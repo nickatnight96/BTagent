@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/build/
+.next/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Secrets
+*.pem
+*.key
+*.crt
+!infra/nginx/ssl/.gitkeep
+.git-credentials
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+coverage/
+test-results/
+playwright-report/
+
+# Database
+*.db
+*.sqlite3
+
+# Misc
+*.log
+tmp/
+.cache/
