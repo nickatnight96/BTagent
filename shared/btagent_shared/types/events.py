@@ -52,6 +52,8 @@ class EventType(StrEnum):
     QUERY_GENERATED = "query_generated"
     QUERY_RESULTS = "query_results"
     THREAT_ASSESSMENT_UPDATE = "threat_assessment_update"
+    KNOWLEDGE_INDEXED = "knowledge_indexed"
+    KNOWLEDGE_QUERIED = "knowledge_queried"
 
     # Cost & metrics
     METRICS_UPDATE = "metrics_update"

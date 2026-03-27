@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { Shield, LayoutDashboard, Search, Settings, ChevronLeft, ChevronRight } from "lucide-react";
+import { Shield, LayoutDashboard, Search, Settings, ChevronLeft, ChevronRight, Database, Grid3X3 } from "lucide-react";
 import { clsx } from "clsx";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -19,6 +19,16 @@ const navItems: NavItem[] = [
     label: "Investigations",
     path: "/",
     icon: <Search className="w-5 h-5" />,
+  },
+  {
+    label: "IOC Notebook",
+    path: "/iocs",
+    icon: <Database className="w-5 h-5" />,
+  },
+  {
+    label: "ATT&CK Matrix",
+    path: "/mitre",
+    icon: <Grid3X3 className="w-5 h-5" />,
   },
   {
     label: "Settings",

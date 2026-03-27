@@ -19,6 +19,15 @@ from btagent_shared.types.enums import (
     UserRole,
 )
 from btagent_shared.types.events import EventEnvelope, EventType
+from btagent_shared.types.knowledge import (
+    IngestRequest,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeSourceType,
+    QueryRequest,
+    QueryResponse,
+    SearchResult,
+)
 from btagent_shared.types.investigation import (
     ContainmentAction,
     Evidence,
@@ -39,12 +48,19 @@ __all__ = [
     "Evidence",
     "IOC",
     "IOCType",
+    "IngestRequest",
     "IntegrationAutonomy",
     "Investigation",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
+    "KnowledgeSourceType",
     "InvestigationStatus",
     "MCPConnection",
     "ModelProvider",
     "ModelTier",
+    "QueryRequest",
+    "QueryResponse",
+    "SearchResult",
     "Severity",
     "TLP",
     "TimelineEntry",

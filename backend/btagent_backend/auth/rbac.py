@@ -45,6 +45,10 @@ PERMISSIONS: dict[str, UserRole] = {
     "ioc:delete": UserRole.SENIOR_ANALYST,
     "ioc:enrich": UserRole.ANALYST,
     "ioc:export": UserRole.ANALYST,
+    # Knowledge base
+    "knowledge:query": UserRole.ANALYST,
+    "knowledge:ingest": UserRole.SENIOR_ANALYST,
+    "knowledge:delete": UserRole.ADMIN,
 }
 
 

@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     default_model_id: str = "claude-sonnet-4-20250514"
     mock_connectors: bool = False
 
+    # Embedding / Knowledge Base
+    embedding_provider: str = "openai"  # openai | ollama
+    embedding_model: str = "text-embedding-3-small"
+    openai_api_key: str = ""
+    ollama_base_url: str = "http://localhost:11434"
+
     # Rate limiting
     rate_limit_enabled: bool = True
 
