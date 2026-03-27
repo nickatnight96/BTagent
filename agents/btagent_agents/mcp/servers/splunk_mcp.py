@@ -13,14 +13,15 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.splunk")
 
-MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
+MOCK_MODE = (
+    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -117,10 +118,15 @@ _MOCK_SEARCH_RESULTS: dict[str, list[dict[str, Any]]] = {
             "_time": "2026-03-26T08:22:05.000+00:00",
             "host": "WS-JSMITH-PC",
             "process_name": "powershell.exe",
-            "process_path": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "process_path": (
+                "C:\\Windows\\System32\\"
+                "WindowsPowerShell\\v1.0\\powershell.exe"
+            ),
             "parent_process": "cmd.exe",
-            "cmdline": "powershell.exe -enc SQBFAFgAIAAoA"
-                       "E4AZQB3AC0ATwBiAGoAZQBjAHQA...",
+            "cmdline": (
+                "powershell.exe -enc SQBFAFgAIAAoA"
+                "E4AZQB3AC0ATwBiAGoAZQBjAHQA..."
+            ),
             "user": "ACME\\jsmith",
             "pid": 7284,
             "ppid": 6140,
@@ -134,7 +140,9 @@ _MOCK_SEARCH_RESULTS: dict[str, list[dict[str, Any]]] = {
             "process_name": "cmd.exe",
             "process_path": "C:\\Windows\\System32\\cmd.exe",
             "parent_process": "outlook.exe",
-            "cmdline": 'cmd.exe /c "start /b powershell -enc ..."',
+            "cmdline": (
+                'cmd.exe /c "start /b powershell -enc ..."'
+            ),
             "user": "ACME\\jsmith",
             "pid": 6140,
             "ppid": 4512,
@@ -153,9 +161,9 @@ _MOCK_ALERTS = [
         "triggered_at": "2026-03-26T07:50:00.000+00:00",
         "search_name": "Authentication - Brute Force Detection",
         "search_query": (
-            'index=authentication action=failure '
-            '| stats count by src_ip, user '
-            '| where count > 5'
+            "index=authentication action=failure "
+            "| stats count by src_ip, user "
+            "| where count > 5"
         ),
         "notable_fields": {
             "src_ip": "185.220.101.42",
@@ -175,7 +183,7 @@ _MOCK_ALERTS = [
         "search_query": (
             'index=endpoint sourcetype="sysmon:process_create" '
             'process_name=powershell.exe cmdline="*-enc*" '
-            '| table _time, host, user, cmdline, parent_process'
+            "| table _time, host, user, cmdline, parent_process"
         ),
         "notable_fields": {
             "host": "WS-JSMITH-PC",
@@ -193,9 +201,9 @@ _MOCK_ALERTS = [
         "triggered_at": "2026-03-26T08:18:00.000+00:00",
         "search_name": "Network - Large Outbound Transfer",
         "search_query": (
-            'index=network action=allowed direction=outbound '
-            '| stats sum(bytes_out) as total_bytes by src_ip '
-            '| where total_bytes > 50000000'
+            "index=network action=allowed direction=outbound "
+            "| stats sum(bytes_out) as total_bytes by src_ip "
+            "| where total_bytes > 50000000"
         ),
         "notable_fields": {
             "src_ip": "10.1.42.17",
@@ -213,9 +221,9 @@ _MOCK_ALERTS = [
         "triggered_at": "2026-03-26T06:30:00.000+00:00",
         "search_name": "Network - DNS Tunnel Detection",
         "search_query": (
-            'index=network sourcetype=dns query_type=TXT '
-            '| eval query_len=len(query) '
-            '| where query_len > 100'
+            "index=network sourcetype=dns query_type=TXT "
+            "| eval query_len=len(query) "
+            "| where query_len > 100"
         ),
         "notable_fields": {
             "src_ip": "10.1.15.88",
@@ -238,12 +246,13 @@ _MOCK_NOTABLES = [
         "src": "185.220.101.42",
         "dest": "vpn.acme-corp.com",
         "user": "jsmith",
-        "status": "1",  # New
+        "status": "1",
         "status_label": "New",
         "owner": "unassigned",
         "security_domain": "access",
         "drilldown_search": (
-            'index=authentication src_ip=185.220.101.42 user=jsmith action=failure'
+            "index=authentication src_ip=185.220.101.42 "
+            "user=jsmith action=failure"
         ),
     },
     {
@@ -261,7 +270,7 @@ _MOCK_NOTABLES = [
         "security_domain": "endpoint",
         "drilldown_search": (
             'index=endpoint sourcetype="sysmon:process_create" '
-            'host=WS-JSMITH-PC process_name=powershell.exe'
+            "host=WS-JSMITH-PC process_name=powershell.exe"
         ),
     },
     {
@@ -278,7 +287,8 @@ _MOCK_NOTABLES = [
         "owner": "unassigned",
         "security_domain": "network",
         "drilldown_search": (
-            'index=network src_ip=10.1.42.17 dest_ip=198.51.100.23 action=allowed'
+            "index=network src_ip=10.1.42.17 "
+            "dest_ip=198.51.100.23 action=allowed"
         ),
     },
     {
@@ -295,7 +305,8 @@ _MOCK_NOTABLES = [
         "owner": "unassigned",
         "security_domain": "network",
         "drilldown_search": (
-            'index=network sourcetype=dns query_type=TXT src_ip=10.1.15.88'
+            "index=network sourcetype=dns "
+            "query_type=TXT src_ip=10.1.15.88"
         ),
     },
 ]
@@ -307,14 +318,16 @@ _MOCK_NOTABLES = [
 class SplunkMCPServer:
     """Splunk MCP connector with mock and real modes.
 
-    In mock mode (default, controlled by ``BTAGENT_MOCK_CONNECTORS``),
-    every tool returns realistic sample data suitable for demos and UAT.
+    In mock mode (default via ``BTAGENT_MOCK_CONNECTORS=true``), every
+    tool returns realistic sample data suitable for demos and UAT.
     """
 
     server_id: str = "splunk"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
+        self.mock_mode = (
+            mock_mode if mock_mode is not None else MOCK_MODE
+        )
 
     # ---- tools ----
 
@@ -328,8 +341,8 @@ class SplunkMCPServer:
 
         Args:
             query: SPL search string.
-            earliest: Start of time range (e.g. ``-24h``, ``2026-03-25``).
-            latest: End of time range (e.g. ``now``, ``2026-03-26``).
+            earliest: Start of time range (e.g. ``-24h``).
+            latest: End of time range (e.g. ``now``).
 
         Returns:
             Search results including events, statistics, and metadata.
@@ -361,7 +374,7 @@ class SplunkMCPServer:
         """Retrieve notable events from Splunk Enterprise Security.
 
         Args:
-            severity: Filter by severity (critical, high, medium, low, all).
+            severity: Filter (critical|high|medium|low|all).
 
         Returns:
             List of notable event payloads.
@@ -376,9 +389,15 @@ class SplunkMCPServer:
         self, query: str, earliest: str, latest: str
     ) -> dict[str, Any]:
         q_lower = query.lower()
-        if "authentication" in q_lower or "okta" in q_lower or "login" in q_lower:
+        if any(
+            k in q_lower
+            for k in ("authentication", "okta", "login")
+        ):
             events = _MOCK_SEARCH_RESULTS["authentication"]
-        elif "process" in q_lower or "sysmon" in q_lower or "powershell" in q_lower:
+        elif any(
+            k in q_lower
+            for k in ("process", "sysmon", "powershell")
+        ):
             events = _MOCK_SEARCH_RESULTS["process"]
         else:
             events = _MOCK_SEARCH_RESULTS["default"]
@@ -409,7 +428,8 @@ class SplunkMCPServer:
             notables = _MOCK_NOTABLES
         else:
             notables = [
-                n for n in _MOCK_NOTABLES
+                n
+                for n in _MOCK_NOTABLES
                 if n["severity"] == severity.lower()
             ]
         return {
@@ -424,25 +444,31 @@ class SplunkMCPServer:
     def _real_search(
         self, query: str, earliest: str, latest: str
     ) -> dict[str, Any]:
-        # TODO: Implement via Splunk REST API (services/search/jobs)
-        raise NotImplementedError("Real Splunk search not yet implemented")
+        raise NotImplementedError(
+            "Real Splunk search not yet implemented"
+        )
 
     def _real_get_alerts(self, limit: int) -> dict[str, Any]:
-        raise NotImplementedError("Real Splunk alerts not yet implemented")
+        raise NotImplementedError(
+            "Real Splunk alerts not yet implemented"
+        )
 
     def _real_get_notable(self, severity: str) -> dict[str, Any]:
-        raise NotImplementedError("Real Splunk notables not yet implemented")
+        raise NotImplementedError(
+            "Real Splunk notables not yet implemented"
+        )
 
     # ---- LangChain tool registration helpers ----
 
     def get_tool_metadata(self) -> list[dict[str, Any]]:
-        """Return tool metadata for discovery without loading implementations."""
+        """Return tool metadata for discovery."""
         return [
             {
                 "name": "splunk_search",
                 "description": (
                     "Execute an SPL search query against Splunk. "
-                    "Returns matching events, statistics, and metadata."
+                    "Returns matching events, statistics, and "
+                    "metadata."
                 ),
                 "server_id": self.server_id,
                 "input_schema": {
@@ -454,12 +480,16 @@ class SplunkMCPServer:
                         },
                         "earliest": {
                             "type": "string",
-                            "description": "Start of time range",
+                            "description": (
+                                "Start of time range"
+                            ),
                             "default": "-24h",
                         },
                         "latest": {
                             "type": "string",
-                            "description": "End of time range",
+                            "description": (
+                                "End of time range"
+                            ),
                             "default": "now",
                         },
                     },
@@ -469,8 +499,8 @@ class SplunkMCPServer:
             {
                 "name": "splunk_get_alerts",
                 "description": (
-                    "Retrieve recent triggered alerts from Splunk "
-                    "Enterprise Security."
+                    "Retrieve recent triggered alerts from "
+                    "Splunk Enterprise Security."
                 ),
                 "server_id": self.server_id,
                 "input_schema": {
@@ -478,7 +508,9 @@ class SplunkMCPServer:
                     "properties": {
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum alerts to return",
+                            "description": (
+                                "Maximum alerts to return"
+                            ),
                             "default": 50,
                         },
                     },
@@ -487,8 +519,9 @@ class SplunkMCPServer:
             {
                 "name": "splunk_get_notable",
                 "description": (
-                    "Retrieve notable events from Splunk Enterprise Security, "
-                    "optionally filtered by severity."
+                    "Retrieve notable events from Splunk "
+                    "Enterprise Security, optionally filtered "
+                    "by severity."
                 ),
                 "server_id": self.server_id,
                 "input_schema": {
@@ -503,7 +536,9 @@ class SplunkMCPServer:
                                 "low",
                                 "all",
                             ],
-                            "description": "Filter by severity",
+                            "description": (
+                                "Filter by severity"
+                            ),
                             "default": "all",
                         },
                     },
@@ -536,7 +571,7 @@ async def splunk_search(
 
 @tool
 async def splunk_get_alerts(limit: int = 50) -> dict[str, Any]:
-    """Retrieve recent triggered alerts from Splunk Enterprise Security.
+    """Retrieve recent triggered alerts from Splunk ES.
 
     Args:
         limit: Maximum number of alerts to return.
@@ -545,10 +580,12 @@ async def splunk_get_alerts(limit: int = 50) -> dict[str, Any]:
 
 
 @tool
-async def splunk_get_notable(severity: str = "all") -> dict[str, Any]:
-    """Retrieve notable events from Splunk ES filtered by severity.
+async def splunk_get_notable(
+    severity: str = "all",
+) -> dict[str, Any]:
+    """Retrieve notable events from Splunk ES by severity.
 
     Args:
-        severity: Filter by severity (critical, high, medium, low, all).
+        severity: Filter (critical, high, medium, low, all).
     """
     return await _server.splunk_get_notable(severity)

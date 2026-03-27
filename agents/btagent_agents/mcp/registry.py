@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
-from btagent_shared.types.config import MCPConnection, MCPTransport
 from btagent_shared.types.mcp import MCPConnectionStatus, MCPServerConfig
 
 logger = logging.getLogger("btagent.mcp.registry")
@@ -62,7 +61,8 @@ class CircuitOpenError(Exception):
         self.state = state
         self.retry_after = retry_after
         super().__init__(
-            f"Circuit open for '{connection_id}'. Retry after {retry_after:.1f}s"
+            f"Circuit open for '{connection_id}'. "
+            f"Retry after {retry_after:.1f}s"
         )
 
 
@@ -129,8 +129,13 @@ class CircuitBreaker:
                     self._state = CircuitState.CLOSED
                     self._failure_count = 0
                     self._success_count = 0
-                    logger.info("Circuit %s -> CLOSED", self.connection_id)
-            elif self._state == CircuitState.CLOSED and self._failure_count > 0:
+                    logger.info(
+                        "Circuit %s -> CLOSED", self.connection_id
+                    )
+            elif (
+                self._state == CircuitState.CLOSED
+                and self._failure_count > 0
+            ):
                 self._failure_count = max(0, self._failure_count - 1)
 
     def record_failure(self, error: Exception | None = None) -> None:
@@ -200,7 +205,6 @@ class ManagedConnection:
     connection_id: str
     server_name: str
     config: MCPServerConfig
-    transport_config: MCPConnection | None = None
 
     # Lifecycle tracking
     created_at: float = field(default_factory=time.time)
@@ -260,27 +264,31 @@ class ManagedConnection:
     # ----- connection lifecycle -----
 
     async def connect(self) -> None:
-        """Establish the logical connection (transport-level connect)."""
+        """Establish the logical connection."""
         if self._connected:
             return
-        # For mock / registry tracking the connection is considered up once
-        # the managed-connection object is created. Real transport connect
-        # happens in the transport layer.
         self._connected = True
         self.is_healthy = True
         self.last_health_check = time.time()
-        logger.info("MCP connection %s (%s) established", self.connection_id, self.server_name)
+        logger.info(
+            "MCP connection %s (%s) established",
+            self.connection_id,
+            self.server_name,
+        )
 
     async def disconnect(self) -> None:
         """Tear down the connection."""
         self._connected = False
         self.is_healthy = False
-        logger.info("MCP connection %s (%s) disconnected", self.connection_id, self.server_name)
+        logger.info(
+            "MCP connection %s (%s) disconnected",
+            self.connection_id,
+            self.server_name,
+        )
 
     async def health_check(self) -> bool:
         """Perform a health-check ping."""
         try:
-            # Lightweight liveness probe -- for mock mode this always passes.
             if not self._connected:
                 self.is_healthy = False
                 self.health_check_failures += 1
@@ -307,11 +315,15 @@ class ManagedConnection:
         try:
             await self.connect()
             self.circuit_breaker.reset()
-            logger.info("Reconnected MCP connection %s", self.connection_id)
+            logger.info(
+                "Reconnected MCP connection %s", self.connection_id
+            )
             return True
         except Exception as exc:
             self.circuit_breaker.record_failure(exc)
-            logger.error("Reconnect failed for %s: %s", self.connection_id, exc)
+            logger.error(
+                "Reconnect failed for %s: %s", self.connection_id, exc
+            )
             return False
 
 
@@ -372,7 +384,8 @@ class MCPConnectionRegistry:
 
         self._initialized = True
         logger.info(
-            "MCPConnectionRegistry initialised (max=%d, idle=%ds, hc=%ds, ka=%ds)",
+            "MCPConnectionRegistry initialised "
+            "(max=%d, idle=%ds, hc=%ds, ka=%ds)",
             MAX_CONNECTIONS,
             int(IDLE_TIMEOUT),
             int(HEALTH_CHECK_INTERVAL),
@@ -423,7 +436,11 @@ class MCPConnectionRegistry:
                 finally:
                     loop.close()
             except Exception as exc:
-                logger.debug("Health-check error for %s: %s", conn.connection_id, exc)
+                logger.debug(
+                    "Health-check error for %s: %s",
+                    conn.connection_id,
+                    exc,
+                )
         # Evict idle connections after health checks
         self._evict_idle_connections()
 
@@ -438,7 +455,7 @@ class MCPConnectionRegistry:
                 conn.touch()
 
     def _evict_idle_connections(self) -> int:
-        """Evict connections that exceed idle timeout. Returns evicted count."""
+        """Evict connections exceeding idle timeout. Returns count."""
         evicted = 0
         with self._lock:
             to_evict = [
@@ -469,16 +486,16 @@ class MCPConnectionRegistry:
         """Get or create a managed connection for *server_name*.
 
         Args:
-            server_name: logical server identifier (e.g. ``"splunk"``).
-            config: server configuration; required when creating a new connection.
-            consumer_id: investigation or caller id for tracking.
+            server_name: Logical server identifier (e.g. ``"splunk"``).
+            config: Server configuration; required for new connections.
+            consumer_id: Investigation or caller ID for tracking.
 
         Returns:
-            The :class:`ManagedConnection`.
+            :class:`ManagedConnection` instance.
 
         Raises:
-            CircuitOpenError: if the circuit breaker is open.
-            RuntimeError: if pool is full or config is missing.
+            CircuitOpenError: If the circuit breaker is open.
+            RuntimeError: If pool is full or config is missing.
         """
         with self._lock:
             existing = self._connections.get(server_name)
@@ -495,10 +512,11 @@ class MCPConnectionRegistry:
                         existing.add_consumer(consumer_id)
                     return existing
                 raise RuntimeError(
-                    f"MCP connection '{server_name}' unhealthy and reconnect failed"
+                    f"MCP connection '{server_name}' unhealthy "
+                    "and reconnect failed"
                 )
 
-            # Create new
+            # Create new connection
             if len(self._connections) >= self._max_connections:
                 self._evict_idle_connections()
                 if len(self._connections) >= self._max_connections:
@@ -508,7 +526,8 @@ class MCPConnectionRegistry:
 
             if config is None:
                 raise RuntimeError(
-                    f"No existing connection for '{server_name}' and no config provided"
+                    f"No existing connection for '{server_name}' "
+                    "and no config provided"
                 )
 
             managed = ManagedConnection(
@@ -522,7 +541,9 @@ class MCPConnectionRegistry:
             self._connections[server_name] = managed
             return managed
 
-    def release_connection(self, server_name: str, consumer_id: str) -> None:
+    def release_connection(
+        self, server_name: str, consumer_id: str
+    ) -> None:
         """Release a consumer's hold on a connection."""
         with self._lock:
             conn = self._connections.get(server_name)
@@ -542,7 +563,9 @@ class MCPConnectionRegistry:
             connection_statuses: list[dict[str, Any]] = []
             for conn in self._connections.values():
                 last_hc = (
-                    datetime.fromtimestamp(conn.last_health_check, tz=timezone.utc).isoformat()
+                    datetime.fromtimestamp(
+                        conn.last_health_check, tz=timezone.utc
+                    ).isoformat()
                     if conn.last_health_check
                     else None
                 )
@@ -583,7 +606,9 @@ class MCPConnectionRegistry:
                 conn.circuit_breaker.record_success()
                 conn.touch()
 
-    def record_failure(self, server_name: str, error: Exception | None = None) -> None:
+    def record_failure(
+        self, server_name: str, error: Exception | None = None
+    ) -> None:
         """Record a failed tool call on *server_name*."""
         with self._lock:
             conn = self._connections.get(server_name)
@@ -608,7 +633,11 @@ class MCPConnectionRegistry:
                     finally:
                         loop.close()
                 except Exception as exc:
-                    logger.debug("Error disconnecting %s: %s", conn.connection_id, exc)
+                    logger.debug(
+                        "Error disconnecting %s: %s",
+                        conn.connection_id,
+                        exc,
+                    )
             self._connections.clear()
         logger.info("MCPConnectionRegistry shutdown complete")
 
@@ -620,5 +649,9 @@ class MCPConnectionRegistry:
                 try:
                     await conn.disconnect()
                 except Exception as exc:
-                    logger.debug("Error disconnecting %s: %s", conn.connection_id, exc)
+                    logger.debug(
+                        "Error disconnecting %s: %s",
+                        conn.connection_id,
+                        exc,
+                    )
             self._connections.clear()

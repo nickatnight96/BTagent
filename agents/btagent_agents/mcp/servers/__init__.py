@@ -1,0 +1,20 @@
+"""MCP server connectors for SIEM, EDR, and security tool integrations.
+
+Available servers:
+    SplunkMCPServer      -- Splunk Enterprise Security
+    CrowdStrikeMCPServer -- CrowdStrike Falcon EDR
+    SentinelMCPServer    -- Microsoft Sentinel SIEM
+    ElasticMCPServer     -- Elastic Security SIEM
+"""
+
+from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
+from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
+from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
+from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
+
+__all__ = [
+    "SplunkMCPServer",
+    "CrowdStrikeMCPServer",
+    "SentinelMCPServer",
+    "ElasticMCPServer",
+]
