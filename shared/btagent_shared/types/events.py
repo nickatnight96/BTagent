@@ -41,6 +41,8 @@ class EventType(StrEnum):
     IOC_DISCOVERED = "ioc_discovered"
     IOC_ENRICHED = "ioc_enriched"
     IOC_CROSS_MATCH = "ioc_cross_match"
+    IOC_ENRICHMENT_STARTED = "ioc_enrichment_started"
+    IOC_ENRICHMENT_COMPLETE = "ioc_enrichment_complete"
     ALERT_CLASSIFIED = "alert_classified"
     CONTAINMENT_PROPOSED = "containment_proposed"
     CONTAINMENT_APPROVED = "containment_approved"

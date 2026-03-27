@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 PLUGIN_MODULES: dict[str, str] = {
     "triage": "btagent_agents.plugins.triage",
     "query": "btagent_agents.plugins.query",
+    "enrichment": "btagent_agents.plugins.enrichment",
 }
 
 # In-process cache of already-loaded plugin instances.
