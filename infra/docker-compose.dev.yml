@@ -1,0 +1,26 @@
+# Dev overrides — hot reload for backend, skip frontend/nginx Docker builds
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.backend
+    command: uvicorn btagent_backend.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ../backend:/app/backend
+      - ../shared:/app/shared
+      - ../agents:/app/agents
+    environment:
+      BTAGENT_ENV: dev
+      BTAGENT_DEBUG: "true"
+      BTAGENT_LOG_LEVEL: debug
+
+  # Frontend runs locally via `npm run dev` in dev mode
+  frontend:
+    profiles:
+      - docker-frontend  # Only start if explicitly requested
+
+  nginx:
+    profiles:
+      - docker-frontend

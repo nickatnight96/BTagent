@@ -1,0 +1,33 @@
+# BTagent frontend — multi-stage build
+# Stage 1: Build
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 2: Serve with nginx
+FROM nginx:alpine
+
+# Security: non-root
+RUN adduser -D -u 1000 btagent && \
+    chown -R btagent:btagent /var/cache/nginx /var/log/nginx /etc/nginx/conf.d && \
+    touch /var/run/nginx.pid && chown btagent:btagent /var/run/nginx.pid
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# SPA routing: fallback to index.html
+RUN echo 'server { \
+    listen 80; \
+    root /usr/share/nginx/html; \
+    index index.html; \
+    location / { \
+        try_files $uri $uri/ /index.html; \
+    } \
+}' > /etc/nginx/conf.d/default.conf
+
+USER btagent
+
+EXPOSE 80

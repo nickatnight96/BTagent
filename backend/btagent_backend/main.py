@@ -47,12 +47,12 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Health check
-    @app.get("/health")
-    async def health():
-        return {"status": "ok", "env": settings.env, "version": "0.1.0"}
+    # Mount routers
+    from btagent_backend.api.v1.router import api_v1_router, health_router_root
 
-    # TODO: Mount API v1 router
+    app.include_router(health_router_root)
+    app.include_router(api_v1_router)
+
     # TODO: Mount WebSocket endpoints
     # TODO: Add request ID middleware
     # TODO: Add error handler middleware

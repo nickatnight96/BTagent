@@ -1,0 +1,14 @@
+"""API v1 router — mounts all sub-routers."""
+
+from fastapi import APIRouter
+
+from btagent_backend.api.v1.auth import router as auth_router
+from btagent_backend.api.v1.health import router as health_router
+from btagent_backend.api.v1.investigations import router as investigations_router
+
+api_v1_router = APIRouter(prefix="/api/v1")
+api_v1_router.include_router(auth_router)
+api_v1_router.include_router(investigations_router)
+
+# Health at root level (no /api/v1 prefix)
+health_router_root = health_router
