@@ -1,0 +1,105 @@
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (defaults to latest git tag)"
+        required: false
+        type: string
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  BACKEND_IMAGE: ghcr.io/nickatnight96/btagent-backend
+  FRONTEND_IMAGE: ghcr.io/nickatnight96/btagent-frontend
+
+jobs:
+  validate:
+    name: Pre-deploy Validation
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify images exist in registry
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          echo "Validating images for tag: ${TAG}"
+          docker manifest inspect ${{ env.BACKEND_IMAGE }}:${TAG} || \
+            (echo "Backend image not found for tag ${TAG}" && exit 1)
+          docker manifest inspect ${{ env.FRONTEND_IMAGE }}:${TAG} || \
+            (echo "Frontend image not found for tag ${TAG}" && exit 1)
+
+  deploy:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+    needs: [validate]
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+
+      - name: Deploy to production
+        run: |
+          helm upgrade --install btagent ./infra/helm/btagent \
+            -f infra/helm/btagent/values.yaml \
+            -f infra/helm/btagent/values-production.yaml \
+            --set image.tag=${{ needs.validate.outputs.version }} \
+            --set frontendImage.tag=${{ needs.validate.outputs.version }} \
+            --namespace btagent-production \
+            --create-namespace \
+            --wait \
+            --timeout 10m \
+            --atomic
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/btagent-backend -n btagent-production --timeout=180s
+          kubectl rollout status deployment/btagent-frontend -n btagent-production --timeout=180s
+
+      - name: Run production smoke tests
+        run: |
+          PROD_URL=$(kubectl get ingress btagent -n btagent-production -o jsonpath='{.spec.rules[0].host}')
+          curl --fail --retry 5 --retry-delay 5 "https://${PROD_URL}/api/health"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Production deployment failed for version ${{ needs.validate.outputs.version }}"
+          echo "Initiating rollback..."
+          helm rollback btagent 0 --namespace btagent-production --wait --timeout 5m

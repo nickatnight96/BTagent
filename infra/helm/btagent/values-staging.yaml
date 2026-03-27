@@ -1,0 +1,47 @@
+# Staging-specific overrides
+replicaCount: 1
+frontendReplicaCount: 1
+
+image:
+  tag: staging
+
+frontendImage:
+  tag: staging
+
+ingress:
+  hosts:
+    - host: staging.btagent.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+        - path: /ws
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls:
+    - secretName: btagent-staging-tls
+      hosts:
+        - staging.btagent.example.com
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+env:
+  BTAGENT_ENV: staging
+  BTAGENT_LOG_LEVEL: debug
+  BTAGENT_OTEL_ENABLED: "true"
+  BTAGENT_MOCK_CONNECTORS: "true"

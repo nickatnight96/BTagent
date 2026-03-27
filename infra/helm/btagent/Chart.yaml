@@ -1,0 +1,13 @@
+apiVersion: v2
+name: btagent
+description: BTagent - Defensive Cyber Security AI Agent Platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: nickatnight96
+keywords:
+  - cybersecurity
+  - ai-agent
+  - incident-response
+  - threat-hunting

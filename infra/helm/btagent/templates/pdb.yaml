@@ -1,0 +1,13 @@
+{{- if .Values.podDisruptionBudget.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "btagent.fullname" . }}-backend
+  labels:
+    {{- include "btagent.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "btagent.selectorLabels" . | nindent 6 }}
+{{- end }}

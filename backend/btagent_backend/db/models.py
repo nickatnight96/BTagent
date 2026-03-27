@@ -226,3 +226,42 @@ class CostTrackingRow(Base):
         Index("idx_cost_investigation", "investigation_id"),
         Index("idx_cost_timestamp", "timestamp"),
     )
+
+
+class NotificationRow(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="")
+    investigation_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("investigations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    read: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        Index("idx_notifications_user", "user_id"),
+        Index("idx_notifications_user_read", "user_id", "read"),
+        Index("idx_notifications_created", "created_at"),
+    )
+
+
+class OrgConfigRow(Base):
+    __tablename__ = "org_config"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    value: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index("idx_org_config_key", "key", unique=True),
+    )

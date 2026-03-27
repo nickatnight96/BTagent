@@ -56,7 +56,24 @@ playwright-report/
 *.db
 *.sqlite3
 
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfvars
+!*.tfvars.example
+
+# Helm
+infra/helm/btagent/charts/
+
 # Misc
 *.log
 tmp/
 .cache/
+.claude/worktrees/

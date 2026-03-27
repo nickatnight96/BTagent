@@ -1,0 +1,107 @@
+version: 2
+
+updates:
+  # Python dependencies (backend)
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 10
+    reviewers:
+      - nickatnight96
+    labels:
+      - dependencies
+      - python
+    groups:
+      python-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Python dependencies (agents)
+  - package-ecosystem: pip
+    directory: /agents
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    reviewers:
+      - nickatnight96
+    labels:
+      - dependencies
+      - python
+    groups:
+      agents-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Python dependencies (shared)
+  - package-ecosystem: pip
+    directory: /shared
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    reviewers:
+      - nickatnight96
+    labels:
+      - dependencies
+      - python
+
+  # npm dependencies (frontend)
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 10
+    reviewers:
+      - nickatnight96
+    labels:
+      - dependencies
+      - javascript
+    groups:
+      npm-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    reviewers:
+      - nickatnight96
+    labels:
+      - dependencies
+      - ci
+
+  # Docker base images
+  - package-ecosystem: docker
+    directory: /infra/docker
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    reviewers:
+      - nickatnight96
+    labels:
+      - dependencies
+      - docker

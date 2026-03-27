@@ -1,0 +1,299 @@
+name: BTagent CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  # ── Lint ────────────────────────────────────────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Ruff check
+        run: ruff check backend/ agents/ shared/
+
+      - name: Ruff format check
+        run: ruff format --check backend/ agents/ shared/
+
+  # ── Backend + Agent Unit Tests ──────────────────────────────
+  backend-tests:
+    name: Backend & Agent Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: btagent
+          POSTGRES_PASSWORD: btagent_ci_password
+          POSTGRES_DB: btagent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U btagent"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://btagent:btagent_ci_password@localhost:5432/btagent_test
+      BTAGENT_REDIS_URL: redis://localhost:6379
+      BTAGENT_ENV: test
+      BTAGENT_JWT_SECRET: ci-test-secret-not-for-production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e shared/
+          uv pip install --system -e agents/
+          uv pip install --system -e "backend/[dev]"
+
+      - name: Run backend tests
+        run: pytest backend/tests/ -v --cov=btagent_backend --cov-report=xml:coverage-backend.xml --cov-report=term-missing
+
+      - name: Run agent tests
+        run: pytest agents/tests/ -v --cov=btagent_agents --cov-report=xml:coverage-agents.xml --cov-report=term-missing
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: coverage-*.xml
+          retention-days: 7
+
+  # ── Agent Evaluation ────────────────────────────────────────
+  agent-eval:
+    name: Agent Evaluation
+    runs-on: ubuntu-latest
+    needs: [backend-tests]
+
+    env:
+      BTAGENT_ENV: test
+      BTAGENT_MOCK_LLM: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e shared/
+          uv pip install --system -e agents/
+          uv pip install --system -e "backend/[dev]"
+
+      - name: Run agent evaluation suite
+        run: pytest tests/agent_eval/ -v --timeout=300
+
+  # ── UAT (User Acceptance Tests) ─────────────────────────────
+  uat:
+    name: UAT
+    runs-on: ubuntu-latest
+    needs: [backend-tests]
+
+    env:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://btagent:btagent_ci_password@localhost:5432/btagent_test
+      BTAGENT_REDIS_URL: redis://localhost:6379
+      BTAGENT_ENV: test
+      BTAGENT_JWT_SECRET: ci-test-secret-not-for-production
+      BTAGENT_MOCK_CONNECTORS: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e shared/
+          uv pip install --system -e agents/
+          uv pip install --system -e "backend/[dev]"
+
+      - name: Start infrastructure
+        run: docker compose -f infra/docker-compose.yml up -d postgres redis
+
+      - name: Wait for services
+        run: |
+          until docker compose -f infra/docker-compose.yml exec -T postgres pg_isready -U btagent; do sleep 1; done
+          until docker compose -f infra/docker-compose.yml exec -T redis redis-cli ping | grep -q PONG; do sleep 1; done
+
+      - name: Run database migrations
+        run: cd backend && alembic upgrade head
+
+      - name: Seed database
+        run: python infra/scripts/seed-data.py
+
+      - name: Start backend
+        run: |
+          cd backend && uvicorn btagent_backend.main:app --host 0.0.0.0 --port 8000 &
+          sleep 5
+          curl --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
+
+      - name: Run UAT tests
+        run: pytest tests/uat/ -v --timeout=120
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+
+  # ── Frontend ────────────────────────────────────────────────
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+  # ── Build & Push Docker Images ──────────────────────────────
+  build-images:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [lint, backend-tests, frontend]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata (backend)
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/nickatnight96/btagent-backend
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Docker metadata (frontend)
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/nickatnight96/btagent-frontend
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: infra/docker/Dockerfile.frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

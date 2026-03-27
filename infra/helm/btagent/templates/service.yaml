@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "btagent.fullname" . }}-backend
+  labels:
+    {{- include "btagent.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "btagent.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "btagent.fullname" . }}-frontend
+  labels:
+    {{- include "btagent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  type: {{ .Values.frontendService.type }}
+  ports:
+    - port: {{ .Values.frontendService.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "btagent.frontendSelectorLabels" . | nindent 4 }}
