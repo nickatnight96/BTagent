@@ -1,0 +1,58 @@
+name: ransomware
+description: Ransomware incident investigation and containment
+severity: critical
+workflow:
+  - triage
+  - query
+  - enrich
+  - contain
+suggested_ioc_types:
+  - hash_sha256
+  - hash_md5
+  - ip
+  - domain
+  - file_path
+  - email
+mitre_techniques:
+  - T1486
+  - T1490
+  - T1059.001
+  - T1204.002
+  - T1071.001
+initial_prompt: >
+  CRITICAL: Potential ransomware incident. Immediately classify severity,
+  identify the ransomware variant if possible, extract all IOCs, determine
+  blast radius, and recommend containment actions. Time is critical.
+investigation_steps:
+  - step: 1
+    agent: triage
+    description: >
+      Classify the ransomware alert. Identify the ransomware family/variant
+      from file names, extensions, ransom note content, or known hashes.
+      Determine which hosts are confirmed affected vs. potentially exposed.
+  - step: 2
+    agent: query
+    description: >
+      Query endpoint telemetry for the ransomware binary hash across all
+      endpoints. Search for lateral movement indicators (PsExec, WMI,
+      SMB file copies). Check for C2 beaconing from affected hosts.
+      Identify the initial access vector (phishing email, RDP, exploit).
+  - step: 3
+    agent: enrich
+    description: >
+      Enrich ransomware IOCs — check hash against threat intel feeds,
+      identify known decryptors, determine threat actor group and TTPs.
+      Check for any data exfiltration indicators (double extortion).
+  - step: 4
+    agent: contain
+    description: >
+      Isolate confirmed-infected hosts. Block C2 domains/IPs at firewall.
+      Disable compromised accounts. Preserve forensic evidence before
+      remediation. Verify backup integrity.
+containment_options:
+  - isolate_infected_hosts
+  - block_c2_infrastructure
+  - disable_compromised_accounts
+  - block_lateral_movement_ports
+  - preserve_forensic_images
+  - verify_backup_integrity

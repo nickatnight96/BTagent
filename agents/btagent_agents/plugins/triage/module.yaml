@@ -1,0 +1,13 @@
+name: triage
+description: Alert triage and initial classification for incident response
+version: "1.0.0"
+author: BTagent Team
+capabilities:
+  - alert_classification
+  - severity_scoring
+  - ioc_extraction
+supported_data_sources:
+  - splunk_alerts
+  - crowdstrike_detections
+  - sentinel_incidents
+  - elastic_alerts

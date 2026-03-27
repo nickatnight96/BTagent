@@ -1,0 +1,51 @@
+name: unauthorized_access
+description: Unauthorized access and credential compromise investigation
+severity: high
+workflow:
+  - triage
+  - query
+  - enrich
+suggested_ioc_types:
+  - ip
+  - email
+  - domain
+  - url
+mitre_techniques:
+  - T1110
+  - T1110.003
+  - T1078
+  - T1078.004
+  - T1021.001
+initial_prompt: >
+  Investigate this unauthorized access alert. Determine if credentials
+  were compromised, assess the scope of access obtained, identify the
+  attack vector (brute force, credential stuffing, phishing, token theft),
+  and check for post-compromise activity.
+investigation_steps:
+  - step: 1
+    agent: triage
+    description: >
+      Classify the access alert. Determine the authentication method
+      targeted (password, MFA bypass, token, API key). Identify source
+      IPs and geolocations. Check for impossible travel or anomalous
+      login patterns.
+  - step: 2
+    agent: query
+    description: >
+      Query authentication logs for the affected account — all successful
+      and failed logins in the last 7 days. Search for the source IP across
+      all accounts (credential stuffing check). Query for any privilege
+      escalation events or new admin role assignments.
+  - step: 3
+    agent: enrich
+    description: >
+      Enrich source IPs — geolocation, threat intel reputation, hosting
+      provider, VPN/proxy/Tor detection. Check if the account has been
+      found in known breach databases.
+containment_options:
+  - force_password_reset
+  - revoke_active_sessions
+  - enable_mfa
+  - block_source_ips
+  - disable_account_temporarily
+  - review_recent_account_actions

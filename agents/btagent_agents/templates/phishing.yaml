@@ -1,0 +1,43 @@
+name: phishing
+description: Phishing email investigation
+severity: high
+workflow:
+  - triage
+  - query
+  - enrich
+suggested_ioc_types:
+  - email
+  - domain
+  - url
+  - ip
+  - hash_sha256
+mitre_techniques:
+  - T1566.001
+  - T1566.002
+initial_prompt: >
+  Triage this phishing alert. Classify severity, extract IOCs from email
+  headers and body, and generate initial SIEM queries to check for similar
+  activity.
+investigation_steps:
+  - step: 1
+    agent: triage
+    description: >
+      Classify the phishing email. Extract sender address, reply-to, subject
+      line, any URLs and attachments. Determine if this is spearphishing,
+      credential harvesting, BEC, or mass phishing.
+  - step: 2
+    agent: query
+    description: >
+      Search email gateway logs for other recipients of the same email
+      (match on subject, sender, or message-ID). Query proxy logs for any
+      user clicks on extracted URLs.
+  - step: 3
+    agent: enrich
+    description: >
+      Enrich all extracted IOCs — check sender domain reputation, URL
+      scanning, and file hash analysis for any attachments.
+containment_options:
+  - block_sender_domain
+  - quarantine_matching_emails
+  - block_urls_at_proxy
+  - reset_credentials_for_clickers

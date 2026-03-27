@@ -1,0 +1,14 @@
+name: query
+description: SIEM/EDR query generation and execution assistance
+version: "1.0.0"
+author: BTagent Team
+capabilities:
+  - spl_generation
+  - kql_generation
+  - eql_generation
+  - query_explanation
+supported_data_sources:
+  - splunk
+  - elastic
+  - sentinel
+  - crowdstrike
