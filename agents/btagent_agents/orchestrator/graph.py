@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
-from langgraph.graph.graph import CompiledGraph
+from langgraph.graph.state import CompiledStateGraph as CompiledGraph
 
 from btagent_shared.types.enums import InvestigationStatus
 
