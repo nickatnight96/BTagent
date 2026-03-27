@@ -2,13 +2,11 @@
 
 from datetime import datetime, timedelta, timezone
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from btagent_backend.config import get_settings
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 class TokenPayload(BaseModel):
@@ -27,11 +25,11 @@ class TokenPair(BaseModel):
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def create_access_token(user_id: str, username: str, role: str) -> str:

@@ -54,6 +54,9 @@ async def seed():
         )
         session.add(senior)
 
+        # Flush users so FK references work
+        await session.flush()
+
         # Create sample investigation
         inv = InvestigationRow(
             id=generate_id("inv"),
