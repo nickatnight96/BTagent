@@ -1,11 +1,15 @@
 """BTagent FastAPI application factory."""
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from btagent_backend.config import get_settings
+from btagent_backend.ws import WebSocketHub, init_ws_routes, ws_router
+
+logger = logging.getLogger("btagent.main")
 
 
 @asynccontextmanager
@@ -13,15 +17,23 @@ async def lifespan(app: FastAPI):
     """Application lifespan: initialize and cleanup resources."""
     settings = get_settings()
 
-    # TODO: Initialize Redis connection pool
-    # TODO: Initialize WebSocket hub
+    # Initialize WebSocket hub (Redis pub/sub + connection management)
+    hub = WebSocketHub(redis_url=settings.redis_url)
+    await hub.start()
+    init_ws_routes(hub)
+    app.state.ws_hub = hub
+    logger.info("WebSocket hub initialised")
+
     # TODO: Initialize TaskManager (auto-resume investigations)
     # TODO: Initialize OTEL if enabled
 
     yield
 
+    # Graceful shutdown — stop WebSocket hub (notifies clients, closes Redis)
+    await hub.stop()
+    logger.info("WebSocket hub shut down")
+
     # TODO: Graceful shutdown — checkpoint running investigations
-    # TODO: Close Redis pool
     # TODO: Close DB engine
 
 
@@ -53,7 +65,9 @@ def create_app() -> FastAPI:
     app.include_router(health_router_root)
     app.include_router(api_v1_router)
 
-    # TODO: Mount WebSocket endpoints
+    # Mount WebSocket endpoints
+    app.include_router(ws_router)
+
     # TODO: Add request ID middleware
     # TODO: Add error handler middleware
 
