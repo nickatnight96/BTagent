@@ -6,6 +6,7 @@ import { InvestigationList } from "@/components/investigations/InvestigationList
 import { InvestigationWorkspace } from "@/components/workspace/InvestigationWorkspace";
 import { IOCNotebook } from "@/components/iocs/IOCNotebook";
 import { MitreMatrix } from "@/components/mitre/MitreMatrix";
+import { KnowledgePage } from "@/components/knowledge/KnowledgePage";
 
 export const router = createBrowserRouter([
   {
@@ -35,6 +36,10 @@ export const router = createBrowserRouter([
       {
         path: "mitre",
         element: <MitreMatrix />,
+      },
+      {
+        path: "knowledge",
+        element: <KnowledgePage />,
       },
     ],
   },

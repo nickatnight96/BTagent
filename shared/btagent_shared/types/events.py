@@ -55,6 +55,13 @@ class EventType(StrEnum):
     KNOWLEDGE_INDEXED = "knowledge_indexed"
     KNOWLEDGE_QUERIED = "knowledge_queried"
 
+    # Playbook lifecycle
+    PLAYBOOK_STARTED = "playbook_started"
+    PLAYBOOK_STEP_COMPLETE = "playbook_step_complete"
+    PLAYBOOK_COMPLETE = "playbook_complete"
+    PLAYBOOK_FAILED = "playbook_failed"
+    PLAYBOOK_HITL_GATE = "playbook_hitl_gate"
+
     # Cost & metrics
     METRICS_UPDATE = "metrics_update"
     COST_UPDATE = "cost_update"

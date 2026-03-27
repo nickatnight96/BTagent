@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { Shield, LayoutDashboard, Search, Settings, ChevronLeft, ChevronRight, Database, Grid3X3 } from "lucide-react";
+import { Shield, LayoutDashboard, Search, Settings, ChevronLeft, ChevronRight, Database, Grid3X3, BookOpen } from "lucide-react";
 import { clsx } from "clsx";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -29,6 +29,11 @@ const navItems: NavItem[] = [
     label: "ATT&CK Matrix",
     path: "/mitre",
     icon: <Grid3X3 className="w-5 h-5" />,
+  },
+  {
+    label: "Knowledge Base",
+    path: "/knowledge",
+    icon: <BookOpen className="w-5 h-5" />,
   },
   {
     label: "Settings",

@@ -49,6 +49,13 @@ PERMISSIONS: dict[str, UserRole] = {
     "knowledge:query": UserRole.ANALYST,
     "knowledge:ingest": UserRole.SENIOR_ANALYST,
     "knowledge:delete": UserRole.ADMIN,
+    # Playbooks
+    "playbook:view": UserRole.ANALYST,
+    "playbook:create": UserRole.SENIOR_ANALYST,
+    "playbook:edit": UserRole.SENIOR_ANALYST,
+    "playbook:delete": UserRole.ADMIN,
+    "playbook:execute": UserRole.SENIOR_ANALYST,
+    "playbook:execute_containment": UserRole.INCIDENT_COMMANDER,
 }
 
 

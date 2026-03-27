@@ -1,0 +1,91 @@
+name: Ransomware Containment
+version: "1.0"
+description: Automated ransomware detection, investigation, and containment workflow
+trigger:
+  type: alert_severity
+  parameters:
+    min_severity: critical
+    category: ransomware
+steps:
+  - id: classify_alert
+    type: action
+    name: Classify ransomware alert and identify variant
+    tool_name: alert_classifier
+    arguments: {source: edr_alert, category: ransomware}
+    next_step: scan_endpoints
+  - id: scan_endpoints
+    type: action
+    name: Scan endpoints for ransomware indicators
+    tool_name: crowdstrike_search
+    arguments: {query_type: process_hash, scope: all_endpoints}
+    next_step: enrich_hashes
+  - id: enrich_hashes
+    type: action
+    name: Enrich file hashes against threat intel
+    tool_name: enrich_ioc
+    arguments: {ioc_types: [hash_sha256, hash_md5]}
+    next_step: check_confirmed
+  - id: check_confirmed
+    type: decision
+    name: Is ransomware confirmed?
+    condition: "enrichment.max_confidence > 0.8"
+    true_branch: assess_blast_radius
+    false_branch: monitor_and_log
+  - id: assess_blast_radius
+    type: action
+    name: Determine blast radius and lateral movement
+    tool_name: splunk_search
+    arguments: {action: lateral_movement_check, timeframe: 24h}
+    next_step: approve_containment
+  - id: approve_containment
+    type: hitl_gate
+    name: Approve network isolation and containment
+    prompt: "Isolate infected hosts and block C2 infrastructure? This will impact business operations."
+    required_role: incident_commander
+    timeout_seconds: 900
+    next_step: parallel_contain
+  - id: parallel_contain
+    type: parallel_fork
+    name: Execute containment in parallel
+    branches:
+      - [isolate_hosts]
+      - [block_c2]
+      - [disable_accounts]
+    next_step: generate_report
+  - id: isolate_hosts
+    type: action
+    name: Isolate infected hosts via EDR
+    tool_name: crowdstrike_search
+    arguments: {action: network_isolate}
+    next_step: join_contain
+  - id: block_c2
+    type: action
+    name: Block C2 domains and IPs at firewall
+    tool_name: splunk_search
+    arguments: {action: block_iocs}
+    next_step: join_contain
+  - id: disable_accounts
+    type: action
+    name: Disable compromised user accounts
+    tool_name: sentinel_search
+    arguments: {action: disable_accounts}
+    next_step: join_contain
+  - id: join_contain
+    type: join
+    name: Wait for all containment actions
+    next_step: generate_report
+  - id: generate_report
+    type: action
+    name: Generate incident report with timeline
+    tool_name: query_generator
+    arguments: {report_type: ransomware_incident}
+    next_step: end
+  - id: monitor_and_log
+    type: action
+    name: Log alert for continued monitoring
+    tool_name: alert_classifier
+    arguments: {action: log_monitoring}
+    next_step: end
+  - id: end
+    type: end
+    name: Playbook complete

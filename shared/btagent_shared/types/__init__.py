@@ -35,6 +35,22 @@ from btagent_shared.types.investigation import (
     IOC,
     TimelineEntry,
 )
+from btagent_shared.types.playbook import (
+    ActionStep,
+    DecisionStep,
+    HITLGateStep,
+    OnFailure,
+    ParallelForkStep,
+    PlaybookDefinition,
+    PlaybookExecution,
+    PlaybookStatus,
+    PlaybookStep,
+    StepResult,
+    StepType,
+    TriggerCondition,
+    TriggerType,
+    ValidationResult,
+)
 
 __all__ = [
     "AgentConfig",
@@ -65,4 +81,19 @@ __all__ = [
     "TLP",
     "TimelineEntry",
     "UserRole",
+    # Playbook types
+    "ActionStep",
+    "DecisionStep",
+    "HITLGateStep",
+    "OnFailure",
+    "ParallelForkStep",
+    "PlaybookDefinition",
+    "PlaybookExecution",
+    "PlaybookStatus",
+    "PlaybookStep",
+    "StepResult",
+    "StepType",
+    "TriggerCondition",
+    "TriggerType",
+    "ValidationResult",
 ]

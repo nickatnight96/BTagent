@@ -14,6 +14,7 @@ PREFIXES = {
     "ca": "ca",  # Containment action
     "ct": "ct",  # Cost tracking
     "pb": "pb",  # Playbook
+    "pbe": "pbe",  # Playbook execution
     "cp": "cp",  # Checkpoint (HITL)
     "rpt": "rpt",  # Report
     "ntf": "ntf",  # Notification
