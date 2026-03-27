@@ -1,5 +1,6 @@
 """JWT token creation and verification."""
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -15,6 +16,7 @@ class TokenPayload(BaseModel):
     role: str
     exp: datetime
     type: str  # "access" or "refresh"
+    jti: str | None = None  # SEC-003 FIX: JWT ID for token revocation tracking
 
 
 class TokenPair(BaseModel):
@@ -48,12 +50,16 @@ def create_access_token(user_id: str, username: str, role: str) -> str:
 def create_refresh_token(user_id: str, username: str, role: str) -> str:
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_ttl_days)
+    # SEC-003 FIX: Include a jti (JWT ID) claim to enable server-side revocation.
+    # A Redis-backed revocation list should check this jti on refresh and invalidate
+    # the old token. Full implementation tracked for a future sprint.
     payload = {
         "sub": user_id,
         "username": username,
         "role": role,
         "exp": expire,
         "type": "refresh",
+        "jti": str(uuid.uuid4()),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 

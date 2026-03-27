@@ -173,6 +173,7 @@ def create_investigation_graph(config: dict[str, Any] | None = None) -> Compiled
         ``.stream()``.
     """
     config = config or {}
+    max_steps = config.get("max_steps", 50)
 
     graph = StateGraph(InvestigationState)
 
@@ -238,7 +239,13 @@ def create_investigation_graph(config: dict[str, Any] | None = None) -> Compiled
     # --- Checkpointing ---
     checkpointer = config.get("checkpointer") or MemorySaver()
 
-    return graph.compile(
+    # SEC-005 FIX: Store max_steps in config for enforcement at invoke() time.
+    # LangGraph enforces recursion_limit via invoke(config={"recursion_limit": N}),
+    # not at compile time. The TaskManager passes this when calling graph.ainvoke().
+    compiled = graph.compile(
         checkpointer=checkpointer,
         interrupt_before=["hitl_checkpoint"],
     )
+    # Attach max_steps so TaskManager can read it
+    compiled.max_steps = max_steps  # type: ignore[attr-defined]
+    return compiled

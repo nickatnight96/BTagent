@@ -1,7 +1,7 @@
 """Authentication endpoints — login, refresh, register (admin only)."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +28,17 @@ class RegisterRequest(BaseModel):
     username: str
     email: str
     password: str
+    # SEC-008 FIX: Validate role against the UserRole enum to prevent arbitrary values
     role: str = "analyst"
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        from btagent_shared.types.enums import UserRole
+        valid_roles = {r.value for r in UserRole}
+        if v not in valid_roles:
+            raise ValueError(f"Invalid role '{v}'. Must be one of: {', '.join(sorted(valid_roles))}")
+        return v
 
 
 class RefreshRequest(BaseModel):

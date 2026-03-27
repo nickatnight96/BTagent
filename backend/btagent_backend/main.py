@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from btagent_backend.config import get_settings
+from btagent_backend.services.task_manager import TaskManager
 from btagent_backend.ws import WebSocketHub, init_ws_routes, ws_router
 
 logger = logging.getLogger("btagent.main")
@@ -24,17 +25,28 @@ async def lifespan(app: FastAPI):
     app.state.ws_hub = hub
     logger.info("WebSocket hub initialised")
 
-    # TODO: Initialize TaskManager (auto-resume investigations)
+    # Initialize TaskManager and auto-resume active investigations
+    task_manager = TaskManager(
+        redis_url=settings.redis_url,
+        database_url=settings.database_url,
+    )
+    app.state.task_manager = task_manager
+    resumed = await task_manager.auto_resume()
+    logger.info(
+        "TaskManager initialised (auto-resumed %d investigation(s))", resumed
+    )
+
     # TODO: Initialize OTEL if enabled
 
     yield
 
+    # Graceful shutdown — checkpoint running investigations
+    await task_manager.shutdown()
+    logger.info("TaskManager shut down")
+
     # Graceful shutdown — stop WebSocket hub (notifies clients, closes Redis)
     await hub.stop()
     logger.info("WebSocket hub shut down")
-
-    # TODO: Graceful shutdown — checkpoint running investigations
-    # TODO: Close DB engine
 
 
 def create_app() -> FastAPI:

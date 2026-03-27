@@ -130,6 +130,10 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
             if not msg.investigation_id:
                 await _send_error(client, "chat requires investigation_id")
                 continue
+            # SEC-006 FIX: Enforce RBAC permission for chat messages
+            if not client.user.has_permission("investigation:chat"):
+                await _send_error(client, "Permission denied: investigation:chat")
+                continue
             # Forward to the agent engine via Redis (fire-and-forget).
             redis = hub._redis
             if redis:
@@ -149,6 +153,10 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
         elif msg.type == ClientMessageType.HITL_RESPONSE:
             if not msg.investigation_id:
                 await _send_error(client, "hitl_response requires investigation_id")
+                continue
+            # SEC-006 FIX: Enforce RBAC permission for HITL approvals
+            if not client.user.has_permission("hitl:approve"):
+                await _send_error(client, "Permission denied: hitl:approve requires senior_analyst or higher")
                 continue
             redis = hub._redis
             if redis:

@@ -35,10 +35,11 @@ async def get_current_user(
     """FastAPI dependency: extract and validate JWT from Authorization header."""
     try:
         payload = decode_token(credentials.credentials)
-    except JWTError as e:
+    except JWTError:
+        # SEC-018 FIX: Do not leak internal JWT error details to the client
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {e}",
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -75,11 +76,26 @@ async def get_ws_user(websocket: WebSocket) -> CurrentUser:
 
 
 def require_role(min_role: str):
-    """FastAPI dependency factory: require minimum role level."""
+    """FastAPI dependency factory: require minimum role level.
+
+    SEC-007 FIX: Compare user's role against the provided min_role using the
+    RBAC role hierarchy, rather than always checking investigation:view.
+    """
+    from btagent_backend.auth.rbac import ROLE_HIERARCHY
 
     async def _check(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if not has_permission(user.role, f"investigation:view"):
-            raise HTTPException(status_code=403, detail="Insufficient role")
+        try:
+            from btagent_shared.types.enums import UserRole
+            user_level = ROLE_HIERARCHY.get(UserRole(user.role), -1)
+            required_level = ROLE_HIERARCHY.get(UserRole(min_role), 999)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Invalid role configuration")
+
+        if user_level < required_level:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Insufficient role: requires {min_role} or higher",
+            )
         return user
 
     return _check

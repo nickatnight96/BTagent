@@ -1,8 +1,19 @@
 """Application configuration via Pydantic Settings."""
 
+import logging
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_config_logger = logging.getLogger("btagent.config")
+
+_INSECURE_JWT_DEFAULTS = frozenset({
+    "CHANGE-ME-IN-PRODUCTION",
+    "change-me-in-production-use-openssl-rand-hex-32",
+    "secret",
+    "changeme",
+})
 
 
 class Settings(BaseSettings):
@@ -36,6 +47,25 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 7
+
+    @model_validator(mode="after")
+    def _validate_jwt_secret(self) -> "Settings":
+        """SEC-001 FIX: Refuse to start with a known-insecure JWT secret in non-dev."""
+        if self.env not in ("dev", "test") and self.jwt_secret in _INSECURE_JWT_DEFAULTS:
+            raise ValueError(
+                "CRITICAL: BTAGENT_JWT_SECRET is set to a known default value. "
+                "Generate a secure secret with: openssl rand -hex 32"
+            )
+        if self.jwt_secret in _INSECURE_JWT_DEFAULTS:
+            _config_logger.warning(
+                "JWT secret is a known default. This is acceptable in dev/test "
+                "but MUST be changed before any staging or production deployment."
+            )
+        if len(self.jwt_secret) < 32 and self.env not in ("dev", "test"):
+            raise ValueError(
+                "BTAGENT_JWT_SECRET must be at least 32 characters in non-dev environments."
+            )
+        return self
 
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]

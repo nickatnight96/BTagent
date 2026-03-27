@@ -20,8 +20,9 @@ async def health():
         async with async_session_factory() as session:
             await session.execute(text("SELECT 1"))
         status["database"] = "connected"
-    except Exception as e:
-        status["database"] = f"error: {e}"
+    except Exception:
+        # SEC-004 FIX: Do not leak exception details in health endpoint response
+        status["database"] = "unreachable"
         status["status"] = "degraded"
 
     # Redis check (TODO: implement when Redis client is initialized)

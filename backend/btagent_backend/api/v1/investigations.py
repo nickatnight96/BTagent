@@ -1,19 +1,36 @@
 """Investigation CRUD and lifecycle endpoints."""
 
+from __future__ import annotations
+
+import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models import InvestigationRow
+from btagent_backend.services.task_manager import TaskManager
 from btagent_shared.types.enums import InvestigationStatus, Severity
 from btagent_shared.types.config import TLP
 from btagent_shared.utils.ids import generate_id
 
+logger = logging.getLogger("btagent.api.investigations")
+
 router = APIRouter(prefix="/investigations", tags=["investigations"])
+
+
+def _get_task_manager(request: Request) -> TaskManager:
+    """Extract the TaskManager from ``app.state``."""
+    tm: TaskManager | None = getattr(request.app.state, "task_manager", None)
+    if tm is None:
+        raise HTTPException(
+            status_code=503,
+            detail="TaskManager not initialised -- server is starting up",
+        )
+    return tm
 
 
 class CreateInvestigationRequest(BaseModel):
@@ -66,11 +83,19 @@ def _to_response(row: InvestigationRow) -> InvestigationResponse:
 @router.post("", response_model=InvestigationResponse, status_code=201)
 async def create_investigation(
     body: CreateInvestigationRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Create a new investigation and start the agent."""
     user.require_permission("investigation:create")
+    task_manager = _get_task_manager(request)
+
+    config = {
+        "severity": body.severity.value,
+        "tlp_level": body.tlp_level.value,
+        "template": body.template,
+    }
 
     inv = InvestigationRow(
         id=generate_id("inv"),
@@ -81,12 +106,19 @@ async def create_investigation(
         template=body.template,
         assigned_to=user.id,
         status=InvestigationStatus.PENDING.value,
+        config=config,
     )
     db.add(inv)
     await db.flush()
 
-    # TODO: Start agent via TaskManager
-    # await task_manager.start_investigation(inv.id, config)
+    # Start the agent via TaskManager (fire-and-forget; the task runs in the
+    # background and updates the DB status as it progresses).
+    await task_manager.start_investigation(inv.id, config)
+    logger.info(
+        "Investigation %s created by user %s and agent started",
+        inv.id,
+        user.id,
+    )
 
     return _to_response(inv)
 
@@ -146,11 +178,13 @@ async def get_investigation(
 @router.post("/{investigation_id}/pause", status_code=200)
 async def pause_investigation(
     investigation_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Pause a running investigation."""
     user.require_permission("investigation:pause")
+    task_manager = _get_task_manager(request)
 
     result = await db.execute(
         select(InvestigationRow).where(InvestigationRow.id == investigation_id)
@@ -163,7 +197,8 @@ async def pause_investigation(
         raise HTTPException(status_code=400, detail=f"Cannot pause investigation in status: {inv.status}")
 
     inv.status = InvestigationStatus.PAUSED.value
-    # TODO: Signal TaskManager to checkpoint and pause
+    await task_manager.pause_investigation(investigation_id)
+    logger.info("Investigation %s paused by user %s", investigation_id, user.id)
 
     return {"status": "paused", "investigation_id": investigation_id}
 
@@ -171,11 +206,13 @@ async def pause_investigation(
 @router.post("/{investigation_id}/resume", status_code=200)
 async def resume_investigation(
     investigation_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Resume a paused investigation."""
     user.require_permission("investigation:resume")
+    task_manager = _get_task_manager(request)
 
     result = await db.execute(
         select(InvestigationRow).where(InvestigationRow.id == investigation_id)
@@ -188,7 +225,8 @@ async def resume_investigation(
         raise HTTPException(status_code=400, detail=f"Cannot resume investigation in status: {inv.status}")
 
     inv.status = InvestigationStatus.INVESTIGATING.value
-    # TODO: Resume via TaskManager from LangGraph checkpoint
+    await task_manager.resume_investigation(investigation_id)
+    logger.info("Investigation %s resumed by user %s", investigation_id, user.id)
 
     return {"status": "resumed", "investigation_id": investigation_id}
 
@@ -196,11 +234,13 @@ async def resume_investigation(
 @router.post("/{investigation_id}/stop", status_code=200)
 async def stop_investigation(
     investigation_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Stop a running investigation."""
     user.require_permission("investigation:stop")
+    task_manager = _get_task_manager(request)
 
     result = await db.execute(
         select(InvestigationRow).where(InvestigationRow.id == investigation_id)
@@ -211,7 +251,8 @@ async def stop_investigation(
 
     inv.status = InvestigationStatus.CANCELLED.value
     inv.closed_at = datetime.now(timezone.utc)
-    # TODO: Signal TaskManager to stop agent
+    await task_manager.stop_investigation(investigation_id)
+    logger.info("Investigation %s stopped by user %s", investigation_id, user.id)
 
     return {"status": "cancelled", "investigation_id": investigation_id}
 
@@ -224,11 +265,13 @@ class ChatRequest(BaseModel):
 async def chat(
     investigation_id: str,
     body: ChatRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Send a message to the investigation's agent."""
     user.require_permission("investigation:chat")
+    task_manager = _get_task_manager(request)
 
     result = await db.execute(
         select(InvestigationRow).where(InvestigationRow.id == investigation_id)
@@ -237,5 +280,10 @@ async def chat(
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
 
-    # TODO: Forward message to TaskManager → LangGraph
+    await task_manager.send_message(investigation_id, body.message, user.id)
+    logger.info(
+        "Chat message forwarded for investigation %s from user %s",
+        investigation_id,
+        user.id,
+    )
     return {"status": "sent", "investigation_id": investigation_id, "message": body.message}

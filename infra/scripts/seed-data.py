@@ -3,6 +3,7 @@
 
 import asyncio
 import os
+import secrets
 import sys
 
 # Add project root to path
@@ -16,6 +17,11 @@ from btagent_backend.auth.jwt import hash_password
 from btagent_shared.utils.ids import generate_id
 
 
+def _generate_seed_password() -> str:
+    """SEC-002 FIX: Generate a random password for seed users instead of using trivial ones."""
+    return secrets.token_urlsafe(16)
+
+
 async def seed():
     async with async_session_factory() as session:
         # Check if admin exists
@@ -24,12 +30,17 @@ async def seed():
             print("Admin user already exists, skipping seed.")
             return
 
+        # Generate random passwords for each user
+        admin_pw = _generate_seed_password()
+        analyst_pw = _generate_seed_password()
+        senior_pw = _generate_seed_password()
+
         # Create admin user
         admin = UserRow(
             id=generate_id("usr"),
             username="admin",
             email="admin@btagent.local",
-            password_hash=hash_password("admin"),
+            password_hash=hash_password(admin_pw),
             role="admin",
         )
         session.add(admin)
@@ -39,7 +50,7 @@ async def seed():
             id=generate_id("usr"),
             username="analyst1",
             email="analyst1@btagent.local",
-            password_hash=hash_password("analyst1"),
+            password_hash=hash_password(analyst_pw),
             role="analyst",
         )
         session.add(analyst)
@@ -49,7 +60,7 @@ async def seed():
             id=generate_id("usr"),
             username="senior1",
             email="senior1@btagent.local",
-            password_hash=hash_password("senior1"),
+            password_hash=hash_password(senior_pw),
             role="senior_analyst",
         )
         session.add(senior)
@@ -70,10 +81,10 @@ async def seed():
         session.add(inv)
 
         await session.commit()
-        print("Seed data created:")
-        print(f"  Admin user:    admin / admin")
-        print(f"  Analyst user:  analyst1 / analyst1")
-        print(f"  Senior user:   senior1 / senior1")
+        print("Seed data created (save these credentials -- they are shown only once):")
+        print(f"  Admin user:    admin / {admin_pw}")
+        print(f"  Analyst user:  analyst1 / {analyst_pw}")
+        print(f"  Senior user:   senior1 / {senior_pw}")
         print(f"  Investigation: {inv.id} — {inv.title}")
 
 
