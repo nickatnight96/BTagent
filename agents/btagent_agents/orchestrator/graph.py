@@ -13,8 +13,11 @@ from btagent_shared.types.enums import InvestigationStatus
 
 from btagent_agents.orchestrator.edges import after_hitl, route_to_agent, should_continue
 from btagent_agents.orchestrator.nodes import (
+    coordination_node,
     hitl_checkpoint_node,
+    mitigation_node,
     query_node,
+    report_node,
     route_task,
     synthesize_node,
     triage_node,
@@ -68,44 +71,8 @@ def _contain_node(state: InvestigationState) -> dict[str, Any]:
 
 
 def _report_node(state: InvestigationState) -> dict[str, Any]:
-    """Placeholder: report generation agent (phase 2).
-
-    Will compile investigation findings into structured reports.
-    """
-    iocs = state.get("iocs", [])
-    timeline = state.get("timeline", [])
-    severity = state.get("severity", "medium")
-    containment_actions = state.get("containment_actions", [])
-
-    # Build a basic summary from available state even though LLM drafting
-    # is not wired up yet.
-    lines = [
-        "**Investigation Report** (auto-generated summary)\n",
-        f"- Severity: {severity}",
-        f"- IOCs discovered: {len(iocs)}",
-        f"- Timeline entries: {len(timeline)}",
-        f"- Containment actions: {len(containment_actions)}",
-    ]
-
-    if iocs:
-        lines.append("\n**IOC Summary:**")
-        for ioc in iocs[:10]:  # Cap at 10 for readability
-            lines.append(f"  - [{ioc.get('type', '?')}] {ioc.get('value', '?')}")
-        if len(iocs) > 10:
-            lines.append(f"  ... and {len(iocs) - 10} more")
-
-    if timeline:
-        lines.append("\n**Timeline:**")
-        for entry in timeline[-5:]:  # Most recent 5
-            lines.append(
-                f"  - {entry.get('timestamp', '?')}: {entry.get('description', '?')}"
-            )
-
-    return {
-        "messages": [AIMessage(content="\n".join(lines))],
-        "current_agent": "report",
-        "status": InvestigationStatus.INVESTIGATING,
-    }
+    """Delegate to the ReportAgent subgraph via nodes.report_node."""
+    return report_node(state)
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +151,8 @@ def create_investigation_graph(config: dict[str, Any] | None = None) -> Compiled
     graph.add_node("enrich", _enrich_node)
     graph.add_node("contain", _contain_node)
     graph.add_node("report", _report_node)
+    graph.add_node("coordination", coordination_node)
+    graph.add_node("mitigation", mitigation_node)
     graph.add_node("synthesize", synthesize_node)
     graph.add_node("hitl_checkpoint", hitl_checkpoint_node)
     graph.add_node("execute", _execute_containment_node)
@@ -201,6 +170,8 @@ def create_investigation_graph(config: dict[str, Any] | None = None) -> Compiled
             "enrich": "enrich",
             "contain": "contain",
             "report": "report",
+            "coordination": "coordination",
+            "mitigation": "mitigation",
             "synthesize": "synthesize",
         },
     )
@@ -211,6 +182,8 @@ def create_investigation_graph(config: dict[str, Any] | None = None) -> Compiled
     graph.add_edge("enrich", "synthesize")
     graph.add_edge("contain", "synthesize")
     graph.add_edge("report", "synthesize")
+    graph.add_edge("coordination", "synthesize")
+    graph.add_edge("mitigation", "synthesize")
 
     # --- Conditional edges from synthesize ---
     graph.add_conditional_edges(

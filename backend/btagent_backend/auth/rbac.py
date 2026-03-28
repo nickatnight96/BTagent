@@ -56,6 +56,12 @@ PERMISSIONS: dict[str, UserRole] = {
     "playbook:delete": UserRole.ADMIN,
     "playbook:execute": UserRole.SENIOR_ANALYST,
     "playbook:execute_containment": UserRole.INCIDENT_COMMANDER,
+    # Reports
+    "report:view": UserRole.ANALYST,
+    "report:generate": UserRole.ANALYST,
+    "report:summarize": UserRole.SENIOR_ANALYST,
+    # Remediation
+    "remediation:generate": UserRole.ANALYST,
 }
 
 

@@ -1,0 +1,15 @@
+name: coordination
+description: Multi-report summarization and agency-ready report generation
+version: "1.0.0"
+author: BTagent Team
+capabilities:
+  - investigation_summarization
+  - multi_report_synthesis
+  - agency_report_formatting
+  - ioc_aggregation
+  - mitre_mapping_rollup
+supported_data_sources:
+  - investigation_reports
+  - ioc_databases
+  - mitre_attack
+  - timeline_events

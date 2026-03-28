@@ -1,0 +1,16 @@
+name: report
+description: Professional incident response report generation from investigation data
+version: "1.0.0"
+author: BTagent Team
+capabilities:
+  - report_generation
+  - section_generation
+  - template_management
+  - executive_briefing
+  - regulatory_notification
+supported_data_sources:
+  - investigation_reports
+  - ioc_databases
+  - mitre_attack
+  - timeline_events
+  - knowledge_base

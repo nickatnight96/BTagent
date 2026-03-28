@@ -9,7 +9,10 @@ from btagent_shared.types.enums import ContainmentStatus, InvestigationStatus
 from btagent_agents.orchestrator.state import InvestigationState
 
 # Valid agent node names in the graph.
-_AGENT_NODES = frozenset({"triage", "query", "enrich", "contain", "report", "synthesize"})
+_AGENT_NODES = frozenset({
+    "triage", "query", "enrich", "contain", "report",
+    "coordination", "mitigation", "synthesize",
+})
 
 
 def route_to_agent(state: InvestigationState) -> str:
@@ -23,7 +26,7 @@ def route_to_agent(state: InvestigationState) -> str:
     -------
     str
         Node name: ``"triage"``, ``"query"``, ``"enrich"``, ``"contain"``,
-        ``"report"``, or ``"synthesize"``.
+        ``"report"``, ``"coordination"``, ``"mitigation"``, or ``"synthesize"``.
     """
     task_type = state.get("task_type", "general")
 
@@ -33,6 +36,8 @@ def route_to_agent(state: InvestigationState) -> str:
         "enrich": "enrich",
         "contain": "contain",
         "report": "report",
+        "coordination": "coordination",
+        "mitigation": "mitigation",
         "general": "synthesize",
     }
 

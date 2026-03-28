@@ -1,0 +1,16 @@
+name: mitigation
+description: Customer-facing remediation guidance and detection content generation
+version: "1.0.0"
+author: BTagent Team
+capabilities:
+  - remediation_generation
+  - detection_content_generation
+  - hardening_recommendations
+  - audience_adaptation
+  - nist_csf_mapping
+supported_data_sources:
+  - investigation_reports
+  - ioc_databases
+  - mitre_attack
+  - nist_csf
+  - cis_controls

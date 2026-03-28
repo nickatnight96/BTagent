@@ -17,6 +17,9 @@ PLUGIN_MODULES: dict[str, str] = {
     "query": "btagent_agents.plugins.query",
     "enrichment": "btagent_agents.plugins.enrichment",
     "knowledge": "btagent_agents.plugins.knowledge",
+    "coordination": "btagent_agents.plugins.coordination",
+    "report": "btagent_agents.plugins.report",
+    "mitigation": "btagent_agents.plugins.mitigation",
 }
 
 # In-process cache of already-loaded plugin instances.

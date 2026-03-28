@@ -1,0 +1,19 @@
+title: Executive Briefing
+description: >
+  One-page executive summary designed for C-suite and board presentation.
+  Covers business impact, actions taken, current status, and high-level
+  recommendations. Avoids deep technical detail.
+version: "1.0"
+sections:
+  - name: executive_summary
+    title: Incident Overview
+    required: true
+    description: What happened, business impact, and current status
+  - name: containment
+    title: Actions Taken
+    required: true
+    description: Summary of containment and remediation actions executed
+  - name: recommendations
+    title: Recommendations
+    required: true
+    description: High-level recommendations for leadership decision-making

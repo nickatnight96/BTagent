@@ -70,12 +70,36 @@ _TASK_KEYWORDS: dict[str, list[str]] = {
     ],
     "report": [
         "report",
-        "summarize",
-        "summary",
+        "generate report",
+        "write up",
         "executive brief",
         "timeline report",
-        "write up",
-        "generate report",
+        "incident report",
+        "ioc report",
+    ],
+    "coordination": [
+        "summarize",
+        "summary",
+        "agency report",
+        "cisa",
+        "fbi",
+        "ic3",
+        "isac",
+        "coordinate",
+        "synthesize investigations",
+        "cross-investigation",
+    ],
+    "mitigation": [
+        "remediate",
+        "remediation",
+        "mitigation",
+        "mitigate",
+        "hardening",
+        "detection rule",
+        "detection content",
+        "playbook",
+        "customer guidance",
+        "siem rule",
     ],
 }
 
@@ -150,7 +174,7 @@ def _classify_intent_llm(text: str) -> str:
                         "You are a task classifier for a defensive cyber security AI agent. "
                         "Given the analyst's message, respond with EXACTLY one word — the "
                         "task type. Valid types: triage, query, enrich, contain, report, "
-                        "general. No explanation."
+                        "coordination, mitigation, general. No explanation."
                     ),
                 },
                 {"role": "user", "content": text},
@@ -159,7 +183,10 @@ def _classify_intent_llm(text: str) -> str:
             temperature=0.0,
         )
         raw = response.choices[0].message.content.strip().lower()
-        if raw in {"triage", "query", "enrich", "contain", "report", "general"}:
+        if raw in {
+            "triage", "query", "enrich", "contain", "report",
+            "coordination", "mitigation", "general",
+        }:
             return raw
     except Exception:
         # LLM unavailable — fall through to default.
@@ -269,6 +296,8 @@ def route_task(state: InvestigationState) -> dict[str, Any]:
         "enrich": "enrich",
         "contain": "contain",
         "report": "report",
+        "coordination": "coordination",
+        "mitigation": "mitigation",
         "general": "synthesize",
     }
     target_agent = agent_map.get(classified, "synthesize")
@@ -888,3 +917,204 @@ def _parse_hitl_response(text: str) -> bool:
         "accept",
     ]
     return any(pattern in lower for pattern in approval_patterns)
+
+
+# ---------------------------------------------------------------------------
+# Node: report_node (delegates to ReportAgent subgraph)
+# ---------------------------------------------------------------------------
+
+
+def report_node(state: InvestigationState) -> dict[str, Any]:
+    """Generate an investigation report using the Report plugin.
+
+    Delegates to the report plugin's generate_report tool to produce
+    a structured report from the investigation data.
+    """
+    investigation_id = state.get("investigation_id", "")
+    existing_timeline: list[dict] = list(state.get("timeline", []))
+
+    try:
+        from btagent_agents.plugins.report.tools.report_generator import (
+            generate_report,
+        )
+
+        result = generate_report.invoke({
+            "investigation_id": investigation_id,
+            "template": "incident_report",
+        })
+
+        if result.get("status") == "success":
+            sections = result.get("sections", {})
+            section_names = list(sections.keys())
+            content = (
+                f"**Investigation Report Generated**\n"
+                f"Template: {result.get('template', 'incident_report')}\n"
+                f"Sections: {', '.join(section_names)}\n\n"
+            )
+            # Include executive summary if present
+            exec_summary = sections.get("executive_summary", "")
+            if exec_summary:
+                content += f"**Executive Summary:**\n{exec_summary}\n"
+        else:
+            content = (
+                f"**Report Generation** — could not generate report: "
+                f"{result.get('error', 'unknown error')}"
+            )
+    except Exception as exc:
+        content = (
+            f"**Report Generation** — error: {exc}\n"
+            "Falling back to basic investigation summary."
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    timeline_entry = {
+        "id": generate_id("tl"),
+        "investigation_id": investigation_id,
+        "timestamp": now_iso,
+        "description": "Report generated for investigation.",
+        "actor": "report_agent",
+        "event_type": "report_generated",
+    }
+
+    _emit_event(
+        "agent_status",
+        investigation_id,
+        {"agent": "report", "action": "report_generated"},
+    )
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "timeline": existing_timeline + [timeline_entry],
+        "current_agent": "report",
+        "status": InvestigationStatus.INVESTIGATING,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node: coordination_node (delegates to CoordinationAgent subgraph)
+# ---------------------------------------------------------------------------
+
+
+def coordination_node(state: InvestigationState) -> dict[str, Any]:
+    """Synthesize investigation data into agency-ready summaries.
+
+    Delegates to the coordination plugin's summarization tools.
+    """
+    investigation_id = state.get("investigation_id", "")
+    existing_timeline: list[dict] = list(state.get("timeline", []))
+
+    try:
+        from btagent_agents.plugins.coordination.tools.summarizer import (
+            summarize_investigation,
+        )
+
+        result = summarize_investigation.invoke({
+            "investigation_id": investigation_id,
+        })
+
+        if result.get("status") == "success":
+            content = (
+                f"**Coordination Summary**\n\n"
+                f"{result.get('executive_summary', 'No summary available.')}\n\n"
+                f"IOCs: {result.get('ioc_count', 0)}\n"
+                f"MITRE Techniques: {', '.join(result.get('mitre_techniques', []))}\n"
+                f"Recommendations: {len(result.get('recommendations', []))}"
+            )
+        else:
+            content = (
+                f"**Coordination** — summarization failed: "
+                f"{result.get('error', 'unknown error')}"
+            )
+    except Exception as exc:
+        content = f"**Coordination** — error: {exc}"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    timeline_entry = {
+        "id": generate_id("tl"),
+        "investigation_id": investigation_id,
+        "timestamp": now_iso,
+        "description": "Coordination summary generated.",
+        "actor": "coordination_agent",
+        "event_type": "coordination_summary",
+    }
+
+    _emit_event(
+        "agent_status",
+        investigation_id,
+        {"agent": "coordination", "action": "summary_generated"},
+    )
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "timeline": existing_timeline + [timeline_entry],
+        "current_agent": "coordination",
+        "status": InvestigationStatus.INVESTIGATING,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node: mitigation_node (delegates to MitigationAgent subgraph)
+# ---------------------------------------------------------------------------
+
+
+def mitigation_node(state: InvestigationState) -> dict[str, Any]:
+    """Generate remediation guidance and detection content.
+
+    Delegates to the mitigation plugin's remediation tools.
+    """
+    investigation_id = state.get("investigation_id", "")
+    existing_timeline: list[dict] = list(state.get("timeline", []))
+
+    try:
+        from btagent_agents.plugins.mitigation.tools.remediation_generator import (
+            generate_remediation,
+        )
+
+        result = generate_remediation.invoke({
+            "investigation_id": investigation_id,
+            "audience": "technical",
+        })
+
+        if result.get("status") == "success":
+            actions = result.get("actions", [])
+            content = (
+                f"**Mitigation Guidance** ({result.get('audience', 'technical')})\n\n"
+                f"Title: {result.get('title', 'Remediation')}\n"
+                f"Actions: {len(actions)} remediation items generated\n\n"
+            )
+            for action in actions[:5]:
+                content += (
+                    f"- [{action.get('priority', '?')}] {action.get('action', '?')}\n"
+                )
+            if len(actions) > 5:
+                content += f"... and {len(actions) - 5} more\n"
+        else:
+            content = (
+                f"**Mitigation** — generation failed: "
+                f"{result.get('error', 'unknown error')}"
+            )
+    except Exception as exc:
+        content = f"**Mitigation** — error: {exc}"
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    timeline_entry = {
+        "id": generate_id("tl"),
+        "investigation_id": investigation_id,
+        "timestamp": now_iso,
+        "description": "Mitigation guidance generated.",
+        "actor": "mitigation_agent",
+        "event_type": "mitigation_generated",
+    }
+
+    _emit_event(
+        "agent_status",
+        investigation_id,
+        {"agent": "mitigation", "action": "remediation_generated"},
+    )
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "timeline": existing_timeline + [timeline_entry],
+        "current_agent": "mitigation",
+        "status": InvestigationStatus.INVESTIGATING,
+    }
