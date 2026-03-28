@@ -38,6 +38,10 @@ PERMISSIONS: dict[str, UserRole] = {
     "user:delete": UserRole.ADMIN,
     # Webhooks
     "webhook:manage": UserRole.ADMIN,
+    # MITRE ATT&CK
+    "mitre:view": UserRole.ANALYST,
+    "mitre:tag": UserRole.SENIOR_ANALYST,
+    "mitre:seed": UserRole.ADMIN,
     # IOCs
     "ioc:view": UserRole.ANALYST,
     "ioc:create": UserRole.ANALYST,
