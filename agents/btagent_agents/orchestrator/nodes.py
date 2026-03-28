@@ -355,6 +355,42 @@ def triage_node(state: InvestigationState) -> dict[str, Any]:
             {"ioc_type": ioc["type"], "value": ioc["value"]},
         )
 
+    # --- MITRE ATT&CK technique suggestion (after IOC extraction) ---
+    mitre_techniques: list[dict] = []
+    try:
+        from btagent_agents.mitre import MitreMapper
+
+        mapper = MitreMapper()
+        suggestions = mapper.suggest_techniques(alert_text, max_results=5)
+        if new_iocs:
+            ioc_suggestions = mapper.suggest_for_iocs(new_iocs, max_results=3)
+            # Merge, preferring higher confidence
+            seen_ids = {s.technique_id for s in suggestions}
+            for s in ioc_suggestions:
+                if s.technique_id not in seen_ids:
+                    suggestions.append(s)
+                    seen_ids.add(s.technique_id)
+        mitre_techniques = [
+            {
+                "technique_id": s.technique_id,
+                "keyword_matched": s.keyword_matched,
+                "confidence": s.confidence,
+            }
+            for s in suggestions
+        ]
+        if mitre_techniques:
+            _emit_event(
+                "agent_status",
+                investigation_id,
+                {
+                    "mitre_techniques_suggested": len(mitre_techniques),
+                    "techniques": [t["technique_id"] for t in mitre_techniques],
+                },
+            )
+    except Exception:
+        # MitreMapper is optional; do not fail triage on import error
+        pass
+
     # --- Severity scoring (keyword heuristic — LLM call in phase 2) ---
     scored_severity = _score_severity_heuristic(alert_text, new_iocs)
     final_severity = _highest_severity(current_severity, scored_severity)
@@ -384,10 +420,12 @@ def triage_node(state: InvestigationState) -> dict[str, Any]:
     # summary deterministically.
     wrapped_alert = _wrap_external_data(alert_text)
     ioc_summary = _format_ioc_summary(new_iocs)
+    mitre_summary = _format_mitre_summary(mitre_techniques)
     triage_output = (
         f"**Triage Analysis**\n"
         f"Severity: **{final_severity}**\n\n"
         f"IOCs Extracted ({len(new_iocs)} new):\n{ioc_summary}\n\n"
+        f"{mitre_summary}"
         f"Alert data (wrapped for safety):\n{wrapped_alert}\n\n"
         f"Timeline entry added at {now_iso}."
     )
@@ -472,6 +510,20 @@ def _format_ioc_summary(iocs: list[dict]) -> str:
     for ioc in iocs:
         lines.append(f"  - [{ioc['type']}] {ioc['value']}")
     return "\n".join(lines)
+
+
+def _format_mitre_summary(techniques: list[dict]) -> str:
+    """Format MITRE ATT&CK technique suggestions as a readable block."""
+    if not techniques:
+        return ""
+    lines = [f"MITRE ATT&CK Techniques ({len(techniques)} suggested):"]
+    for t in techniques:
+        lines.append(
+            f"  - {t['technique_id']} "
+            f"(matched: \"{t['keyword_matched']}\", "
+            f"confidence: {t['confidence']:.0%})"
+        )
+    return "\n".join(lines) + "\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -700,7 +752,9 @@ def synthesize_node(state: InvestigationState) -> dict[str, Any]:
     needs_hitl = len(pending_containment) > 0
     needs_more_work = False
 
-    # After triage, if severity is high/critical and we have IOCs, suggest enrichment.
+    # After triage, if severity is high/critical and we have IOCs, auto-route
+    # to enrichment.  The should_continue edge reads task_type="triage" to
+    # decide whether to loop back through route_task targeting enrich.
     if task_type == "triage" and severity in (Severity.HIGH, Severity.CRITICAL) and iocs:
         needs_more_work = True
 

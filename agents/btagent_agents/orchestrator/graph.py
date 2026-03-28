@@ -218,6 +218,7 @@ def create_investigation_graph(config: dict[str, Any] | None = None) -> Compiled
         should_continue,
         {
             "continue": "route_task",
+            "knowledge": "route_task",
             "hitl": "hitl_checkpoint",
             END: END,
         },

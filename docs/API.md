@@ -581,6 +581,318 @@ Critical events (HITL checkpoints, errors, containment actions, shutdown) are al
 
 ---
 
+## IOCs (Phase 2)
+
+### GET /api/v1/iocs
+
+List IOCs for an investigation. Requires `ioc:view` permission.
+
+**Query Parameters**:
+- `investigation_id` (required): Filter by investigation.
+- `page` (default 1): Page number.
+- `page_size` (default 20, max 100): Items per page.
+- `type` (optional): Filter by IOC type (ip, domain, hash_sha256, etc.).
+
+**Response 200**:
+```json
+{
+  "items": [
+    {
+      "id": "ioc_01HX...",
+      "investigation_id": "inv_01HX...",
+      "type": "ip",
+      "value": "198.51.100.23",
+      "tlp_level": "green",
+      "confidence": 0.85,
+      "first_seen": "2026-03-26T12:00:00+00:00",
+      "last_seen": "2026-03-26T12:05:00+00:00",
+      "source": "auto_extraction",
+      "enrichment": {}
+    }
+  ],
+  "total": 15,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+### POST /api/v1/iocs
+
+Create a new IOC. Requires `ioc:create` permission.
+
+**Request**:
+```json
+{
+  "investigation_id": "inv_01HX...",
+  "type": "ip",
+  "value": "198.51.100.23",
+  "tlp_level": "green",
+  "confidence": 0.5,
+  "context": "Source IP from failed SSH attempts",
+  "source": "manual"
+}
+```
+
+**Response 201**: IOC object.
+
+### POST /api/v1/iocs/{ioc_id}/enrich
+
+Trigger enrichment for a specific IOC. Requires `ioc:enrich` permission. Returns 202 Accepted.
+
+**Response 202**:
+```json
+{
+  "status": "accepted",
+  "ioc_id": "ioc_01HX...",
+  "message": "Enrichment queued"
+}
+```
+
+### GET /api/v1/iocs/{ioc_id}/stix
+
+Export a single IOC as a STIX 2.1 Indicator. TLP:RED IOCs are blocked.
+
+**Response 200**: STIX 2.1 Indicator JSON object.
+
+### POST /api/v1/iocs/stix/import
+
+Import IOCs from a STIX 2.1 Bundle. Requires `ioc:create` permission.
+
+**Request**: STIX 2.1 Bundle JSON.
+
+**Response 201**:
+```json
+{
+  "imported_count": 5,
+  "investigation_id": "inv_01HX..."
+}
+```
+
+---
+
+## MITRE ATT&CK (Phase 2)
+
+### GET /api/v1/mitre/techniques
+
+List MITRE ATT&CK techniques. Requires authentication.
+
+**Query Parameters**:
+- `tactic` (optional): Filter by tactic shortname (e.g. "initial-access").
+- `search` (optional): Text search across technique names and descriptions.
+- `page` (default 1): Page number.
+- `page_size` (default 50): Items per page.
+
+**Response 200**:
+```json
+{
+  "items": [
+    {
+      "technique_id": "T1566.001",
+      "name": "Phishing: Spearphishing Attachment",
+      "description": "Adversaries may send spearphishing emails...",
+      "tactic_ids": ["initial-access"],
+      "data_sources": ["Email", "File monitoring"]
+    }
+  ],
+  "total": 200
+}
+```
+
+### GET /api/v1/mitre/tactics
+
+List MITRE ATT&CK tactics in kill-chain order.
+
+**Response 200**: Array of tactic objects with ordinal, name, and shortname.
+
+### GET /api/v1/mitre/coverage
+
+Get detection coverage map for the organisation.
+
+**Response 200**:
+```json
+{
+  "coverage": {
+    "T1566.001": {"detected": true, "data_sources": ["email_gateway"]},
+    "T1059.001": {"detected": false, "data_sources": []}
+  },
+  "total_techniques": 200,
+  "covered_count": 85,
+  "coverage_percentage": 42.5
+}
+```
+
+### GET /api/v1/mitre/navigator
+
+Export an ATT&CK Navigator layer JSON file.
+
+**Response 200**: ATT&CK Navigator layer JSON (Content-Type: application/json).
+
+---
+
+## Knowledge Base (Phase 2)
+
+### POST /api/v1/knowledge/ingest
+
+Ingest a document into the knowledge base. Requires `knowledge:ingest` permission (senior_analyst+).
+
+**Request**:
+```json
+{
+  "title": "Ransomware Response Playbook",
+  "content": "Full document text...",
+  "source_type": "policy_document",
+  "metadata": {"category": "incident_response"}
+}
+```
+
+Valid source types: `policy_document`, `runbook`, `threat_report`, `investigation_report`, `enrichment_data`, `cti_feed`, `other`.
+
+**Response 201**:
+```json
+{
+  "id": "kd_01HX...",
+  "title": "Ransomware Response Playbook",
+  "source_type": "policy_document",
+  "chunk_count": 12,
+  "token_count": 3500
+}
+```
+
+### POST /api/v1/knowledge/query
+
+Search the knowledge base using hybrid search (vector + keyword + RRF). Requires `knowledge:query` permission.
+
+**Request**:
+```json
+{
+  "query": "How should we respond to ransomware?",
+  "top_k": 5,
+  "source_type_filter": null
+}
+```
+
+**Response 200**:
+```json
+{
+  "query": "How should we respond to ransomware?",
+  "results": [
+    {
+      "chunk_content": "Step 1: Isolate affected systems...",
+      "document_title": "Ransomware Response Playbook",
+      "source_type": "policy_document",
+      "relevance_score": 0.032787,
+      "document_id": "kd_01HX...",
+      "chunk_id": "kc_01HX..."
+    }
+  ],
+  "total_results": 3
+}
+```
+
+### GET /api/v1/knowledge/documents
+
+List knowledge base documents. Requires `knowledge:query` permission.
+
+**Query Parameters**:
+- `source_type` (optional): Filter by source type.
+- `page` (default 1): Page number.
+- `page_size` (default 20): Items per page.
+
+**Response 200**: Paginated document list.
+
+### DELETE /api/v1/knowledge/documents/{document_id}
+
+Delete a document and its chunks. Requires `knowledge:delete` permission (admin only).
+
+**Response 204**: No content.
+
+---
+
+## Playbooks (Phase 2)
+
+### GET /api/v1/playbooks
+
+List playbooks. Requires `playbook:view` permission.
+
+**Response 200**:
+```json
+{
+  "items": [
+    {
+      "id": "pb_01HX...",
+      "name": "Phishing Response",
+      "version": "1.0",
+      "description": "Automated phishing investigation",
+      "trigger_type": "alert_severity",
+      "is_active": true,
+      "created_at": "2026-03-26T12:00:00+00:00"
+    }
+  ],
+  "total": 3
+}
+```
+
+### POST /api/v1/playbooks
+
+Create a new playbook. Requires `playbook:create` permission (senior_analyst+).
+
+**Request**:
+```json
+{
+  "name": "Custom Playbook",
+  "yaml_content": "name: Custom Playbook\ntrigger:\n  type: manual\nsteps:\n  ..."
+}
+```
+
+**Response 201**: Playbook object with validation result.
+
+### GET /api/v1/playbooks/{playbook_id}
+
+Get playbook detail. Requires `playbook:view` permission.
+
+### PUT /api/v1/playbooks/{playbook_id}
+
+Update playbook YAML. Requires `playbook:edit` permission.
+
+### DELETE /api/v1/playbooks/{playbook_id}
+
+Delete a playbook. Requires `playbook:delete` permission (admin only).
+
+### POST /api/v1/playbooks/{playbook_id}/validate
+
+Validate playbook YAML without saving. Returns validation result with errors and warnings.
+
+### POST /api/v1/playbooks/{playbook_id}/execute
+
+Execute a playbook for an investigation. Requires `playbook:execute` permission.
+
+**Request**:
+```json
+{
+  "investigation_id": "inv_01HX...",
+  "trigger_data": {"severity": "high"}
+}
+```
+
+**Response 202**:
+```json
+{
+  "execution_id": "pbe_01HX...",
+  "status": "running",
+  "playbook_id": "pb_01HX..."
+}
+```
+
+### GET /api/v1/playbooks/{playbook_id}/executions
+
+List execution history for a playbook. Returns execution records with status and step results.
+
+### GET /api/v1/playbooks/executions/{execution_id}
+
+Get execution detail including step-by-step results.
+
+---
+
 ## Metrics
 
 ### GET /metrics

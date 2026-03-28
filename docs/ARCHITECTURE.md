@@ -182,11 +182,88 @@ The orchestrator is a LangGraph `StateGraph` with the following topology:
 
 ### Worker Subgraphs
 
-Phase 1 implements two worker subgraphs:
+Phase 1 implements two worker subgraphs, with Phase 2 adding three more:
 
-**Triage Agent**: Alert classification, severity scoring, IOC extraction, MITRE ATT&CK mapping. Uses keyword heuristics in phase 1, upgrading to LLM calls in phase 2.
+**Triage Agent**: Alert classification, severity scoring, IOC extraction, MITRE ATT&CK mapping. Uses keyword heuristics in phase 1, with MITRE technique suggestion integrated via `MitreMapper` in Phase 2.
 
 **Query Agent**: Generates Splunk SPL and Elastic KQL queries incorporating known IOCs. Template-based in phase 1, LLM-generated in phase 2.
+
+**Enrichment Agent (Phase 2)**: IOC enrichment pipeline that processes indicators through CTI sources. Pipeline: `select_iocs -> parallel_enrich -> score_confidence -> deduplicate -> store_results -> END`. Uses confidence scoring with multi-source fusion and deduplication.
+
+**Knowledge Agent (Phase 2)**: RAG pipeline for knowledge base retrieval. Pipeline: `understand_query -> retrieve_context -> generate_answer -> cite_sources -> END`. Uses hybrid search (pgvector cosine similarity + keyword ILIKE + RRF re-ranking) with structured citations.
+
+**SOAR Playbook Executor (Phase 2)**: Compiles playbook YAML definitions into LangGraph subgraphs. Supports action, decision, HITL gate, parallel fork, join, and end step types. Decision steps use a safe condition parser (no eval). HITL gates require human approval for containment actions.
+
+### Phase 2: IOC Enrichment Pipeline
+
+```
+   Raw IOCs (from triage)
+         |
+   select_iocs        -- Filter unsupported types, validate
+         |
+   parallel_enrich    -- Query CTI sources (VT, OTX, MISP, Shodan)
+         |
+   score_confidence   -- Multi-source confidence scoring
+         |
+   deduplicate        -- Merge duplicate IOCs
+         |
+   store_results      -- Persist to IOC table with enrichment JSONB
+         |
+       END
+```
+
+After triage with high/critical severity, the synthesize node auto-routes to enrichment. The enrichment subgraph processes IOCs through the pipeline above, scoring confidence from 0.0-1.0 with justifications.
+
+### Phase 2: Knowledge Agent (RAG)
+
+```
+   User query / investigation context
+         |
+   understand_query    -- Expand abbreviations, add investigation context
+         |
+   retrieve_context    -- Hybrid search (vector + keyword + RRF fusion)
+         |
+   generate_answer     -- LLM synthesis with retrieved context
+         |
+   cite_sources        -- Extract citations, link to source documents
+         |
+       END
+```
+
+**Knowledge Injection**: The `knowledge_injector` module queries the knowledge base for context relevant to the current investigation and injects retrieved chunks into the system prompt. This bridges the RAG pipeline with the main investigation graph.
+
+**Auto-Indexing**: When an investigation completes, `TaskManager._on_investigation_complete()` automatically indexes investigation findings and enrichment results into the knowledge base for future retrieval.
+
+### Phase 2: SOAR Playbook System
+
+```
+   Playbook YAML definition
+         |
+   PlaybookCompiler.compile()    -- Parse, validate, cycle-detect
+         |
+   PlaybookDefinition            -- Pydantic model with step graph
+         |
+   PlaybookExecutor              -- LangGraph subgraph from steps
+         |
+   Step handlers:
+     action     -- Execute tool with arguments
+     decision   -- Safe condition evaluation (no eval)
+     hitl_gate  -- LangGraph interrupt for human approval
+     parallel   -- Fork execution into parallel branches
+     join       -- Rejoin parallel branches
+     end        -- Terminate playbook
+```
+
+Pre-built templates: `phishing_response.yaml`, `ransomware_containment.yaml`, `credential_compromise.yaml`.
+
+### Phase 2: MITRE ATT&CK Integration
+
+The `MitreMapper` provides keyword-based technique suggestion from alert text, IOC context, and category strings. It loads 80+ keyword-to-technique mappings from `mitre_keywords.yaml` and returns ranked `TechniqueSuggestion` results.
+
+Integration points:
+- **Triage node**: After IOC extraction, calls `MitreMapper.suggest_techniques()` to suggest ATT&CK techniques.
+- **MITRE service**: Backend service for matrix loading, technique tagging, coverage analysis, and ATT&CK Navigator layer export.
+- **MITRE API**: REST endpoints for techniques, tactics, groups, coverage maps, and detection gap analysis.
 
 ## Plugin System
 
@@ -383,6 +460,18 @@ Agent Hook Callback
 |-------|---------|------------|
 | `cost_tracking` | Per-invocation LLM cost records | id, investigation_id, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd |
 | `notifications` | User notification inbox | id, user_id, type, title, message, investigation_id, read |
+
+### Phase 2 Tables (5)
+
+| Table | Purpose | Key Fields |
+|-------|---------|------------|
+| `mitre_tactics` | ATT&CK tactic definitions | id, tactic_id, name, shortname, ordinal |
+| `mitre_techniques` | ATT&CK technique definitions | id, technique_id, name, description, tactic_ids |
+| `mitre_groups` | ATT&CK threat groups | id, group_id, name, aliases, technique_ids |
+| `knowledge_documents` | Knowledge base documents | id, title, source_type, content, doc_metadata, token_count |
+| `knowledge_chunks` | Embedded document chunks | id, document_id, chunk_index, content, embedding (vector), chunk_metadata |
+| `playbooks` | Playbook YAML definitions | id, name, version, yaml_content, trigger_type, trigger_config, is_active |
+| `playbook_executions` | Playbook execution records | id, playbook_id, investigation_id, status, trigger_data, step_results |
 
 All IDs use prefixed ULIDs (e.g., `inv_01HX...`, `ioc_01HX...`, `usr_01HX...`).
 

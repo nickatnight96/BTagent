@@ -477,6 +477,9 @@ class TaskManager:
                 final_status,
             )
 
+            # 7. Auto-index investigation into knowledge base.
+            await self._on_investigation_complete(investigation_id)
+
         except asyncio.CancelledError:
             # Task was cancelled (pause / stop / shutdown).  LangGraph
             # checkpoints automatically, so nothing to do here.
@@ -518,6 +521,66 @@ class TaskManager:
                 except Exception:
                     pass
             self._tasks.pop(investigation_id, None)
+
+    # ------------------------------------------------------------------
+    # Internal: knowledge auto-indexing on completion
+    # ------------------------------------------------------------------
+
+    async def _on_investigation_complete(self, investigation_id: str) -> None:
+        """Index investigation findings and enrichment data into the
+        knowledge base when an investigation completes.
+
+        This enables future investigations to benefit from prior findings
+        via the RAG knowledge retrieval pipeline.  Failures are logged but
+        never propagated -- indexing is best-effort.
+        """
+        try:
+            from btagent_backend.services.knowledge_service import KnowledgeService
+            from btagent_backend.services.embedding_service import (
+                MockEmbeddingService,
+            )
+
+            async with async_session_factory() as session:
+                # Use MockEmbeddingService for auto-indexing to avoid
+                # requiring external API keys during background tasks.
+                knowledge_svc = KnowledgeService(
+                    embedding_service=MockEmbeddingService()
+                )
+
+                # Index investigation report
+                inv_doc = await knowledge_svc.auto_index_investigation(
+                    session, investigation_id
+                )
+                if inv_doc:
+                    logger.info(
+                        "Auto-indexed investigation %s as knowledge doc %s",
+                        investigation_id,
+                        inv_doc.id,
+                    )
+
+                # Index enrichment results
+                enrich_doc = await knowledge_svc.auto_index_enrichment(
+                    session, investigation_id
+                )
+                if enrich_doc:
+                    logger.info(
+                        "Auto-indexed enrichment for %s as knowledge doc %s",
+                        investigation_id,
+                        enrich_doc.id,
+                    )
+
+                await session.commit()
+        except ImportError:
+            logger.debug(
+                "Knowledge service not available for auto-indexing "
+                "investigation %s",
+                investigation_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to auto-index investigation %s into knowledge base",
+                investigation_id,
+            )
 
     # ------------------------------------------------------------------
     # Internal: hook construction
@@ -654,6 +717,7 @@ class TaskManager:
             "template_config": config.get("template_config", {}),
             "token_usage": {},
             "cost_usd": 0.0,
+            "knowledge_context": "",
         }
 
     # ------------------------------------------------------------------

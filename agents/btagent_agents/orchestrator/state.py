@@ -54,6 +54,9 @@ class InvestigationState(TypedDict):
         Running token counts keyed by model name.
     cost_usd : float
         Running monetary cost of LLM calls.
+    knowledge_context : str
+        Retrieved knowledge base context injected by the knowledge injector.
+        Populated after enrichment when the knowledge base has relevant content.
     """
 
     investigation_id: str
@@ -73,3 +76,4 @@ class InvestigationState(TypedDict):
     template_config: dict
     token_usage: dict
     cost_usd: float
+    knowledge_context: str

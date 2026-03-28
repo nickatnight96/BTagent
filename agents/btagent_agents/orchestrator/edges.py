@@ -96,6 +96,17 @@ def should_continue(state: InvestigationState) -> str:
     ):
         return "continue"
 
+    # After enrichment, if knowledge base has content (indicated by
+    # knowledge_context field), route to knowledge retrieval for
+    # additional context before closing.
+    knowledge_context = state.get("knowledge_context", "")
+    if (
+        status == InvestigationStatus.INVESTIGATING
+        and task_type == "enrich"
+        and knowledge_context
+    ):
+        return "knowledge"
+
     # Default: end the current graph run.  The analyst can send another message
     # to resume the investigation (new graph invocation).
     return END
