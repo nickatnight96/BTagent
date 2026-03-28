@@ -1,0 +1,31 @@
+# BTagent Code Owners
+# Each line defines one or more owners for a path pattern.
+# Order matters: later patterns take precedence.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ── Default ────────────────────────────────────────────────────
+* @nickatnight96
+
+# ── Backend ────────────────────────────────────────────────────
+/backend/ @nickatnight96
+/shared/ @nickatnight96
+
+# ── Agent Engine ───────────────────────────────────────────────
+/agents/ @nickatnight96
+
+# ── Frontend ───────────────────────────────────────────────────
+/frontend/ @nickatnight96
+
+# ── Infrastructure ─────────────────────────────────────────────
+/infra/ @nickatnight96
+
+# ── Documentation ──────────────────────────────────────────────
+/docs/ @nickatnight96
+
+# ── CI / GitHub Configuration ──────────────────────────────────
+/.github/ @nickatnight96
+
+# ── Security-Sensitive Files ───────────────────────────────────
+SECURITY.md @nickatnight96
+/backend/btagent_backend/auth/ @nickatnight96
+/agents/btagent_agents/hooks/ @nickatnight96
