@@ -10,43 +10,61 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from btagent_shared.types.config import TLP, ModelProvider
+from btagent_shared.types.events import EventType
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from btagent_agents.events.emitter import RedisEmitter
 from btagent_agents.hooks.base import HookProvider
-from btagent_shared.types.config import ModelProvider, TLP
-from btagent_shared.types.events import EventType
 
 logger = logging.getLogger("btagent.hooks.classification")
 
 # Providers considered "local" / on-premises (safe for TLP:RED)
-_LOCAL_PROVIDERS: frozenset[str] = frozenset({
-    ModelProvider.OLLAMA,
-})
+_LOCAL_PROVIDERS: frozenset[str] = frozenset(
+    {
+        ModelProvider.OLLAMA,
+    }
+)
 
 # Providers considered "trusted cloud" (safe for TLP:AMBER_STRICT and below)
-_TRUSTED_CLOUD_PROVIDERS: frozenset[str] = frozenset({
-    ModelProvider.OLLAMA,
-    ModelProvider.BEDROCK,
-})
+_TRUSTED_CLOUD_PROVIDERS: frozenset[str] = frozenset(
+    {
+        ModelProvider.OLLAMA,
+        ModelProvider.BEDROCK,
+    }
+)
 
 # TLP routing rules: which providers are allowed per classification level
 TLP_ALLOWED_PROVIDERS: dict[TLP, frozenset[str]] = {
     TLP.RED: frozenset({ModelProvider.OLLAMA}),
     TLP.AMBER_STRICT: frozenset({ModelProvider.OLLAMA, ModelProvider.BEDROCK}),
-    TLP.AMBER: frozenset({
-        ModelProvider.ANTHROPIC, ModelProvider.BEDROCK, ModelProvider.VERTEX_AI,
-    }),
-    TLP.GREEN: frozenset({
-        ModelProvider.ANTHROPIC, ModelProvider.OPENAI,
-        ModelProvider.BEDROCK, ModelProvider.VERTEX_AI, ModelProvider.OLLAMA,
-    }),
-    TLP.WHITE: frozenset({
-        ModelProvider.ANTHROPIC, ModelProvider.OPENAI,
-        ModelProvider.BEDROCK, ModelProvider.VERTEX_AI,
-        ModelProvider.AZURE, ModelProvider.OLLAMA,
-    }),
+    TLP.AMBER: frozenset(
+        {
+            ModelProvider.ANTHROPIC,
+            ModelProvider.BEDROCK,
+            ModelProvider.VERTEX_AI,
+        }
+    ),
+    TLP.GREEN: frozenset(
+        {
+            ModelProvider.ANTHROPIC,
+            ModelProvider.OPENAI,
+            ModelProvider.BEDROCK,
+            ModelProvider.VERTEX_AI,
+            ModelProvider.OLLAMA,
+        }
+    ),
+    TLP.WHITE: frozenset(
+        {
+            ModelProvider.ANTHROPIC,
+            ModelProvider.OPENAI,
+            ModelProvider.BEDROCK,
+            ModelProvider.VERTEX_AI,
+            ModelProvider.AZURE,
+            ModelProvider.OLLAMA,
+        }
+    ),
 }
 
 
@@ -56,9 +74,7 @@ class TLPViolation(Exception):
     def __init__(self, tlp: TLP, provider: str) -> None:
         self.tlp = tlp
         self.provider = provider
-        super().__init__(
-            f"TLP:{tlp.value.upper()} data cannot be sent to provider {provider!r}"
-        )
+        super().__init__(f"TLP:{tlp.value.upper()} data cannot be sent to provider {provider!r}")
 
 
 def is_provider_allowed(tlp: TLP, provider: str) -> bool:
@@ -122,9 +138,7 @@ class ClassificationCallback(AsyncCallbackHandler):
                 if hasattr(gen, "generation_info") and gen.generation_info is not None:
                     gen.generation_info["tlp_level"] = self._tlp_level.value
 
-    async def _check_tlp_compliance(
-        self, serialized: dict[str, Any], run_id: UUID
-    ) -> None:
+    async def _check_tlp_compliance(self, serialized: dict[str, Any], run_id: UUID) -> None:
         """Verify that the current provider is allowed for the TLP level."""
         if is_provider_allowed(self._tlp_level, self._provider):
             return

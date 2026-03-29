@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, Field
 
-from btagent_shared.types.config import MCPConnection, MCPTransport
+from btagent_shared.types.config import MCPTransport
 
 
 class MCPServerConfig(BaseModel):

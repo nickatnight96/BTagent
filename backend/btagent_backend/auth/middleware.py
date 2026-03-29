@@ -86,6 +86,7 @@ def require_role(min_role: str):
     async def _check(user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
         try:
             from btagent_shared.types.enums import UserRole
+
             user_level = ROLE_HIERARCHY.get(UserRole(user.role), -1)
             required_level = ROLE_HIERARCHY.get(UserRole(min_role), 999)
         except ValueError:

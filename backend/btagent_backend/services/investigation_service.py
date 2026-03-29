@@ -8,16 +8,16 @@ DB rows and tasks directly.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+from btagent_shared.types.config import TLP
+from btagent_shared.types.enums import InvestigationStatus, Severity
+from btagent_shared.utils.ids import generate_id
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import InvestigationRow
-from btagent_shared.types.enums import InvestigationStatus, Severity
-from btagent_shared.types.config import TLP
-from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger("btagent.services.investigation")
 
@@ -181,16 +181,12 @@ async def update_investigation_status(
     """
     values: dict[str, Any] = {
         "status": status.value,
-        "updated_at": datetime.now(timezone.utc),
+        "updated_at": datetime.now(UTC),
     }
     if close:
-        values["closed_at"] = datetime.now(timezone.utc)
+        values["closed_at"] = datetime.now(UTC)
 
-    stmt = (
-        update(InvestigationRow)
-        .where(InvestigationRow.id == investigation_id)
-        .values(**values)
-    )
+    stmt = update(InvestigationRow).where(InvestigationRow.id == investigation_id).values(**values)
     await db.execute(stmt)
 
     logger.info(

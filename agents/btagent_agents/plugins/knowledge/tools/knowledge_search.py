@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.tools import tool
-
 
 # --------------------------------------------------------------------------- #
 # Mock search data (used when running without a live DB)
@@ -72,9 +70,7 @@ def _compute_relevance(query: str, content: str) -> float:
 
 
 @tool
-def search_knowledge_base(
-    query: str, top_k: int = 5
-) -> dict[str, Any]:
+def search_knowledge_base(query: str, top_k: int = 5) -> dict[str, Any]:
     """Search the organisation's knowledge base using hybrid retrieval.
 
     Combines vector similarity search with keyword matching and
@@ -106,13 +102,15 @@ def search_knowledge_base(
         title_score = _compute_relevance(query, entry["document_title"])
         combined_score = max(score, title_score)
         if combined_score > 0:
-            scored.append({
-                "chunk_content": entry["content"],
-                "document_title": entry["document_title"],
-                "source_type": entry["source_type"],
-                "relevance_score": combined_score,
-                "metadata": entry.get("metadata", {}),
-            })
+            scored.append(
+                {
+                    "chunk_content": entry["content"],
+                    "document_title": entry["document_title"],
+                    "source_type": entry["source_type"],
+                    "relevance_score": combined_score,
+                    "metadata": entry.get("metadata", {}),
+                }
+            )
 
     # Sort by relevance and take top_k
     scored.sort(key=lambda x: x["relevance_score"], reverse=True)
@@ -135,7 +133,7 @@ def search_knowledge_base(
         "results": results,
         "total_results": len(results),
         "query": query,
-        "searched_at": datetime.now(timezone.utc).isoformat(),
+        "searched_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -174,18 +172,20 @@ def get_investigation_context(
         meta = entry.get("metadata", {})
         # Check if the entry is directly related to this investigation
         is_direct = meta.get("investigation_id") == investigation_id
-        context_docs.append({
-            "document_title": entry["document_title"],
-            "source_type": entry["source_type"],
-            "content_preview": entry["content"][:300],
-            "metadata": meta,
-            "is_direct_match": is_direct,
-            "relevance": "high" if is_direct else "medium",
-        })
+        context_docs.append(
+            {
+                "document_title": entry["document_title"],
+                "source_type": entry["source_type"],
+                "content_preview": entry["content"][:300],
+                "metadata": meta,
+                "is_direct_match": is_direct,
+                "relevance": "high" if is_direct else "medium",
+            }
+        )
 
     return {
         "context_documents": context_docs,
         "investigation_id": investigation_id,
         "total_documents": len(context_docs),
-        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "retrieved_at": datetime.now(UTC).isoformat(),
     }

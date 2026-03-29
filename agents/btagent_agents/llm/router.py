@@ -14,10 +14,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from btagent_shared.types.config import TLP, ModelProvider, ModelTier
 from langchain_community.chat_models import ChatLiteLLM
 from langchain_core.language_models import BaseChatModel
-
-from btagent_shared.types.config import ModelProvider, ModelTier, TLP
 
 logger = logging.getLogger("btagent.llm.router")
 
@@ -163,12 +162,14 @@ class TLPAwareLLMRouter:
                 if model_id:
                     logger.warning(
                         "No LOCAL tier model for TLP=%s; falling back to STANDARD on %s",
-                        tlp, provider,
+                        tlp,
+                        provider,
                     )
                     return provider, model_id
 
         raise RoutingError(
-            tlp, tier,
+            tlp,
+            tier,
             f"No model found for tier={tier} among allowed providers: {allowed}",
         )
 
@@ -225,7 +226,10 @@ class TLPAwareLLMRouter:
 
         logger.info(
             "Routed LLM: TLP=%s tier=%s -> provider=%s model=%s",
-            tlp.value, tier.value, provider, model_id,
+            tlp.value,
+            tier.value,
+            provider,
+            model_id,
         )
 
         return llm

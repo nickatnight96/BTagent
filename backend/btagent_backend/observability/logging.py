@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -32,8 +32,7 @@ def _redact(obj: Any) -> Any:  # noqa: ANN401
     """Recursively redact values whose keys match the sensitive pattern."""
     if isinstance(obj, dict):
         return {
-            k: (_REDACTED if _SENSITIVE_PATTERN.search(k) else _redact(v))
-            for k, v in obj.items()
+            k: (_REDACTED if _SENSITIVE_PATTERN.search(k) else _redact(v)) for k, v in obj.items()
         }
     if isinstance(obj, (list, tuple)):
         return [_redact(item) for item in obj]
@@ -62,7 +61,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

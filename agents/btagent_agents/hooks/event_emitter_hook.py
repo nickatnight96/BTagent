@@ -16,12 +16,12 @@ import time
 from typing import Any
 from uuid import UUID
 
+from btagent_shared.types.events import EventType
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from btagent_agents.events.emitter import RedisEmitter
 from btagent_agents.hooks.base import HookProvider
-from btagent_shared.types.events import EventType
 
 logger = logging.getLogger("btagent.hooks.event_emitter")
 

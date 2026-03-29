@@ -19,9 +19,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.greynoise")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +67,9 @@ _MOCK_IP_CONTEXT: dict[str, dict[str, Any]] = {
             ],
             "web": {
                 "paths": [
-                    "/login", "/.env", "/wp-admin",
+                    "/login",
+                    "/.env",
+                    "/wp-admin",
                     "/api/v1/auth",
                 ],
                 "useragents": [
@@ -79,9 +79,7 @@ _MOCK_IP_CONTEXT: dict[str, dict[str, Any]] = {
             },
             "ja3": [
                 {
-                    "fingerprint": (
-                        "a0e9f5d64349fb13191bc781f81f42e1"
-                    ),
+                    "fingerprint": ("a0e9f5d64349fb13191bc781f81f42e1"),
                     "port": 443,
                 },
             ],
@@ -191,13 +189,8 @@ _MOCK_RIOT_DATA: dict[str, dict[str, Any]] = {
         "riot": True,
         "category": "public_dns",
         "name": "Google Public DNS",
-        "description": (
-            "Google's public DNS resolver service."
-        ),
-        "explanation": (
-            "This IP belongs to Google Public DNS, "
-            "a widely-used legitimate service."
-        ),
+        "description": ("Google's public DNS resolver service."),
+        "explanation": ("This IP belongs to Google Public DNS, a widely-used legitimate service."),
         "last_updated": "2026-03-25T00:00:00Z",
         "reference": "https://developers.google.com/speed/public-dns",
         "trust_level": "1",
@@ -209,10 +202,7 @@ _MOCK_RIOT_DATA: dict[str, dict[str, Any]] = {
         "category": "cdn",
         "name": "Microsoft 365",
         "description": "Microsoft 365 service endpoint.",
-        "explanation": (
-            "This IP belongs to Microsoft 365 "
-            "infrastructure and is a known service."
-        ),
+        "explanation": ("This IP belongs to Microsoft 365 infrastructure and is a known service."),
         "last_updated": "2026-03-25T00:00:00Z",
         "reference": "https://learn.microsoft.com/en-us/microsoft-365/",
         "trust_level": "1",
@@ -224,10 +214,7 @@ _MOCK_RIOT_DATA: dict[str, dict[str, Any]] = {
         "category": "unknown",
         "name": "Not Found",
         "description": "IP not found in RIOT dataset.",
-        "explanation": (
-            "This IP is not part of any known "
-            "benign service."
-        ),
+        "explanation": ("This IP is not part of any known benign service."),
         "last_updated": None,
         "reference": None,
         "trust_level": "0",
@@ -249,9 +236,7 @@ class GreyNoiseMCPServer:
     server_id: str = "greynoise"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -306,9 +291,7 @@ class GreyNoiseMCPServer:
     # ---- mock implementations ----
 
     def _mock_ip_lookup(self, ip: str) -> dict[str, Any]:
-        result = _MOCK_IP_CONTEXT.get(
-            ip, _MOCK_IP_CONTEXT["default"]
-        )
+        result = _MOCK_IP_CONTEXT.get(ip, _MOCK_IP_CONTEXT["default"])
         if result["ip"] == "unknown":
             result = {**result, "ip": ip}
         return {
@@ -319,9 +302,7 @@ class GreyNoiseMCPServer:
         }
 
     def _mock_quick_check(self, ip: str) -> dict[str, Any]:
-        ctx = _MOCK_IP_CONTEXT.get(
-            ip, _MOCK_IP_CONTEXT["default"]
-        )
+        ctx = _MOCK_IP_CONTEXT.get(ip, _MOCK_IP_CONTEXT["default"])
         return {
             "status": "success",
             "ip": ip,
@@ -332,9 +313,7 @@ class GreyNoiseMCPServer:
         }
 
     def _mock_riot_lookup(self, ip: str) -> dict[str, Any]:
-        result = _MOCK_RIOT_DATA.get(
-            ip, _MOCK_RIOT_DATA["default"]
-        )
+        result = _MOCK_RIOT_DATA.get(ip, _MOCK_RIOT_DATA["default"])
         if result["ip"] == "unknown":
             result = {**result, "ip": ip}
         return {
@@ -347,19 +326,13 @@ class GreyNoiseMCPServer:
     # ---- real implementations (placeholders) ----
 
     def _real_ip_lookup(self, ip: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real GreyNoise IP lookup not yet implemented"
-        )
+        raise NotImplementedError("Real GreyNoise IP lookup not yet implemented")
 
     def _real_quick_check(self, ip: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real GreyNoise quick check not yet implemented"
-        )
+        raise NotImplementedError("Real GreyNoise quick check not yet implemented")
 
     def _real_riot_lookup(self, ip: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real GreyNoise RIOT lookup not yet implemented"
-        )
+        raise NotImplementedError("Real GreyNoise RIOT lookup not yet implemented")
 
     # ---- LangChain tool registration helpers ----
 
@@ -379,9 +352,7 @@ class GreyNoiseMCPServer:
                     "properties": {
                         "ip": {
                             "type": "string",
-                            "description": (
-                                "IP address to look up"
-                            ),
+                            "description": ("IP address to look up"),
                         },
                     },
                     "required": ["ip"],
@@ -400,9 +371,7 @@ class GreyNoiseMCPServer:
                     "properties": {
                         "ip": {
                             "type": "string",
-                            "description": (
-                                "IP address to check"
-                            ),
+                            "description": ("IP address to check"),
                         },
                     },
                     "required": ["ip"],
@@ -421,10 +390,7 @@ class GreyNoiseMCPServer:
                     "properties": {
                         "ip": {
                             "type": "string",
-                            "description": (
-                                "IP address to check "
-                                "against RIOT dataset"
-                            ),
+                            "description": ("IP address to check against RIOT dataset"),
                         },
                     },
                     "required": ["ip"],

@@ -13,16 +13,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from btagent_backend.db.models_mitre import (
-    MitreGroupRow,
-    MitreTacticRow,
-    MitreTechniqueRow,
-    MitreTechniqueTagRow,
-)
 from btagent_shared.types.mitre import (
     CoverageMap,
     DetectionGap,
@@ -32,9 +22,18 @@ from btagent_shared.types.mitre import (
     NavigatorLayer,
     NavigatorTechnique,
     TechniqueCoverage,
-    TechniqueTag,
 )
 from btagent_shared.utils.ids import generate_id
+from sqlalchemy import func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from btagent_backend.db.models_mitre import (
+    MitreGroupRow,
+    MitreTacticRow,
+    MitreTechniqueRow,
+    MitreTechniqueTagRow,
+)
 
 logger = logging.getLogger("btagent.services.mitre")
 
@@ -113,17 +112,19 @@ def _parse_techniques(objects: list[dict]) -> list[dict[str, Any]]:
         if not tactic:
             continue
 
-        techniques.append({
-            "id": ext_id,
-            "name": obj.get("name", ""),
-            "tactic": tactic,
-            "description": obj.get("description", ""),
-            "platforms": obj.get("x_mitre_platforms", []),
-            "data_sources": obj.get("x_mitre_data_sources", []),
-            "detection": obj.get("x_mitre_detection", ""),
-            "url": _extract_url(obj),
-            "is_subtechnique": obj.get("x_mitre_is_subtechnique", False),
-        })
+        techniques.append(
+            {
+                "id": ext_id,
+                "name": obj.get("name", ""),
+                "tactic": tactic,
+                "description": obj.get("description", ""),
+                "platforms": obj.get("x_mitre_platforms", []),
+                "data_sources": obj.get("x_mitre_data_sources", []),
+                "detection": obj.get("x_mitre_detection", ""),
+                "url": _extract_url(obj),
+                "is_subtechnique": obj.get("x_mitre_is_subtechnique", False),
+            }
+        )
     return techniques
 
 
@@ -143,13 +144,15 @@ def _parse_tactics(objects: list[dict]) -> list[dict[str, Any]]:
         shortname = obj.get("x_mitre_shortname", "")
         ordinal = _TACTIC_ORDINALS.get(shortname, 99)
 
-        tactics.append({
-            "id": ext_id,
-            "name": obj.get("name", ""),
-            "shortname": shortname,
-            "description": obj.get("description", ""),
-            "ordinal": ordinal,
-        })
+        tactics.append(
+            {
+                "id": ext_id,
+                "name": obj.get("name", ""),
+                "shortname": shortname,
+                "description": obj.get("description", ""),
+                "ordinal": ordinal,
+            }
+        )
     return tactics
 
 
@@ -171,13 +174,15 @@ def _parse_groups(
         stix_id = obj.get("id", "")
         technique_ids = relationship_map.get(stix_id, [])
 
-        groups.append({
-            "id": ext_id,
-            "name": obj.get("name", ""),
-            "aliases": obj.get("aliases", []),
-            "description": obj.get("description", ""),
-            "technique_ids": technique_ids,
-        })
+        groups.append(
+            {
+                "id": ext_id,
+                "name": obj.get("name", ""),
+                "aliases": obj.get("aliases", []),
+                "description": obj.get("description", ""),
+                "technique_ids": technique_ids,
+            }
+        )
     return groups
 
 
@@ -409,13 +414,10 @@ class MitreService:
         CoverageMap
         """
         # Build the query for tag counts per technique
-        tag_query = (
-            select(
-                MitreTechniqueTagRow.technique_id,
-                func.count(MitreTechniqueTagRow.id).label("cnt"),
-            )
-            .group_by(MitreTechniqueTagRow.technique_id)
-        )
+        tag_query = select(
+            MitreTechniqueTagRow.technique_id,
+            func.count(MitreTechniqueTagRow.id).label("cnt"),
+        ).group_by(MitreTechniqueTagRow.technique_id)
 
         if investigation_id:
             # Filter tags whose entity_id belongs to the investigation.
@@ -423,9 +425,7 @@ class MitreService:
             # Use a subquery approach: find entity_ids from iocs + timeline_entries
             from btagent_backend.db.models import IOCRow, TimelineEntryRow
 
-            ioc_ids = select(IOCRow.id).where(
-                IOCRow.investigation_id == investigation_id
-            )
+            ioc_ids = select(IOCRow.id).where(IOCRow.investigation_id == investigation_id)
             timeline_ids = select(TimelineEntryRow.id).where(
                 TimelineEntryRow.investigation_id == investigation_id
             )
@@ -492,9 +492,7 @@ class MitreService:
         coverage = await MitreService.get_coverage(db, investigation_id)
         if coverage.total_techniques == 0:
             return 0.0
-        return round(
-            (coverage.covered_techniques / coverage.total_techniques) * 100, 2
-        )
+        return round((coverage.covered_techniques / coverage.total_techniques) * 100, 2)
 
     @staticmethod
     async def get_detection_gaps(
@@ -652,9 +650,7 @@ class MitreService:
         # JSONB array overlap: platform column ? any of the keywords
         conditions = []
         for kw in platform_keywords:
-            conditions.append(
-                MitreTechniqueRow.platforms.op("@>")(json.dumps([kw]))
-            )
+            conditions.append(MitreTechniqueRow.platforms.op("@>")(json.dumps([kw])))
 
         if not conditions:
             return []
@@ -696,11 +692,7 @@ class MitreService:
 
         if technique_id:
             # JSONB array contains check
-            stmt = stmt.where(
-                MitreGroupRow.technique_ids.op("@>")(
-                    json.dumps([technique_id])
-                )
-            )
+            stmt = stmt.where(MitreGroupRow.technique_ids.op("@>")(json.dumps([technique_id])))
 
         result = await db.execute(stmt)
         rows = result.scalars().all()
@@ -734,9 +726,7 @@ class MitreService:
         -------
         MitreGroup | None
         """
-        result = await db.execute(
-            select(MitreGroupRow).where(MitreGroupRow.id == group_id)
-        )
+        result = await db.execute(select(MitreGroupRow).where(MitreGroupRow.id == group_id))
         row = result.scalar_one_or_none()
         if not row:
             return None
@@ -789,9 +779,7 @@ class MitreService:
                         tactic=tactic,
                         score=score,
                         color=color if score > 0 else "",
-                        comment=(
-                            f"Detected {tech.count} time(s)" if tech.count > 0 else ""
-                        ),
+                        comment=(f"Detected {tech.count} time(s)" if tech.count > 0 else ""),
                         enabled=True,
                         showSubtechniques="." in tech.technique_id,
                     )
@@ -803,9 +791,7 @@ class MitreService:
 
         score_pct = 0.0
         if coverage.total_techniques > 0:
-            score_pct = round(
-                (coverage.covered_techniques / coverage.total_techniques) * 100, 1
-            )
+            score_pct = round((coverage.covered_techniques / coverage.total_techniques) * 100, 1)
 
         return NavigatorLayer(
             name=f"BTagent Coverage ({score_pct}%)",
@@ -890,9 +876,7 @@ class MitreService:
         -------
         list[MitreTactic]
         """
-        result = await db.execute(
-            select(MitreTacticRow).order_by(MitreTacticRow.ordinal)
-        )
+        result = await db.execute(select(MitreTacticRow).order_by(MitreTacticRow.ordinal))
         rows = result.scalars().all()
         return [
             MitreTactic(

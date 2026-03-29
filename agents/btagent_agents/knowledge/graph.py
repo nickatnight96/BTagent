@@ -11,13 +11,11 @@ Provides a four-stage retrieval-augmented generation pipeline:
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph as CompiledGraph
-
 
 # --------------------------------------------------------------------------- #
 # State definition
@@ -91,9 +89,7 @@ def understand_query_node(state: KnowledgeState) -> dict[str, Any]:
 
     # Add investigation context if available
     if investigation_id:
-        rephrased_parts.append(
-            f"(investigation context: {investigation_id})"
-        )
+        rephrased_parts.append(f"(investigation context: {investigation_id})")
 
     # Expand common security abbreviations
     abbreviation_map = {
@@ -144,15 +140,13 @@ def retrieve_context_node(state: KnowledgeState) -> dict[str, Any]:
     # The orchestrator will inject real search results via tool calls.
     retrieved_chunks = [
         {
-            "content": (
-                f"[Retrieval placeholder for query: {rephrased_query[:100]}]"
-            ),
+            "content": (f"[Retrieval placeholder for query: {rephrased_query[:100]}]"),
             "document_title": "Knowledge Base",
             "source_type": "knowledge_base",
             "relevance_score": 1.0,
             "metadata": {
                 "retrieval_query": rephrased_query,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             },
         }
     ]
@@ -180,10 +174,7 @@ def generate_answer_node(state: KnowledgeState) -> dict[str, Any]:
 
     if not chunks:
         return {
-            "answer": (
-                "No relevant information found in the knowledge base "
-                "for this query."
-            ),
+            "answer": ("No relevant information found in the knowledge base for this query."),
             "errors": errors,
             "status": "citing",
         }
@@ -193,9 +184,7 @@ def generate_answer_node(state: KnowledgeState) -> dict[str, Any]:
     for i, chunk in enumerate(chunks, 1):
         source = chunk.get("document_title", "Unknown")
         content = chunk.get("content", "")
-        context_parts.append(
-            f"[Source {i}: {source}]\n{content}"
-        )
+        context_parts.append(f"[Source {i}: {source}]\n{content}")
 
     context = "\n\n---\n\n".join(context_parts)
 
@@ -203,7 +192,7 @@ def generate_answer_node(state: KnowledgeState) -> dict[str, Any]:
     # generate a structured summary from the retrieved context.
     answer = (
         f"Based on {len(chunks)} knowledge base source(s), "
-        f"here is what was found for: \"{query}\"\n\n"
+        f'here is what was found for: "{query}"\n\n'
         f"Context retrieved:\n{context}"
     )
 

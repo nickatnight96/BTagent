@@ -7,7 +7,6 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-
 # --------------------------------------------------------------------------- #
 # IOC extraction patterns
 # --------------------------------------------------------------------------- #
@@ -29,56 +28,108 @@ _IOC_PATTERNS: dict[str, re.Pattern[str]] = {
     "hash_sha256": re.compile(r"\b[a-fA-F0-9]{64}\b"),
     "hash_sha1": re.compile(r"\b[a-fA-F0-9]{40}\b"),
     "hash_md5": re.compile(r"\b[a-fA-F0-9]{32}\b"),
-    "email": re.compile(
-        r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
-    ),
+    "email": re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"),
     "cve": re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.IGNORECASE),
 }
 
 # Keywords that drive category classification, ordered by priority.
 _CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "phishing": [
-        "phish", "spearphish", "credential harvest", "bec ",
-        "business email compromise", "suspicious email", "spoofed sender",
-        "reply-to mismatch", "deceptive link",
+        "phish",
+        "spearphish",
+        "credential harvest",
+        "bec ",
+        "business email compromise",
+        "suspicious email",
+        "spoofed sender",
+        "reply-to mismatch",
+        "deceptive link",
     ],
     "malware": [
-        "malware", "ransomware", "trojan", "dropper", "backdoor", "worm",
-        "keylogger", "rootkit", "cryptominer", "miner", "cobalt strike",
-        "meterpreter", "reverse shell",
+        "malware",
+        "ransomware",
+        "trojan",
+        "dropper",
+        "backdoor",
+        "worm",
+        "keylogger",
+        "rootkit",
+        "cryptominer",
+        "miner",
+        "cobalt strike",
+        "meterpreter",
+        "reverse shell",
     ],
     "c2_communication": [
-        "c2", "command and control", "command-and-control", "beaconing",
-        "beacon", "dns tunnel", "dns exfil", "known c2",
+        "c2",
+        "command and control",
+        "command-and-control",
+        "beaconing",
+        "beacon",
+        "dns tunnel",
+        "dns exfil",
+        "known c2",
     ],
     "data_exfiltration": [
-        "exfiltration", "data leak", "dlp", "data loss", "large upload",
-        "unusual transfer", "bulk download",
+        "exfiltration",
+        "data leak",
+        "dlp",
+        "data loss",
+        "large upload",
+        "unusual transfer",
+        "bulk download",
     ],
     "unauthorized_access": [
-        "brute force", "credential stuff", "privilege escalation",
-        "unauthorized login", "failed login", "impossible travel",
-        "password spray", "account compromise",
+        "brute force",
+        "credential stuff",
+        "privilege escalation",
+        "unauthorized login",
+        "failed login",
+        "impossible travel",
+        "password spray",
+        "account compromise",
     ],
     "lateral_movement": [
-        "lateral movement", "pass-the-hash", "pass the hash", "pth",
-        "psexec", "wmiexec", "remote exec", "pivot",
+        "lateral movement",
+        "pass-the-hash",
+        "pass the hash",
+        "pth",
+        "psexec",
+        "wmiexec",
+        "remote exec",
+        "pivot",
     ],
     "reconnaissance": [
-        "port scan", "enumeration", "vulnerability scan", "nmap",
-        "directory brute", "recon", "fingerprint",
+        "port scan",
+        "enumeration",
+        "vulnerability scan",
+        "nmap",
+        "directory brute",
+        "recon",
+        "fingerprint",
     ],
     "denial_of_service": [
-        "ddos", "dos ", "denial of service", "flood", "volumetric",
-        "syn flood", "amplification",
+        "ddos",
+        "dos ",
+        "denial of service",
+        "flood",
+        "volumetric",
+        "syn flood",
+        "amplification",
     ],
     "insider_threat": [
-        "insider threat", "anomalous user", "data hoarding",
-        "unusual access pattern", "terminated employee",
+        "insider threat",
+        "anomalous user",
+        "data hoarding",
+        "unusual access pattern",
+        "terminated employee",
     ],
     "policy_violation": [
-        "policy violation", "shadow it", "unapproved software",
-        "compliance", "unauthorized software",
+        "policy violation",
+        "shadow it",
+        "unapproved software",
+        "compliance",
+        "unauthorized software",
     ],
 }
 
@@ -118,13 +169,9 @@ def _extract_iocs(text: str) -> list[dict[str, str]]:
     deduped: list[dict[str, str]] = []
     for ioc in iocs:
         val_lower = ioc["value"].lower()
-        if ioc["type"] == "hash_md5" and (
-            val_lower in sha256_values or val_lower in sha1_values
-        ):
+        if ioc["type"] == "hash_md5" and (val_lower in sha256_values or val_lower in sha1_values):
             continue
-        if ioc["type"] == "hash_sha1" and any(
-            val_lower in sha for sha in sha256_values
-        ):
+        if ioc["type"] == "hash_sha1" and any(val_lower in sha for sha in sha256_values):
             continue
         deduped.append(ioc)
 
@@ -161,8 +208,12 @@ def _infer_severity(category: str, iocs: list[dict[str, str]], text: str) -> str
 
     # Immediate critical indicators
     critical_signals = [
-        "ransomware execut", "active breach", "data exfiltration in progress",
-        "crown jewel", "domain admin compromised", "production down",
+        "ransomware execut",
+        "active breach",
+        "data exfiltration in progress",
+        "crown jewel",
+        "domain admin compromised",
+        "production down",
     ]
     if any(sig in text_lower for sig in critical_signals):
         return "critical"

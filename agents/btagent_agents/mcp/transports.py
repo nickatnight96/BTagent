@@ -88,10 +88,8 @@ class StdioTransport(MCPTransportBase):
         if self._process is not None:
             try:
                 self._process.terminate()
-                await asyncio.wait_for(
-                    self._process.wait(), timeout=5.0
-                )
-            except (asyncio.TimeoutError, ProcessLookupError):
+                await asyncio.wait_for(self._process.wait(), timeout=5.0)
+            except (TimeoutError, ProcessLookupError):
                 self._process.kill()
             self._process = None
         self._connected = False
@@ -109,9 +107,7 @@ class StdioTransport(MCPTransportBase):
             raise RuntimeError("StdioTransport not connected")
         line = await self._process.stdout.readline()
         if not line:
-            raise ConnectionError(
-                "StdioTransport: subprocess closed stdout"
-            )
+            raise ConnectionError("StdioTransport: subprocess closed stdout")
         return json.loads(line.decode())
 
     @property
@@ -134,9 +130,7 @@ class HTTPTransport(MCPTransportBase):
     timeout_seconds: int = 30
 
     _connected: bool = field(default=False, init=False)
-    _session: Any = field(
-        default=None, init=False, repr=False
-    )  # aiohttp.ClientSession
+    _session: Any = field(default=None, init=False, repr=False)  # aiohttp.ClientSession
 
     async def connect(self) -> None:
         if self._connected:
@@ -146,9 +140,7 @@ class HTTPTransport(MCPTransportBase):
 
             self._session = aiohttp.ClientSession(
                 headers=self.headers,
-                timeout=aiohttp.ClientTimeout(
-                    total=self.timeout_seconds
-                ),
+                timeout=aiohttp.ClientTimeout(total=self.timeout_seconds),
             )
         except ImportError:
             # aiohttp is optional; mark connected for mock usage
@@ -167,9 +159,7 @@ class HTTPTransport(MCPTransportBase):
         if not self._connected:
             raise RuntimeError("HTTPTransport not connected")
         if self._session is None:
-            raise RuntimeError(
-                "HTTPTransport: aiohttp not installed"
-            )
+            raise RuntimeError("HTTPTransport: aiohttp not installed")
         url = f"{self.server_url.rstrip('/')}/mcp"
         async with self._session.post(url, json=message) as resp:
             resp.raise_for_status()
@@ -178,9 +168,7 @@ class HTTPTransport(MCPTransportBase):
         if not self._connected:
             raise RuntimeError("HTTPTransport not connected")
         if self._session is None:
-            raise RuntimeError(
-                "HTTPTransport: aiohttp not installed"
-            )
+            raise RuntimeError("HTTPTransport: aiohttp not installed")
         url = f"{self.server_url.rstrip('/')}/mcp"
         async with self._session.get(url) as resp:
             resp.raise_for_status()
@@ -206,9 +194,7 @@ class SSETransport(MCPTransportBase):
     timeout_seconds: int = 30
 
     _connected: bool = field(default=False, init=False)
-    _session: Any = field(
-        default=None, init=False, repr=False
-    )
+    _session: Any = field(default=None, init=False, repr=False)
     _event_queue: asyncio.Queue[dict[str, Any]] = field(
         default_factory=asyncio.Queue, init=False, repr=False
     )
@@ -221,9 +207,7 @@ class SSETransport(MCPTransportBase):
 
             self._session = aiohttp.ClientSession(
                 headers=self.headers,
-                timeout=aiohttp.ClientTimeout(
-                    total=self.timeout_seconds
-                ),
+                timeout=aiohttp.ClientTimeout(total=self.timeout_seconds),
             )
         except ImportError:
             self._session = None
@@ -241,9 +225,7 @@ class SSETransport(MCPTransportBase):
         if not self._connected:
             raise RuntimeError("SSETransport not connected")
         if self._session is None:
-            raise RuntimeError(
-                "SSETransport: aiohttp not installed"
-            )
+            raise RuntimeError("SSETransport: aiohttp not installed")
         url = f"{self.server_url.rstrip('/')}/mcp"
         async with self._session.post(url, json=message) as resp:
             resp.raise_for_status()

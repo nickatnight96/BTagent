@@ -84,11 +84,13 @@ def layer0_externalize(
         content_str = content if isinstance(content, str) else json.dumps(content, default=str)
         ref = _make_artifact_ref(content_str)
 
-        artifacts.append({
-            "ref": ref,
-            "content": content_str,
-            "tool_name": msg.get("name", "unknown"),
-        })
+        artifacts.append(
+            {
+                "ref": ref,
+                "content": content_str,
+                "tool_name": msg.get("name", "unknown"),
+            }
+        )
 
         new_msg = dict(msg)
         new_msg["content"] = (
@@ -218,7 +220,9 @@ def layer2_prune(
 
     logger.info(
         "Layer 2: pruned %d messages (kept %d + %d)",
-        pruned_count, keep_first, keep_last,
+        pruned_count,
+        keep_first,
+        keep_last,
     )
 
     return head + [marker] + tail
@@ -273,10 +277,7 @@ def layer3_summarize_replace(
 
     summary_msg: dict[str, Any] = {
         "role": "system",
-        "content": (
-            "[Conversation summary — earlier messages have been condensed]\n\n"
-            + summary
-        ),
+        "content": ("[Conversation summary — earlier messages have been condensed]\n\n" + summary),
     }
 
     tail = messages[-keep_last:] if keep_last < len(messages) else messages

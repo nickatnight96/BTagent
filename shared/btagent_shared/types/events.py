@@ -1,6 +1,6 @@
 """Event types and envelope for BTagent agent communication."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -89,7 +89,5 @@ class EventEnvelope(BaseModel):
     investigation_id: str
     parent_id: str | None = None
     trace_id: str | None = None
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     data: dict[str, Any] = Field(default_factory=dict)

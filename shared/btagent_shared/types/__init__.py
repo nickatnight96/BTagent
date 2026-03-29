@@ -1,24 +1,31 @@
 """BTagent shared types — re-export commonly used models."""
 
 from btagent_shared.types.config import (
+    TLP,
     AgentConfig,
     AutonomyLevel,
     IntegrationAutonomy,
     MCPConnection,
     ModelProvider,
     ModelTier,
-    TLP,
 )
 from btagent_shared.types.enums import (
     AuditCategory,
     AuditOutcome,
     ContainmentStatus,
-    IOCType,
     InvestigationStatus,
+    IOCType,
     Severity,
     UserRole,
 )
 from btagent_shared.types.events import EventEnvelope, EventType
+from btagent_shared.types.investigation import (
+    IOC,
+    ContainmentAction,
+    Evidence,
+    Investigation,
+    TimelineEntry,
+)
 from btagent_shared.types.knowledge import (
     IngestRequest,
     KnowledgeChunk,
@@ -27,13 +34,6 @@ from btagent_shared.types.knowledge import (
     QueryRequest,
     QueryResponse,
     SearchResult,
-)
-from btagent_shared.types.investigation import (
-    ContainmentAction,
-    Evidence,
-    Investigation,
-    IOC,
-    TimelineEntry,
 )
 from btagent_shared.types.playbook import (
     ActionStep,

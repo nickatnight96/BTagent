@@ -7,7 +7,7 @@ Generates professional IR reports from investigation data using templates.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -15,10 +15,13 @@ from langgraph.graph.state import CompiledStateGraph as CompiledGraph
 
 from btagent_agents.plugins.report.tools.report_generator import (
     generate_report as _generate_report_tool,
+)
+from btagent_agents.plugins.report.tools.report_generator import (
     generate_section as _generate_section_tool,
+)
+from btagent_agents.plugins.report.tools.report_generator import (
     list_templates as _list_templates_tool,
 )
-
 
 # --------------------------------------------------------------------------- #
 # State definition
@@ -81,10 +84,7 @@ def select_template(state: ReportState) -> dict[str, Any]:
     available = [t["name"] for t in templates_result.get("templates", [])]
 
     if template_name not in available:
-        errors.append(
-            f"Template '{template_name}' not found. "
-            f"Available: {', '.join(available)}"
-        )
+        errors.append(f"Template '{template_name}' not found. Available: {', '.join(available)}")
         return {"errors": errors, "status": "failed"}
 
     # Find the template config
@@ -112,15 +112,15 @@ def gather_data(state: ReportState) -> dict[str, Any]:
         return {"errors": errors, "status": "failed"}
 
     # Validate by generating the executive summary section
-    test_result = _generate_section_tool.invoke({
-        "investigation_id": investigation_id,
-        "section": "executive_summary",
-    })
+    test_result = _generate_section_tool.invoke(
+        {
+            "investigation_id": investigation_id,
+            "section": "executive_summary",
+        }
+    )
 
     if test_result.get("status") == "failed":
-        errors.append(
-            test_result.get("error", "Failed to gather investigation data")
-        )
+        errors.append(test_result.get("error", "Failed to gather investigation data"))
         return {"errors": errors, "status": "failed"}
 
     return {
@@ -136,10 +136,12 @@ def generate_sections(state: ReportState) -> dict[str, Any]:
     template_name = state.get("template_name", "incident_report")
     errors: list[str] = []
 
-    result = _generate_report_tool.invoke({
-        "investigation_id": investigation_id,
-        "template": template_name,
-    })
+    result = _generate_report_tool.invoke(
+        {
+            "investigation_id": investigation_id,
+            "template": template_name,
+        }
+    )
 
     if result.get("status") == "failed":
         errors.append(result.get("error", "Section generation failed"))
@@ -192,7 +194,7 @@ def compile_report(state: ReportState) -> dict[str, Any]:
     template_name = state.get("template_name", "incident_report")
     sections = state.get("sections", {})
     review_results = state.get("review_results", [])
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     compiled_report = {
         "investigation_id": investigation_id,

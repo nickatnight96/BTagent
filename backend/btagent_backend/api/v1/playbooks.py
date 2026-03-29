@@ -138,9 +138,7 @@ def _to_execution_response(row: PlaybookExecutionRow) -> ExecutionResponse:
         trigger_data=row.trigger_data or {},
         step_results=row.step_results or {},
         started_at=row.started_at.isoformat() if row.started_at else None,
-        completed_at=(
-            row.completed_at.isoformat() if row.completed_at else None
-        ),
+        completed_at=(row.completed_at.isoformat() if row.completed_at else None),
         error=row.error,
     )
 

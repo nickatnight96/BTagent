@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from btagent_shared.types.playbook import ActionStep
@@ -33,7 +33,7 @@ async def execute_action_step(
     dict
         Step result containing status, output, and timing.
     """
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
 
     if mock:
         # In mock/dev mode, return a simulated successful result
@@ -69,5 +69,5 @@ async def execute_action_step(
         "status": "completed",
         "output": output,
         "started_at": started_at,
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
     }

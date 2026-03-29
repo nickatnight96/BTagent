@@ -39,8 +39,7 @@ _MOCK_SEARCH_RESULTS: dict[str, list[dict[str, Any]]] = {
                     "name": "powershell.exe",
                     "pid": 7284,
                     "executable": (
-                        "C:\\Windows\\System32\\WindowsPowerShell"
-                        "\\v1.0\\powershell.exe"
+                        "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
                     ),
                     "args": ["-enc", "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoA..."],
                     "parent": {
@@ -154,10 +153,7 @@ _MOCK_SEARCH_RESULTS: dict[str, list[dict[str, Any]]] = {
                 "destination": {"ip": "192.0.2.100", "port": 53},
                 "dns": {
                     "question": {
-                        "name": (
-                            "aGVsbG8gd29ybGQgdGhpcyBpcyBhIH"
-                            "Rlc3Q.data.evil-c2.example.com"
-                        ),
+                        "name": ("aGVsbG8gd29ybGQgdGhpcyBpcyBhIHRlc3Q.data.evil-c2.example.com"),
                         "type": "TXT",
                     },
                     "response_code": "NOERROR",
@@ -231,8 +227,7 @@ _MOCK_ALERTS = [
         "signal": {
             "rule": {"type": "eql", "language": "eql"},
             "reason": (
-                "certutil.exe used to download file from external URL "
-                "(evil-c2.example.com)"
+                "certutil.exe used to download file from external URL (evil-c2.example.com)"
             ),
         },
     },
@@ -260,8 +255,7 @@ _MOCK_ALERTS = [
         "signal": {
             "rule": {"type": "threshold", "language": "lucene"},
             "reason": (
-                "154 MB transferred to 198.51.100.23:443 within 10 min, "
-                "exceeding baseline by 15x"
+                "154 MB transferred to 198.51.100.23:443 within 10 min, exceeding baseline by 15x"
             ),
         },
     },
@@ -454,9 +448,7 @@ class ElasticMCPServer:
 
     # ---- mock implementations ----
 
-    def _mock_search(
-        self, query: str, index: str, timerange: str
-    ) -> dict[str, Any]:
+    def _mock_search(self, query: str, index: str, timerange: str) -> dict[str, Any]:
         q_lower = query.lower()
         if "dns" in q_lower or "tunnel" in q_lower:
             hits = _MOCK_SEARCH_RESULTS["dns"]
@@ -481,9 +473,7 @@ class ElasticMCPServer:
         if severity == "all":
             alerts = _MOCK_ALERTS
         else:
-            alerts = [
-                a for a in _MOCK_ALERTS if a["severity"] == severity.lower()
-            ]
+            alerts = [a for a in _MOCK_ALERTS if a["severity"] == severity.lower()]
         return {
             "status": "success",
             "total": len(alerts),
@@ -512,9 +502,7 @@ class ElasticMCPServer:
 
     # ---- real implementations (placeholders) ----
 
-    def _real_search(
-        self, query: str, index: str, timerange: str
-    ) -> dict[str, Any]:
+    def _real_search(self, query: str, index: str, timerange: str) -> dict[str, Any]:
         raise NotImplementedError("Real Elastic search not yet implemented")
 
     def _real_get_alerts(self, severity: str) -> dict[str, Any]:
@@ -530,8 +518,7 @@ class ElasticMCPServer:
             {
                 "name": "elastic_search",
                 "description": (
-                    "Search Elastic Security indices using EQL, KQL, or "
-                    "Lucene query strings."
+                    "Search Elastic Security indices using EQL, KQL, or Lucene query strings."
                 ),
                 "server_id": self.server_id,
                 "input_schema": {
@@ -582,8 +569,7 @@ class ElasticMCPServer:
             {
                 "name": "elastic_get_fields",
                 "description": (
-                    "Get field mappings for an Elasticsearch index "
-                    "including field names and types."
+                    "Get field mappings for an Elasticsearch index including field names and types."
                 ),
                 "server_id": self.server_id,
                 "input_schema": {

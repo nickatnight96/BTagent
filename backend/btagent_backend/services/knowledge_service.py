@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
+from btagent_shared.utils.ids import generate_id
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,6 @@ from btagent_backend.services.embedding_service import (
     EmbeddingService,
     MockEmbeddingService,
 )
-from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger("btagent.services.knowledge")
 
@@ -128,14 +127,10 @@ class KnowledgeService:
         if chunks:
             # Generate embeddings for all chunks
             chunk_texts = [c.content for c in chunks]
-            embeddings = await self._embedding_service.generate_embeddings(
-                chunk_texts
-            )
+            embeddings = await self._embedding_service.generate_embeddings(chunk_texts)
 
             # Create chunk rows
-            for i, (chunk, embedding) in enumerate(
-                zip(chunks, embeddings, strict=False)
-            ):
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
                 chunk_row = KnowledgeChunkRow(
                     id=generate_id("kc"),
                     document_id=doc_id,
@@ -200,15 +195,14 @@ class KnowledgeService:
             return []
 
         # Generate query embedding
-        query_embeddings = (
-            await self._embedding_service.generate_embeddings([query])
-        )
+        query_embeddings = await self._embedding_service.generate_embeddings([query])
         query_embedding = query_embeddings[0] if query_embeddings else None
 
         # --- Vector search ---
         vector_results: list[tuple[str, float]] = []
         if query_embedding is not None:
-            vector_sql = text("""
+            vector_sql = text(
+                """
                 SELECT kc.id, 1 - (kc.embedding <=> :embedding::vector) AS similarity
                 FROM knowledge_chunks kc
                 JOIN knowledge_documents kd ON kd.id = kc.document_id
@@ -217,12 +211,11 @@ class KnowledgeService:
                 ORDER BY kc.embedding <=> :embedding::vector
                 LIMIT :limit
             """.format(
-                source_filter=(
-                    "AND kd.source_type = :source_type"
-                    if source_type_filter
-                    else ""
+                    source_filter=(
+                        "AND kd.source_type = :source_type" if source_type_filter else ""
+                    )
                 )
-            ))
+            )
 
             params: dict[str, Any] = {
                 "embedding": str(query_embedding),
@@ -232,12 +225,11 @@ class KnowledgeService:
                 params["source_type"] = source_type_filter
 
             result = await db.execute(vector_sql, params)
-            vector_results = [
-                (row[0], float(row[1])) for row in result.fetchall()
-            ]
+            vector_results = [(row[0], float(row[1])) for row in result.fetchall()]
 
         # --- Keyword search (ILIKE) ---
-        keyword_sql = text("""
+        keyword_sql = text(
+            """
             SELECT kc.id, 1.0 AS score
             FROM knowledge_chunks kc
             JOIN knowledge_documents kd ON kd.id = kc.document_id
@@ -245,12 +237,9 @@ class KnowledgeService:
             {source_filter}
             LIMIT :limit
         """.format(
-            source_filter=(
-                "AND kd.source_type = :source_type"
-                if source_type_filter
-                else ""
+                source_filter=("AND kd.source_type = :source_type" if source_type_filter else "")
             )
-        ))
+        )
 
         kw_params: dict[str, Any] = {
             "pattern": f"%{query}%",
@@ -269,19 +258,13 @@ class KnowledgeService:
         chunk_scores: dict[str, float] = {}
 
         for rank, (chunk_id, _) in enumerate(vector_results):
-            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + (
-                1.0 / (rrf_k + rank + 1)
-            )
+            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + (1.0 / (rrf_k + rank + 1))
 
         for rank, (chunk_id, _) in enumerate(keyword_results):
-            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + (
-                1.0 / (rrf_k + rank + 1)
-            )
+            chunk_scores[chunk_id] = chunk_scores.get(chunk_id, 0.0) + (1.0 / (rrf_k + rank + 1))
 
         # Sort by RRF score
-        ranked_ids = sorted(
-            chunk_scores.items(), key=lambda x: x[1], reverse=True
-        )[:top_k]
+        ranked_ids = sorted(chunk_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
 
         if not ranked_ids:
             return []
@@ -309,19 +292,20 @@ class KnowledgeService:
             if chunk_id not in chunk_doc_map:
                 continue
             chunk_row, doc_row = chunk_doc_map[chunk_id]
-            results.append(SearchResult(
-                chunk_content=chunk_row.content,
-                document_title=doc_row.title,
-                source_type=doc_row.source_type,
-                relevance_score=round(score, 6),
-                metadata=chunk_row.chunk_metadata or {},
-                document_id=doc_row.id,
-                chunk_id=chunk_row.id,
-            ))
+            results.append(
+                SearchResult(
+                    chunk_content=chunk_row.content,
+                    document_title=doc_row.title,
+                    source_type=doc_row.source_type,
+                    relevance_score=round(score, 6),
+                    metadata=chunk_row.chunk_metadata or {},
+                    document_id=doc_row.id,
+                    chunk_id=chunk_row.id,
+                )
+            )
 
         logger.info(
-            "Hybrid search for %r: %d vector results, %d keyword results, "
-            "%d final (top_k=%d)",
+            "Hybrid search for %r: %d vector results, %d keyword results, %d final (top_k=%d)",
             query[:50],
             len(vector_results),
             len(keyword_results),
@@ -357,9 +341,7 @@ class KnowledgeService:
             The created document, or None if investigation not found.
         """
         result = await db.execute(
-            select(InvestigationRow).where(
-                InvestigationRow.id == investigation_id
-            )
+            select(InvestigationRow).where(InvestigationRow.id == investigation_id)
         )
         investigation = result.scalar_one_or_none()
         if investigation is None:
@@ -381,17 +363,14 @@ class KnowledgeService:
 
         # Add IOC summary if available
         ioc_result = await db.execute(
-            select(IOCRow).where(
-                IOCRow.investigation_id == investigation_id
-            )
+            select(IOCRow).where(IOCRow.investigation_id == investigation_id)
         )
         iocs = ioc_result.scalars().all()
         if iocs:
             content_parts.append("\n## Indicators of Compromise\n")
             for ioc in iocs:
                 content_parts.append(
-                    f"- **{ioc.type}:** `{ioc.value}` "
-                    f"(confidence: {ioc.confidence})"
+                    f"- **{ioc.type}:** `{ioc.value}` (confidence: {ioc.confidence})"
                 )
 
         content = "\n".join(content_parts)
@@ -458,22 +437,16 @@ class KnowledgeService:
 
         for ioc in iocs:
             content_parts.append(f"\n## {ioc.type}: `{ioc.value}`")
-            content_parts.append(
-                f"- **Confidence:** {ioc.confidence}"
-            )
+            content_parts.append(f"- **Confidence:** {ioc.confidence}")
             content_parts.append(f"- **Source:** {ioc.source}")
             if ioc.enrichment:
-                content_parts.append(
-                    f"- **Enrichment data:** {len(ioc.enrichment)} fields"
-                )
+                content_parts.append(f"- **Enrichment data:** {len(ioc.enrichment)} fields")
 
         content = "\n".join(content_parts)
 
         doc = await self.ingest_document(
             db,
-            title=(
-                f"Enrichment Results: Investigation {investigation_id}"
-            ),
+            title=(f"Enrichment Results: Investigation {investigation_id}"),
             content=content,
             source_type="enrichment_data",
             metadata={
@@ -514,9 +487,7 @@ class KnowledgeService:
             True if document was found and deleted, False otherwise.
         """
         result = await db.execute(
-            select(KnowledgeDocumentRow).where(
-                KnowledgeDocumentRow.id == document_id
-            )
+            select(KnowledgeDocumentRow).where(KnowledgeDocumentRow.id == document_id)
         )
         doc = result.scalar_one_or_none()
         if doc is None:
@@ -524,15 +495,9 @@ class KnowledgeService:
 
         # Chunks are cascade-deleted via FK, but explicit delete for clarity
         await db.execute(
-            delete(KnowledgeChunkRow).where(
-                KnowledgeChunkRow.document_id == document_id
-            )
+            delete(KnowledgeChunkRow).where(KnowledgeChunkRow.document_id == document_id)
         )
-        await db.execute(
-            delete(KnowledgeDocumentRow).where(
-                KnowledgeDocumentRow.id == document_id
-            )
-        )
+        await db.execute(delete(KnowledgeDocumentRow).where(KnowledgeDocumentRow.id == document_id))
         await db.flush()
 
         logger.info("Deleted document %s and its chunks", document_id)
@@ -564,18 +529,12 @@ class KnowledgeService:
         tuple[list[KnowledgeDocumentRow], int]
             (rows, total_count)
         """
-        query = select(KnowledgeDocumentRow).order_by(
-            KnowledgeDocumentRow.created_at.desc()
-        )
+        query = select(KnowledgeDocumentRow).order_by(KnowledgeDocumentRow.created_at.desc())
         count_query = select(func.count(KnowledgeDocumentRow.id))
 
         if source_type_filter:
-            query = query.where(
-                KnowledgeDocumentRow.source_type == source_type_filter
-            )
-            count_query = count_query.where(
-                KnowledgeDocumentRow.source_type == source_type_filter
-            )
+            query = query.where(KnowledgeDocumentRow.source_type == source_type_filter)
+            count_query = count_query.where(KnowledgeDocumentRow.source_type == source_type_filter)
 
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
@@ -593,9 +552,7 @@ class KnowledgeService:
     ) -> KnowledgeDocumentRow | None:
         """Fetch a single document by ID."""
         result = await db.execute(
-            select(KnowledgeDocumentRow).where(
-                KnowledgeDocumentRow.id == document_id
-            )
+            select(KnowledgeDocumentRow).where(KnowledgeDocumentRow.id == document_id)
         )
         return result.scalar_one_or_none()
 

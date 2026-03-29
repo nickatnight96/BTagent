@@ -19,9 +19,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.splunk")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -118,15 +116,9 @@ _MOCK_SEARCH_RESULTS: dict[str, list[dict[str, Any]]] = {
             "_time": "2026-03-26T08:22:05.000+00:00",
             "host": "WS-JSMITH-PC",
             "process_name": "powershell.exe",
-            "process_path": (
-                "C:\\Windows\\System32\\"
-                "WindowsPowerShell\\v1.0\\powershell.exe"
-            ),
+            "process_path": ("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
             "parent_process": "cmd.exe",
-            "cmdline": (
-                "powershell.exe -enc SQBFAFgAIAAoA"
-                "E4AZQB3AC0ATwBiAGoAZQBjAHQA..."
-            ),
+            "cmdline": ("powershell.exe -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA..."),
             "user": "ACME\\jsmith",
             "pid": 7284,
             "ppid": 6140,
@@ -140,9 +132,7 @@ _MOCK_SEARCH_RESULTS: dict[str, list[dict[str, Any]]] = {
             "process_name": "cmd.exe",
             "process_path": "C:\\Windows\\System32\\cmd.exe",
             "parent_process": "outlook.exe",
-            "cmdline": (
-                'cmd.exe /c "start /b powershell -enc ..."'
-            ),
+            "cmdline": ('cmd.exe /c "start /b powershell -enc ..."'),
             "user": "ACME\\jsmith",
             "pid": 6140,
             "ppid": 4512,
@@ -161,9 +151,7 @@ _MOCK_ALERTS = [
         "triggered_at": "2026-03-26T07:50:00.000+00:00",
         "search_name": "Authentication - Brute Force Detection",
         "search_query": (
-            "index=authentication action=failure "
-            "| stats count by src_ip, user "
-            "| where count > 5"
+            "index=authentication action=failure | stats count by src_ip, user | where count > 5"
         ),
         "notable_fields": {
             "src_ip": "185.220.101.42",
@@ -251,8 +239,7 @@ _MOCK_NOTABLES = [
         "owner": "unassigned",
         "security_domain": "access",
         "drilldown_search": (
-            "index=authentication src_ip=185.220.101.42 "
-            "user=jsmith action=failure"
+            "index=authentication src_ip=185.220.101.42 user=jsmith action=failure"
         ),
     },
     {
@@ -287,8 +274,7 @@ _MOCK_NOTABLES = [
         "owner": "unassigned",
         "security_domain": "network",
         "drilldown_search": (
-            "index=network src_ip=10.1.42.17 "
-            "dest_ip=198.51.100.23 action=allowed"
+            "index=network src_ip=10.1.42.17 dest_ip=198.51.100.23 action=allowed"
         ),
     },
     {
@@ -304,10 +290,7 @@ _MOCK_NOTABLES = [
         "status_label": "New",
         "owner": "unassigned",
         "security_domain": "network",
-        "drilldown_search": (
-            "index=network sourcetype=dns "
-            "query_type=TXT src_ip=10.1.15.88"
-        ),
+        "drilldown_search": ("index=network sourcetype=dns query_type=TXT src_ip=10.1.15.88"),
     },
 ]
 
@@ -325,9 +308,7 @@ class SplunkMCPServer:
     server_id: str = "splunk"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -385,19 +366,11 @@ class SplunkMCPServer:
 
     # ---- mock implementations ----
 
-    def _mock_search(
-        self, query: str, earliest: str, latest: str
-    ) -> dict[str, Any]:
+    def _mock_search(self, query: str, earliest: str, latest: str) -> dict[str, Any]:
         q_lower = query.lower()
-        if any(
-            k in q_lower
-            for k in ("authentication", "okta", "login")
-        ):
+        if any(k in q_lower for k in ("authentication", "okta", "login")):
             events = _MOCK_SEARCH_RESULTS["authentication"]
-        elif any(
-            k in q_lower
-            for k in ("process", "sysmon", "powershell")
-        ):
+        elif any(k in q_lower for k in ("process", "sysmon", "powershell")):
             events = _MOCK_SEARCH_RESULTS["process"]
         else:
             events = _MOCK_SEARCH_RESULTS["default"]
@@ -427,11 +400,7 @@ class SplunkMCPServer:
         if severity == "all":
             notables = _MOCK_NOTABLES
         else:
-            notables = [
-                n
-                for n in _MOCK_NOTABLES
-                if n["severity"] == severity.lower()
-            ]
+            notables = [n for n in _MOCK_NOTABLES if n["severity"] == severity.lower()]
         return {
             "status": "success",
             "total": len(notables),
@@ -441,22 +410,14 @@ class SplunkMCPServer:
 
     # ---- real implementations (placeholders) ----
 
-    def _real_search(
-        self, query: str, earliest: str, latest: str
-    ) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Splunk search not yet implemented"
-        )
+    def _real_search(self, query: str, earliest: str, latest: str) -> dict[str, Any]:
+        raise NotImplementedError("Real Splunk search not yet implemented")
 
     def _real_get_alerts(self, limit: int) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Splunk alerts not yet implemented"
-        )
+        raise NotImplementedError("Real Splunk alerts not yet implemented")
 
     def _real_get_notable(self, severity: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Splunk notables not yet implemented"
-        )
+        raise NotImplementedError("Real Splunk notables not yet implemented")
 
     # ---- LangChain tool registration helpers ----
 
@@ -480,16 +441,12 @@ class SplunkMCPServer:
                         },
                         "earliest": {
                             "type": "string",
-                            "description": (
-                                "Start of time range"
-                            ),
+                            "description": ("Start of time range"),
                             "default": "-24h",
                         },
                         "latest": {
                             "type": "string",
-                            "description": (
-                                "End of time range"
-                            ),
+                            "description": ("End of time range"),
                             "default": "now",
                         },
                     },
@@ -499,8 +456,7 @@ class SplunkMCPServer:
             {
                 "name": "splunk_get_alerts",
                 "description": (
-                    "Retrieve recent triggered alerts from "
-                    "Splunk Enterprise Security."
+                    "Retrieve recent triggered alerts from Splunk Enterprise Security."
                 ),
                 "server_id": self.server_id,
                 "input_schema": {
@@ -508,9 +464,7 @@ class SplunkMCPServer:
                     "properties": {
                         "limit": {
                             "type": "integer",
-                            "description": (
-                                "Maximum alerts to return"
-                            ),
+                            "description": ("Maximum alerts to return"),
                             "default": 50,
                         },
                     },
@@ -536,9 +490,7 @@ class SplunkMCPServer:
                                 "low",
                                 "all",
                             ],
-                            "description": (
-                                "Filter by severity"
-                            ),
+                            "description": ("Filter by severity"),
                             "default": "all",
                         },
                     },

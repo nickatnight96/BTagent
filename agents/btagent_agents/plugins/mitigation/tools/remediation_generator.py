@@ -6,11 +6,10 @@ content, and technical hardening recommendations mapped to NIST CSF / CIS Contro
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.tools import tool
-
 
 # --------------------------------------------------------------------------- #
 # Mock investigation data
@@ -122,78 +121,92 @@ def _remediation_technical(inv: dict[str, Any]) -> dict[str, Any]:
 
     # Immediate: credential reset
     for account in affected_accounts:
-        actions.append({
-            "priority": "immediate",
-            "action": f"Reset credentials for {account}",
-            "commands": [
-                f"Set-ADAccountPassword -Identity '{account.split('@')[0]}' -Reset",
-                f"Set-ADUser -Identity '{account.split('@')[0]}' -ChangePasswordAtLogon $true",
-            ],
-            "verification": f"Verify account lockout cleared: Get-ADUser '{account.split('@')[0]}' -Properties LockedOut",
-        })
+        actions.append(
+            {
+                "priority": "immediate",
+                "action": f"Reset credentials for {account}",
+                "commands": [
+                    f"Set-ADAccountPassword -Identity '{account.split('@')[0]}' -Reset",
+                    f"Set-ADUser -Identity '{account.split('@')[0]}' -ChangePasswordAtLogon $true",
+                ],
+                "verification": f"Verify account lockout cleared: Get-ADUser '{account.split('@')[0]}' -Properties LockedOut",
+            }
+        )
 
     # Immediate: block IOCs
     if ips:
-        actions.append({
-            "priority": "immediate",
-            "action": "Block malicious IP addresses at firewall",
-            "commands": [
-                f"# Add to firewall block list:\n" + "\n".join(f"  block ip {ip}" for ip in ips),
-            ],
-            "verification": "Verify blocks: show access-list | include " + ips[0],
-        })
+        actions.append(
+            {
+                "priority": "immediate",
+                "action": "Block malicious IP addresses at firewall",
+                "commands": [
+                    "# Add to firewall block list:\n" + "\n".join(f"  block ip {ip}" for ip in ips),
+                ],
+                "verification": "Verify blocks: show access-list | include " + ips[0],
+            }
+        )
 
     if domains:
-        actions.append({
-            "priority": "immediate",
-            "action": "Block malicious domains at DNS/proxy",
-            "commands": [
-                "# Add to DNS sinkhole / proxy block list:\n"
-                + "\n".join(f"  block domain {d}" for d in domains),
-            ],
-            "verification": "Verify DNS resolution fails: nslookup " + domains[0],
-        })
+        actions.append(
+            {
+                "priority": "immediate",
+                "action": "Block malicious domains at DNS/proxy",
+                "commands": [
+                    "# Add to DNS sinkhole / proxy block list:\n"
+                    + "\n".join(f"  block domain {d}" for d in domains),
+                ],
+                "verification": "Verify DNS resolution fails: nslookup " + domains[0],
+            }
+        )
 
     if hashes:
-        actions.append({
-            "priority": "immediate",
-            "action": "Block file hashes in EDR policy",
-            "commands": [
-                "# Add to EDR block list:\n" + "\n".join(f"  block hash {h}" for h in hashes),
-            ],
-            "verification": "Verify in EDR console that hashes are in deny list",
-        })
+        actions.append(
+            {
+                "priority": "immediate",
+                "action": "Block file hashes in EDR policy",
+                "commands": [
+                    "# Add to EDR block list:\n" + "\n".join(f"  block hash {h}" for h in hashes),
+                ],
+                "verification": "Verify in EDR console that hashes are in deny list",
+            }
+        )
 
     # Short-term: system scanning
     for system in affected_systems:
-        actions.append({
-            "priority": "short_term",
-            "action": f"Full malware scan on {system}",
-            "commands": [
-                f"# Initiate full scan via EDR:\n  Invoke-EDRScan -Target {system} -ScanType Full",
-            ],
-            "verification": f"Review scan results for {system} in EDR console",
-        })
+        actions.append(
+            {
+                "priority": "short_term",
+                "action": f"Full malware scan on {system}",
+                "commands": [
+                    f"# Initiate full scan via EDR:\n  Invoke-EDRScan -Target {system} -ScanType Full",
+                ],
+                "verification": f"Review scan results for {system} in EDR console",
+            }
+        )
 
     # Short-term: detection rules
-    actions.append({
-        "priority": "short_term",
-        "action": "Deploy updated detection rules for identified techniques",
-        "commands": [
-            "# See generate_detection_content tool for platform-specific rules",
-        ],
-        "verification": "Validate rules fire against test data in staging SIEM",
-    })
+    actions.append(
+        {
+            "priority": "short_term",
+            "action": "Deploy updated detection rules for identified techniques",
+            "commands": [
+                "# See generate_detection_content tool for platform-specific rules",
+            ],
+            "verification": "Validate rules fire against test data in staging SIEM",
+        }
+    )
 
     # Long-term: hardening
-    actions.append({
-        "priority": "long_term",
-        "action": "Implement email authentication (SPF, DKIM, DMARC)",
-        "commands": [
-            "# Publish DMARC record: _dmarc.corp.com TXT \"v=DMARC1; p=quarantine; rua=mailto:dmarc@corp.com\"",
-        ],
-        "verification": "Verify DMARC record: dig TXT _dmarc.corp.com",
-    })
+    actions.append(
+        {
+            "priority": "long_term",
+            "action": "Implement email authentication (SPF, DKIM, DMARC)",
+            "commands": [
+                '# Publish DMARC record: _dmarc.corp.com TXT "v=DMARC1; p=quarantine; rua=mailto:dmarc@corp.com"',
+            ],
+            "verification": "Verify DMARC record: dig TXT _dmarc.corp.com",
+        }
+    )
 
     return {
         "audience": "technical",
@@ -300,60 +313,68 @@ def _generate_splunk_rules(inv: dict[str, Any]) -> list[dict[str, str]]:
 
     if ips:
         ip_list = " OR ".join(f'"{ip}"' for ip in ips)
-        rules.append({
-            "name": "IOC - Malicious IP Communication",
-            "description": "Detect communication with known malicious IPs from this investigation",
-            "language": "spl",
-            "rule": (
-                f"index=* earliest=-24h\n"
-                f"(src_ip IN ({ip_list}) OR dest_ip IN ({ip_list}))\n"
-                f"| stats count min(_time) as first_seen max(_time) as last_seen "
-                f"by src_ip, dest_ip, action, sourcetype\n"
-                f"| where count > 0"
-            ),
-        })
+        rules.append(
+            {
+                "name": "IOC - Malicious IP Communication",
+                "description": "Detect communication with known malicious IPs from this investigation",
+                "language": "spl",
+                "rule": (
+                    f"index=* earliest=-24h\n"
+                    f"(src_ip IN ({ip_list}) OR dest_ip IN ({ip_list}))\n"
+                    f"| stats count min(_time) as first_seen max(_time) as last_seen "
+                    f"by src_ip, dest_ip, action, sourcetype\n"
+                    f"| where count > 0"
+                ),
+            }
+        )
 
     if domains:
         domain_list = " OR ".join(f'"{d}"' for d in domains)
-        rules.append({
-            "name": "IOC - Malicious Domain Resolution",
-            "description": "Detect DNS queries for known malicious domains",
-            "language": "spl",
-            "rule": (
-                f"index=dns earliest=-24h\n"
-                f"query IN ({domain_list})\n"
-                f"| stats count by query, src_ip, answer\n"
-                f"| where count > 0"
-            ),
-        })
+        rules.append(
+            {
+                "name": "IOC - Malicious Domain Resolution",
+                "description": "Detect DNS queries for known malicious domains",
+                "language": "spl",
+                "rule": (
+                    f"index=dns earliest=-24h\n"
+                    f"query IN ({domain_list})\n"
+                    f"| stats count by query, src_ip, answer\n"
+                    f"| where count > 0"
+                ),
+            }
+        )
 
     if hashes:
         hash_list = " OR ".join(f'"{h}"' for h in hashes)
-        rules.append({
-            "name": "IOC - Malicious File Hash Detected",
-            "description": "Detect execution of files with known malicious hashes",
-            "language": "spl",
-            "rule": (
-                f"index=endpoint earliest=-24h\n"
-                f"file_hash IN ({hash_list})\n"
-                f"| stats count by file_hash, file_name, host, user"
-            ),
-        })
+        rules.append(
+            {
+                "name": "IOC - Malicious File Hash Detected",
+                "description": "Detect execution of files with known malicious hashes",
+                "language": "spl",
+                "rule": (
+                    f"index=endpoint earliest=-24h\n"
+                    f"file_hash IN ({hash_list})\n"
+                    f"| stats count by file_hash, file_name, host, user"
+                ),
+            }
+        )
 
     # Add a technique-based rule
     techniques = inv.get("mitre_techniques", [])
     if "T1566.002" in techniques:
-        rules.append({
-            "name": "TTP - Spearphishing Link Click",
-            "description": "Detect email link clicks followed by credential entry on suspicious domains",
-            "language": "spl",
-            "rule": (
-                'index=proxy earliest=-24h action=allowed\n'
-                '| eval suspicious=if(match(url_domain, "(?i)(login|signin|verify|secure)"), 1, 0)\n'
-                '| where suspicious=1\n'
-                '| stats count by src_ip, url_domain, user'
-            ),
-        })
+        rules.append(
+            {
+                "name": "TTP - Spearphishing Link Click",
+                "description": "Detect email link clicks followed by credential entry on suspicious domains",
+                "language": "spl",
+                "rule": (
+                    "index=proxy earliest=-24h action=allowed\n"
+                    '| eval suspicious=if(match(url_domain, "(?i)(login|signin|verify|secure)"), 1, 0)\n'
+                    "| where suspicious=1\n"
+                    "| stats count by src_ip, url_domain, user"
+                ),
+            }
+        )
 
     return rules
 
@@ -367,36 +388,40 @@ def _generate_elastic_rules(inv: dict[str, Any]) -> list[dict[str, str]]:
     domains = [i["value"] for i in iocs if i["type"] == "domain"]
 
     if ips:
-        ip_clauses = " or ".join(
-            f'source.ip: "{ip}" or destination.ip: "{ip}"' for ip in ips
+        ip_clauses = " or ".join(f'source.ip: "{ip}" or destination.ip: "{ip}"' for ip in ips)
+        rules.append(
+            {
+                "name": "IOC - Malicious IP Communication",
+                "description": "Detect communication with known malicious IPs",
+                "language": "kql",
+                "rule": f"({ip_clauses})",
+            }
         )
-        rules.append({
-            "name": "IOC - Malicious IP Communication",
-            "description": "Detect communication with known malicious IPs",
-            "language": "kql",
-            "rule": f"({ip_clauses})",
-        })
 
     if domains:
         domain_clauses = " or ".join(f'dns.question.name: "{d}"' for d in domains)
-        rules.append({
-            "name": "IOC - Malicious Domain Resolution",
-            "description": "Detect DNS queries for known malicious domains",
-            "language": "kql",
-            "rule": f"({domain_clauses})",
-        })
+        rules.append(
+            {
+                "name": "IOC - Malicious Domain Resolution",
+                "description": "Detect DNS queries for known malicious domains",
+                "language": "kql",
+                "rule": f"({domain_clauses})",
+            }
+        )
 
     techniques = inv.get("mitre_techniques", [])
     if "T1078" in techniques:
-        rules.append({
-            "name": "TTP - Suspicious Account Usage",
-            "description": "Detect anomalous authentication patterns for compromised accounts",
-            "language": "kql",
-            "rule": (
-                'event.category: "authentication" and event.outcome: "success" '
-                'and not source.ip: (10.0.0.0/8 or 172.16.0.0/12 or 192.168.0.0/16)'
-            ),
-        })
+        rules.append(
+            {
+                "name": "TTP - Suspicious Account Usage",
+                "description": "Detect anomalous authentication patterns for compromised accounts",
+                "language": "kql",
+                "rule": (
+                    'event.category: "authentication" and event.outcome: "success" '
+                    "and not source.ip: (10.0.0.0/8 or 172.16.0.0/12 or 192.168.0.0/16)"
+                ),
+            }
+        )
 
     return rules
 
@@ -411,33 +436,37 @@ def _generate_sentinel_rules(inv: dict[str, Any]) -> list[dict[str, str]]:
 
     if ips:
         ip_list = ", ".join(f'"{ip}"' for ip in ips)
-        rules.append({
-            "name": "IOC - Malicious IP Communication",
-            "description": "Detect communication with known malicious IPs (Sentinel)",
-            "language": "kql",
-            "rule": (
-                f"let malicious_ips = dynamic([{ip_list}]);\n"
-                f"CommonSecurityLog\n"
-                f"| where TimeGenerated > ago(24h)\n"
-                f"| where SourceIP in (malicious_ips) or DestinationIP in (malicious_ips)\n"
-                f"| summarize count() by SourceIP, DestinationIP, DeviceAction"
-            ),
-        })
+        rules.append(
+            {
+                "name": "IOC - Malicious IP Communication",
+                "description": "Detect communication with known malicious IPs (Sentinel)",
+                "language": "kql",
+                "rule": (
+                    f"let malicious_ips = dynamic([{ip_list}]);\n"
+                    f"CommonSecurityLog\n"
+                    f"| where TimeGenerated > ago(24h)\n"
+                    f"| where SourceIP in (malicious_ips) or DestinationIP in (malicious_ips)\n"
+                    f"| summarize count() by SourceIP, DestinationIP, DeviceAction"
+                ),
+            }
+        )
 
     if domains:
         domain_list = ", ".join(f'"{d}"' for d in domains)
-        rules.append({
-            "name": "IOC - Malicious Domain Resolution",
-            "description": "Detect DNS queries for known malicious domains (Sentinel)",
-            "language": "kql",
-            "rule": (
-                f"let malicious_domains = dynamic([{domain_list}]);\n"
-                f"DnsEvents\n"
-                f"| where TimeGenerated > ago(24h)\n"
-                f"| where Name in (malicious_domains)\n"
-                f"| summarize count() by Name, ClientIP, IPAddresses"
-            ),
-        })
+        rules.append(
+            {
+                "name": "IOC - Malicious Domain Resolution",
+                "description": "Detect DNS queries for known malicious domains (Sentinel)",
+                "language": "kql",
+                "rule": (
+                    f"let malicious_domains = dynamic([{domain_list}]);\n"
+                    f"DnsEvents\n"
+                    f"| where TimeGenerated > ago(24h)\n"
+                    f"| where Name in (malicious_domains)\n"
+                    f"| summarize count() by Name, ClientIP, IPAddresses"
+                ),
+            }
+        )
 
     return rules
 
@@ -482,16 +511,14 @@ def generate_remediation(investigation_id: str, audience: str) -> dict[str, Any]
 
     result = generators[audience](inv)
     result["investigation_id"] = investigation_id
-    result["generated_at"] = datetime.now(timezone.utc).isoformat()
+    result["generated_at"] = datetime.now(UTC).isoformat()
     result["status"] = "success"
 
     return result
 
 
 @tool
-def generate_detection_content(
-    investigation_id: str, platform: str
-) -> dict[str, Any]:
+def generate_detection_content(investigation_id: str, platform: str) -> dict[str, Any]:
     """Generate SIEM detection rules based on investigation findings.
 
     Creates platform-specific detection rules from IOCs and attack
@@ -531,7 +558,7 @@ def generate_detection_content(
         "platform": platform,
         "rules": rules,
         "rule_count": len(rules),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "status": "success",
     }
 
@@ -561,106 +588,112 @@ def generate_hardening_recommendations(
     recommendations: list[dict[str, Any]] = []
 
     # Phishing-related hardening
-    if "phishing" in attack_vectors or any(
-        t.startswith("T1566") for t in techniques
-    ):
-        recommendations.extend([
-            {
-                "category": "email_security",
-                "recommendation": "Deploy advanced email filtering with URL sandboxing",
-                "nist_csf": "PR.PT-4 (Communications and control networks are protected)",
-                "cis_control": "CIS 9.6 - Block Unnecessary File Types",
-                "priority": "high",
-                "complexity": "medium",
-            },
-            {
-                "category": "email_security",
-                "recommendation": "Implement DMARC with p=reject policy",
-                "nist_csf": "PR.PT-4",
-                "cis_control": "CIS 9.5 - Implement DMARC",
-                "priority": "high",
-                "complexity": "low",
-            },
-            {
-                "category": "awareness",
-                "recommendation": "Deploy simulated phishing exercises quarterly",
-                "nist_csf": "PR.AT-1 (All users are informed and trained)",
-                "cis_control": "CIS 14.1 - Establish Security Awareness Program",
-                "priority": "medium",
-                "complexity": "low",
-            },
-        ])
+    if "phishing" in attack_vectors or any(t.startswith("T1566") for t in techniques):
+        recommendations.extend(
+            [
+                {
+                    "category": "email_security",
+                    "recommendation": "Deploy advanced email filtering with URL sandboxing",
+                    "nist_csf": "PR.PT-4 (Communications and control networks are protected)",
+                    "cis_control": "CIS 9.6 - Block Unnecessary File Types",
+                    "priority": "high",
+                    "complexity": "medium",
+                },
+                {
+                    "category": "email_security",
+                    "recommendation": "Implement DMARC with p=reject policy",
+                    "nist_csf": "PR.PT-4",
+                    "cis_control": "CIS 9.5 - Implement DMARC",
+                    "priority": "high",
+                    "complexity": "low",
+                },
+                {
+                    "category": "awareness",
+                    "recommendation": "Deploy simulated phishing exercises quarterly",
+                    "nist_csf": "PR.AT-1 (All users are informed and trained)",
+                    "cis_control": "CIS 14.1 - Establish Security Awareness Program",
+                    "priority": "medium",
+                    "complexity": "low",
+                },
+            ]
+        )
 
     # Credential compromise hardening
     if "credential_harvest" in attack_vectors or "T1078" in techniques:
-        recommendations.extend([
-            {
-                "category": "identity",
-                "recommendation": "Enforce MFA for all user accounts",
-                "nist_csf": "PR.AC-7 (Users, devices, other assets are authenticated)",
-                "cis_control": "CIS 6.3 - Require MFA for Externally-Exposed Applications",
-                "priority": "critical",
-                "complexity": "medium",
-            },
-            {
-                "category": "identity",
-                "recommendation": "Implement conditional access policies based on risk signals",
-                "nist_csf": "PR.AC-4 (Access permissions are managed)",
-                "cis_control": "CIS 6.8 - Define and Maintain Role-Based Access Control",
-                "priority": "high",
-                "complexity": "high",
-            },
-            {
-                "category": "monitoring",
-                "recommendation": "Deploy impossible-travel and anomalous-login detection",
-                "nist_csf": "DE.AE-1 (A baseline of network operations is established)",
-                "cis_control": "CIS 8.11 - Conduct Audit Log Reviews",
-                "priority": "high",
-                "complexity": "medium",
-            },
-        ])
+        recommendations.extend(
+            [
+                {
+                    "category": "identity",
+                    "recommendation": "Enforce MFA for all user accounts",
+                    "nist_csf": "PR.AC-7 (Users, devices, other assets are authenticated)",
+                    "cis_control": "CIS 6.3 - Require MFA for Externally-Exposed Applications",
+                    "priority": "critical",
+                    "complexity": "medium",
+                },
+                {
+                    "category": "identity",
+                    "recommendation": "Implement conditional access policies based on risk signals",
+                    "nist_csf": "PR.AC-4 (Access permissions are managed)",
+                    "cis_control": "CIS 6.8 - Define and Maintain Role-Based Access Control",
+                    "priority": "high",
+                    "complexity": "high",
+                },
+                {
+                    "category": "monitoring",
+                    "recommendation": "Deploy impossible-travel and anomalous-login detection",
+                    "nist_csf": "DE.AE-1 (A baseline of network operations is established)",
+                    "cis_control": "CIS 8.11 - Conduct Audit Log Reviews",
+                    "priority": "high",
+                    "complexity": "medium",
+                },
+            ]
+        )
 
     # Account compromise hardening
     if "account_compromise" in attack_vectors or "T1114.002" in techniques:
-        recommendations.extend([
-            {
-                "category": "email_security",
-                "recommendation": "Enable mailbox audit logging and forwarding rule alerts",
-                "nist_csf": "DE.CM-3 (Personnel activity is monitored)",
-                "cis_control": "CIS 8.2 - Collect Audit Logs",
-                "priority": "high",
-                "complexity": "low",
-            },
-            {
-                "category": "network",
-                "recommendation": "Implement network segmentation between user and server VLANs",
-                "nist_csf": "PR.AC-5 (Network integrity is protected)",
-                "cis_control": "CIS 12.2 - Establish and Maintain Network Segmentation",
-                "priority": "medium",
-                "complexity": "high",
-            },
-        ])
+        recommendations.extend(
+            [
+                {
+                    "category": "email_security",
+                    "recommendation": "Enable mailbox audit logging and forwarding rule alerts",
+                    "nist_csf": "DE.CM-3 (Personnel activity is monitored)",
+                    "cis_control": "CIS 8.2 - Collect Audit Logs",
+                    "priority": "high",
+                    "complexity": "low",
+                },
+                {
+                    "category": "network",
+                    "recommendation": "Implement network segmentation between user and server VLANs",
+                    "nist_csf": "PR.AC-5 (Network integrity is protected)",
+                    "cis_control": "CIS 12.2 - Establish and Maintain Network Segmentation",
+                    "priority": "medium",
+                    "complexity": "high",
+                },
+            ]
+        )
 
     # General recommendations if no specific vectors matched
     if not recommendations:
-        recommendations.extend([
-            {
-                "category": "general",
-                "recommendation": "Review and update endpoint protection configurations",
-                "nist_csf": "PR.PT-1 (Audit/log records are maintained)",
-                "cis_control": "CIS 10.1 - Deploy and Maintain Anti-Malware Software",
-                "priority": "medium",
-                "complexity": "low",
-            },
-            {
-                "category": "general",
-                "recommendation": "Conduct vulnerability assessment of affected systems",
-                "nist_csf": "ID.RA-1 (Asset vulnerabilities are identified)",
-                "cis_control": "CIS 7.1 - Establish and Maintain Vulnerability Management",
-                "priority": "medium",
-                "complexity": "medium",
-            },
-        ])
+        recommendations.extend(
+            [
+                {
+                    "category": "general",
+                    "recommendation": "Review and update endpoint protection configurations",
+                    "nist_csf": "PR.PT-1 (Audit/log records are maintained)",
+                    "cis_control": "CIS 10.1 - Deploy and Maintain Anti-Malware Software",
+                    "priority": "medium",
+                    "complexity": "low",
+                },
+                {
+                    "category": "general",
+                    "recommendation": "Conduct vulnerability assessment of affected systems",
+                    "nist_csf": "ID.RA-1 (Asset vulnerabilities are identified)",
+                    "cis_control": "CIS 7.1 - Establish and Maintain Vulnerability Management",
+                    "priority": "medium",
+                    "complexity": "medium",
+                },
+            ]
+        )
 
     return {
         "investigation_id": investigation_id,
@@ -671,6 +704,6 @@ def generate_hardening_recommendations(
         "nist_csf_functions_covered": sorted(
             {r["nist_csf"].split("(")[0].strip().split(".")[0] for r in recommendations}
         ),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "status": "success",
     }

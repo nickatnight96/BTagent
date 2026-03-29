@@ -40,9 +40,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.task_manager = task_manager
     resumed = await task_manager.auto_resume()
-    logger.info(
-        "TaskManager initialised (auto-resumed %d investigation(s))", resumed
-    )
+    logger.info("TaskManager initialised (auto-resumed %d investigation(s))", resumed)
 
     yield
 

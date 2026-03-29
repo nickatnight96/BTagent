@@ -6,12 +6,12 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
+from btagent_shared.types.events import EventEnvelope
 from fastapi import WebSocket, WebSocketDisconnect
 from redis.asyncio import Redis
 from starlette.websockets import WebSocketState
 
 from btagent_backend.auth.middleware import CurrentUser
-from btagent_shared.types.events import EventEnvelope
 
 from .protocol import (
     BACKPRESSURE_QUEUE_LIMIT,
@@ -284,9 +284,7 @@ class WebSocketHub:
     # Internal: per-client sender loop with backpressure
     # ------------------------------------------------------------------
 
-    async def _enqueue(
-        self, client: ConnectedClient, payload: str, *, critical: bool
-    ) -> None:
+    async def _enqueue(self, client: ConnectedClient, payload: str, *, critical: bool) -> None:
         if client.queue.full():
             if critical:
                 # Drop the oldest non-critical item to make room
@@ -327,9 +325,7 @@ class WebSocketHub:
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.exception(
-                "Sender loop error for user=%s", client.user.id
-            )
+            logger.exception("Sender loop error for user=%s", client.user.id)
 
     # ------------------------------------------------------------------
     # Internal: ensure Redis subscription exists

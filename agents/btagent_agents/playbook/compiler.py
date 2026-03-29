@@ -11,7 +11,6 @@ from collections import defaultdict, deque
 from typing import Any
 
 import yaml
-
 from btagent_shared.types.playbook import (
     ActionStep,
     DecisionStep,
@@ -22,7 +21,6 @@ from btagent_shared.types.playbook import (
     PlaybookStep,
     StepType,
     TriggerCondition,
-    ValidationResult,
 )
 
 logger = logging.getLogger("btagent.playbook.compiler")
@@ -141,9 +139,7 @@ class PlaybookCompiler:
                 adj[step.id].append(succ)
                 in_degree[succ] = in_degree.get(succ, 0) + 1
 
-        queue: deque[str] = deque(
-            sid for sid, deg in in_degree.items() if deg == 0
-        )
+        queue: deque[str] = deque(sid for sid, deg in in_degree.items() if deg == 0)
         visited = 0
         while queue:
             node = queue.popleft()
@@ -155,9 +151,7 @@ class PlaybookCompiler:
 
         errors: list[str] = []
         if visited < len(step_ids):
-            cycle_nodes = sorted(
-                sid for sid, deg in in_degree.items() if deg > 0
-            )
+            cycle_nodes = sorted(sid for sid, deg in in_degree.items() if deg > 0)
             errors.append(f"Cycle detected among steps: {cycle_nodes}")
 
         return errors

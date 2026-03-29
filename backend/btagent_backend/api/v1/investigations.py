@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from btagent_shared.types.config import TLP
+from btagent_shared.types.enums import InvestigationStatus, Severity
+from btagent_shared.utils.ids import generate_id
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,9 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services.task_manager import TaskManager
-from btagent_shared.types.enums import InvestigationStatus, Severity
-from btagent_shared.types.config import TLP
-from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger("btagent.api.investigations")
 
@@ -194,7 +194,9 @@ async def pause_investigation(
         raise HTTPException(status_code=404, detail="Investigation not found")
 
     if inv.status not in (InvestigationStatus.INVESTIGATING, InvestigationStatus.TRIAGING):
-        raise HTTPException(status_code=400, detail=f"Cannot pause investigation in status: {inv.status}")
+        raise HTTPException(
+            status_code=400, detail=f"Cannot pause investigation in status: {inv.status}"
+        )
 
     inv.status = InvestigationStatus.PAUSED.value
     await task_manager.pause_investigation(investigation_id)
@@ -222,7 +224,9 @@ async def resume_investigation(
         raise HTTPException(status_code=404, detail="Investigation not found")
 
     if inv.status not in (InvestigationStatus.PAUSED, InvestigationStatus.PAUSED_HITL):
-        raise HTTPException(status_code=400, detail=f"Cannot resume investigation in status: {inv.status}")
+        raise HTTPException(
+            status_code=400, detail=f"Cannot resume investigation in status: {inv.status}"
+        )
 
     inv.status = InvestigationStatus.INVESTIGATING.value
     await task_manager.resume_investigation(investigation_id)
@@ -250,7 +254,7 @@ async def stop_investigation(
         raise HTTPException(status_code=404, detail="Investigation not found")
 
     inv.status = InvestigationStatus.CANCELLED.value
-    inv.closed_at = datetime.now(timezone.utc)
+    inv.closed_at = datetime.now(UTC)
     await task_manager.stop_investigation(investigation_id)
     logger.info("Investigation %s stopped by user %s", investigation_id, user.id)
 

@@ -7,14 +7,14 @@ cross-investigation search.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from btagent_shared.utils.ids import generate_id
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import IOCRow
-from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger("btagent.services.ioc")
 
@@ -80,7 +80,7 @@ async def create_ioc(
         context=context,
         source=source,
         enrichment=enrichment or {},
-        first_seen=first_seen or datetime.now(timezone.utc),
+        first_seen=first_seen or datetime.now(UTC),
         last_seen=last_seen,
     )
     db.add(ioc)
@@ -274,20 +274,22 @@ async def update_ioc(
         Updated row, or None if not found.
     """
     allowed_fields = {
-        "type", "value", "tlp_level", "confidence", "context",
-        "source", "enrichment", "first_seen", "last_seen",
+        "type",
+        "value",
+        "tlp_level",
+        "confidence",
+        "context",
+        "source",
+        "enrichment",
+        "first_seen",
+        "last_seen",
     }
     update_values = {k: v for k, v in fields.items() if k in allowed_fields}
 
     if not update_values:
         return await get_ioc(db, ioc_id)
 
-    stmt = (
-        update(IOCRow)
-        .where(IOCRow.id == ioc_id)
-        .values(**update_values)
-        .returning(IOCRow)
-    )
+    stmt = update(IOCRow).where(IOCRow.id == ioc_id).values(**update_values).returning(IOCRow)
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
 

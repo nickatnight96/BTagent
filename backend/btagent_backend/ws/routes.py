@@ -89,9 +89,7 @@ async def ws_global_events(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     except Exception:
-        logger.exception(
-            "Unexpected error on global WS user=%s", user.id
-        )
+        logger.exception("Unexpected error on global WS user=%s", user.id)
     finally:
         await hub.disconnect(client)
 
@@ -146,9 +144,7 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
                         "data": msg.data,
                     }
                 )
-                await redis.publish(
-                    f"btagent:commands:{msg.investigation_id}", payload
-                )
+                await redis.publish(f"btagent:commands:{msg.investigation_id}", payload)
 
         elif msg.type == ClientMessageType.HITL_RESPONSE:
             if not msg.investigation_id:
@@ -156,7 +152,9 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
                 continue
             # SEC-006 FIX: Enforce RBAC permission for HITL approvals
             if not client.user.has_permission("hitl:approve"):
-                await _send_error(client, "Permission denied: hitl:approve requires senior_analyst or higher")
+                await _send_error(
+                    client, "Permission denied: hitl:approve requires senior_analyst or higher"
+                )
                 continue
             redis = hub._redis
             if redis:
@@ -169,9 +167,7 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
                         "data": msg.data,
                     }
                 )
-                await redis.publish(
-                    f"btagent:commands:{msg.investigation_id}", payload
-                )
+                await redis.publish(f"btagent:commands:{msg.investigation_id}", payload)
 
         else:
             await _send_error(client, f"Unknown message type: {msg.type}")

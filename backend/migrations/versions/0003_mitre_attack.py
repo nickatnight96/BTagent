@@ -5,16 +5,16 @@ Revises: 0002
 Create Date: 2026-03-26
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "0003"
-down_revision: Union[str, None] = "0002"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0002"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -31,12 +31,8 @@ def upgrade() -> None:
         sa.Column("url", sa.String(500), server_default=""),
         sa.Column("is_subtechnique", sa.Boolean, server_default="false"),
     )
-    op.create_index(
-        "idx_mitre_techniques_tactic", "mitre_techniques", ["tactic"]
-    )
-    op.create_index(
-        "idx_mitre_techniques_name", "mitre_techniques", ["name"]
-    )
+    op.create_index("idx_mitre_techniques_tactic", "mitre_techniques", ["tactic"])
+    op.create_index("idx_mitre_techniques_name", "mitre_techniques", ["name"])
 
     # MITRE ATT&CK tactics
     op.create_table(
@@ -47,9 +43,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, server_default=""),
         sa.Column("ordinal", sa.Integer, nullable=False),
     )
-    op.create_index(
-        "idx_mitre_tactics_ordinal", "mitre_tactics", ["ordinal"]
-    )
+    op.create_index("idx_mitre_tactics_ordinal", "mitre_tactics", ["ordinal"])
 
     # MITRE ATT&CK threat groups
     op.create_table(
@@ -60,9 +54,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, server_default=""),
         sa.Column("technique_ids", JSONB, server_default="[]"),
     )
-    op.create_index(
-        "idx_mitre_groups_name", "mitre_groups", ["name"]
-    )
+    op.create_index("idx_mitre_groups_name", "mitre_groups", ["name"])
 
     # MITRE technique tags (entity <-> technique associations)
     op.create_table(
@@ -84,17 +76,13 @@ def upgrade() -> None:
             server_default=sa.func.now(),
         ),
     )
-    op.create_index(
-        "idx_mitre_tags_technique", "mitre_technique_tags", ["technique_id"]
-    )
+    op.create_index("idx_mitre_tags_technique", "mitre_technique_tags", ["technique_id"])
     op.create_index(
         "idx_mitre_tags_entity",
         "mitre_technique_tags",
         ["entity_type", "entity_id"],
     )
-    op.create_index(
-        "idx_mitre_tags_tagged_by", "mitre_technique_tags", ["tagged_by"]
-    )
+    op.create_index("idx_mitre_tags_tagged_by", "mitre_technique_tags", ["tagged_by"])
 
 
 def downgrade() -> None:

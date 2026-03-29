@@ -8,12 +8,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _config_logger = logging.getLogger("btagent.config")
 
-_INSECURE_JWT_DEFAULTS = frozenset({
-    "CHANGE-ME-IN-PRODUCTION",
-    "change-me-in-production-use-openssl-rand-hex-32",
-    "secret",
-    "changeme",
-})
+_INSECURE_JWT_DEFAULTS = frozenset(
+    {
+        "CHANGE-ME-IN-PRODUCTION",
+        "change-me-in-production-use-openssl-rand-hex-32",
+        "secret",
+        "changeme",
+    }
+)
 
 
 class Settings(BaseSettings):

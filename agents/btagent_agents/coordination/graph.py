@@ -8,7 +8,6 @@ Synthesizes multiple investigation reports into agency-ready summaries.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -16,10 +15,13 @@ from langgraph.graph.state import CompiledStateGraph as CompiledGraph
 
 from btagent_agents.plugins.coordination.tools.summarizer import (
     format_agency_report as _format_tool,
+)
+from btagent_agents.plugins.coordination.tools.summarizer import (
     summarize_investigation as _summarize_tool,
+)
+from btagent_agents.plugins.coordination.tools.summarizer import (
     summarize_multiple as _summarize_multiple_tool,
 )
-
 
 # --------------------------------------------------------------------------- #
 # State definition
@@ -95,15 +97,11 @@ def summarize(state: CoordinationState) -> dict[str, Any]:
 
     if len(investigation_ids) == 1:
         # Single investigation: use direct summarization
-        result = _summarize_tool.invoke(
-            {"investigation_id": investigation_ids[0]}
-        )
+        result = _summarize_tool.invoke({"investigation_id": investigation_ids[0]})
     else:
         # Multiple investigations: use map-reduce aggregation
         ids_str = ",".join(investigation_ids)
-        result = _summarize_multiple_tool.invoke(
-            {"investigation_ids": ids_str}
-        )
+        result = _summarize_multiple_tool.invoke({"investigation_ids": ids_str})
 
     if result.get("status") == "failed":
         errors.append(result.get("error", "Summarization failed"))
@@ -123,9 +121,7 @@ def format_report(state: CoordinationState) -> dict[str, Any]:
     errors: list[str] = []
 
     summary_json = json.dumps(summary)
-    result = _format_tool.invoke(
-        {"summary_json": summary_json, "format": target_format}
-    )
+    result = _format_tool.invoke({"summary_json": summary_json, "format": target_format})
 
     if result.get("status") == "failed":
         errors.append(result.get("error", "Formatting failed"))

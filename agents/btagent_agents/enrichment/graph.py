@@ -6,7 +6,6 @@ Pipeline: select_iocs -> parallel_enrich -> score_confidence -> deduplicate -> s
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -21,7 +20,6 @@ from btagent_agents.plugins.enrichment.tools.dedup import (
 from btagent_agents.plugins.enrichment.tools.enrichment_executor import (
     enrich_ioc as _enrich_ioc_tool,
 )
-
 
 # --------------------------------------------------------------------------- #
 # State definition
@@ -120,15 +118,15 @@ def parallel_enrich(state: EnrichmentState) -> dict[str, Any]:
 
     for ioc in selected_iocs:
         try:
-            result = _enrich_ioc_tool.invoke({
-                "ioc_type": ioc["type"],
-                "ioc_value": ioc["value"],
-            })
+            result = _enrich_ioc_tool.invoke(
+                {
+                    "ioc_type": ioc["type"],
+                    "ioc_value": ioc["value"],
+                }
+            )
             enriched.append(result)
         except Exception as exc:
-            errors.append(
-                f"Enrichment failed for {ioc['type']}:{ioc['value']}: {exc}"
-            )
+            errors.append(f"Enrichment failed for {ioc['type']}:{ioc['value']}: {exc}")
 
     return {
         "enriched_iocs": enriched,
@@ -145,9 +143,11 @@ def score_all_confidence(state: EnrichmentState) -> dict[str, Any]:
 
     for ioc in enriched_iocs:
         try:
-            score_result = _score_confidence_tool.invoke({
-                "enrichment_json": json.dumps(ioc),
-            })
+            score_result = _score_confidence_tool.invoke(
+                {
+                    "enrichment_json": json.dumps(ioc),
+                }
+            )
             # Merge score result back into the IOC
             ioc_scored = dict(ioc)
             ioc_scored["confidence"] = score_result.get("confidence", ioc.get("confidence", 0.0))
@@ -155,9 +155,7 @@ def score_all_confidence(state: EnrichmentState) -> dict[str, Any]:
             ioc_scored["recommended_action"] = score_result.get("recommended_action", "monitor")
             scored.append(ioc_scored)
         except Exception as exc:
-            errors.append(
-                f"Scoring failed for {ioc.get('ioc_type')}:{ioc.get('ioc_value')}: {exc}"
-            )
+            errors.append(f"Scoring failed for {ioc.get('ioc_type')}:{ioc.get('ioc_value')}: {exc}")
             scored.append(ioc)  # Keep the IOC even without updated score
 
     return {
@@ -173,9 +171,11 @@ def deduplicate(state: EnrichmentState) -> dict[str, Any]:
     errors: list[str] = []
 
     try:
-        dedup_result = _deduplicate_tool.invoke({
-            "iocs_json": json.dumps(scored_iocs),
-        })
+        dedup_result = _deduplicate_tool.invoke(
+            {
+                "iocs_json": json.dumps(scored_iocs),
+            }
+        )
         deduplicated = dedup_result.get("deduplicated", scored_iocs)
     except Exception as exc:
         errors.append(f"Deduplication failed: {exc}")

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from btagent_shared.types.enums import InvestigationStatus
 from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph as CompiledGraph
-
-from btagent_shared.types.enums import InvestigationStatus
 
 from btagent_agents.orchestrator.edges import after_hitl, route_to_agent, should_continue
 from btagent_agents.orchestrator.nodes import (
@@ -23,7 +22,6 @@ from btagent_agents.orchestrator.nodes import (
     triage_node,
 )
 from btagent_agents.orchestrator.state import InvestigationState
-
 
 # ---------------------------------------------------------------------------
 # Placeholder nodes for phase-2 agents (enrich, contain, report)

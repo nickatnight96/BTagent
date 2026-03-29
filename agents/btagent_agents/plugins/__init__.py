@@ -50,15 +50,15 @@ def load_plugin(name: str) -> DefensivePlugin | None:
     # instance (or callable returning an instance) of DefensivePlugin.
     plugin_factory = getattr(module, "plugin", None)
     if plugin_factory is None:
-        logger.error(
-            "Module %s does not expose a 'plugin' attribute", module_path
-        )
+        logger.error("Module %s does not expose a 'plugin' attribute", module_path)
         return None
 
     # Support both pre-instantiated singletons and factory callables.
-    if callable(plugin_factory) and not isinstance(plugin_factory, type):
-        plugin_instance = plugin_factory()
-    elif isinstance(plugin_factory, type):
+    if (
+        callable(plugin_factory)
+        and not isinstance(plugin_factory, type)
+        or isinstance(plugin_factory, type)
+    ):
         plugin_instance = plugin_factory()
     else:
         plugin_instance = plugin_factory

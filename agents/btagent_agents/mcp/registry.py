@@ -17,7 +17,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -54,16 +54,11 @@ class CircuitState(StrEnum):
 class CircuitOpenError(Exception):
     """Raised when circuit is open and request is rejected."""
 
-    def __init__(
-        self, connection_id: str, state: CircuitState, retry_after: float
-    ) -> None:
+    def __init__(self, connection_id: str, state: CircuitState, retry_after: float) -> None:
         self.connection_id = connection_id
         self.state = state
         self.retry_after = retry_after
-        super().__init__(
-            f"Circuit open for '{connection_id}'. "
-            f"Retry after {retry_after:.1f}s"
-        )
+        super().__init__(f"Circuit open for '{connection_id}'. Retry after {retry_after:.1f}s")
 
 
 @dataclass
@@ -129,13 +124,8 @@ class CircuitBreaker:
                     self._state = CircuitState.CLOSED
                     self._failure_count = 0
                     self._success_count = 0
-                    logger.info(
-                        "Circuit %s -> CLOSED", self.connection_id
-                    )
-            elif (
-                self._state == CircuitState.CLOSED
-                and self._failure_count > 0
-            ):
+                    logger.info("Circuit %s -> CLOSED", self.connection_id)
+            elif self._state == CircuitState.CLOSED and self._failure_count > 0:
                 self._failure_count = max(0, self._failure_count - 1)
 
     def record_failure(self, error: Exception | None = None) -> None:
@@ -151,8 +141,7 @@ class CircuitBreaker:
                     error,
                 )
             elif (
-                self._state == CircuitState.CLOSED
-                and self._failure_count >= self.failure_threshold
+                self._state == CircuitState.CLOSED and self._failure_count >= self.failure_threshold
             ):
                 self._state = CircuitState.OPEN
                 logger.warning(
@@ -167,12 +156,8 @@ class CircuitBreaker:
         with self._lock:
             state = self._effective_state()
             if state == CircuitState.OPEN:
-                retry_after = self.recovery_timeout - (
-                    time.time() - self._last_failure_time
-                )
-                raise CircuitOpenError(
-                    self.connection_id, state, max(0, retry_after)
-                )
+                retry_after = self.recovery_timeout - (time.time() - self._last_failure_time)
+                raise CircuitOpenError(self.connection_id, state, max(0, retry_after))
 
     def reset(self) -> None:
         with self._lock:
@@ -315,15 +300,11 @@ class ManagedConnection:
         try:
             await self.connect()
             self.circuit_breaker.reset()
-            logger.info(
-                "Reconnected MCP connection %s", self.connection_id
-            )
+            logger.info("Reconnected MCP connection %s", self.connection_id)
             return True
         except Exception as exc:
             self.circuit_breaker.record_failure(exc)
-            logger.error(
-                "Reconnect failed for %s: %s", self.connection_id, exc
-            )
+            logger.error("Reconnect failed for %s: %s", self.connection_id, exc)
             return False
 
 
@@ -384,8 +365,7 @@ class MCPConnectionRegistry:
 
         self._initialized = True
         logger.info(
-            "MCPConnectionRegistry initialised "
-            "(max=%d, idle=%ds, hc=%ds, ka=%ds)",
+            "MCPConnectionRegistry initialised (max=%d, idle=%ds, hc=%ds, ka=%ds)",
             MAX_CONNECTIONS,
             int(IDLE_TIMEOUT),
             int(HEALTH_CHECK_INTERVAL),
@@ -511,23 +491,17 @@ class MCPConnectionRegistry:
                     if consumer_id:
                         existing.add_consumer(consumer_id)
                     return existing
-                raise RuntimeError(
-                    f"MCP connection '{server_name}' unhealthy "
-                    "and reconnect failed"
-                )
+                raise RuntimeError(f"MCP connection '{server_name}' unhealthy and reconnect failed")
 
             # Create new connection
             if len(self._connections) >= self._max_connections:
                 self._evict_idle_connections()
                 if len(self._connections) >= self._max_connections:
-                    raise RuntimeError(
-                        f"MCP pool full ({self._max_connections} connections)"
-                    )
+                    raise RuntimeError(f"MCP pool full ({self._max_connections} connections)")
 
             if config is None:
                 raise RuntimeError(
-                    f"No existing connection for '{server_name}' "
-                    "and no config provided"
+                    f"No existing connection for '{server_name}' and no config provided"
                 )
 
             managed = ManagedConnection(
@@ -541,9 +515,7 @@ class MCPConnectionRegistry:
             self._connections[server_name] = managed
             return managed
 
-    def release_connection(
-        self, server_name: str, consumer_id: str
-    ) -> None:
+    def release_connection(self, server_name: str, consumer_id: str) -> None:
         """Release a consumer's hold on a connection."""
         with self._lock:
             conn = self._connections.get(server_name)
@@ -563,9 +535,7 @@ class MCPConnectionRegistry:
             connection_statuses: list[dict[str, Any]] = []
             for conn in self._connections.values():
                 last_hc = (
-                    datetime.fromtimestamp(
-                        conn.last_health_check, tz=timezone.utc
-                    ).isoformat()
+                    datetime.fromtimestamp(conn.last_health_check, tz=UTC).isoformat()
                     if conn.last_health_check
                     else None
                 )
@@ -606,9 +576,7 @@ class MCPConnectionRegistry:
                 conn.circuit_breaker.record_success()
                 conn.touch()
 
-    def record_failure(
-        self, server_name: str, error: Exception | None = None
-    ) -> None:
+    def record_failure(self, server_name: str, error: Exception | None = None) -> None:
         """Record a failed tool call on *server_name*."""
         with self._lock:
             conn = self._connections.get(server_name)

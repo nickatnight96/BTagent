@@ -19,9 +19,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.abuseipdb")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -54,30 +52,21 @@ _MOCK_IP_CHECK: dict[str, dict[str, Any]] = {
         "reports": [
             {
                 "reportedAt": "2026-03-26T07:55:00Z",
-                "comment": (
-                    "SSH brute force attack detected from "
-                    "this Tor exit node"
-                ),
+                "comment": ("SSH brute force attack detected from this Tor exit node"),
                 "categories": [18],
                 "reporterId": 48291,
                 "reporterCountryCode": "US",
             },
             {
                 "reportedAt": "2026-03-26T06:30:00Z",
-                "comment": (
-                    "Attempted credential stuffing on "
-                    "VPN endpoint"
-                ),
+                "comment": ("Attempted credential stuffing on VPN endpoint"),
                 "categories": [18, 15],
                 "reporterId": 72104,
                 "reporterCountryCode": "GB",
             },
             {
                 "reportedAt": "2026-03-25T22:10:00Z",
-                "comment": (
-                    "Port scanning multiple hosts on "
-                    "TCP/22, TCP/3389"
-                ),
+                "comment": ("Port scanning multiple hosts on TCP/22, TCP/3389"),
                 "categories": [14],
                 "reporterId": 15832,
                 "reporterCountryCode": "DE",
@@ -112,20 +101,14 @@ _MOCK_IP_CHECK: dict[str, dict[str, Any]] = {
         "reports": [
             {
                 "reportedAt": "2026-03-26T05:00:00Z",
-                "comment": (
-                    "Malware C2 traffic observed to "
-                    "this host"
-                ),
+                "comment": ("Malware C2 traffic observed to this host"),
                 "categories": [23, 15],
                 "reporterId": 33102,
                 "reporterCountryCode": "NL",
             },
             {
                 "reportedAt": "2026-03-25T18:30:00Z",
-                "comment": (
-                    "CobaltStrike beacon callback to "
-                    "this IP"
-                ),
+                "comment": ("CobaltStrike beacon callback to this IP"),
                 "categories": [15, 23],
                 "reporterId": 99201,
                 "reporterCountryCode": "US",
@@ -237,9 +220,7 @@ class AbuseIPDBMCPServer:
     server_id: str = "abuseipdb"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -290,9 +271,7 @@ class AbuseIPDBMCPServer:
         }
 
     def _mock_check_block(self, network: str) -> dict[str, Any]:
-        result = _MOCK_BLOCK_CHECK.get(
-            network, _MOCK_BLOCK_CHECK["default"]
-        )
+        result = _MOCK_BLOCK_CHECK.get(network, _MOCK_BLOCK_CHECK["default"])
         return {
             "status": "success",
             "network_queried": network,
@@ -303,14 +282,10 @@ class AbuseIPDBMCPServer:
     # ---- real implementations (placeholders) ----
 
     def _real_check(self, ip: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real AbuseIPDB check not yet implemented"
-        )
+        raise NotImplementedError("Real AbuseIPDB check not yet implemented")
 
     def _real_check_block(self, network: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real AbuseIPDB check block not yet implemented"
-        )
+        raise NotImplementedError("Real AbuseIPDB check block not yet implemented")
 
     # ---- LangChain tool registration helpers ----
 
@@ -331,9 +306,7 @@ class AbuseIPDBMCPServer:
                     "properties": {
                         "ip": {
                             "type": "string",
-                            "description": (
-                                "IP address to check"
-                            ),
+                            "description": ("IP address to check"),
                         },
                     },
                     "required": ["ip"],
@@ -352,10 +325,7 @@ class AbuseIPDBMCPServer:
                     "properties": {
                         "network": {
                             "type": "string",
-                            "description": (
-                                "CIDR notation network "
-                                "(e.g. 185.220.101.0/24)"
-                            ),
+                            "description": ("CIDR notation network (e.g. 185.220.101.0/24)"),
                         },
                     },
                     "required": ["network"],

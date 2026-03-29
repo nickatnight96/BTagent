@@ -13,9 +13,8 @@ import json
 import logging
 from typing import Any
 
-from langchain_core.tools import tool
-
 from btagent_shared.types.mcp import MCPToolInfo
+from langchain_core.tools import tool
 
 from btagent_agents.mcp.registry import ManagedConnection
 
@@ -36,10 +35,10 @@ def _ensure_servers_loaded() -> None:
     if _SERVER_CLASSES:
         return
 
-    from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
     from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
-    from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
     from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
+    from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
+    from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
 
     _SERVER_CLASSES["splunk"] = SplunkMCPServer
     _SERVER_CLASSES["crowdstrike"] = CrowdStrikeMCPServer
@@ -61,6 +60,7 @@ def _get_server_instance(server_id: str) -> Any:
 # ---------------------------------------------------------------------------
 # Tool discovery
 # ---------------------------------------------------------------------------
+
 
 def discover_tools(
     connections: list[ManagedConnection] | None = None,
@@ -171,6 +171,7 @@ def get_tool_descriptions_text() -> str:
 # ---------------------------------------------------------------------------
 # MCP Router Tool -- single entry-point LangChain tool
 # ---------------------------------------------------------------------------
+
 
 @tool
 async def mcp_router_tool(

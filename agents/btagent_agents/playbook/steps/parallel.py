@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from btagent_shared.types.playbook import ParallelForkStep
@@ -36,7 +36,7 @@ async def execute_parallel_fork_step(
     dict
         Step result with outputs from all branches.
     """
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
 
     if not step.branches:
         logger.info("Parallel fork '%s' has no branches — skipping", step.id)
@@ -45,19 +45,21 @@ async def execute_parallel_fork_step(
             "status": "completed",
             "output": {"branches": [], "results": []},
             "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
         }
 
     if branch_executor is None:
         # Mock mode: simulate branch execution
         branch_results = []
         for i, branch in enumerate(step.branches):
-            branch_results.append({
-                "branch_index": i,
-                "step_ids": branch,
-                "status": "completed",
-                "mock": True,
-            })
+            branch_results.append(
+                {
+                    "branch_index": i,
+                    "step_ids": branch,
+                    "status": "completed",
+                    "mock": True,
+                }
+            )
 
         logger.info(
             "Parallel fork '%s' mock-executed %d branches",
@@ -72,7 +74,7 @@ async def execute_parallel_fork_step(
                 "results": branch_results,
             },
             "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
         }
 
     # Production: run all branches concurrently
@@ -99,10 +101,7 @@ async def execute_parallel_fork_step(
                 "error": str(exc),
             }
 
-    tasks = [
-        _run_branch(i, branch)
-        for i, branch in enumerate(step.branches)
-    ]
+    tasks = [_run_branch(i, branch) for i, branch in enumerate(step.branches)]
     branch_results = await asyncio.gather(*tasks)
 
     all_ok = all(r["status"] == "completed" for r in branch_results)
@@ -123,5 +122,5 @@ async def execute_parallel_fork_step(
             "results": list(branch_results),
         },
         "started_at": started_at,
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
     }

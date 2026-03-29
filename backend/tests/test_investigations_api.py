@@ -1,21 +1,19 @@
 """Tests for the Investigation CRUD and lifecycle API endpoints."""
 
 import pytest
+from btagent_shared.types.enums import InvestigationStatus
+from btagent_shared.utils.ids import generate_id
+from helpers import auth_header
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import InvestigationRow, UserRow
-from btagent_shared.types.enums import InvestigationStatus
-from btagent_shared.utils.ids import generate_id
-from helpers import auth_header
-
 
 # ---- POST /api/v1/investigations ----
 
+
 @pytest.mark.asyncio
-async def test_create_investigation_returns_201(
-    client: AsyncClient, analyst_token: str
-):
+async def test_create_investigation_returns_201(client: AsyncClient, analyst_token: str):
     """Creating an investigation returns 201 with the new resource."""
     resp = await client.post(
         "/api/v1/investigations",
@@ -34,9 +32,7 @@ async def test_create_investigation_returns_201(
 
 
 @pytest.mark.asyncio
-async def test_create_investigation_defaults_pending(
-    client: AsyncClient, analyst_token: str
-):
+async def test_create_investigation_defaults_pending(client: AsyncClient, analyst_token: str):
     """A newly created investigation defaults to status=pending."""
     resp = await client.post(
         "/api/v1/investigations",
@@ -49,9 +45,7 @@ async def test_create_investigation_defaults_pending(
 
 
 @pytest.mark.asyncio
-async def test_create_investigation_defaults_severity(
-    client: AsyncClient, analyst_token: str
-):
+async def test_create_investigation_defaults_severity(client: AsyncClient, analyst_token: str):
     """A newly created investigation without severity defaults to medium."""
     resp = await client.post(
         "/api/v1/investigations",
@@ -63,9 +57,7 @@ async def test_create_investigation_defaults_severity(
 
 
 @pytest.mark.asyncio
-async def test_create_investigation_defaults_tlp(
-    client: AsyncClient, analyst_token: str
-):
+async def test_create_investigation_defaults_tlp(client: AsyncClient, analyst_token: str):
     """A newly created investigation without tlp_level defaults to green."""
     resp = await client.post(
         "/api/v1/investigations",
@@ -78,10 +70,9 @@ async def test_create_investigation_defaults_tlp(
 
 # ---- GET /api/v1/investigations ----
 
+
 @pytest.mark.asyncio
-async def test_list_investigations_paginated(
-    client: AsyncClient, analyst_token: str
-):
+async def test_list_investigations_paginated(client: AsyncClient, analyst_token: str):
     """Listing investigations returns a paginated response."""
     # Create a few investigations first.
     for i in range(3):
@@ -106,9 +97,7 @@ async def test_list_investigations_paginated(
 
 
 @pytest.mark.asyncio
-async def test_list_investigations_with_status_filter(
-    client: AsyncClient, analyst_token: str
-):
+async def test_list_investigations_with_status_filter(client: AsyncClient, analyst_token: str):
     """Filtering by status returns only matching investigations."""
     # Create one pending investigation.
     await client.post(
@@ -128,9 +117,7 @@ async def test_list_investigations_with_status_filter(
 
 
 @pytest.mark.asyncio
-async def test_list_investigations_nonexistent_status(
-    client: AsyncClient, analyst_token: str
-):
+async def test_list_investigations_nonexistent_status(client: AsyncClient, analyst_token: str):
     """Filtering with a status that no investigation has returns empty list."""
     resp = await client.get(
         "/api/v1/investigations?status=closed",
@@ -145,10 +132,9 @@ async def test_list_investigations_nonexistent_status(
 
 # ---- GET /api/v1/investigations/{id} ----
 
+
 @pytest.mark.asyncio
-async def test_get_investigation_by_id(
-    client: AsyncClient, analyst_token: str
-):
+async def test_get_investigation_by_id(client: AsyncClient, analyst_token: str):
     """Fetching an investigation by ID returns the correct record."""
     create_resp = await client.post(
         "/api/v1/investigations",
@@ -169,9 +155,7 @@ async def test_get_investigation_by_id(
 
 
 @pytest.mark.asyncio
-async def test_get_nonexistent_investigation_returns_404(
-    client: AsyncClient, analyst_token: str
-):
+async def test_get_nonexistent_investigation_returns_404(client: AsyncClient, analyst_token: str):
     """Requesting a non-existent investigation ID returns 404."""
     resp = await client.get(
         "/api/v1/investigations/inv_does_not_exist",
@@ -183,10 +167,9 @@ async def test_get_nonexistent_investigation_returns_404(
 
 # ---- POST /api/v1/investigations/{id}/chat ----
 
+
 @pytest.mark.asyncio
-async def test_chat_accepts_message(
-    client: AsyncClient, analyst_token: str
-):
+async def test_chat_accepts_message(client: AsyncClient, analyst_token: str):
     """Posting a chat message to an investigation returns status=sent."""
     create_resp = await client.post(
         "/api/v1/investigations",
@@ -208,9 +191,7 @@ async def test_chat_accepts_message(
 
 
 @pytest.mark.asyncio
-async def test_chat_nonexistent_investigation_returns_404(
-    client: AsyncClient, analyst_token: str
-):
+async def test_chat_nonexistent_investigation_returns_404(client: AsyncClient, analyst_token: str):
     """Chat to a non-existent investigation returns 404."""
     resp = await client.post(
         "/api/v1/investigations/inv_fake_id/chat",
@@ -221,6 +202,7 @@ async def test_chat_nonexistent_investigation_returns_404(
 
 
 # ---- POST /api/v1/investigations/{id}/pause ----
+
 
 @pytest.mark.asyncio
 async def test_pause_investigation(
@@ -249,6 +231,7 @@ async def test_pause_investigation(
 
 # ---- POST /api/v1/investigations/{id}/stop ----
 
+
 @pytest.mark.asyncio
 async def test_stop_investigation_sets_cancelled(
     client: AsyncClient, admin_token: str, db_session: AsyncSession, admin_user: UserRow
@@ -275,6 +258,7 @@ async def test_stop_investigation_sets_cancelled(
 
 
 # ---- Unauthenticated access ----
+
 
 @pytest.mark.asyncio
 async def test_unauthenticated_list_blocked(client: AsyncClient):

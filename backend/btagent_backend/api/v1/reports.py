@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from btagent_backend.api.deps import CurrentUser, get_current_user
 from btagent_backend.services.report_service import ReportService

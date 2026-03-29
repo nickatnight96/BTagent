@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.tools import tool
@@ -37,7 +37,7 @@ def _deterministic_ip(seed: str, index: int) -> str:
 def _mock_splunk_results(query: str) -> dict[str, Any]:
     """Generate realistic mock Splunk search results."""
     seed = query[:50]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     return {
         "results": [
@@ -62,7 +62,7 @@ def _mock_splunk_results(query: str) -> dict[str, Any]:
 def _mock_sentinel_results(query: str) -> dict[str, Any]:
     """Generate realistic mock Sentinel/KQL results."""
     seed = query[:50]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     return {
         "results": [
@@ -84,7 +84,7 @@ def _mock_sentinel_results(query: str) -> dict[str, Any]:
 def _mock_elastic_results(query: str) -> dict[str, Any]:
     """Generate realistic mock Elastic results."""
     seed = query[:50]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     return {
         "hits": {
@@ -113,7 +113,7 @@ def _mock_elastic_results(query: str) -> dict[str, Any]:
 def _mock_crowdstrike_results(query: str) -> dict[str, Any]:
     """Generate realistic mock CrowdStrike Falcon results."""
     seed = query[:50]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     return {
         "results": [
@@ -121,9 +121,7 @@ def _mock_crowdstrike_results(query: str) -> dict[str, Any]:
                 "timestamp": now.isoformat(),
                 "aid": f"abc{i:04d}def",
                 "ComputerName": f"DESKTOP-{i:04X}",
-                "event_simpleName": [
-                    "ProcessRollup2", "NetworkConnectIP4", "DnsRequest"
-                ][i % 3],
+                "event_simpleName": ["ProcessRollup2", "NetworkConnectIP4", "DnsRequest"][i % 3],
                 "RemoteAddressIP4": _deterministic_ip(seed, i),
                 "FileName": ["svchost.exe", "powershell.exe", "cmd.exe"][i % 3],
             }
@@ -214,7 +212,6 @@ def query_executor(
             "agent configuration."
         ),
         "setup_hint": (
-            f"Add an MCPConnection for '{platform}' to the AgentConfig "
-            "mcp_connections list."
+            f"Add an MCPConnection for '{platform}' to the AgentConfig mcp_connections list."
         ),
     }

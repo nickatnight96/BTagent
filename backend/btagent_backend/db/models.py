@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for BTagent."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
@@ -10,7 +10,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -23,7 +22,7 @@ class Base(DeclarativeBase):
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class UserRow(Base):
@@ -123,9 +122,7 @@ class TimelineEntryRow(Base):
 
     investigation: Mapped["InvestigationRow"] = relationship(back_populates="timeline_entries")
 
-    __table_args__ = (
-        Index("idx_timeline_investigation_ts", "investigation_id", "timestamp"),
-    )
+    __table_args__ = (Index("idx_timeline_investigation_ts", "investigation_id", "timestamp"),)
 
 
 class ContainmentActionRow(Base):
@@ -143,9 +140,7 @@ class ContainmentActionRow(Base):
     initiated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    investigation: Mapped["InvestigationRow"] = relationship(
-        back_populates="containment_actions"
-    )
+    investigation: Mapped["InvestigationRow"] = relationship(back_populates="containment_actions")
 
 
 class EvidenceRow(Base):
@@ -262,6 +257,4 @@ class OrgConfigRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    __table_args__ = (
-        Index("idx_org_config_key", "key", unique=True),
-    )
+    __table_args__ = (Index("idx_org_config_key", "key", unique=True),)

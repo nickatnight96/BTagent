@@ -7,11 +7,10 @@ map-reduce, and agency-specific report formatting.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.tools import tool
-
 
 # --------------------------------------------------------------------------- #
 # Mock investigation data store (used when no DB is available)
@@ -360,7 +359,7 @@ def format_agency_report(summary_json: str, format: str) -> dict[str, Any]:
     techniques = summary.get("mitre_techniques", [])
     recommendations = summary.get("recommendations", [])
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     if format == "cisa":
         sections = _format_cisa(exec_summary, iocs, techniques, recommendations, now_iso)
@@ -397,12 +396,7 @@ def _format_cisa(
     rec_lines = "\n".join(f"  {idx + 1}. {r}" for idx, r in enumerate(recommendations))
 
     return {
-        "header": (
-            f"CISA INCIDENT REPORT\n"
-            f"TLP: AMBER\n"
-            f"Report Date: {timestamp}\n"
-            f"{'=' * 60}"
-        ),
+        "header": (f"CISA INCIDENT REPORT\nTLP: AMBER\nReport Date: {timestamp}\n{'=' * 60}"),
         "executive_summary": f"EXECUTIVE SUMMARY\n\n{exec_summary}",
         "affected_sectors": (
             "AFFECTED SECTORS\n\n"
@@ -437,9 +431,7 @@ def _format_fbi_ic3(
 
     return {
         "header": (
-            f"FBI INTERNET CRIME COMPLAINT CENTER (IC3)\n"
-            f"Submission Date: {timestamp}\n"
-            f"{'=' * 60}"
+            f"FBI INTERNET CRIME COMPLAINT CENTER (IC3)\nSubmission Date: {timestamp}\n{'=' * 60}"
         ),
         "incident_description": f"INCIDENT DESCRIPTION\n\n{exec_summary}",
         "financial_impact": (
@@ -454,10 +446,7 @@ def _format_fbi_ic3(
             "  Known aliases: TBD\n"
             "  Infrastructure used: See IOC list below"
         ),
-        "digital_evidence": (
-            f"DIGITAL EVIDENCE\n\n"
-            f"Indicators of Compromise:\n{ioc_lines}"
-        ),
+        "digital_evidence": (f"DIGITAL EVIDENCE\n\nIndicators of Compromise:\n{ioc_lines}"),
         "recommendations": f"RECOMMENDED ACTIONS\n\n{rec_lines}",
     }
 
@@ -476,10 +465,7 @@ def _format_isac(
 
     return {
         "header": (
-            f"ISAC THREAT INTELLIGENCE SHARING\n"
-            f"TLP: AMBER\n"
-            f"Sharing Date: {timestamp}\n"
-            f"{'=' * 60}"
+            f"ISAC THREAT INTELLIGENCE SHARING\nTLP: AMBER\nSharing Date: {timestamp}\n{'=' * 60}"
         ),
         "threat_summary": f"THREAT SUMMARY\n\n{exec_summary}",
         "sector_relevance": (
@@ -493,10 +479,7 @@ def _format_isac(
             f"Sharing Permissions: TLP:AMBER — share within your organization "
             f"and with clients on a need-to-know basis.\n\n{ioc_lines}"
         ),
-        "mitre_mapping": (
-            f"MITRE ATT&CK MAPPING\n\n"
-            f"Techniques: {tech_lines}"
-        ),
+        "mitre_mapping": (f"MITRE ATT&CK MAPPING\n\nTechniques: {tech_lines}"),
         "defensive_recommendations": f"DEFENSIVE RECOMMENDATIONS\n\n{rec_lines}",
     }
 
@@ -514,11 +497,7 @@ def _format_generic(
     rec_lines = "\n".join(f"  {idx + 1}. {r}" for idx, r in enumerate(recommendations))
 
     return {
-        "header": (
-            f"INCIDENT SUMMARY REPORT\n"
-            f"Generated: {timestamp}\n"
-            f"{'=' * 60}"
-        ),
+        "header": (f"INCIDENT SUMMARY REPORT\nGenerated: {timestamp}\n{'=' * 60}"),
         "executive_summary": f"EXECUTIVE SUMMARY\n\n{exec_summary}",
         "technical_details": (
             f"TECHNICAL DETAILS\n\n"

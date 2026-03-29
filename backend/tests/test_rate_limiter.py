@@ -8,9 +8,9 @@ Exercises the rate limiter at two levels:
 import time
 
 import pytest
+from helpers import auth_header
 from httpx import AsyncClient
 
-from btagent_backend.auth.jwt import create_access_token
 from btagent_backend.middleware.rate_limiter import (
     DEFAULT_LIMIT,
     ROLE_LIMITS,
@@ -19,12 +19,10 @@ from btagent_backend.middleware.rate_limiter import (
     rate_limit_state,
 )
 
-from helpers import auth_header
-
-
 # ---------------------------------------------------------------------------
 # Unit tests — RateLimitState
 # ---------------------------------------------------------------------------
+
 
 class TestRateLimitState:
     """Direct tests of the sliding-window counter."""
@@ -80,6 +78,7 @@ class TestRateLimitState:
 # Role-based limit configuration
 # ---------------------------------------------------------------------------
 
+
 class TestRoleLimits:
     """Verify the role -> limit mapping is sensible."""
 
@@ -91,7 +90,7 @@ class TestRoleLimits:
         assert ROLE_LIMITS["analyst"] > 0
 
     def test_anonymous_default_is_lowest(self):
-        assert DEFAULT_LIMIT <= min(ROLE_LIMITS.values())
+        assert min(ROLE_LIMITS.values()) >= DEFAULT_LIMIT
 
     def test_different_roles_have_different_limits(self):
         limits = set(ROLE_LIMITS.values())
@@ -102,6 +101,7 @@ class TestRoleLimits:
 # ---------------------------------------------------------------------------
 # Integration: middleware via HTTP (requires the FastAPI test client)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():

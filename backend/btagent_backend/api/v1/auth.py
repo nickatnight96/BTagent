@@ -1,5 +1,6 @@
 """Authentication endpoints — login, refresh, register (admin only)."""
 
+from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
@@ -14,7 +15,6 @@ from btagent_backend.auth.jwt import (
     verify_password,
 )
 from btagent_backend.db.models import UserRow
-from btagent_shared.utils.ids import generate_id
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -35,9 +35,12 @@ class RegisterRequest(BaseModel):
     @classmethod
     def validate_role(cls, v: str) -> str:
         from btagent_shared.types.enums import UserRole
+
         valid_roles = {r.value for r in UserRole}
         if v not in valid_roles:
-            raise ValueError(f"Invalid role '{v}'. Must be one of: {', '.join(sorted(valid_roles))}")
+            raise ValueError(
+                f"Invalid role '{v}'. Must be one of: {', '.join(sorted(valid_roles))}"
+            )
         return v
 
 
@@ -85,9 +88,7 @@ async def register(
 
     # Check if username or email exists
     existing = await db.execute(
-        select(UserRow).where(
-            (UserRow.username == body.username) | (UserRow.email == body.email)
-        )
+        select(UserRow).where((UserRow.username == body.username) | (UserRow.email == body.email))
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Username or email already exists")

@@ -49,9 +49,7 @@ class MitreTacticRow(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    __table_args__ = (
-        Index("idx_mitre_tactics_ordinal", "ordinal"),
-    )
+    __table_args__ = (Index("idx_mitre_tactics_ordinal", "ordinal"),)
 
 
 class MitreGroupRow(Base):
@@ -65,9 +63,7 @@ class MitreGroupRow(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     technique_ids: Mapped[list] = mapped_column(JSONB, default=list)
 
-    __table_args__ = (
-        Index("idx_mitre_groups_name", "name"),
-    )
+    __table_args__ = (Index("idx_mitre_groups_name", "name"),)
 
 
 class MitreTechniqueTagRow(Base):
@@ -85,9 +81,7 @@ class MitreTechniqueTagRow(Base):
     )
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     tagged_by: Mapped[str] = mapped_column(String(200), default="")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     __table_args__ = (
         Index("idx_mitre_tags_technique", "technique_id"),

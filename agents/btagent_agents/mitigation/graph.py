@@ -7,7 +7,7 @@ Generates customer-facing remediation guidance with audience-aware tone.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -15,10 +15,13 @@ from langgraph.graph.state import CompiledStateGraph as CompiledGraph
 
 from btagent_agents.plugins.mitigation.tools.remediation_generator import (
     generate_detection_content as _detection_tool,
+)
+from btagent_agents.plugins.mitigation.tools.remediation_generator import (
     generate_hardening_recommendations as _hardening_tool,
+)
+from btagent_agents.plugins.mitigation.tools.remediation_generator import (
     generate_remediation as _remediation_tool,
 )
-
 
 # --------------------------------------------------------------------------- #
 # State definition
@@ -84,9 +87,7 @@ def analyze_attack(state: MitigationState) -> dict[str, Any]:
         return {"errors": errors, "status": "failed"}
 
     # Use hardening tool as a proxy to retrieve and analyze attack data
-    analysis = _hardening_tool.invoke(
-        {"investigation_id": investigation_id}
-    )
+    analysis = _hardening_tool.invoke({"investigation_id": investigation_id})
 
     if analysis.get("status") == "failed":
         errors.append(analysis.get("error", "Attack analysis failed"))
@@ -111,10 +112,12 @@ def gen_remediation(state: MitigationState) -> dict[str, Any]:
     audience = state.get("audience", "technical")
     errors: list[str] = []
 
-    result = _remediation_tool.invoke({
-        "investigation_id": investigation_id,
-        "audience": audience,
-    })
+    result = _remediation_tool.invoke(
+        {
+            "investigation_id": investigation_id,
+            "audience": audience,
+        }
+    )
 
     if result.get("status") == "failed":
         errors.append(result.get("error", "Remediation generation failed"))
@@ -133,10 +136,12 @@ def gen_detection(state: MitigationState) -> dict[str, Any]:
     platform = state.get("detection_platform", "splunk")
     errors: list[str] = []
 
-    result = _detection_tool.invoke({
-        "investigation_id": investigation_id,
-        "platform": platform,
-    })
+    result = _detection_tool.invoke(
+        {
+            "investigation_id": investigation_id,
+            "platform": platform,
+        }
+    )
 
     if result.get("status") == "failed":
         errors.append(result.get("error", "Detection content generation failed"))
@@ -159,11 +164,9 @@ def compile_playbook(state: MitigationState) -> dict[str, Any]:
     detection_result = state.get("detection_result", {})
 
     # Also get hardening recommendations
-    hardening_result = _hardening_tool.invoke(
-        {"investigation_id": investigation_id}
-    )
+    hardening_result = _hardening_tool.invoke({"investigation_id": investigation_id})
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     compiled_playbook = {
         "investigation_id": investigation_id,
@@ -176,9 +179,7 @@ def compile_playbook(state: MitigationState) -> dict[str, Any]:
         "hardening": hardening_result,
         "total_remediation_actions": len(remediation_result.get("actions", [])),
         "total_detection_rules": detection_result.get("rule_count", 0),
-        "total_hardening_recommendations": hardening_result.get(
-            "recommendation_count", 0
-        ),
+        "total_hardening_recommendations": hardening_result.get("recommendation_count", 0),
         "status": "complete",
     }
 

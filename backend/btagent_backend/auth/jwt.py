@@ -1,10 +1,10 @@
 """JWT token creation and verification."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
-from jose import JWTError, jwt
+from jose import jwt
 from pydantic import BaseModel
 
 from btagent_backend.config import get_settings
@@ -36,7 +36,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(user_id: str, username: str, role: str) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_ttl_minutes)
+    expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_ttl_minutes)
     payload = {
         "sub": user_id,
         "username": username,
@@ -49,7 +49,7 @@ def create_access_token(user_id: str, username: str, role: str) -> str:
 
 def create_refresh_token(user_id: str, username: str, role: str) -> str:
     settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_ttl_days)
+    expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_ttl_days)
     # SEC-003 FIX: Include a jti (JWT ID) claim to enable server-side revocation.
     # A Redis-backed revocation list should check this jti on refresh and invalidate
     # the old token. Full implementation tracked for a future sprint.

@@ -5,16 +5,16 @@ Revises: 0003
 Create Date: 2026-03-26
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "0004"
-down_revision: Union[str, None] = "0003"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0003"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -75,10 +75,7 @@ def upgrade() -> None:
     )
 
     # Add pgvector embedding column (1536-dim for text-embedding-3-small)
-    op.execute(
-        "ALTER TABLE knowledge_chunks "
-        "ADD COLUMN embedding vector(1536)"
-    )
+    op.execute("ALTER TABLE knowledge_chunks ADD COLUMN embedding vector(1536)")
 
     # HNSW index on embedding for ANN search (cosine distance)
     op.execute(

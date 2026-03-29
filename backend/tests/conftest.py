@@ -10,9 +10,8 @@ import json
 import os
 import sys
 import types
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import JSON, event
@@ -80,6 +79,7 @@ for _table in Base.metadata.tables.values():
         if isinstance(_col.type, JSONB):
             _col.type = JSON()
 
+
 # Turn on foreign-key enforcement for SQLite (off by default).
 @event.listens_for(_test_engine.sync_engine, "connect")
 def _enable_sqlite_fk(dbapi_conn, connection_record):
@@ -93,6 +93,7 @@ def _enable_sqlite_fk(dbapi_conn, connection_record):
 # ============================================================================
 
 # --- Database setup / teardown ---
+
 
 @pytest_asyncio.fixture(scope="session")
 async def _init_db():
@@ -115,12 +116,14 @@ async def db_session(_init_db):
 
 # --- FastAPI test client ---
 
+
 @pytest_asyncio.fixture()
 async def client(_init_db):
     """``httpx.AsyncClient`` wired to the FastAPI app via ASGI transport."""
     # Patch the health endpoint's direct import of async_session_factory
     # (it uses it to run a quick ``SELECT 1`` DB probe).
     import btagent_backend.api.v1.health as health_mod
+
     health_mod.async_session_factory = _test_session_factory
 
     from btagent_backend.api.deps import get_db
@@ -136,10 +139,11 @@ async def client(_init_db):
 
 # --- Users ---
 
-from btagent_backend.auth.jwt import create_token_pair, hash_password  # noqa: E402
-from btagent_backend.db.models import InvestigationRow, UserRow  # noqa: E402
 from btagent_shared.types.enums import InvestigationStatus, Severity  # noqa: E402
 from btagent_shared.utils.ids import generate_id  # noqa: E402
+
+from btagent_backend.auth.jwt import create_token_pair, hash_password  # noqa: E402
+from btagent_backend.db.models import InvestigationRow, UserRow  # noqa: E402
 
 _ADMIN_PASSWORD = "Admin-P@ss-123!"
 _ANALYST_PASSWORD = "Analyst-P@ss-456!"
@@ -147,6 +151,7 @@ _ANALYST_PASSWORD = "Analyst-P@ss-456!"
 # Counter to guarantee unique usernames/emails across fixture invocations
 # within the same test session (in-memory SQLite persists data).
 import itertools as _itertools  # noqa: E402
+
 _user_counter = _itertools.count(1)
 
 
@@ -160,7 +165,7 @@ async def sample_user(db_session: AsyncSession):
         email=f"analyst_{n}@btagent.test",
         password_hash=hash_password(_ANALYST_PASSWORD),
         role="analyst",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db_session.add(user)
     await db_session.commit()
@@ -177,7 +182,7 @@ async def admin_user(db_session: AsyncSession):
         email=f"admin_{n}@btagent.test",
         password_hash=hash_password(_ADMIN_PASSWORD),
         role="admin",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db_session.add(user)
     await db_session.commit()
@@ -185,6 +190,7 @@ async def admin_user(db_session: AsyncSession):
 
 
 # --- Tokens ---
+
 
 @pytest_asyncio.fixture()
 async def analyst_token(sample_user: UserRow) -> str:
@@ -200,6 +206,7 @@ async def admin_token(admin_user: UserRow) -> str:
 
 # --- Sample investigation ---
 
+
 @pytest_asyncio.fixture()
 async def sample_investigation(db_session: AsyncSession, sample_user: UserRow):
     """Create and return a test investigation in INVESTIGATING status."""
@@ -211,8 +218,8 @@ async def sample_investigation(db_session: AsyncSession, sample_user: UserRow):
         severity=Severity.HIGH.value,
         tlp_level="green",
         assigned_to=sample_user.id,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     db_session.add(inv)
     await db_session.commit()
@@ -222,6 +229,7 @@ async def sample_investigation(db_session: AsyncSession, sample_user: UserRow):
 # ============================================================================
 # Helpers importable by test modules (``from conftest import auth_header``)
 # ============================================================================
+
 
 def auth_header(token: str) -> dict[str, str]:
     """Build an ``Authorization: Bearer <token>`` header dict."""

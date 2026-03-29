@@ -9,9 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid5, NAMESPACE_URL
+from uuid import NAMESPACE_URL, uuid5
 
 logger = logging.getLogger("btagent.services.stix")
 
@@ -118,7 +118,7 @@ def ioc_to_stix_indicator(
     pattern = _build_stix_pattern(ioc_type, ioc_value)
     stix_id = _deterministic_id("indicator", f"{ioc_type}:{ioc_value}")
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     indicator: dict[str, Any] = {
         "type": "indicator",
@@ -184,9 +184,7 @@ def stix_bundle_from_iocs(
 
     bundle_id = _deterministic_id(
         "bundle",
-        hashlib.sha256(
-            json.dumps(sorted(i["id"] for i in indicators)).encode()
-        ).hexdigest(),
+        hashlib.sha256(json.dumps(sorted(i["id"] for i in indicators)).encode()).hexdigest(),
     )
 
     return {

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("btagent.services.report")
@@ -51,10 +50,12 @@ class ReportService:
             template,
         )
 
-        result = report_tool.invoke({
-            "investigation_id": investigation_id,
-            "template": template,
-        })
+        result = report_tool.invoke(
+            {
+                "investigation_id": investigation_id,
+                "template": template,
+            }
+        )
 
         if result.get("status") == "failed":
             logger.warning(
@@ -118,23 +119,29 @@ class ReportService:
 
         # Summarize
         if len(investigation_ids) == 1:
-            summary = summarize_investigation.invoke({
-                "investigation_id": investigation_ids[0],
-            })
+            summary = summarize_investigation.invoke(
+                {
+                    "investigation_id": investigation_ids[0],
+                }
+            )
         else:
             ids_str = ",".join(investigation_ids)
-            summary = summarize_multiple.invoke({
-                "investigation_ids": ids_str,
-            })
+            summary = summarize_multiple.invoke(
+                {
+                    "investigation_ids": ids_str,
+                }
+            )
 
         if summary.get("status") == "failed":
             return summary
 
         # Format for agency
-        formatted = format_agency_report.invoke({
-            "summary_json": json.dumps(summary),
-            "format": format,
-        })
+        formatted = format_agency_report.invoke(
+            {
+                "summary_json": json.dumps(summary),
+                "format": format,
+            }
+        )
 
         return {
             "summary": summary,
@@ -171,10 +178,12 @@ class ReportService:
             investigation_id,
         )
 
-        return remediation_tool.invoke({
-            "investigation_id": investigation_id,
-            "audience": audience,
-        })
+        return remediation_tool.invoke(
+            {
+                "investigation_id": investigation_id,
+                "audience": audience,
+            }
+        )
 
     async def generate_detection_content(
         self,
@@ -205,7 +214,9 @@ class ReportService:
             investigation_id,
         )
 
-        return detection_tool.invoke({
-            "investigation_id": investigation_id,
-            "platform": platform,
-        })
+        return detection_tool.invoke(
+            {
+                "investigation_id": investigation_id,
+                "platform": platform,
+            }
+        )

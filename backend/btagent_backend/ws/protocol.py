@@ -5,9 +5,8 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from btagent_shared.types.events import EventEnvelope, EventType
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Channel naming

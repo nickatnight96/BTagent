@@ -6,7 +6,7 @@ per-section generation, and template listing.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -136,9 +136,7 @@ def _gen_findings(inv: dict[str, Any]) -> str:
 
     if techniques:
         parts.append("### Attack Techniques")
-        parts.append(
-            "The following MITRE ATT&CK techniques were identified:\n"
-        )
+        parts.append("The following MITRE ATT&CK techniques were identified:\n")
         for tech in techniques:
             parts.append(f"- **{tech}**")
 
@@ -175,9 +173,7 @@ def _gen_timeline(inv: dict[str, Any]) -> str:
     parts = [f"## Timeline ({len(timeline)} events)\n"]
 
     for event in timeline:
-        parts.append(
-            f"| {event.get('timestamp', 'Unknown')} | {event.get('description', '')} |"
-        )
+        parts.append(f"| {event.get('timestamp', 'Unknown')} | {event.get('description', '')} |")
 
     return "\n".join(parts)
 
@@ -256,7 +252,7 @@ _SECTION_GENERATORS: dict[str, Any] = {
     "recommendations": _gen_recommendations,
     "appendices": _gen_appendices,
     "containment": lambda inv: (
-        f"## Containment Actions\n\n"
+        "## Containment Actions\n\n"
         + "\n".join(
             f"- {a.get('action_type', '?')}: {a.get('target', '?')}"
             for a in inv.get("containment_actions", [])
@@ -298,7 +294,7 @@ def generate_report(investigation_id: str, template: str) -> dict[str, Any]:
             "status": "failed",
         }
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     sections: dict[str, str] = {}
     template_sections = tmpl.get("sections", [])
 
@@ -343,10 +339,7 @@ def generate_section(investigation_id: str, section: str) -> dict[str, Any]:
     if generator is None:
         available = sorted(_SECTION_GENERATORS.keys())
         return {
-            "error": (
-                f"Unknown section '{section}'. "
-                f"Available: {', '.join(available)}"
-            ),
+            "error": (f"Unknown section '{section}'. Available: {', '.join(available)}"),
             "status": "failed",
         }
 
@@ -373,14 +366,14 @@ def list_templates() -> dict[str, Any]:
             with yaml_path.open() as f:
                 tmpl = yaml.safe_load(f)
             if tmpl:
-                templates.append({
-                    "name": yaml_path.stem,
-                    "title": tmpl.get("title", yaml_path.stem),
-                    "description": tmpl.get("description", ""),
-                    "sections": [
-                        s.get("name", "") for s in tmpl.get("sections", [])
-                    ],
-                })
+                templates.append(
+                    {
+                        "name": yaml_path.stem,
+                        "title": tmpl.get("title", yaml_path.stem),
+                        "description": tmpl.get("description", ""),
+                        "sections": [s.get("name", "") for s in tmpl.get("sections", [])],
+                    }
+                )
 
     return {
         "templates": templates,

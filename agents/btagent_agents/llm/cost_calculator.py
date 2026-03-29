@@ -30,60 +30,81 @@ class ModelPricing:
 PRICING: dict[str, ModelPricing] = {
     # Anthropic
     "claude-haiku-4-5-20251001": ModelPricing(
-        input_per_m=0.80, output_per_m=4.00,
-        cache_read_per_m=0.08, cache_write_per_m=1.00,
+        input_per_m=0.80,
+        output_per_m=4.00,
+        cache_read_per_m=0.08,
+        cache_write_per_m=1.00,
     ),
     "claude-sonnet-4-20250514": ModelPricing(
-        input_per_m=3.00, output_per_m=15.00,
-        cache_read_per_m=0.30, cache_write_per_m=3.75,
+        input_per_m=3.00,
+        output_per_m=15.00,
+        cache_read_per_m=0.30,
+        cache_write_per_m=3.75,
     ),
     "claude-opus-4-20250415": ModelPricing(
-        input_per_m=15.00, output_per_m=75.00,
-        cache_read_per_m=1.50, cache_write_per_m=18.75,
+        input_per_m=15.00,
+        output_per_m=75.00,
+        cache_read_per_m=1.50,
+        cache_write_per_m=18.75,
     ),
     # OpenAI
     "gpt-4o-mini": ModelPricing(
-        input_per_m=0.15, output_per_m=0.60,
+        input_per_m=0.15,
+        output_per_m=0.60,
     ),
     "gpt-4o": ModelPricing(
-        input_per_m=2.50, output_per_m=10.00,
+        input_per_m=2.50,
+        output_per_m=10.00,
     ),
     "o3": ModelPricing(
-        input_per_m=10.00, output_per_m=40.00,
+        input_per_m=10.00,
+        output_per_m=40.00,
     ),
     # Google Vertex AI / Gemini
     "gemini-2.0-flash": ModelPricing(
-        input_per_m=0.10, output_per_m=0.40,
+        input_per_m=0.10,
+        output_per_m=0.40,
     ),
     "gemini-2.5-pro": ModelPricing(
-        input_per_m=1.25, output_per_m=10.00,
+        input_per_m=1.25,
+        output_per_m=10.00,
     ),
     "gemini-ultra": ModelPricing(
-        input_per_m=7.00, output_per_m=21.00,
+        input_per_m=7.00,
+        output_per_m=21.00,
     ),
     # Azure (same models as OpenAI, pricing may differ slightly)
     "azure/gpt-4o-mini": ModelPricing(
-        input_per_m=0.15, output_per_m=0.60,
+        input_per_m=0.15,
+        output_per_m=0.60,
     ),
     "azure/gpt-4o": ModelPricing(
-        input_per_m=2.50, output_per_m=10.00,
+        input_per_m=2.50,
+        output_per_m=10.00,
     ),
     # AWS Bedrock (Anthropic models on Bedrock)
     "bedrock/claude-haiku-4-5-20251001": ModelPricing(
-        input_per_m=1.00, output_per_m=5.00,
-        cache_read_per_m=0.10, cache_write_per_m=1.25,
+        input_per_m=1.00,
+        output_per_m=5.00,
+        cache_read_per_m=0.10,
+        cache_write_per_m=1.25,
     ),
     "bedrock/claude-sonnet-4-20250514": ModelPricing(
-        input_per_m=3.00, output_per_m=15.00,
-        cache_read_per_m=0.30, cache_write_per_m=3.75,
+        input_per_m=3.00,
+        output_per_m=15.00,
+        cache_read_per_m=0.30,
+        cache_write_per_m=3.75,
     ),
     "bedrock/claude-opus-4-20250415": ModelPricing(
-        input_per_m=15.00, output_per_m=75.00,
-        cache_read_per_m=1.50, cache_write_per_m=18.75,
+        input_per_m=15.00,
+        output_per_m=75.00,
+        cache_read_per_m=1.50,
+        cache_write_per_m=18.75,
     ),
     # Ollama (local, free)
     "llama3.3": ModelPricing(
-        input_per_m=0.0, output_per_m=0.0,
+        input_per_m=0.0,
+        output_per_m=0.0,
     ),
 }
 
@@ -171,14 +192,16 @@ class CostAccumulator:
         self.total_cache_write += cache_write
         self.total_cost_usd += cost
         self.call_count += 1
-        self.history.append({
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cache_read": cache_read,
-            "cache_write": cache_write,
-            "cost_usd": cost,
-        })
+        self.history.append(
+            {
+                "model": model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_read": cache_read,
+                "cache_write": cache_write,
+                "cost_usd": cost,
+            }
+        )
         return cost
 
     def summary(self) -> dict[str, Any]:
