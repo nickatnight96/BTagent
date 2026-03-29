@@ -17,8 +17,11 @@ from btagent_backend.auth.jwt import hash_password
 from btagent_shared.utils.ids import generate_id
 
 
-def _generate_seed_password() -> str:
-    """SEC-002 FIX: Generate a random password for seed users instead of using trivial ones."""
+def _generate_seed_password(username: str = "") -> str:
+    """SEC-002 FIX: Generate a random password for seed users instead of using trivial ones.
+    In CI/test mode (BTAGENT_ENV=test), use deterministic passwords for UAT."""
+    if os.environ.get("BTAGENT_ENV") == "test":
+        return username or "test-password"  # Deterministic for CI UAT
     return secrets.token_urlsafe(16)
 
 
@@ -31,9 +34,9 @@ async def seed():
             return
 
         # Generate random passwords for each user
-        admin_pw = _generate_seed_password()
-        analyst_pw = _generate_seed_password()
-        senior_pw = _generate_seed_password()
+        admin_pw = _generate_seed_password("admin")
+        analyst_pw = _generate_seed_password("analyst1")
+        senior_pw = _generate_seed_password("senior1")
 
         # Create admin user
         admin = UserRow(
