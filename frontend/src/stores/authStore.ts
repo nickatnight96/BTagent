@@ -130,4 +130,4 @@ export const useAuthStore = create<AuthState>()(
 
 // Computed selector for isAuthenticated
 export const useIsAuthenticated = () =>
-  useAuthStore((state) => state.accessToken !== null && state.user !== null);
+  useAuthStore((state) => state.accessToken !== null);

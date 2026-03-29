@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent, type KeyboardEvent } from "react";
+import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Shield, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
@@ -12,6 +12,12 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+
+  // Clear any stale errors and auth state on mount
+  useEffect(() => {
+    clearError();
+    useAuthStore.getState().logout();
+  }, [clearError]);
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
