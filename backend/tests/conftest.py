@@ -132,6 +132,20 @@ async def client(_init_db):
     test_app = create_app()
     test_app.dependency_overrides[get_db] = _test_get_session
 
+    # Mock TaskManager on app.state so investigation endpoints don't return 503
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_tm = MagicMock()
+    mock_tm.start_investigation = AsyncMock()
+    mock_tm.send_message = AsyncMock()
+    mock_tm.pause_investigation = AsyncMock()
+    mock_tm.resume_investigation = AsyncMock()
+    mock_tm.stop_investigation = AsyncMock()
+    mock_tm.get_status = MagicMock(
+        return_value={"running": 0, "total_started": 0, "agents_available": True}
+    )
+    test_app.state.task_manager = mock_tm
+
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
         yield ac
