@@ -46,13 +46,20 @@ export const useAuthStore = create<AuthState>()(
           const data = (await response.json()) as {
             access_token: string;
             refresh_token: string;
-            user: User;
           };
+
+          // Fetch user profile using the new token
+          const meResponse = await fetch(`${BASE_URL}/v1/auth/me`, {
+            headers: { Authorization: `Bearer ${data.access_token}` },
+          });
+          const user = meResponse.ok
+            ? ((await meResponse.json()) as User)
+            : { id: "unknown", username, role: "analyst" as const };
 
           set({
             accessToken: data.access_token,
             refreshToken: data.refresh_token,
-            user: data.user,
+            user,
             isLoading: false,
             error: null,
           });
