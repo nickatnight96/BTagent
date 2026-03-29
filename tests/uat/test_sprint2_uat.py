@@ -4,6 +4,8 @@ Run with: pytest tests/uat/test_sprint2_uat.py -v
 Requires: backend running on localhost:8000, postgres + redis up
 """
 
+import os
+
 import httpx
 import pytest
 
@@ -43,7 +45,7 @@ class TestWebhooks:
                 },
                 "sid": "splunk_search_12345",
             },
-            headers={"X-Webhook-Secret": "CHANGE-ME-IN-PRODUCTION"},
+            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
         )
         assert r.status_code in (201, 202), f"Splunk webhook failed: {r.status_code} {r.text}"
         data = r.json()
@@ -62,7 +64,7 @@ class TestWebhooks:
                 "filename": "mimikatz.exe",
                 "description": "Credential dumping tool detected",
             },
-            headers={"X-Webhook-Secret": "CHANGE-ME-IN-PRODUCTION"},
+            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
         )
         assert r.status_code in (201, 202), f"CS webhook failed: {r.status_code} {r.text}"
 
@@ -79,7 +81,7 @@ class TestWebhooks:
                 },
                 "name": "sentinel-incident-42",
             },
-            headers={"X-Webhook-Secret": "CHANGE-ME-IN-PRODUCTION"},
+            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
         )
         assert r.status_code in (201, 202), f"Sentinel webhook failed: {r.status_code} {r.text}"
 
@@ -93,7 +95,7 @@ class TestWebhooks:
                 "host": {"name": "webserver-01"},
                 "message": "Outbound connection to known C2 IP",
             },
-            headers={"X-Webhook-Secret": "CHANGE-ME-IN-PRODUCTION"},
+            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
         )
         assert r.status_code in (201, 202), f"Elastic webhook failed: {r.status_code} {r.text}"
 
