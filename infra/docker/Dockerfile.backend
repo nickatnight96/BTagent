@@ -1,6 +1,6 @@
 # BTagent backend — multi-stage build
 # Stage 1: Build
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 WORKDIR /app
 RUN pip install --no-cache-dir uv
@@ -24,7 +24,7 @@ COPY backend/migrations/ backend/migrations/
 COPY agents/btagent_agents/ agents/btagent_agents/
 
 # Stage 2: Production
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 # Security: non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1000 btagent
