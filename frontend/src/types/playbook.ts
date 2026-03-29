@@ -113,17 +113,17 @@ export interface PlaybookDefinition {
 export interface Playbook {
   id: string;
   name: string;
-  version: string;
+  version?: string;
   description: string;
-  trigger: TriggerCondition;
-  steps: PlaybookStep[];
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-  created_by: string;
-  execution_count: number;
-  last_executed_at: string | null;
-  tags: string[];
+  trigger?: TriggerCondition;
+  steps?: PlaybookStep[];
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string;
+  execution_count?: number;
+  last_executed_at?: string | null;
+  tags?: string[];
 }
 
 export interface CreatePlaybookRequest {
@@ -154,8 +154,8 @@ export interface StepResult {
   status: StepExecutionStatus;
   started_at: string | null;
   completed_at: string | null;
-  output: Record<string, unknown>;
-  error: string | null;
+  output?: Record<string, unknown>;
+  error?: string | null;
 }
 
 export interface PlaybookExecution {
@@ -165,8 +165,8 @@ export interface PlaybookExecution {
   status: PlaybookStatus;
   started_at: string | null;
   completed_at: string | null;
-  step_results: StepResult[];
-  error: string | null;
+  step_results?: StepResult[];
+  error?: string | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -137,10 +137,10 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <Badge className="text-[10px] shrink-0">
-                  {selectedIOC.type.toUpperCase()}
+                  {(selectedIOC.type ?? "unknown").toUpperCase()}
                 </Badge>
-                <EnrichmentStatusIcon status={selectedIOC.enrichment_status} />
-                <StatusLabel status={selectedIOC.enrichment_status} />
+                <EnrichmentStatusIcon status={selectedIOC.enrichment_status ?? "pending"} />
+                <StatusLabel status={selectedIOC.enrichment_status ?? "pending"} />
               </div>
               <p className="font-mono text-sm text-slate-200 break-all">
                 {selectedIOC.value}
@@ -159,7 +159,7 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
               size="sm"
               onClick={handleEnrich}
               isLoading={isEnriching}
-              disabled={selectedIOC.enrichment_status === "enriching"}
+              disabled={(selectedIOC.enrichment_status ?? "pending") === "enriching"}
             >
               <Zap className="w-3.5 h-3.5" />
               Enrich Now
@@ -185,7 +185,7 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                   TLP
                 </span>
                 <p className="text-sm text-slate-200 mt-0.5">
-                  {selectedIOC.tlp}
+                  {selectedIOC.tlp ?? selectedIOC.tlp_level ?? "N/A"}
                 </p>
               </div>
               <div className="bg-slate-900 rounded-lg p-3 border border-slate-800">
@@ -211,11 +211,11 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
           </div>
 
           {/* MITRE Technique Tags */}
-          {selectedIOC.mitre_tags.length > 0 && (
+          {(selectedIOC.mitre_tags ?? []).length > 0 && (
             <div>
               <SectionHeader>MITRE ATT&CK Techniques</SectionHeader>
               <div className="flex flex-wrap gap-2">
-                {selectedIOC.mitre_tags.map((tag) => (
+                {(selectedIOC.mitre_tags ?? []).map((tag) => (
                   <MitreTagBadge key={tag.technique_id} tag={tag} />
                 ))}
               </div>
@@ -285,7 +285,7 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                       <div>
                         <span className="text-slate-500">Open Ports</span>
                         <div className="flex flex-wrap gap-1 mt-1">
-                          {enrichment_data.shodan.ports.map((port) => (
+                          {(enrichment_data.shodan.ports ?? []).map((port) => (
                             <span
                               key={port}
                               className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-300 font-mono"
@@ -295,13 +295,13 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                           ))}
                         </div>
                       </div>
-                      {enrichment_data.shodan.vulns.length > 0 && (
+                      {(enrichment_data.shodan.vulns ?? []).length > 0 && (
                         <div>
                           <span className="text-slate-500">
                             Vulnerabilities
                           </span>
                           <div className="flex flex-wrap gap-1 mt-1">
-                            {enrichment_data.shodan.vulns.map((vuln) => (
+                            {(enrichment_data.shodan.vulns ?? []).map((vuln) => (
                               <span
                                 key={vuln}
                                 className="px-1.5 py-0.5 bg-red-500/15 rounded text-red-400 font-mono text-[10px]"
@@ -316,14 +316,14 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                         <div>
                           <span className="text-slate-500">ISP</span>
                           <p className="text-slate-200">
-                            {enrichment_data.shodan.isp}
+                            {enrichment_data.shodan.isp ?? "N/A"}
                           </p>
                         </div>
                         <div>
                           <span className="text-slate-500">Location</span>
                           <p className="text-slate-200">
-                            {enrichment_data.shodan.city},{" "}
-                            {enrichment_data.shodan.country}
+                            {enrichment_data.shodan.city ?? "Unknown"},{" "}
+                            {enrichment_data.shodan.country ?? "Unknown"}
                           </p>
                         </div>
                       </div>
@@ -430,12 +430,12 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                         MISP
                       </span>
                       <Badge className="text-[10px]">
-                        {enrichment_data.misp.event_count} events
+                        {enrichment_data.misp.event_count ?? 0} events
                       </Badge>
                     </div>
-                    {enrichment_data.misp.events.length > 0 && (
+                    {(enrichment_data.misp.events ?? []).length > 0 && (
                       <div className="space-y-2">
-                        {enrichment_data.misp.events.slice(0, 5).map((evt) => (
+                        {(enrichment_data.misp.events ?? []).slice(0, 5).map((evt) => (
                           <div
                             key={evt.id}
                             className="flex items-start gap-2 py-1.5 border-b border-slate-800 last:border-0 text-xs"
@@ -448,9 +448,9 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                         ))}
                       </div>
                     )}
-                    {enrichment_data.misp.tags.length > 0 && (
+                    {(enrichment_data.misp.tags ?? []).length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
-                        {enrichment_data.misp.tags.map((tag) => (
+                        {(enrichment_data.misp.tags ?? []).map((tag) => (
                           <span
                             key={tag}
                             className="px-1.5 py-0.5 bg-indigo-500/15 rounded text-indigo-400 text-[10px]"
@@ -467,12 +467,11 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
           )}
 
           {/* Enrichment Timeline */}
-          {enrichment_data?.raw_results &&
-            enrichment_data.raw_results.length > 0 && (
+          {(enrichment_data?.raw_results ?? []).length > 0 && (
               <div>
                 <SectionHeader>Enrichment Timeline</SectionHeader>
                 <div className="space-y-2">
-                  {enrichment_data.raw_results.map((result, idx) => (
+                  {(enrichment_data?.raw_results ?? []).map((result, idx) => (
                     <div
                       key={idx}
                       className="flex items-center gap-3 text-xs py-2 border-b border-slate-800/50 last:border-0"
@@ -499,13 +498,13 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
             )}
 
           {/* Related IOCs */}
-          {selectedIOC.related_ioc_ids.length > 0 && (
+          {(selectedIOC.related_ioc_ids ?? []).length > 0 && (
             <div>
               <SectionHeader>
-                Related IOCs ({selectedIOC.related_ioc_ids.length})
+                Related IOCs ({(selectedIOC.related_ioc_ids ?? []).length})
               </SectionHeader>
               <div className="space-y-2">
-                {selectedIOC.related_ioc_ids.map((relatedId) => (
+                {(selectedIOC.related_ioc_ids ?? []).map((relatedId) => (
                   <button
                     key={relatedId}
                     onClick={() => {

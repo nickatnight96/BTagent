@@ -69,8 +69,8 @@ export function PlaybookList() {
 
   const filteredPlaybooks = playbooks.filter(
     (p) =>
-      p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.description.toLowerCase().includes(searchQuery.toLowerCase()),
+      (p.name ?? "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (p.description ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   const handleNewPlaybook = useCallback(async () => {
@@ -208,7 +208,7 @@ export function PlaybookList() {
 
         <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
           {filteredPlaybooks.map((playbook) => {
-            const badge = TRIGGER_BADGES[playbook.trigger.type] ?? TRIGGER_BADGES[TriggerType.MANUAL]!;
+            const badge = TRIGGER_BADGES[playbook.trigger?.type ?? TriggerType.MANUAL] ?? TRIGGER_BADGES[TriggerType.MANUAL]!;
             return (
               <div
                 key={playbook.id}
@@ -266,7 +266,7 @@ export function PlaybookList() {
                     {badge.label}
                   </span>
                   <span className="text-[10px] text-slate-500 font-medium">
-                    v{playbook.version}
+                    v{playbook.version ?? "1.0"}
                   </span>
                 </div>
 
@@ -274,11 +274,11 @@ export function PlaybookList() {
                 <div className="flex items-center gap-4 mb-3 text-xs text-slate-500">
                   <div className="flex items-center gap-1">
                     <BarChart3 className="w-3 h-3" />
-                    <span>{playbook.execution_count} runs</span>
+                    <span>{playbook.execution_count ?? 0} runs</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
-                    <span>{formatRelativeTime(playbook.last_executed_at)}</span>
+                    <span>{formatRelativeTime(playbook.last_executed_at ?? null)}</span>
                   </div>
                 </div>
 

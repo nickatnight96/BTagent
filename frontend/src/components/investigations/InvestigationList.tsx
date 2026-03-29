@@ -44,9 +44,9 @@ export function InvestigationList() {
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       return (
-        inv.title.toLowerCase().includes(q) ||
-        inv.description.toLowerCase().includes(q) ||
-        inv.tags.some((t) => t.toLowerCase().includes(q))
+        (inv.title ?? "").toLowerCase().includes(q) ||
+        (inv.description ?? "").toLowerCase().includes(q) ||
+        (inv.tags ?? []).some((t) => t.toLowerCase().includes(q))
       );
     }
     return true;

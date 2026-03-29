@@ -100,7 +100,7 @@ export function KnowledgeDocumentList() {
                 </div>
                 <div className="flex items-center gap-3 mt-1">
                   <span className="text-xs text-slate-500">
-                    {doc.token_count.toLocaleString()} tokens
+                    {(doc.token_count ?? 0).toLocaleString()} tokens
                   </span>
                   {doc.created_at && (
                     <span className="text-xs text-slate-500">

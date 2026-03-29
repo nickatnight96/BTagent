@@ -51,9 +51,9 @@ export function InvestigationCard({ investigation }: InvestigationCardProps) {
       )}
 
       {/* Tags */}
-      {(investigation.tags?.length ?? 0) > 0 && (
+      {(investigation.tags ?? []).length > 0 && (
         <div className="flex flex-wrap gap-1 mb-3">
-          {investigation.tags!.slice(0, 3).map((tag) => (
+          {(investigation.tags ?? []).slice(0, 3).map((tag) => (
             <span
               key={tag}
               className="px-1.5 py-0.5 text-[10px] rounded bg-slate-800 text-slate-400 border border-slate-700/50"
@@ -61,9 +61,9 @@ export function InvestigationCard({ investigation }: InvestigationCardProps) {
               {tag}
             </span>
           ))}
-          {investigation.tags!.length > 3 && (
+          {(investigation.tags ?? []).length > 3 && (
             <span className="px-1.5 py-0.5 text-[10px] rounded text-slate-500">
-              +{investigation.tags!.length - 3}
+              +{(investigation.tags ?? []).length - 3}
             </span>
           )}
         </div>
@@ -85,14 +85,14 @@ export function InvestigationCard({ investigation }: InvestigationCardProps) {
 
       {/* IOC and cost indicators */}
       <div className="flex items-center gap-3 mt-2">
-        {(investigation.iocs?.length ?? 0) > 0 && (
+        {(investigation.iocs ?? []).length > 0 && (
           <span className="text-[10px] text-slate-500">
-            {investigation.iocs!.length} IOCs
+            {(investigation.iocs ?? []).length} IOCs
           </span>
         )}
         {(investigation.cost_usd ?? 0) > 0 && (
           <span className="text-[10px] text-slate-500">
-            ${investigation.cost_usd!.toFixed(2)}
+            ${(investigation.cost_usd ?? 0).toFixed(2)}
           </span>
         )}
       </div>

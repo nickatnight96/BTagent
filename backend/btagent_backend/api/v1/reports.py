@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from btagent_backend.api.deps import CurrentUser, get_current_user
 from btagent_backend.services.report_service import ReportService
@@ -25,8 +25,10 @@ _report_service = ReportService()
 
 
 class GenerateReportRequest(BaseModel):
-    investigation_id: str
-    template: str = "incident_report"
+    investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    template: Literal[
+        "incident_report", "ioc_report", "executive_briefing", "regulatory_notification"
+    ] = "incident_report"
 
 
 class ListTemplatesResponse(BaseModel):
@@ -36,18 +38,18 @@ class ListTemplatesResponse(BaseModel):
 
 
 class SummarizeRequest(BaseModel):
-    investigation_ids: list[str]
-    format: str = "generic"
+    investigation_ids: list[str] = Field(..., min_length=1)
+    format: Literal["cisa", "fbi_ic3", "isac", "generic"] = "generic"
 
 
 class RemediationRequest(BaseModel):
-    investigation_id: str
-    audience: str = "technical"
+    investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    audience: Literal["executive", "technical", "compliance"] = "technical"
 
 
 class DetectionContentRequest(BaseModel):
-    investigation_id: str
-    platform: str = "splunk"
+    investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
+    platform: Literal["splunk", "elastic", "sentinel"] = "splunk"
 
 
 # --------------------------------------------------------------------------- #

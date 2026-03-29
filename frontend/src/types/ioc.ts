@@ -36,13 +36,13 @@ export interface VTEnrichment {
 /** Shodan specific enrichment */
 export interface ShodanEnrichment {
   ip: string;
-  ports: number[];
-  vulns: string[];
-  os: string | null;
-  isp: string;
-  country: string;
-  city: string;
-  last_update: string;
+  ports?: number[];
+  vulns?: string[];
+  os?: string | null;
+  isp?: string;
+  country?: string;
+  city?: string;
+  last_update?: string;
 }
 
 /** GreyNoise specific enrichment */
@@ -67,14 +67,14 @@ export interface AbuseIPDBEnrichment {
 
 /** MISP specific enrichment */
 export interface MISPEnrichment {
-  event_count: number;
-  events: Array<{
+  event_count?: number;
+  events?: Array<{
     id: string;
     info: string;
     date: string;
     threat_level: number;
   }>;
-  tags: string[];
+  tags?: string[];
 }
 
 /** Full enrichment data container */
@@ -84,7 +84,7 @@ export interface EnrichmentData {
   grey_noise?: GreyNoiseEnrichment;
   abuse_ipdb?: AbuseIPDBEnrichment;
   misp?: MISPEnrichment;
-  raw_results: EnrichmentResult[];
+  raw_results?: EnrichmentResult[];
 }
 
 /** MITRE technique reference on an IOC */
@@ -101,17 +101,19 @@ export interface IOC {
   value: string;
   source: string;
   confidence: number;
-  tags: string[];
+  tags?: string[];
   first_seen: string;
   last_seen?: string;
   context?: string;
   investigation_id?: string;
   investigation_title?: string;
-  enrichment_status: EnrichmentStatus;
+  enrichment_status?: EnrichmentStatus;
   enrichment_data?: EnrichmentData;
-  mitre_tags: MitreTag[];
-  tlp: TLP;
-  related_ioc_ids: string[];
+  enrichment?: Record<string, unknown>;
+  mitre_tags?: MitreTag[];
+  tlp?: TLP;
+  tlp_level?: string;
+  related_ioc_ids?: string[];
 }
 
 /** IOC filter parameters */

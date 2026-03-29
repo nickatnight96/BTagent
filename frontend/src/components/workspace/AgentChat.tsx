@@ -107,17 +107,19 @@ function HITLCard({ checkpoint, onRespond }: HITLCardProps) {
         </span>
       </div>
       <p className="text-sm text-slate-300 mb-2">{checkpoint.prompt}</p>
-      <div className="bg-slate-800/50 rounded-md p-3 mb-3 text-xs font-mono text-slate-400">
-        <div>
-          Action: <span className="text-slate-200">{checkpoint.action.action_type}</span>
+      {checkpoint.action && (
+        <div className="bg-slate-800/50 rounded-md p-3 mb-3 text-xs font-mono text-slate-400">
+          <div>
+            Action: <span className="text-slate-200">{checkpoint.action.action_type ?? "unknown"}</span>
+          </div>
+          <div>
+            Target: <span className="text-slate-200">{checkpoint.action.target ?? "unknown"}</span>
+          </div>
+          <div>
+            Reason: <span className="text-slate-200">{checkpoint.action.reason ?? ""}</span>
+          </div>
         </div>
-        <div>
-          Target: <span className="text-slate-200">{checkpoint.action.target}</span>
-        </div>
-        <div>
-          Reason: <span className="text-slate-200">{checkpoint.action.reason}</span>
-        </div>
-      </div>
+      )}
       <textarea
         placeholder="Optional comment..."
         value={comment}

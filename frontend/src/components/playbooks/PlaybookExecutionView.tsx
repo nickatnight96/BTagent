@@ -142,10 +142,8 @@ export function PlaybookExecutionView() {
   // Build a step result lookup
   const stepResultMap = useMemo(() => {
     const map = new Map<string, StepResult>();
-    if (executionState?.step_results) {
-      for (const sr of executionState.step_results) {
-        map.set(sr.step_id, sr);
-      }
+    for (const sr of (executionState?.step_results ?? [])) {
+      map.set(sr.step_id, sr);
     }
     return map;
   }, [executionState?.step_results]);
@@ -371,11 +369,11 @@ export function PlaybookExecutionView() {
                 </div>
               )}
 
-              {Object.keys(selectedStepResult.output).length > 0 && (
+              {Object.keys(selectedStepResult.output ?? {}).length > 0 && (
                 <div>
                   <label className="block text-xs font-medium text-slate-400 mb-1">Output</label>
                   <pre className="text-xs text-slate-300 bg-slate-800 border border-slate-700 rounded-md p-2 font-mono overflow-auto max-h-60">
-                    {JSON.stringify(selectedStepResult.output, null, 2)}
+                    {JSON.stringify(selectedStepResult.output ?? {}, null, 2)}
                   </pre>
                 </div>
               )}
@@ -385,14 +383,14 @@ export function PlaybookExecutionView() {
       </div>
 
       {/* Execution timeline at bottom */}
-      {executionState && executionState.step_results.length > 0 && (
+      {executionState && (executionState.step_results ?? []).length > 0 && (
         <div className="border-t border-slate-700/50 bg-slate-900 px-4 py-3 shrink-0">
           <div className="flex items-center gap-1.5 mb-2">
             <Clock className="w-3 h-3 text-slate-500" />
             <span className="text-xs font-medium text-slate-400">Execution Timeline</span>
           </div>
           <div className="flex items-center gap-1 overflow-x-auto pb-1">
-            {executionState.step_results.map((sr, idx) => {
+            {(executionState.step_results ?? []).map((sr, idx) => {
               const styles = STEP_STATUS_STYLES[sr.status] ?? STEP_STATUS_STYLES[StepExecutionStatus.PENDING]!;
               return (
                 <div key={sr.step_id} className="flex items-center shrink-0">
@@ -411,7 +409,7 @@ export function PlaybookExecutionView() {
                     {styles.icon}
                     <span className="max-w-[80px] truncate">{sr.step_id}</span>
                   </button>
-                  {idx < executionState.step_results.length - 1 && (
+                  {idx < (executionState.step_results ?? []).length - 1 && (
                     <div className="w-4 h-px bg-slate-700 mx-0.5" />
                   )}
                 </div>

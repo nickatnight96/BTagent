@@ -6,7 +6,7 @@ export interface IOC {
   value: string;
   source: string;
   confidence: number;
-  tags: string[];
+  tags?: string[];
   first_seen: string;
   context?: string;
 }
@@ -36,22 +36,25 @@ export interface ContainmentAction {
 
 export interface Investigation {
   id: string;
+  case_id?: string;
   title: string;
   description: string;
   severity: Severity;
-  tlp: TLP;
+  tlp?: TLP;
+  tlp_level?: string;
   status: InvestigationStatus;
   assigned_to?: string;
-  created_by: string;
+  created_by?: string;
   created_at: string;
   updated_at: string;
+  closed_at?: string;
   template?: string;
-  iocs: IOC[];
-  timeline: TimelineEntry[];
-  containment_actions: ContainmentAction[];
-  cost_usd: number;
-  token_count: number;
-  tags: string[];
+  iocs?: IOC[];
+  timeline?: TimelineEntry[];
+  containment_actions?: ContainmentAction[];
+  cost_usd?: number;
+  token_count?: number;
+  tags?: string[];
 }
 
 export interface CreateInvestigationRequest {
@@ -83,7 +86,7 @@ export interface ToolCallInfo {
 export interface HITLCheckpoint {
   id: string;
   investigation_id: string;
-  action: ContainmentAction;
+  action?: ContainmentAction;
   prompt: string;
   timestamp: string;
   timeout_seconds: number;

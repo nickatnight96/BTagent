@@ -138,7 +138,7 @@ export function MitreMatrix() {
     // Group techniques by tactic
     const techByTactic = new Map<string, typeof techniques>();
     for (const tech of techniques) {
-      for (const tacticName of tech.tactic_names) {
+      for (const tacticName of (tech.tactic_names ?? [])) {
         const key = tacticName.toLowerCase().replace(/\s+/g, "-");
         if (!techByTactic.has(key)) {
           techByTactic.set(key, []);

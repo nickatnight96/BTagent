@@ -99,7 +99,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
     void exportNavigator(investigationFilter ?? undefined);
   }, [exportNavigator, investigationFilter]);
 
-  const mitreUrl = technique.url || `https://attack.mitre.org/techniques/${technique.id.replace(".", "/")}/`;
+  const mitreUrl = technique.url ?? `https://attack.mitre.org/techniques/${technique.id.replace(".", "/")}/`;
 
   // Get investigations where this technique is tagged (from coverage data)
   const taggedInvestigations = useMemo(() => {
@@ -141,7 +141,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
                 {technique.name}
               </h2>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
-                {technique.tactic_names.map((tactic) => (
+                {(technique.tactic_names ?? []).map((tactic) => (
                   <span
                     key={tactic}
                     className="px-1.5 py-0.5 bg-slate-800 rounded text-[10px] text-slate-400"
@@ -188,13 +188,13 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
           </div>
 
           {/* Platforms */}
-          {technique.platforms.length > 0 && (
+          {(technique.platforms ?? []).length > 0 && (
             <div>
               <SectionHeader icon={<Layers className="w-3.5 h-3.5" />}>
                 Platforms
               </SectionHeader>
               <div className="flex flex-wrap gap-1.5">
-                {technique.platforms.map((platform) => (
+                {(technique.platforms ?? []).map((platform) => (
                   <Badge key={platform} className="text-[10px]">
                     {platform}
                   </Badge>
@@ -204,13 +204,13 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
           )}
 
           {/* Data Sources */}
-          {technique.data_sources.length > 0 && (
+          {(technique.data_sources ?? []).length > 0 && (
             <div>
               <SectionHeader icon={<Eye className="w-3.5 h-3.5" />}>
                 Data Sources
               </SectionHeader>
               <div className="space-y-1.5">
-                {technique.data_sources.map((ds) => (
+                {(technique.data_sources ?? []).map((ds) => (
                   <div
                     key={ds}
                     className="px-3 py-2 bg-slate-900 rounded-lg border border-slate-800 text-xs text-slate-300"

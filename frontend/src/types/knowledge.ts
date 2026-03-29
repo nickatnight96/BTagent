@@ -15,10 +15,10 @@ export interface KnowledgeDocument {
   id: string;
   title: string;
   source_type: KnowledgeSourceType;
-  token_count: number;
-  metadata: Record<string, unknown>;
-  created_at: string | null;
-  updated_at: string | null;
+  token_count?: number;
+  metadata?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 /** Document with content and chunk count */

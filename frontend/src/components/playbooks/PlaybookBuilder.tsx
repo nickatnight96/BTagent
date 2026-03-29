@@ -183,7 +183,7 @@ export function PlaybookBuilder() {
 
   // Hydrate builder from loaded playbook
   useEffect(() => {
-    if (currentPlaybook && currentPlaybook.steps.length > 0) {
+    if (currentPlaybook && (currentPlaybook.steps ?? []).length > 0) {
       // Convert playbook steps to nodes/edges
       const triggerNode: Node = {
         id: "trigger-1",
@@ -191,12 +191,12 @@ export function PlaybookBuilder() {
         position: { x: 0, y: 0 },
         data: {
           label: currentPlaybook.name,
-          triggerType: currentPlaybook.trigger.type,
-          parameters: currentPlaybook.trigger.parameters,
+          triggerType: currentPlaybook.trigger?.type ?? TriggerType.MANUAL,
+          parameters: currentPlaybook.trigger?.parameters ?? {},
         } satisfies TriggerNodeData,
       };
 
-      const stepNodes: Node[] = currentPlaybook.steps.map((step, index) => {
+      const stepNodes: Node[] = (currentPlaybook.steps ?? []).map((step, index) => {
         const nodeType = step.type === "hitl_gate" ? "hitlGate" : step.type === "parallel_fork" ? "parallelFork" : step.type;
         return {
           id: step.id,
@@ -224,7 +224,7 @@ export function PlaybookBuilder() {
       }
 
       // Build edges from next_step references
-      for (const step of currentPlaybook.steps) {
+      for (const step of (currentPlaybook.steps ?? [])) {
         if (step.next_step) {
           computedEdges.push({
             id: `e-${step.id}-${step.next_step}`,

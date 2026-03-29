@@ -132,9 +132,9 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
         investigationId || undefined,
       );
       setImportResult({
-        imported: result.imported,
-        skipped: result.skipped,
-        errors: result.errors.length,
+        imported: result.imported ?? 0,
+        skipped: result.skipped ?? 0,
+        errors: (result.errors ?? []).length,
       });
     } catch (err) {
       setImportError(

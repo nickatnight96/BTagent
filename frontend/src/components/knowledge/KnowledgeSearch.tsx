@@ -165,7 +165,7 @@ export function KnowledgeSearch() {
                     result.source_type}
                 </span>
                 <span className="text-xs text-slate-500 ml-auto">
-                  Score: {result.relevance_score.toFixed(4)}
+                  Score: {(result.relevance_score ?? 0).toFixed(4)}
                 </span>
               </div>
               <p className="text-sm text-slate-300 leading-relaxed line-clamp-3">

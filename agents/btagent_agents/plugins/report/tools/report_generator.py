@@ -75,8 +75,20 @@ _MOCK_INVESTIGATIONS: dict[str, dict[str, Any]] = {
 
 
 def _load_template(template_name: str) -> dict[str, Any] | None:
-    """Load a report template from YAML."""
-    yaml_path = _TEMPLATES_DIR / f"{template_name}.yaml"
+    """Load a report template from YAML.
+
+    SEC-P3-001 FIX: Validate template_name to prevent path traversal.
+    Only bare alphanumeric/underscore names are allowed; any path separator
+    or '..' component is rejected before touching the filesystem.
+    """
+    import re
+
+    if not re.match(r"^[a-zA-Z0-9_-]+$", template_name):
+        return None
+    yaml_path = (_TEMPLATES_DIR / f"{template_name}.yaml").resolve()
+    # Belt-and-suspenders: ensure resolved path is inside templates dir
+    if not str(yaml_path).startswith(str(_TEMPLATES_DIR.resolve())):
+        return None
     if not yaml_path.exists():
         return None
     with yaml_path.open() as f:

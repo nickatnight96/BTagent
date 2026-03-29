@@ -194,7 +194,7 @@ export function InvestigationWorkspace() {
             <div className="flex items-center gap-2 mt-1">
               <SeverityBadge severity={inv.severity} />
               <StatusBadge status={inv.status} />
-              <CostBadge costUsd={inv.cost_usd} tokenCount={inv.token_count} />
+              <CostBadge costUsd={inv.cost_usd ?? 0} tokenCount={inv.token_count ?? 0} />
             </div>
           </div>
         </div>
@@ -253,9 +253,9 @@ export function InvestigationWorkspace() {
           {/* Tab content */}
           <div className="flex-1 overflow-hidden">
             {rightTab === "timeline" && (
-              <TimelinePanel timeline={inv.timeline} />
+              <TimelinePanel timeline={inv.timeline ?? []} />
             )}
-            {rightTab === "iocs" && <IOCsPanel iocs={inv.iocs} />}
+            {rightTab === "iocs" && <IOCsPanel iocs={inv.iocs ?? []} />}
             {rightTab === "evidence" && <EvidencePanel />}
             {rightTab === "events" && <EventStream investigationId={inv.id} />}
           </div>
@@ -340,9 +340,9 @@ function IOCsPanel({ iocs }: { iocs: IOC[] }) {
           {ioc.context && (
             <p className="text-xs text-slate-500 mt-1">{ioc.context}</p>
           )}
-          {ioc.tags.length > 0 && (
+          {(ioc.tags ?? []).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
-              {ioc.tags.map((tag) => (
+              {(ioc.tags ?? []).map((tag) => (
                 <span
                   key={tag}
                   className="px-1.5 py-0.5 text-[10px] rounded bg-slate-800 text-slate-400"

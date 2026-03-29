@@ -13,13 +13,13 @@ export interface MitreTechnique {
   id: string;
   name: string;
   description: string;
-  tactic_ids: string[];
-  tactic_names: string[];
-  platforms: string[];
-  data_sources: string[];
-  detection: string;
-  url: string;
-  is_subtechnique: boolean;
+  tactic_ids?: string[];
+  tactic_names?: string[];
+  platforms?: string[];
+  data_sources?: string[];
+  detection?: string;
+  url?: string;
+  is_subtechnique?: boolean;
   parent_id?: string;
   sub_techniques?: MitreTechnique[];
 }

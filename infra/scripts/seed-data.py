@@ -84,10 +84,16 @@ async def seed():
         session.add(inv)
 
         await session.commit()
-        print("Seed data created (save these credentials -- they are shown only once):")
-        print(f"  Admin user:    admin / {admin_pw}")
-        print(f"  Analyst user:  analyst1 / {analyst_pw}")
-        print(f"  Senior user:   senior1 / {senior_pw}")
+        # SEC-P3-002 FIX: Only print credentials in test mode to avoid leaking
+        # random production passwords to stdout/CI logs.
+        if os.environ.get("BTAGENT_ENV") == "test":
+            print("Seed data created (test mode — deterministic credentials):")
+            print(f"  Admin user:    admin / {admin_pw}")
+            print(f"  Analyst user:  analyst1 / {analyst_pw}")
+            print(f"  Senior user:   senior1 / {senior_pw}")
+        else:
+            print("Seed data created. Credentials are NOT printed in non-test mode.")
+            print("  Retrieve or reset passwords via the admin CLI.")
         print(f"  Investigation: {inv.id} — {inv.title}")
 
 

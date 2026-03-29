@@ -500,11 +500,11 @@ export function IOCNotebook() {
                       </span>
                     </td>
                     <td className="px-3 py-2.5">
-                      <EnrichmentIcon status={ioc.enrichment_status} />
+                      <EnrichmentIcon status={ioc.enrichment_status ?? "pending"} />
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1 flex-wrap max-w-[200px]">
-                        {ioc.mitre_tags.slice(0, 3).map((tag) => (
+                        {(ioc.mitre_tags ?? []).slice(0, 3).map((tag) => (
                           <span
                             key={tag.technique_id}
                             className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20"
@@ -513,9 +513,9 @@ export function IOCNotebook() {
                             {tag.technique_id}
                           </span>
                         ))}
-                        {ioc.mitre_tags.length > 3 && (
+                        {(ioc.mitre_tags ?? []).length > 3 && (
                           <span className="text-[10px] text-slate-500">
-                            +{ioc.mitre_tags.length - 3}
+                            +{(ioc.mitre_tags ?? []).length - 3}
                           </span>
                         )}
                       </div>
