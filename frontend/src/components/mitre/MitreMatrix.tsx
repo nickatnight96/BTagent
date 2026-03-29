@@ -149,7 +149,7 @@ export function MitreMatrix() {
 
     for (const tactic of TACTIC_ORDER) {
       const techs = techByTactic.get(tactic) ?? [];
-      const tacticCoverage = coverage?.matrix[tactic] ?? {};
+      const tacticCoverage = coverage?.matrix?.[tactic] ?? {};
 
       matrix[tactic] = techs.map((tech) => ({
         id: tech.id,
@@ -261,27 +261,27 @@ export function MitreMatrix() {
               </span>
               <Badge
                 className={`text-sm font-bold ${
-                  coverage.coverage_score >= 70
+                  (coverage?.coverage_score ?? 0) >= 70
                     ? "bg-green-500/20 text-green-400 border-green-500/30"
-                    : coverage.coverage_score >= 40
+                    : (coverage?.coverage_score ?? 0) >= 40
                       ? "bg-amber-500/20 text-amber-400 border-amber-500/30"
                       : "bg-red-500/20 text-red-400 border-red-500/30"
                 }`}
               >
-                {coverage.coverage_score}%
+                {(coverage?.coverage_score ?? 0)}%
               </Badge>
             </div>
             <div className="flex items-center gap-4 text-xs text-slate-500">
               <span>
                 <span className="text-slate-300 font-medium">
-                  {coverage.total_tagged}
+                  {(coverage?.total_tagged ?? 0)}
                 </span>{" "}
                 techniques tagged
               </span>
               <span>
                 of{" "}
                 <span className="text-slate-300 font-medium">
-                  {coverage.total_techniques}
+                  {(coverage?.total_techniques ?? 0)}
                 </span>{" "}
                 total
               </span>
