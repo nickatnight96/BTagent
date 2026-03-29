@@ -51,12 +51,13 @@ export function InvestigationWorkspace() {
     useAgentStore();
   const { accessToken } = useAuthStore();
 
-  // Fetch investigation
+  // Fetch investigation (only when ID changes, not on store reference change)
   useEffect(() => {
     if (id) {
-      void fetchInvestigation(id);
+      void useInvestigationStore.getState().fetchInvestigation(id);
     }
-  }, [id, fetchInvestigation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // Connect WebSocket for real-time events
   useEffect(() => {
