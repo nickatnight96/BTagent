@@ -80,7 +80,12 @@ class Settings(BaseSettings):
         return self
 
     # CORS
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8080",
+    ]
 
     # Agent defaults
     default_model_provider: str = "anthropic"
