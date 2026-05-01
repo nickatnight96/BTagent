@@ -21,6 +21,7 @@ from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from btagent_agents.events.emitter import RedisEmitter
+from btagent_agents.hooks._redaction import redact_secrets
 from btagent_agents.hooks.base import HookProvider
 
 logger = logging.getLogger("btagent.hooks.event_emitter")
@@ -173,9 +174,15 @@ class EventEmitterCallback(AsyncCallbackHandler):
         start = self._tool_start_times.pop(run_key, None)
         duration_ms = round((time.monotonic() - start) * 1000, 1) if start else None
 
+        # IMPORTANT: redact secrets BEFORE truncation. A credential appearing in
+        # the first 2000 chars of a tool result must not leak to Redis subscribers
+        # (WebSocket → analyst browser). See agents/btagent_agents/hooks/_redaction.py.
+        redacted = redact_secrets(output) if output else output
+        emitted = redacted[:2000] if len(redacted) > 2000 else redacted
+
         await self._emitter.emit(
             EventType.TOOL_END,
-            output=output[:2000] if len(output) > 2000 else output,
+            output=emitted,
             duration_ms=duration_ms,
             run_id=run_key,
         )
