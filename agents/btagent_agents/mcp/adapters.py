@@ -18,6 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from btagent_shared.types.config import TLP
+
+from btagent_agents.hooks._tlp_egress import (
+    TLPViolation,
+    assert_tlp_allows_egress,
+)
 from btagent_agents.mcp.registry import (
     CircuitOpenError,
     MCPConnectionRegistry,
@@ -58,6 +64,7 @@ class ResilientMCPToolAdapter:
     max_retries: int = DEFAULT_MAX_RETRIES
     backoff_base: float = DEFAULT_BACKOFF_BASE
     backoff_max: float = DEFAULT_BACKOFF_MAX
+    investigation_tlp: str | None = None
     registry: MCPConnectionRegistry | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -125,7 +132,12 @@ class ResilientMCPToolAdapter:
             try:
                 result = await tool_fn(**arguments)
                 self._record_success()
-                return result  # type: ignore[no-any-return]
+                return _enforce_tlp_on_mcp_return(
+                    result,
+                    server_name=self.server_name,
+                    tool_name=tool_name,
+                    investigation_tlp=self.investigation_tlp,
+                )
 
             except CircuitOpenError:
                 raise
@@ -153,6 +165,99 @@ class ResilientMCPToolAdapter:
     def _backoff_delay(self, attempt: int) -> float:
         """Exponential backoff: base * 2^(attempt-1) capped at backoff_max."""
         return min(self.backoff_base * (2 ** (attempt - 1)), self.backoff_max)
+
+
+# ---------------------------------------------------------------------------
+# TLP egress filter for MCP returns
+# ---------------------------------------------------------------------------
+def _is_red_tagged(node: Any) -> bool:
+    """Return True if a dict node is itself tagged TLP:RED."""
+    if not isinstance(node, dict):
+        return False
+    for key in ("tlp_level", "tlp", "TLP", "TLPLevel"):
+        val = node.get(key)
+        if isinstance(val, str) and val.lower() == "red":
+            return True
+    return False
+
+
+def _strip_red_items(node: Any) -> tuple[Any, int]:
+    """Recursively remove any RED-tagged dict from *node*.
+
+    Returns the cleaned structure plus the number of items stripped. RED
+    entries inside lists are dropped; nested dict values that are RED are
+    replaced with a placeholder reference. The MCP envelope itself is never
+    silently swallowed -- the caller raises if the *whole* envelope is RED.
+    """
+    stripped = 0
+    if isinstance(node, dict):
+        cleaned: dict[str, Any] = {}
+        for key, value in node.items():
+            if _is_red_tagged(value):
+                stripped += 1
+                cleaned[key] = {
+                    "_tlp_redacted": True,
+                    "reason": "TLP:RED data not propagated outside investigation",
+                }
+                continue
+            new_value, sub = _strip_red_items(value)
+            stripped += sub
+            cleaned[key] = new_value
+        return cleaned, stripped
+    if isinstance(node, list):
+        cleaned_list: list[Any] = []
+        for item in node:
+            if _is_red_tagged(item):
+                stripped += 1
+                continue
+            new_item, sub = _strip_red_items(item)
+            stripped += sub
+            cleaned_list.append(new_item)
+        return cleaned_list, stripped
+    return node, 0
+
+
+def _enforce_tlp_on_mcp_return(
+    result: dict[str, Any],
+    *,
+    server_name: str,
+    tool_name: str,
+    investigation_tlp: str | None,
+) -> dict[str, Any]:
+    """Apply the TLP egress gate to a returning MCP envelope.
+
+    1. If the envelope itself is RED-tagged, raise :class:`TLPViolation` --
+       the entire payload is restricted and we will not propagate it into
+       agent state.
+    2. Otherwise strip RED-tagged children and call
+       :func:`assert_tlp_allows_egress` to confirm nothing RED slipped past.
+    """
+    if _is_red_tagged(result):
+        logger.error(
+            "Refusing to return TLP:RED MCP envelope from %s/%s",
+            server_name,
+            tool_name,
+        )
+        raise TLPViolation(TLP.RED, f"mcp:{server_name}")
+
+    cleaned, stripped = _strip_red_items(result)
+    if stripped:
+        logger.warning(
+            "Stripped %d TLP:RED-tagged item(s) from MCP return %s/%s",
+            stripped,
+            server_name,
+            tool_name,
+        )
+        if isinstance(cleaned, dict):
+            cleaned.setdefault("_tlp_stripped_count", stripped)
+
+    # Defensive: ensure no RED tag remains.
+    assert_tlp_allows_egress(
+        cleaned,
+        "mcp_return",
+        classification_ctx=investigation_tlp,
+    )
+    return cleaned  # type: ignore[no-any-return]
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +376,7 @@ class MCPToolExecutor:
     max_retries: int = DEFAULT_MAX_RETRIES
     offload_threshold: int = LARGE_RESULT_THRESHOLD
     investigation_id: str = ""
+    investigation_tlp: str | None = None
 
     _resilient: ResilientMCPToolAdapter = field(init=False, repr=False)
     _file_adapter: FileWritingAdapter = field(init=False, repr=False)
@@ -279,6 +385,7 @@ class MCPToolExecutor:
         self._resilient = ResilientMCPToolAdapter(
             server_name=self.server_name,
             max_retries=self.max_retries,
+            investigation_tlp=self.investigation_tlp,
         )
         self._file_adapter = FileWritingAdapter(threshold=self.offload_threshold)
 
