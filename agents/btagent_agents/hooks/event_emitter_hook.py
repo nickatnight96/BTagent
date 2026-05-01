@@ -22,6 +22,7 @@ from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from btagent_agents.events.emitter import RedisEmitter
+from btagent_agents.hooks._redaction import redact_secrets
 from btagent_agents.hooks._tlp_egress import (
     TLPViolation,
     assert_tlp_allows_egress,
@@ -234,15 +235,22 @@ class EventEmitterCallback(AsyncCallbackHandler):
         start = self._tool_start_times.pop(run_key, None)
         duration_ms = round((time.monotonic() - start) * 1000, 1) if start else None
 
-        truncated = output[:2000] if len(output) > 2000 else output
+        # Defense in depth: redact secrets BEFORE truncation so credentials
+        # appearing in the first 2000 chars don't leak via the truncation
+        # window, then TLP-gate the (redacted, truncated) payload before it
+        # reaches the broadcast channel. Order is gate-on-redacted so we never
+        # log unredacted output even on a drop.
+        redacted = redact_secrets(output) if output else output
+        emitted = redacted[:2000] if len(redacted) > 2000 else redacted
+
         if not self._tlp_check_or_drop(
-            {"output": truncated, "run_id": run_key},
+            {"output": emitted, "run_id": run_key},
             source="on_tool_end",
         ):
             return
         await self._emitter.emit(
             EventType.TOOL_END,
-            output=truncated,
+            output=emitted,
             duration_ms=duration_ms,
             run_id=run_key,
         )
