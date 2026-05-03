@@ -18,12 +18,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from btagent_shared.security import TLPViolation, assert_tlp_allows_egress
 from btagent_shared.types.config import TLP
 
-from btagent_agents.hooks._tlp_egress import (
-    TLPViolation,
-    assert_tlp_allows_egress,
-)
 from btagent_agents.mcp.registry import (
     CircuitOpenError,
     MCPConnectionRegistry,

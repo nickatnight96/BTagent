@@ -16,6 +16,7 @@ import time
 from typing import Any
 from uuid import UUID
 
+from btagent_shared.security import TLPViolation, assert_tlp_allows_egress
 from btagent_shared.types.config import TLP
 from btagent_shared.types.events import EventType
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
@@ -23,10 +24,6 @@ from langchain_core.outputs import LLMResult
 
 from btagent_agents.events.emitter import RedisEmitter
 from btagent_agents.hooks._redaction import redact_secrets
-from btagent_agents.hooks._tlp_egress import (
-    TLPViolation,
-    assert_tlp_allows_egress,
-)
 from btagent_agents.hooks.base import HookProvider
 
 logger = logging.getLogger("btagent.hooks.event_emitter")

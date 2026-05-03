@@ -20,12 +20,9 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from btagent_shared.security import TLPViolation, assert_tlp_allows_egress
 from btagent_shared.types.config import TLP, ModelProvider
 
-from btagent_agents.hooks._tlp_egress import (
-    TLPViolation,
-    assert_tlp_allows_egress,
-)
 from btagent_agents.hooks.classification_hook import ClassificationCallback
 from btagent_agents.mcp.adapters import (
     ResilientMCPToolAdapter,

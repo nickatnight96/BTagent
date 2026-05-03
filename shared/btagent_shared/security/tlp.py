@@ -1,30 +1,33 @@
-"""Centralized TLP egress enforcement.
+"""Centralised TLP enforcement — exception type plus egress gate.
 
-Provides a single function -- :func:`assert_tlp_allows_egress` -- that all
-non-LLM egress points must call before letting tagged data leave the
-originating investigation context. The LLM-call gate is handled separately by
-:mod:`btagent_agents.hooks.classification_hook`; the four call sites covered
-here are:
+Provides:
+
+* :class:`TLPViolation` -- raised by every TLP gate (LLM-call provider check
+  in ``btagent_agents.hooks.classification_hook`` and the four non-LLM egress
+  gates below). A single ``except TLPViolation:`` covers both.
+* :func:`assert_tlp_allows_egress` -- the gate that all non-LLM egress points
+  must call before letting tagged data leave the originating investigation
+  context.
+
+Egress kinds covered:
 
 * ``"stix_export"``      - STIX 2.1 bundle generation / export
 * ``"knowledge_ingest"`` - RAG knowledge-base document ingestion
 * ``"mcp_return"``       - MCP tool-call return envelopes
 * ``"event_emit"``       - WebSocket / Redis event broadcast
 
-Behaviour summary
------------------
-* TLP:RED is *blocked* on every egress kind. The function raises
-  :class:`TLPViolation` (re-exported from :mod:`classification_hook` so call
-  sites have a single exception type to catch).
-* TLP:AMBER_STRICT and below are *allowed*; AMBER_STRICT triggers a logged
-  warning so that operators can audit which channels are carrying restricted
-  data.
-* Unknown / missing classification is treated as TLP:GREEN (the documented
-  default in :class:`btagent_shared.types.config.AgentConfig`).
+Behaviour:
 
-The helper is deliberately small and synchronous so it can be invoked from
-anywhere -- sync code, async coroutines, hooks, services -- without adding a
-new dependency on the event loop.
+* TLP:RED is *blocked* on every egress kind. The function raises
+  :class:`TLPViolation`.
+* TLP:AMBER_STRICT and below are *allowed*; AMBER_STRICT triggers a logged
+  warning so operators can audit which channels are carrying restricted data.
+* Unknown / missing classification is treated as TLP:GREEN -- matching the
+  default in :class:`btagent_shared.types.config.AgentConfig`.
+
+The helper is small and synchronous so it can be invoked from anywhere --
+sync code, async coroutines, hooks, services -- without adding a new
+dependency on the event loop.
 """
 
 from __future__ import annotations
@@ -34,9 +37,27 @@ from typing import Any, Literal
 
 from btagent_shared.types.config import TLP
 
-from btagent_agents.hooks.classification_hook import TLPViolation
+logger = logging.getLogger("btagent.security.tlp")
 
-logger = logging.getLogger("btagent.hooks.tlp_egress")
+
+class TLPViolation(Exception):
+    """Raised when TLP-classified data would cross a forbidden boundary.
+
+    Carries the offending TLP level and the channel name (``provider`` for
+    the LLM-call gate, ``"egress:<kind>"`` for the egress gate) so handlers
+    can audit-log uniformly.
+    """
+
+    def __init__(self, tlp: TLP, channel: str) -> None:
+        self.tlp = tlp
+        # Kept as ``provider`` for backwards compatibility with the original
+        # classification_hook gate; new call sites should treat it as the
+        # generic channel identifier.
+        self.provider = channel
+        super().__init__(
+            f"TLP:{tlp.value.upper()} data cannot be sent to channel {channel!r}"
+        )
+
 
 EgressKind = Literal[
     "stix_export",
@@ -57,7 +78,6 @@ _TLP_FIELD_NAMES: tuple[str, ...] = ("tlp_level", "tlp", "TLP", "TLPLevel")
 
 
 def _coerce_tlp(value: Any) -> TLP | None:
-    """Best-effort conversion of *value* to a :class:`TLP` member."""
     if value is None:
         return None
     if isinstance(value, TLP):
@@ -71,17 +91,11 @@ def _coerce_tlp(value: Any) -> TLP | None:
 
 
 def _scan_payload_for_red(payload: Any) -> bool:
-    """Return ``True`` if *payload* contains any TLP:RED-tagged item.
-
-    Walks dicts and lists up to a reasonable depth. Strings, numbers, and
-    other scalar types are ignored -- they cannot carry their own TLP tag.
-    """
     return _scan(payload, depth=0)
 
 
 def _scan(node: Any, *, depth: int) -> bool:
     if depth > 8:
-        # Defensive: stop recursing into pathological structures.
         return False
     if isinstance(node, dict):
         for key in _TLP_FIELD_NAMES:
@@ -101,12 +115,6 @@ def _scan(node: Any, *, depth: int) -> bool:
 def _resolve_classification(
     classification_ctx: TLP | str | dict[str, Any] | None,
 ) -> TLP:
-    """Normalise the classification context into a TLP enum value.
-
-    ``None`` and unrecognised values default to :attr:`TLP.GREEN` -- matching
-    the default in :class:`AgentConfig`. Callers that want strict behaviour
-    should always pass an explicit TLP.
-    """
     if isinstance(classification_ctx, TLP):
         return classification_ctx
     if isinstance(classification_ctx, str):
@@ -144,10 +152,8 @@ def assert_tlp_allows_egress(
     Raises
     ------
     TLPViolation:
-        If the resolved context is :attr:`TLP.RED`, *or* the payload contains
-        any item explicitly tagged TLP:RED. The exception is the same type
-        raised by :class:`ClassificationCallback` so a single
-        ``except TLPViolation:`` handler covers both gates.
+        If the resolved context is :attr:`TLP.RED`, *or* the payload
+        contains any item explicitly tagged TLP:RED.
     ValueError:
         If *egress_kind* is not one of the recognised values. Egress sites
         must opt into a known channel name -- silent fall-throughs would
@@ -161,7 +167,6 @@ def assert_tlp_allows_egress(
 
     ctx_tlp = _resolve_classification(classification_ctx)
 
-    # Hard block: investigation is RED -> nothing leaves, regardless of payload.
     if ctx_tlp == TLP.RED:
         logger.error(
             "TLP egress block: investigation classification is TLP:RED; "
@@ -170,7 +175,6 @@ def assert_tlp_allows_egress(
         )
         raise TLPViolation(TLP.RED, f"egress:{egress_kind}")
 
-    # Hard block: any RED-tagged item inside the payload itself.
     if _scan_payload_for_red(payload):
         logger.error(
             "TLP egress block: payload contains TLP:RED-tagged data; "
@@ -179,7 +183,6 @@ def assert_tlp_allows_egress(
         )
         raise TLPViolation(TLP.RED, f"egress:{egress_kind}")
 
-    # Soft warn for AMBER_STRICT so operators can audit restricted channels.
     if ctx_tlp == TLP.AMBER_STRICT:
         logger.warning(
             "TLP:AMBER_STRICT data permitted to egress via %s "
