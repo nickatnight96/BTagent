@@ -25,6 +25,11 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+# Default organization id used to seed existing rows during the org-scoping
+# migration and as a fallback in tests / single-tenant deployments.
+DEFAULT_ORG_ID = "org_default"
+
+
 class OrganizationRow(Base):
     __tablename__ = "organizations"
 
@@ -37,12 +42,15 @@ class UserRow(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Phase A1 (schema): org_id is required.  Until Phase B1 wires routes to
+    # set org_id from the authenticated user, we default to the seeded
+    # ``org_default`` row so existing call sites continue to function.
     org_id: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("organizations.id"),
         nullable=False,
         index=True,
-        default="org_default",
+        default=DEFAULT_ORG_ID,
     )
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
@@ -63,7 +71,7 @@ class InvestigationRow(Base):
         ForeignKey("organizations.id"),
         nullable=False,
         index=True,
-        default="org_default",
+        default=DEFAULT_ORG_ID,
     )
     case_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -112,7 +120,7 @@ class IOCRow(Base):
         ForeignKey("organizations.id"),
         nullable=False,
         index=True,
-        default="org_default",
+        default=DEFAULT_ORG_ID,
     )
     investigation_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False
@@ -185,7 +193,7 @@ class EvidenceRow(Base):
         ForeignKey("organizations.id"),
         nullable=False,
         index=True,
-        default="org_default",
+        default=DEFAULT_ORG_ID,
     )
     investigation_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False

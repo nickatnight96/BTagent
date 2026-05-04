@@ -95,7 +95,9 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Invalid username or password",
         )
 
-    return create_token_pair(user.id, user.username, user.role)
+    # AUTH-B1: embed org_id so route-level scoping can run without an extra
+    # DB hit per request.
+    return create_token_pair(user.id, user.username, user.role, org_id=user.org_id)
 
 
 @router.post("/refresh", response_model=TokenPair)
@@ -128,8 +130,14 @@ async def refresh(body: RefreshRequest):
         await revoke(payload.jti, _remaining_ttl(payload.exp))
 
     settings = get_settings()
-    access_token, _ = create_access_token(payload.sub, payload.username, payload.role)
-    new_refresh_token, _ = create_refresh_token(payload.sub, payload.username, payload.role)
+    # AUTH-B1: propagate org_id from the rotated refresh token so the new
+    # access token keeps the caller scoped to their tenant.
+    access_token, _ = create_access_token(
+        payload.sub, payload.username, payload.role, org_id=payload.org_id
+    )
+    new_refresh_token, _ = create_refresh_token(
+        payload.sub, payload.username, payload.role, org_id=payload.org_id
+    )
     return TokenPair(
         access_token=access_token,
         refresh_token=new_refresh_token,
