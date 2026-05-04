@@ -25,10 +25,10 @@ class CurrentUser:
         self.id = payload.sub
         self.username = payload.username
         self.role = payload.role
-        # AUTH-B1: tenant scoping. Tokens issued before B1 don't carry an
-        # ``org_id`` claim; treat those as members of ``org_default`` so
-        # legacy sessions keep working until the rollout window closes.
-        self.org_id: str = payload.org_id or "org_default"
+        # AUTH-B1: org_id powers route-level tenant scoping. TokenPayload
+        # defaults this to "org_default" for legacy tokens issued before
+        # Phase B1, so the attribute is always populated.
+        self.org_id = payload.org_id
 
     def has_permission(self, permission: str) -> bool:
         return has_permission(self.role, permission)

@@ -95,8 +95,8 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
             detail="Invalid username or password",
         )
 
-    # AUTH-B1: embed org_id so route-level scoping can run without an extra
-    # DB hit per request.
+    # AUTH-B1: bind the issued tokens to the user's org so per-request authz
+    # has tenant context without an extra DB lookup.
     return create_token_pair(user.id, user.username, user.role, org_id=user.org_id)
 
 
@@ -130,8 +130,8 @@ async def refresh(body: RefreshRequest):
         await revoke(payload.jti, _remaining_ttl(payload.exp))
 
     settings = get_settings()
-    # AUTH-B1: propagate org_id from the rotated refresh token so the new
-    # access token keeps the caller scoped to their tenant.
+    # AUTH-B1: keep the same org_id on rotation so the new pair stays bound
+    # to the same tenant as the original session.
     access_token, _ = create_access_token(
         payload.sub, payload.username, payload.role, org_id=payload.org_id
     )
@@ -197,12 +197,15 @@ async def register(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="Username or email already exists")
 
+    # AUTH-B1: new users inherit the creating admin's org_id (defense against
+    # mass-assignment of org_id from the request body).
     user = UserRow(
         id=generate_id("usr"),
         username=body.username,
         email=body.email,
         password_hash=hash_password(body.password),
         role=body.role,
+        org_id=current_user.org_id,
     )
     db.add(user)
     await db.flush()
@@ -213,4 +216,9 @@ async def register(
 @router.get("/me")
 async def me(current_user: CurrentUser = Depends(get_current_user)):
     """Get current user info from JWT."""
-    return {"id": current_user.id, "username": current_user.username, "role": current_user.role}
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "role": current_user.role,
+        "org_id": current_user.org_id,
+    }

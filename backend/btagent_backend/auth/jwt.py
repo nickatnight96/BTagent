@@ -17,12 +17,10 @@ class TokenPayload(BaseModel):
     exp: datetime
     type: str  # "access" or "refresh"
     jti: str | None = None  # SEC-003 FIX: JWT ID for token revocation tracking
-    # AUTH-B1: org_id is embedded so the request-scoped CurrentUser dependency
-    # can scope reads/writes to the caller's tenant without an extra DB hit.
-    # ``None`` is tolerated for legacy tokens issued before this rollout; the
-    # middleware will treat them as members of ``"org_default"`` so they keep
-    # working during the rollout window.
-    org_id: str | None = None
+    # AUTH-B1: org_id embedded so per-request authz can scope without an extra
+    # DB lookup. Optional + defaulted to "org_default" so legacy tokens issued
+    # before Phase B1 still validate during the rollout window.
+    org_id: str = "org_default"
 
 
 class TokenPair(BaseModel):
@@ -44,7 +42,7 @@ def create_access_token(
     user_id: str,
     username: str,
     role: str,
-    org_id: str | None = None,
+    org_id: str = "org_default",
 ) -> tuple[str, str]:
     """Issue a signed access token and return ``(token, jti)``.
 
@@ -53,8 +51,8 @@ def create_access_token(
     also returned to the caller (login / refresh endpoints) so they can record
     or revoke it without having to decode the token they just signed.
 
-    AUTH-B1: ``org_id`` is also embedded so route-level ownership checks can
-    scope reads/writes to the caller's tenant without an extra DB lookup.
+    AUTH-B1: ``org_id`` is now embedded in the token so route-level scoping can
+    reject cross-org access without an extra DB lookup.
     """
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_ttl_minutes)
@@ -76,15 +74,15 @@ def create_refresh_token(
     user_id: str,
     username: str,
     role: str,
-    org_id: str | None = None,
+    org_id: str = "org_default",
 ) -> tuple[str, str]:
     """Issue a signed refresh token and return ``(token, jti)``.
 
     AUTH-A2: refresh tokens already carried a jti; we now also return it so the
     rotation path in ``/auth/refresh`` can revoke it the moment it is consumed.
 
-    AUTH-B1: ``org_id`` is also embedded so the rotated access token issued by
-    ``/auth/refresh`` carries the same tenant context.
+    AUTH-B1: ``org_id`` is propagated through refresh-token rotation so the
+    new access token issued during refresh stays bound to the same tenant.
     """
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_ttl_days)
@@ -106,7 +104,7 @@ def create_token_pair(
     user_id: str,
     username: str,
     role: str,
-    org_id: str | None = None,
+    org_id: str = "org_default",
 ) -> TokenPair:
     settings = get_settings()
     access_token, _ = create_access_token(user_id, username, role, org_id=org_id)
