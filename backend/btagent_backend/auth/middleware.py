@@ -1,13 +1,21 @@
 """Authentication middleware and FastAPI dependencies."""
 
+import logging
+
 from fastapi import Depends, HTTPException, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
 from btagent_backend.auth.jwt import TokenPayload, decode_token
 from btagent_backend.auth.rbac import has_permission
+from btagent_backend.auth.revocation import is_revoked
+
+logger = logging.getLogger("btagent.auth.middleware")
 
 security = HTTPBearer()
+
+# AUTH-A2: header used when rejecting a revoked or otherwise invalid token.
+_INVALID_TOKEN_HEADERS = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
 
 
 class CurrentUser:
@@ -47,6 +55,24 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Expected access token, got refresh token",
+        )
+
+    # AUTH-A2: enforce the Redis-backed revocation list.
+    if payload.jti is None:
+        # Legacy access tokens issued before AUTH-A2 have no jti and therefore
+        # cannot be revoked individually. Accept them during the rollout window
+        # so analysts aren't force-logged-out, but emit a warning so we can
+        # detect their use and tighten the policy once the window closes.
+        logger.warning(
+            "Accepted legacy access token without jti for user=%s; "
+            "force re-login recommended before AUTH-A2 rollout completes",
+            payload.sub,
+        )
+    elif await is_revoked(payload.jti):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked",
+            headers=_INVALID_TOKEN_HEADERS,
         )
 
     return CurrentUser(payload)

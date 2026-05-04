@@ -34,41 +34,57 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-def create_access_token(user_id: str, username: str, role: str) -> str:
+def create_access_token(user_id: str, username: str, role: str) -> tuple[str, str]:
+    """Issue a signed access token and return ``(token, jti)``.
+
+    AUTH-A2: every access token now carries a ``jti`` (JWT ID) claim so it can
+    be revoked server-side via the Redis-backed revocation list. The ``jti`` is
+    also returned to the caller (login / refresh endpoints) so they can record
+    or revoke it without having to decode the token they just signed.
+    """
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_ttl_minutes)
+    jti = str(uuid.uuid4())
     payload = {
         "sub": user_id,
         "username": username,
         "role": role,
         "exp": expire,
         "type": "access",
+        "jti": jti,
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return token, jti
 
 
-def create_refresh_token(user_id: str, username: str, role: str) -> str:
+def create_refresh_token(user_id: str, username: str, role: str) -> tuple[str, str]:
+    """Issue a signed refresh token and return ``(token, jti)``.
+
+    AUTH-A2: refresh tokens already carried a jti; we now also return it so the
+    rotation path in ``/auth/refresh`` can revoke it the moment it is consumed.
+    """
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_ttl_days)
-    # SEC-003 FIX: Include a jti (JWT ID) claim to enable server-side revocation.
-    # A Redis-backed revocation list should check this jti on refresh and invalidate
-    # the old token. Full implementation tracked for a future sprint.
+    jti = str(uuid.uuid4())
     payload = {
         "sub": user_id,
         "username": username,
         "role": role,
         "exp": expire,
         "type": "refresh",
-        "jti": str(uuid.uuid4()),
+        "jti": jti,
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return token, jti
 
 
 def create_token_pair(user_id: str, username: str, role: str) -> TokenPair:
     settings = get_settings()
+    access_token, _ = create_access_token(user_id, username, role)
+    refresh_token, _ = create_refresh_token(user_id, username, role)
     return TokenPair(
-        access_token=create_access_token(user_id, username, role),
-        refresh_token=create_refresh_token(user_id, username, role),
+        access_token=access_token,
+        refresh_token=refresh_token,
         expires_in=settings.access_token_ttl_minutes * 60,
     )
 
