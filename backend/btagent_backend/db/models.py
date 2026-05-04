@@ -25,10 +25,25 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+class OrganizationRow(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class UserRow(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default="org_default",
+    )
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -36,11 +51,20 @@ class UserRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    __table_args__ = (Index("idx_users_org_id", "org_id", "id"),)
+
 
 class InvestigationRow(Base):
     __tablename__ = "investigations"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default="org_default",
+    )
     case_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -48,7 +72,7 @@ class InvestigationRow(Base):
     severity: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
     tlp_level: Mapped[str] = mapped_column(String(20), nullable=False, default="green")
     assigned_to: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("users.id"), nullable=True
+        String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     template: Mapped[str | None] = mapped_column(String(100), nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -75,6 +99,7 @@ class InvestigationRow(Base):
         Index("idx_investigations_status", "status"),
         Index("idx_investigations_created", "created_at"),
         Index("idx_investigations_severity", "severity"),
+        Index("idx_investigations_org_id", "org_id", "id"),
     )
 
 
@@ -82,6 +107,13 @@ class IOCRow(Base):
     __tablename__ = "iocs"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default="org_default",
+    )
     investigation_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False
     )
@@ -101,6 +133,7 @@ class IOCRow(Base):
         Index("idx_iocs_value", "value"),
         Index("idx_iocs_investigation", "investigation_id"),
         Index("idx_iocs_type", "type"),
+        Index("idx_iocs_org_id", "org_id", "id"),
     )
 
 
@@ -147,6 +180,13 @@ class EvidenceRow(Base):
     __tablename__ = "evidence"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default="org_default",
+    )
     investigation_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False
     )
@@ -158,6 +198,8 @@ class EvidenceRow(Base):
     collected_by: Mapped[str] = mapped_column(String(200), default="")
 
     investigation: Mapped["InvestigationRow"] = relationship(back_populates="evidence")
+
+    __table_args__ = (Index("idx_evidence_org_id", "org_id", "id"),)
 
 
 class EventRow(Base):

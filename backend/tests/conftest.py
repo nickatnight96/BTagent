@@ -97,9 +97,29 @@ def _enable_sqlite_fk(dbapi_conn, connection_record):
 
 @pytest_asyncio.fixture(scope="session")
 async def _init_db():
-    """Create all tables once for the entire test session."""
+    """Create all tables once for the entire test session.
+
+    Also seeds the ``org_default`` organization row so any fixture that
+    creates users/investigations/iocs/evidence (which now FK into
+    ``organizations``) can rely on it being present.
+    """
+    from btagent_backend.db.models import OrganizationRow
+
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    async with _test_session_factory() as session:
+        existing = await session.get(OrganizationRow, "org_default")
+        if existing is None:
+            session.add(
+                OrganizationRow(
+                    id="org_default",
+                    name="Default Organization",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+
     yield
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
