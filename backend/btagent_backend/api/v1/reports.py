@@ -7,9 +7,31 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.api.deps import CurrentUser, get_current_user
+from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.auth.scoping import assert_can_access_investigation
+from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services.report_service import ReportService
+
+
+async def _scope_or_404(
+    db: AsyncSession, user: CurrentUser, investigation_id: str
+) -> None:
+    """Look up an investigation and 404 if the caller cannot access it.
+
+    AUTH-B1: report endpoints take ``investigation_id`` from the request body,
+    so each one needs an explicit scope check before delegating to the report
+    plugin (which doesn't know about tenants).
+    """
+    result = await db.execute(
+        select(InvestigationRow).where(InvestigationRow.id == investigation_id)
+    )
+    inv = result.scalar_one_or_none()
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    assert_can_access_investigation(user, inv)
 
 logger = logging.getLogger("btagent.api.reports")
 
@@ -61,12 +83,14 @@ class DetectionContentRequest(BaseModel):
 async def generate_report(
     body: GenerateReportRequest,
     user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Generate a full report from investigation data using a template.
 
     Requires ``report:generate`` permission.
     """
     user.require_permission("report:generate")
+    await _scope_or_404(db, user, body.investigation_id)
 
     result = await _report_service.generate_report(
         investigation_id=body.investigation_id,
@@ -98,6 +122,7 @@ async def list_templates(
 async def summarize_investigations(
     body: SummarizeRequest,
     user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Summarize investigation(s) for agency submission.
 
@@ -111,6 +136,10 @@ async def summarize_investigations(
             status_code=400,
             detail="At least one investigation ID is required",
         )
+
+    # AUTH-B1: every investigation in the request must be in-scope.
+    for inv_id in body.investigation_ids:
+        await _scope_or_404(db, user, inv_id)
 
     result = await _report_service.summarize_investigations(
         investigation_ids=body.investigation_ids,
@@ -130,6 +159,7 @@ async def summarize_investigations(
 async def generate_remediation(
     body: RemediationRequest,
     user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Generate customer-facing remediation guidance.
 
@@ -137,6 +167,7 @@ async def generate_remediation(
     Requires ``remediation:generate`` permission.
     """
     user.require_permission("remediation:generate")
+    await _scope_or_404(db, user, body.investigation_id)
 
     result = await _report_service.generate_remediation(
         investigation_id=body.investigation_id,
@@ -156,6 +187,7 @@ async def generate_remediation(
 async def generate_detection_content(
     body: DetectionContentRequest,
     user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Generate SIEM detection rules from investigation findings.
 
@@ -163,6 +195,7 @@ async def generate_detection_content(
     Requires ``remediation:generate`` permission.
     """
     user.require_permission("remediation:generate")
+    await _scope_or_404(db, user, body.investigation_id)
 
     result = await _report_service.generate_detection_content(
         investigation_id=body.investigation_id,

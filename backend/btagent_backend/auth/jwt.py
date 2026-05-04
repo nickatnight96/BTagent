@@ -17,6 +17,10 @@ class TokenPayload(BaseModel):
     exp: datetime
     type: str  # "access" or "refresh"
     jti: str | None = None  # SEC-003 FIX: JWT ID for token revocation tracking
+    # AUTH-B1: org_id embedded so per-request authz can scope without an extra
+    # DB lookup. Optional + defaulted to "org_default" so legacy tokens issued
+    # before Phase B1 still validate during the rollout window.
+    org_id: str = "org_default"
 
 
 class TokenPair(BaseModel):
@@ -34,13 +38,21 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-def create_access_token(user_id: str, username: str, role: str) -> tuple[str, str]:
+def create_access_token(
+    user_id: str,
+    username: str,
+    role: str,
+    org_id: str = "org_default",
+) -> tuple[str, str]:
     """Issue a signed access token and return ``(token, jti)``.
 
     AUTH-A2: every access token now carries a ``jti`` (JWT ID) claim so it can
     be revoked server-side via the Redis-backed revocation list. The ``jti`` is
     also returned to the caller (login / refresh endpoints) so they can record
     or revoke it without having to decode the token they just signed.
+
+    AUTH-B1: ``org_id`` is now embedded in the token so route-level scoping can
+    reject cross-org access without an extra DB lookup.
     """
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_ttl_minutes)
@@ -52,16 +64,25 @@ def create_access_token(user_id: str, username: str, role: str) -> tuple[str, st
         "exp": expire,
         "type": "access",
         "jti": jti,
+        "org_id": org_id,
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, jti
 
 
-def create_refresh_token(user_id: str, username: str, role: str) -> tuple[str, str]:
+def create_refresh_token(
+    user_id: str,
+    username: str,
+    role: str,
+    org_id: str = "org_default",
+) -> tuple[str, str]:
     """Issue a signed refresh token and return ``(token, jti)``.
 
     AUTH-A2: refresh tokens already carried a jti; we now also return it so the
     rotation path in ``/auth/refresh`` can revoke it the moment it is consumed.
+
+    AUTH-B1: ``org_id`` is propagated through refresh-token rotation so the
+    new access token issued during refresh stays bound to the same tenant.
     """
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_ttl_days)
@@ -73,15 +94,21 @@ def create_refresh_token(user_id: str, username: str, role: str) -> tuple[str, s
         "exp": expire,
         "type": "refresh",
         "jti": jti,
+        "org_id": org_id,
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, jti
 
 
-def create_token_pair(user_id: str, username: str, role: str) -> TokenPair:
+def create_token_pair(
+    user_id: str,
+    username: str,
+    role: str,
+    org_id: str = "org_default",
+) -> TokenPair:
     settings = get_settings()
-    access_token, _ = create_access_token(user_id, username, role)
-    refresh_token, _ = create_refresh_token(user_id, username, role)
+    access_token, _ = create_access_token(user_id, username, role, org_id=org_id)
+    refresh_token, _ = create_refresh_token(user_id, username, role, org_id=org_id)
     return TokenPair(
         access_token=access_token,
         refresh_token=refresh_token,
