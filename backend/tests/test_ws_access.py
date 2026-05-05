@@ -146,14 +146,33 @@ async def _ensure_core_tables() -> None:
         return
     _retranslate_jsonb_to_json()
 
-    # Names of the tables this test file actually exercises.
-    needed = {"users", "investigations"}
+    # Names of the tables this test file actually exercises. ``organizations``
+    # is included because UserRow / InvestigationRow have a non-null FK on
+    # ``org_id`` that defaults to ``DEFAULT_ORG_ID`` — the row has to exist or
+    # SQLite (with PRAGMA foreign_keys=ON) rejects the insert.
+    needed = {"organizations", "users", "investigations"}
     tables = [t for name, t in Base.metadata.tables.items() if name in needed]
 
     async with _test_engine.begin() as conn:
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables, checkfirst=True)
         )
+
+    # Seed the default organization referenced by every user/investigation FK.
+    from btagent_backend.db.models import DEFAULT_ORG_ID, OrganizationRow
+
+    async with _test_session_factory() as s:
+        existing = await s.get(OrganizationRow, DEFAULT_ORG_ID)
+        if existing is None:
+            s.add(
+                OrganizationRow(
+                    id=DEFAULT_ORG_ID,
+                    name="Default Organization",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await s.commit()
+
     _TABLES_CREATED = True
 
 
