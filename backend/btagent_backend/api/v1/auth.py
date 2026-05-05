@@ -4,7 +4,7 @@ import logging
 from datetime import UTC, datetime
 
 from btagent_shared.utils.ids import generate_id
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from pydantic import BaseModel, field_validator
@@ -12,6 +12,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.auth.cookies import (
+    ACCESS_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
+    REFRESH_COOKIE_PATH,
+    clear_auth_cookies,
+    set_auth_cookies,
+)
 from btagent_backend.auth.jwt import (
     TokenPair,
     create_access_token,
@@ -69,7 +76,13 @@ class RegisterRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    """Refresh request body.
+
+    Phase C1: ``refresh_token`` is now *optional* in the body — when omitted,
+    the endpoint reads the value from the ``btagent_refresh`` httpOnly cookie.
+    """
+
+    refresh_token: str | None = None
 
 
 class LogoutRequest(BaseModel):
@@ -84,8 +97,18 @@ class LogoutRequest(BaseModel):
 
 
 @router.post("/login", response_model=TokenPair)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Authenticate user and return JWT token pair."""
+async def login(
+    body: LoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Authenticate user and return JWT token pair.
+
+    Phase C1: tokens are *also* placed into httpOnly cookies on the response so
+    the browser never exposes them to JavaScript. The JSON body still carries
+    them for the rollout window — the frontend will stop reading them in
+    Phase C2 and existing mobile/CLI clients keep working in the meantime.
+    """
     result = await db.execute(select(UserRow).where(UserRow.username == body.username))
     user = result.scalar_one_or_none()
 
@@ -97,20 +120,37 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     # AUTH-B1: bind the issued tokens to the user's org so per-request authz
     # has tenant context without an extra DB lookup.
-    return create_token_pair(user.id, user.username, user.role, org_id=user.org_id)
+    pair = create_token_pair(user.id, user.username, user.role, org_id=user.org_id)
+
+    # AUTH-C1: set httpOnly cookies (primary path) alongside the JSON body
+    # (compat path).
+    set_auth_cookies(response, pair.access_token, pair.refresh_token)
+
+    return pair
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(body: RefreshRequest):
+async def refresh(request: Request, response: Response, body: RefreshRequest | None = None):
     """Exchange a refresh token for a new token pair.
 
     AUTH-A2: implements *refresh-token rotation*. The supplied refresh token's
     ``jti`` is checked against the revocation list and then immediately revoked,
     so the token can only be redeemed once. A second attempt with the same
     refresh token returns 401.
+
+    Phase C1: when the JSON body has no ``refresh_token``, fall back to the
+    ``btagent_refresh`` httpOnly cookie. On success, the new pair is *also*
+    written back as cookies so the browser keeps an httpOnly session.
     """
+    # Resolve the refresh token from body, then cookie.
+    refresh_token: str | None = body.refresh_token if body is not None else None
+    if not refresh_token:
+        refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Missing refresh token")
+
     try:
-        payload = decode_token(body.refresh_token)
+        payload = decode_token(refresh_token)
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
@@ -138,6 +178,11 @@ async def refresh(body: RefreshRequest):
     new_refresh_token, _ = create_refresh_token(
         payload.sub, payload.username, payload.role, org_id=payload.org_id
     )
+
+    # AUTH-C1: rewrite both cookies on every successful refresh so the
+    # browser's httpOnly session keeps pace with header-based clients.
+    set_auth_cookies(response, access_token, new_refresh_token)
+
     return TokenPair(
         access_token=access_token,
         refresh_token=new_refresh_token,
@@ -147,6 +192,8 @@ async def refresh(body: RefreshRequest):
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    request: Request,
+    response: Response,
     body: LogoutRequest | None = None,
     credentials: HTTPAuthorizationCredentials | None = Depends(_logout_bearer),
 ):
@@ -157,26 +204,45 @@ async def logout(
     requests using either token are rejected with 401 by ``get_current_user``
     / ``/auth/refresh``.
 
+    Phase C1: also reads tokens from the ``btagent_access`` /
+    ``btagent_refresh`` httpOnly cookies (cookie-only browser sessions don't
+    set the Authorization header) and clears both cookies on the response so
+    the browser drops them immediately.
+
     Logout is idempotent and never errors on a malformed/expired token —
     revocation of an already-dead token is a harmless no-op.
     """
-    # Revoke the access token (from Authorization header).
+    # Resolve the access token: Authorization header first, then cookie.
+    access_token: str | None = None
     if credentials is not None and credentials.credentials:
+        access_token = credentials.credentials
+    if not access_token:
+        access_token = request.cookies.get(ACCESS_COOKIE_NAME)
+
+    if access_token:
         try:
-            access_payload = decode_token(credentials.credentials)
+            access_payload = decode_token(access_token)
         except JWTError:
             access_payload = None
         if access_payload is not None and access_payload.jti:
             await revoke(access_payload.jti, _remaining_ttl(access_payload.exp))
 
-    # Revoke the refresh token (from request body, if supplied).
-    if body is not None and body.refresh_token:
+    # Resolve the refresh token: body first, then cookie.
+    refresh_token: str | None = body.refresh_token if body is not None else None
+    if not refresh_token:
+        refresh_token = request.cookies.get(REFRESH_COOKIE_NAME)
+
+    if refresh_token:
         try:
-            refresh_payload = decode_token(body.refresh_token)
+            refresh_payload = decode_token(refresh_token)
         except JWTError:
             refresh_payload = None
         if refresh_payload is not None and refresh_payload.jti:
             await revoke(refresh_payload.jti, _remaining_ttl(refresh_payload.exp))
+
+    # AUTH-C1: drop the browser's httpOnly cookies so the next request is
+    # unauthenticated even before the access-token's TTL expires.
+    clear_auth_cookies(response)
 
     return None
 

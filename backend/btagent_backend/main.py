@@ -69,6 +69,17 @@ def create_app() -> FastAPI:
         redoc_url="/api/redoc" if settings.env != "prod" else None,
     )
 
+    # AUTH-C1: cookie auth requires ``allow_credentials=True``, which in turn
+    # requires ``allow_origins`` to be an explicit list — the browser refuses
+    # to send cookies when CORS allows ``*``. Fail loudly at startup if the
+    # config drifts to a wildcard so the misconfiguration is caught in
+    # staging, not in production.
+    if "*" in settings.cors_origins:
+        raise RuntimeError(
+            "BTAGENT_CORS_ORIGINS must be an explicit list (no '*') because "
+            "cookie-based auth requires allow_credentials=True."
+        )
+
     # CORS
     app.add_middleware(
         CORSMiddleware,
