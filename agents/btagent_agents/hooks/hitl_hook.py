@@ -50,10 +50,16 @@ _TOOL_AUTONOMY_MAP: dict[str, str] = {
 
 
 class HITLInterrupt(Exception):
-    """Raised to signal that a tool call requires human approval.
+    """Callback-level signal that a tool call requires human approval.
 
-    LangGraph nodes should catch this and enter an interrupt state, persisting
-    the checkpoint so the graph can resume after approval.
+    Note on production wiring: the BTagent orchestrator pauses for HITL via
+    LangGraph's declarative ``interrupt_before=["hitl_checkpoint"]`` config
+    (see ``orchestrator/graph.py``). It does **not** catch this exception.
+
+    This class is preserved as an extension point for non-LangGraph consumers
+    that wire ``HITLCallback`` directly into a tool runtime and want to
+    surface "approval required" as a typed exception. The contract is
+    enforced by ``tests/test_hitl_integration.py``.
     """
 
     def __init__(
