@@ -29,10 +29,20 @@ logger = logging.getLogger("btagent.ws.hub")
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(eq=False)
 class ConnectedClient:
+    # ``eq=False`` so the dataclass keeps the default ``__hash__`` based on
+    # object identity, which is what the hub's ``set[ConnectedClient]``
+    # collections need. (A custom ``__eq__`` would otherwise make it
+    # unhashable.)
     ws: WebSocket
     user: CurrentUser
+    # Org of the user (or of the investigation they connected to). Captured at
+    # connect time so dispatch can filter cross-org events at the per-client
+    # layer in addition to the connect-time access check.
+    # ``None`` means "no org constraint known" — used as a no-op when Phase A1
+    # has not yet populated org_id on users / investigations.
+    org_id: str | None = None
     subscriptions: set[str] = field(default_factory=set)
     queue: asyncio.Queue[str] = field(
         default_factory=lambda: asyncio.Queue(BACKPRESSURE_QUEUE_LIMIT)
@@ -112,8 +122,14 @@ class WebSocketHub:
         ws: WebSocket,
         user: CurrentUser,
         investigation_id: str | None = None,
+        org_id: str | None = None,
     ) -> ConnectedClient | None:
-        """Accept a WebSocket and register the client. Returns None if limit exceeded."""
+        """Accept a WebSocket and register the client. Returns None if limit exceeded.
+
+        ``org_id`` is captured by the route handler from the access check
+        (Phase B2) and recorded on the :class:`ConnectedClient` so dispatch
+        can drop events whose payload ``org_id`` field doesn't match.
+        """
         async with self._lock:
             user_conns = self._user_connections.setdefault(user.id, [])
             if len(user_conns) >= self._max_per_user:
@@ -124,7 +140,7 @@ class WebSocketHub:
                 return None
 
             await ws.accept()
-            client = ConnectedClient(ws=ws, user=user)
+            client = ConnectedClient(ws=ws, user=user, org_id=org_id)
             user_conns.append(client)
 
         client._sender_task = asyncio.create_task(self._sender_loop(client))
@@ -269,16 +285,47 @@ class WebSocketHub:
 
         critical = is_critical(envelope)
 
+        # Phase B2: extract event's org_id (if present) so dispatch can filter
+        # at the per-client layer. This is in addition to — not a replacement
+        # for — the connect-time access check in ``access.assert_can_subscribe``.
+        # Events emitted by Phase 0+ already carry data["org_id"] in most
+        # paths; when absent we fall back to a same-org no-op (skip filter).
+        event_org_id: str | None = None
+        try:
+            event_org_id = envelope.data.get("org_id") if isinstance(envelope.data, dict) else None
+        except Exception:
+            event_org_id = None
+
         if channel == global_channel():
             async with self._lock:
                 targets = list(self._global_clients)
-            for client in targets:
-                await self._enqueue(client, raw_json, critical=critical)
         else:
             async with self._lock:
                 targets = list(self._investigation_clients.get(channel, set()))
-            for client in targets:
-                await self._enqueue(client, raw_json, critical=critical)
+
+        for client in targets:
+            if not self._client_passes_org_filter(client, event_org_id):
+                logger.debug(
+                    "Dropping cross-org event for client user=%s client_org=%s event_org=%s",
+                    client.user.id,
+                    client.org_id,
+                    event_org_id,
+                )
+                continue
+            await self._enqueue(client, raw_json, critical=critical)
+
+    @staticmethod
+    def _client_passes_org_filter(client: ConnectedClient, event_org_id: str | None) -> bool:
+        """Return True if the event may be delivered to this client.
+
+        Conservative: when either side is missing org info we deliver the
+        event (same-org no-op). The primary security gate is the connect-time
+        access check; this is a defence-in-depth filter for any leaked
+        cross-org event that ever lands on a shared channel.
+        """
+        if client.org_id is None or event_org_id is None:
+            return True
+        return client.org_id == event_org_id
 
     # ------------------------------------------------------------------
     # Internal: per-client sender loop with backpressure

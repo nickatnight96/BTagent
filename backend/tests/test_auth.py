@@ -65,12 +65,15 @@ async def test_create_token_pair_returns_both_tokens():
 @pytest.mark.asyncio
 async def test_decode_access_token():
     """decode_token on a fresh access token returns correct payload."""
-    token = create_access_token("usr_123", "bob", "admin")
+    token, jti = create_access_token("usr_123", "bob", "admin")
     payload = decode_token(token)
     assert payload.sub == "usr_123"
     assert payload.username == "bob"
     assert payload.role == "admin"
     assert payload.type == "access"
+    # AUTH-A2: access tokens now carry a jti for revocation.
+    assert payload.jti == jti
+    assert payload.jti is not None
 
 
 @pytest.mark.asyncio

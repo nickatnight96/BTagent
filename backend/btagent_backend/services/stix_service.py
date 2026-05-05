@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
+from btagent_shared.security import assert_tlp_allows_egress
+
 logger = logging.getLogger("btagent.services.stix")
 
 # STIX 2.1 spec version
@@ -166,21 +168,22 @@ def stix_bundle_from_iocs(
     -------
     dict
         STIX 2.1 Bundle object.
-    """
-    # Enforce TLP: never export TLP:RED indicators
-    if tlp_level == "red":
-        logger.warning("Refusing to export TLP:RED IOCs to STIX bundle")
-        return {
-            "type": "bundle",
-            "id": _deterministic_id("bundle", "empty-tlp-red"),
-            "objects": [],
-        }
 
-    indicators = [
-        ioc_to_stix_indicator(ioc, tlp_level=tlp_level)
-        for ioc in iocs
-        if ioc.get("tlp_level", "green") != "red"
-    ]
+    Raises
+    ------
+    btagent_shared.security.TLPViolation
+        If the bundle's TLP context is :attr:`TLP.RED`. Defense-in-depth
+        backstop -- the API layer is expected to 403 before reaching this
+        function, so a raise here means an internal caller bypassed that gate.
+    """
+    # Defense in depth: the API layer (api/v1/iocs.py:export_stix) already
+    # 403s on tlp_level=="red" and pre-filters RED IOCs from the input. The
+    # gate below is the backstop -- it raises if any RED context or
+    # RED-tagged IOC slips past pre-filtering, so internal callers don't
+    # silently drop data.
+    assert_tlp_allows_egress(iocs, "stix_export", classification_ctx=tlp_level)
+
+    indicators = [ioc_to_stix_indicator(ioc, tlp_level=tlp_level) for ioc in iocs]
 
     bundle_id = _deterministic_id(
         "bundle",
