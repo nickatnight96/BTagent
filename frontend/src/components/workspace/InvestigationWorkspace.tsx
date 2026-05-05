@@ -49,7 +49,10 @@ export function InvestigationWorkspace() {
   const { activePanel, setActivePanel } = useUIStore();
   const { appendStreamChunk, finalizeStreamMessage, addCheckpoint } =
     useAgentStore();
-  const { accessToken } = useAuthStore();
+  // Phase C2: tokens are httpOnly cookies. We gate WS connection on the
+  // presence of a hydrated user (the proxy for "session valid"); the
+  // browser attaches the auth cookie on the upgrade handshake automatically.
+  const user = useAuthStore((state) => state.user);
 
   // Fetch investigation (only when ID changes, not on store reference change)
   useEffect(() => {
@@ -61,7 +64,7 @@ export function InvestigationWorkspace() {
 
   // Connect WebSocket for real-time events
   useEffect(() => {
-    if (!id || !accessToken) return;
+    if (!id || !user) return;
 
     const wsClient = getWSClient();
     const eventStore = useEventStore.getState();
@@ -119,7 +122,8 @@ export function InvestigationWorkspace() {
     };
 
     if (!wsClient.isConnected) {
-      wsClient.connect(accessToken);
+      // Cookies authenticate the upgrade — no token argument needed.
+      wsClient.connect();
     }
 
     return () => {
@@ -127,7 +131,7 @@ export function InvestigationWorkspace() {
     };
   }, [
     id,
-    accessToken,
+    user,
     appendStreamChunk,
     finalizeStreamMessage,
     updateStatus,
