@@ -55,13 +55,42 @@ Triggers (Sprint 2.5B) -- ``btagent_engine.triggers``:
 * ``ManualTriggerNode`` -- the simplest workflow entry point;
   webhook / schedule / alert variants ship in Phase 3.
 
-Runtime (Sprint 2.5A) -- ``btagent_engine.runtime``:
+Runtime (Sprint 2.5A + Sprint 4D) -- ``btagent_engine.runtime``:
 
 * ``WorkflowExecutor`` walks a compiled :class:`Workflow` end-to-end,
   routing every step through ``Runner.execute`` so the middleware
   chain applies uniformly. Surfaces ``WorkflowPaused`` for HITL
   checkpoints and ``WorkflowExecutionError`` for structural / step
   failures.
+* Sprint 4D adds AST-walking condition evaluation on DecisionNode
+  edges (no ``eval()``, dunder-attribute blocking, allowlisted
+  callables). ``ConditionEvaluationError`` surfaces when a condition
+  string is malformed or references unknown state.
+
+Data Nodes (Sprint 4A) -- ``btagent_engine.data``:
+
+* ``TransformNode`` -- generic shape-bridge with rename / drop / set /
+  keep_only rules.
+* ``MitreMapperNode`` -- MITRE ATT&CK keyword mapping (10 high-
+  confidence techniques, word-boundary regex; fixes the audit's
+  ``lateral`` vs ``collateral`` false-positive).
+
+Enrichment Nodes (Sprint 4B) -- ``btagent_engine.enrichment``:
+
+* ``ExtractIOCsNode`` -- regex IOC extraction with defang reversal,
+  RFC-1918 skipping, and ``first_offset`` for highlight UI.
+* ``ScoreSeverityNode`` -- smooth 0.0-1.0 severity score with rationale
+  list and force-critical overrides for high-impact MITRE techniques.
+* ``DedupIOCsNode`` -- canonicalising dedup; fixes the audit's
+  case-sensitivity bug (``DOMAIN.COM`` and ``domain.com`` now collapse).
+
+Knowledge Nodes (Sprint 4C) -- ``btagent_engine.knowledge``:
+
+* ``KnowledgeSearchNode`` / ``KnowledgeUpsertNode`` -- RAG I/O against
+  a ``KnowledgeClient`` Protocol. Engine ships a
+  ``FakeKnowledgeClient`` for tests; the orchestrator wires
+  ``HttpKnowledgeClient`` at startup via the class-level
+  ``client_factory``.
 """
 
 from btagent_engine.middleware import Middleware, Runner
@@ -80,8 +109,10 @@ from btagent_engine.runtime import (
     WorkflowRunResult,
     WorkflowState,
 )
+from btagent_engine.runtime.conditions import ConditionEvaluationError
 
 __all__ = [
+    "ConditionEvaluationError",
     "Middleware",
     "Node",
     "NodeAlreadyRegisteredError",
