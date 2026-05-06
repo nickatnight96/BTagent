@@ -56,6 +56,7 @@ from btagent_engine.runtime.conditions import (
     evaluate_condition,
 )
 from btagent_engine.runtime.state import WorkflowState
+from btagent_engine.runtime.templating import render_payload
 
 # Synthetic node ids the compiler emits for structural ``join`` / ``end``
 # steps. They have no registered Node class -- the executor short-circuits
@@ -269,7 +270,7 @@ class WorkflowExecutor:
 
             # Regular execute path. Resolve, build input, run via Runner.
             node_instance = self._resolve_node(wf_node)
-            node_input = self._build_input(node_instance, carried_payload, wf_node.config)
+            node_input = self._build_input(node_instance, carried_payload, wf_node.config, state)
 
             # DecisionNode condition evaluation: when the compiler stashed a
             # YAML-authored ``condition`` string in the step config, evaluate
@@ -471,6 +472,7 @@ class WorkflowExecutor:
         node: Node,
         upstream_payload: BaseModel | dict[str, Any] | None,
         config: dict[str, Any],
+        state: WorkflowState,
     ) -> dict[str, Any] | BaseModel:
         """Combine upstream output + static step config into the node input.
 
@@ -481,13 +483,23 @@ class WorkflowExecutor:
         pass, which is the documented contract; it also avoids us
         instantiating the wrong schema if the previous output's class
         doesn't match the next node's input class.
+
+        Sprint 5B: any string in ``config`` that contains ``{{ expr }}``
+        placeholders is rendered against the current workflow state
+        before the merge -- so YAML templates can reference upstream
+        node outputs (``{{ node['triage'].severity }}``) or the
+        trigger payload (``{{ alert_text }}``) symbolically. See
+        :mod:`btagent_engine.runtime.templating` for the rendering
+        contract; missing variables raise the same
+        :class:`ConditionEvaluationError` that DecisionNode conditions
+        do.
         """
         if isinstance(upstream_payload, BaseModel):
-            base: dict[str, Any] = upstream_payload.model_dump()
+            raw_base: dict[str, Any] = upstream_payload.model_dump()
         elif isinstance(upstream_payload, dict):
-            base = dict(upstream_payload)
+            raw_base = dict(upstream_payload)
         elif upstream_payload is None:
-            base = {}
+            raw_base = {}
         else:  # pragma: no cover -- guarded by Runner.execute signature
             raise WorkflowExecutionError(
                 f"Cannot build input for {node.meta.id!r} from {type(upstream_payload).__name__}",
@@ -495,9 +507,44 @@ class WorkflowExecutor:
                 reason="bad upstream type",
             )
 
+        # Filter the upstream payload to only the keys the next Node's input
+        # schema accepts. The trigger payload (and any upstream output) often
+        # carries fields the next Node doesn't know about -- those fields can
+        # still be referenced from ``config`` placeholders via the render
+        # context below, but they must not flow into the validated input or
+        # ``extra=forbid`` schemas reject the run. Without this filter, a
+        # workflow that uses ``{{ alert_text }}`` in an LLM step's prompt
+        # would fail because ``alert_text`` would also leak into the LLM
+        # input as a top-level field.
+        accepted_fields: set[str] = set(node.input_schema.model_fields.keys())
+        base: dict[str, Any] = {k: v for k, v in raw_base.items() if k in accepted_fields}
+
         if config:
+            # Render any ``{{ expr }}`` placeholders in the static config
+            # before merging. The render context exposes upstream node
+            # outputs under ``node['<step_id>']`` (Sprint 4D's contract)
+            # and the FULL upstream payload at the top level so authors
+            # can write ``{{ alert_text }}`` without nesting -- even if
+            # ``alert_text`` isn't an accepted field on the next Node's
+            # input schema (the field-filter above is for the merged
+            # input, not the render namespace).
+            render_ctx = build_condition_context(state.outputs)
+            for k, v in raw_base.items():
+                # Don't clobber the ``node`` namespace if a payload
+                # happens to use that key.
+                if k != "node":
+                    render_ctx[k] = v
+            try:
+                rendered_config = render_payload(config, render_ctx)
+            except ConditionEvaluationError as exc:
+                raise WorkflowExecutionError(
+                    f"Template render failed in step {node.meta.id!r}: {exc}",
+                    node_id=None,
+                    reason="template render failed",
+                    cause=exc,
+                ) from exc
             # Static config wins on collision per the brief.
-            base.update(config)
+            base.update(rendered_config)
         return base
 
     def _apply_condition(

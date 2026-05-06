@@ -230,8 +230,17 @@ def _resolve_node_id(step: CompiledStep) -> str:
 def _build_node(step: CompiledStep) -> WorkflowNode:
     config: dict[str, Any] = dict(step.config)
     if step.type == "action":
-        if step.arguments:
-            config.setdefault("arguments", step.arguments)
+        # YAML ``arguments:`` block is what the playbook author uses to
+        # specify the Node's input fields (``messages``, ``model``,
+        # ``query``, etc.). Flatten its keys into the top-level config so
+        # the executor's config-merge sees them directly -- the alternative
+        # (nesting under ``"arguments"``) would force every action Node's
+        # input schema to know about that wrapper, which it shouldn't.
+        # ``setdefault`` preserves the playbook author's intent if the
+        # same key was also explicitly listed under ``config:`` -- the
+        # explicit ``config:`` entry wins because it's the outer scope.
+        for key, value in step.arguments.items():
+            config.setdefault(key, value)
         if step.timeout_seconds is not None:
             config.setdefault("timeout_seconds", step.timeout_seconds)
     elif step.type == "decision":

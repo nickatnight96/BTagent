@@ -830,3 +830,124 @@ async def test_condition_referencing_unknown_step_raises_workflow_error():
         await WorkflowExecutor().execute(wf, {}, _ctx())
     assert ei.value.node_id == "gate"
     assert ei.value.reason == "condition evaluation failed"
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 5B: templating in WorkflowNode.config
+# --------------------------------------------------------------------------- #
+
+
+class _StringInput(BaseModel):
+    """Tiny string-shaped input for the templating end-to-end test."""
+
+    text: str
+
+
+class _StringOutput(BaseModel):
+    text: str
+
+
+class _StringEchoNode(Node[_StringInput, _StringOutput]):
+    meta: ClassVar[NodeMeta] = NodeMeta(
+        id="test.executor.string_echo",
+        name="String Echo",
+        version="0.1.0",
+        category=NodeCategory.DATA,
+    )
+    input_schema = _StringInput
+    output_schema = _StringOutput
+
+    async def run(self, input: _StringInput, ctx: NodeContext) -> _StringOutput:
+        return _StringOutput(text=input.text)
+
+
+@pytest.fixture
+def _register_string_echo():
+    NodeRegistry.register(_StringEchoNode)
+    yield
+    NodeRegistry.unregister(_StringEchoNode.meta.id)
+
+
+@pytest.mark.asyncio
+async def test_executor_renders_template_from_initial_input(_register_string_echo):
+    """``{{ alert_text }}`` in the step config should be substituted with
+    the value the workflow was kicked off with."""
+    wf = _wf(
+        nodes=[
+            WorkflowNode(
+                step_id="echo",
+                node_id=_StringEchoNode.meta.id,
+                config={"text": "Alert: {{ alert_text }}"},
+            ),
+        ],
+        edges=[],
+    )
+    result = await WorkflowExecutor().execute(
+        wf,
+        {"alert_text": "ransom note dropped"},
+        _ctx(),
+    )
+    assert result.outputs["echo"].text == "Alert: ransom note dropped"
+
+
+@pytest.mark.asyncio
+async def test_executor_renders_template_from_upstream_node(_register_string_echo):
+    """``{{ node['first'].text }}`` should resolve to the first step's
+    output -- the ``node['<step_id>']`` syntax matches DecisionNode
+    conditions, so authors only learn one expression language."""
+    wf = _wf(
+        nodes=[
+            WorkflowNode(
+                step_id="first",
+                node_id=_StringEchoNode.meta.id,
+                config={"text": "hello"},
+            ),
+            WorkflowNode(
+                step_id="second",
+                node_id=_StringEchoNode.meta.id,
+                config={"text": "Saw: {{ node['first'].text }}"},
+            ),
+        ],
+        edges=[WorkflowEdge(source="first", target="second", label="next")],
+    )
+    result = await WorkflowExecutor().execute(wf, {}, _ctx())
+    assert result.outputs["second"].text == "Saw: hello"
+
+
+@pytest.mark.asyncio
+async def test_executor_template_missing_variable_raises(_register_string_echo):
+    """Missing-variable references surface as
+    ``WorkflowExecutionError(reason="template render failed")`` so the
+    failure points at the right step."""
+    wf = _wf(
+        nodes=[
+            WorkflowNode(
+                step_id="echo",
+                node_id=_StringEchoNode.meta.id,
+                config={"text": "{{ does_not_exist }}"},
+            ),
+        ],
+        edges=[],
+    )
+    with pytest.raises(WorkflowExecutionError) as ei:
+        await WorkflowExecutor().execute(wf, {}, _ctx())
+    assert ei.value.reason == "template render failed"
+
+
+@pytest.mark.asyncio
+async def test_executor_does_not_render_strings_without_placeholders(_register_string_echo):
+    """Fast path: literal strings (no ``{{``) are never passed to the
+    evaluator -- proves the renderer is skipped when there's nothing to
+    do, even when the trigger payload is empty."""
+    wf = _wf(
+        nodes=[
+            WorkflowNode(
+                step_id="echo",
+                node_id=_StringEchoNode.meta.id,
+                config={"text": "literal"},
+            ),
+        ],
+        edges=[],
+    )
+    result = await WorkflowExecutor().execute(wf, {}, _ctx())
+    assert result.outputs["echo"].text == "literal"
