@@ -71,8 +71,6 @@ from btagent_backend.config import get_settings  # noqa: E402
 
 get_settings.cache_clear()
 
-from btagent_backend.db.models import Base  # noqa: E402
-
 # Force registration of every Base subclass with ``Base.metadata`` BEFORE the
 # JSONB → JSON swap below. Importing ``btagent_backend.db.models`` alone only
 # registers the four core tables; ``models_knowledge``, ``models_mitre``, and
@@ -83,6 +81,7 @@ from btagent_backend.db.models import Base  # noqa: E402
 import btagent_backend.db.models_knowledge  # noqa: E402, F401
 import btagent_backend.db.models_mitre  # noqa: E402, F401
 import btagent_backend.db.models_playbook  # noqa: E402, F401
+from btagent_backend.db.models import Base  # noqa: E402
 
 # PostgreSQL JSONB columns are incompatible with SQLite — swap to plain JSON.
 for _table in Base.metadata.tables.values():

@@ -90,6 +90,22 @@ class EventEmitterMiddleware(Middleware):
         self._tlp_level = tlp_level
         self._start_times: dict[str, float] = {}
 
+    @staticmethod
+    def _node_descriptor(node: Node) -> dict[str, str]:
+        """Build the ``node`` sub-dict downstream consumers (e.g. the
+        backend WS adapter at ``backend/.../ws/engine_event_adapter.py``)
+        rely on to map engine events into the legacy WebSocket
+        ``EventType`` taxonomy. ``id`` is the stable workflow identifier;
+        ``name`` is the human-readable canvas label; ``category`` is the
+        enum value -- the adapter routes on category to pick THINKING vs
+        TOOL_START vs the no-op for decision/data/output/trigger/knowledge.
+        """
+        return {
+            "id": node.meta.id,
+            "name": node.meta.name,
+            "category": node.meta.category.value,
+        }
+
     async def before_run(
         self,
         node: Node,
@@ -98,8 +114,13 @@ class EventEmitterMiddleware(Middleware):
     ) -> None:
         self._start_times[ctx.run_id] = time.monotonic()
         payload = {
+            # ``node_id`` retained for legacy / direct-Python consumers; the
+            # ``node`` sub-dict is the structured form the WS adapter needs.
             "node_id": node.meta.id,
+            "node": self._node_descriptor(node),
+            "investigation_id": ctx.investigation_id or "",
             "run_id": ctx.run_id,
+            "started_at": time.time(),
             "input": _redact_payload(_dump(input)),
         }
         await self._safe_emit("node.start", payload)
@@ -115,8 +136,11 @@ class EventEmitterMiddleware(Middleware):
         duration_ms = round((time.monotonic() - start) * 1000, 1) if start else None
         payload = {
             "node_id": node.meta.id,
+            "node": self._node_descriptor(node),
+            "investigation_id": ctx.investigation_id or "",
             "run_id": ctx.run_id,
             "duration_ms": duration_ms,
+            "ended_at": time.time(),
             "output": _redact_payload(_dump(output)),
         }
         await self._safe_emit("node.end", payload)
@@ -133,6 +157,8 @@ class EventEmitterMiddleware(Middleware):
         self._start_times.pop(ctx.run_id, None)
         payload = {
             "node_id": node.meta.id,
+            "node": self._node_descriptor(node),
+            "investigation_id": ctx.investigation_id or "",
             "run_id": ctx.run_id,
             "error_type": type(error).__name__,
             "error": str(error),
