@@ -113,6 +113,11 @@ CRITICAL_EVENT_TYPES: frozenset[EventType] = frozenset(
 # are dropped.
 BACKPRESSURE_QUEUE_LIMIT = 256
 
+# Wave-2 Medium #15: cap inbound WebSocket message size so a malicious client
+# cannot exhaust server memory by streaming a single huge frame. Anything
+# larger than this triggers a 1009 ("message too big") close.
+MAX_WS_MESSAGE_BYTES = 65536  # 64 KiB — well above any legitimate client frame
+
 
 def is_critical(envelope: EventEnvelope) -> bool:
     return envelope.type in CRITICAL_EVENT_TYPES

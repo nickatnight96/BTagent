@@ -10,6 +10,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from btagent_shared.security import TLPViolation
 from btagent_shared.types.config import TLP, ModelProvider
 from btagent_shared.types.events import EventType
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
@@ -66,15 +67,6 @@ TLP_ALLOWED_PROVIDERS: dict[TLP, frozenset[str]] = {
         }
     ),
 }
-
-
-class TLPViolation(Exception):
-    """Raised when classified data would be sent to an unauthorized provider."""
-
-    def __init__(self, tlp: TLP, provider: str) -> None:
-        self.tlp = tlp
-        self.provider = provider
-        super().__init__(f"TLP:{tlp.value.upper()} data cannot be sent to provider {provider!r}")
 
 
 def is_provider_allowed(tlp: TLP, provider: str) -> bool:

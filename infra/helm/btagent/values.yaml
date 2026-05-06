@@ -3,7 +3,12 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/nickatnight96/btagent-backend
-  pullPolicy: IfNotPresent
+  # ``Always`` (rather than ``IfNotPresent``) so a redeploy that reuses a
+  # mutable tag (e.g. ``latest``, ``staging``) actually pulls the new image
+  # instead of using a stale local cache. Once images are pinned by digest in
+  # CI (see infra/docker/Dockerfile.* for the build-arg pattern), this can
+  # safely revert to ``IfNotPresent`` for image-pull bandwidth savings.
+  pullPolicy: Always
   tag: latest
 
 imagePullSecrets: []
@@ -13,7 +18,12 @@ fullnameOverride: ""
 # -- Frontend configuration
 frontendImage:
   repository: ghcr.io/nickatnight96/btagent-frontend
-  pullPolicy: IfNotPresent
+  # ``Always`` (rather than ``IfNotPresent``) so a redeploy that reuses a
+  # mutable tag (e.g. ``latest``, ``staging``) actually pulls the new image
+  # instead of using a stale local cache. Once images are pinned by digest in
+  # CI (see infra/docker/Dockerfile.* for the build-arg pattern), this can
+  # safely revert to ``IfNotPresent`` for image-pull bandwidth savings.
+  pullPolicy: Always
   tag: latest
 
 frontendReplicaCount: 1
