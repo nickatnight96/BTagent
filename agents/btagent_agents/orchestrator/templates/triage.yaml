@@ -72,7 +72,14 @@ steps:
   - id: severity_high
     type: decision
     name: Is severity high or critical?
-    condition: "severity.level >= high"
+    # Sprint 5C fix: was ``"severity.level >= high"`` -- legacy mini-DSL
+    # the safe AST evaluator can't parse (bare ``high`` identifier, no
+    # quoted string). Now references the actual upstream output:
+    # ``score_severity`` is a mock LLM call whose ``text`` contains the
+    # severity word ("info" / "low" / "medium" / "high" / "critical").
+    # Anything containing the substring "high" or "critical" is treated
+    # as high severity.
+    condition: "'high' in node['score_severity'].text or 'critical' in node['score_severity'].text"
     true_branch: handoff_query
     false_branch: summarise
   - id: handoff_query

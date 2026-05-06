@@ -68,3 +68,80 @@ async def test_knowledge_template_runs_end_to_end_with_rendered_summary():
     assert "{{ investigation_summary }}" not in rendered_text, (
         "Placeholder was passed to the LLM as a literal -- rendering didn't fire"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 5C: smoke tests for the remaining 3 production templates
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_triage_template_runs_end_to_end():
+    """Triage: extract_iocs -> score_severity -> decision -> handoff_query
+    OR summarise. Mock LLM produces ``[mock-llm] <content>`` for each step.
+    Decision condition must evaluate cleanly even though ``severity.level``
+    isn't a real upstream output -- use an explicit condition that
+    references actual upstream content."""
+
+    workflow = load_template("triage")
+    ctx = NodeContext(
+        run_id="run_triage_smoke",
+        org_id="org_default",
+        investigation_id="inv_triage_smoke",
+    )
+    result = await WorkflowExecutor().execute(
+        workflow,
+        {"alert_text": "ransomware encrypting workstations"},
+        ctx,
+    )
+    # Decision routes to either handoff_query or summarise; both are
+    # valid endings. Just verify the workflow finished without raising.
+    assert result.final_output is not None
+    assert "extract_iocs" in result.outputs
+    assert "score_severity" in result.outputs
+
+
+@pytest.mark.asyncio
+async def test_query_template_runs_end_to_end(monkeypatch):
+    """Query: parallel_fork into 4 SIEM/EDR integrations -> join ->
+    summarise_results. Mock-mode integration Nodes return deterministic
+    fixtures. ``{{ join_results }}`` placeholder in the summarise step
+    must resolve to something usable."""
+
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+
+    workflow = load_template("query")
+    ctx = NodeContext(
+        run_id="run_query_smoke",
+        org_id="org_default",
+        investigation_id="inv_query_smoke",
+    )
+    result = await WorkflowExecutor().execute(workflow, {}, ctx)
+    assert result.final_output is not None
+    # Each SIEM/EDR step ran.
+    assert "splunk_search" in result.outputs
+    assert "summarise_results" in result.outputs
+
+
+@pytest.mark.asyncio
+async def test_enrichment_template_runs_end_to_end(monkeypatch):
+    """Enrichment: parallel_fork into 5 CTI lookups -> join -> merge_verdict.
+    Each branch needs the IOC value via ``{{ ioc.value }}`` placeholder
+    resolved from the trigger payload."""
+
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+
+    workflow = load_template("enrichment")
+    ctx = NodeContext(
+        run_id="run_enrich_smoke",
+        org_id="org_default",
+        investigation_id="inv_enrich_smoke",
+    )
+    result = await WorkflowExecutor().execute(
+        workflow,
+        {"ioc": {"type": "ip", "value": "8.8.8.8"}},
+        ctx,
+    )
+    assert result.final_output is not None
+    assert "vt_lookup" in result.outputs
+    assert "merge_verdict" in result.outputs

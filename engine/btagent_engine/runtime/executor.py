@@ -185,6 +185,18 @@ class WorkflowExecutor:
         """
         state = WorkflowState()
         entry_id = self._find_entry_id(workflow)
+        # Stash the initial input on state metadata so its keys remain
+        # in scope for ``{{ ... }}`` rendering at every step, not just
+        # the entry step. The trigger payload is the workflow's
+        # "input arguments" -- a fan-out branch deep in the graph still
+        # needs to reference ``{{ alert_text }}`` even though its
+        # immediate upstream is a SIEM result, not the trigger.
+        if isinstance(initial_input, dict):
+            state.metadata["trigger_payload"] = dict(initial_input)
+        elif isinstance(initial_input, BaseModel):
+            state.metadata["trigger_payload"] = initial_input.model_dump()
+        else:
+            state.metadata["trigger_payload"] = {}
         # Initial input flows into the entry node verbatim. Treating it as
         # the synthetic "previous output" lets the standard input-build
         # logic merge it with the entry node's static config.
@@ -529,9 +541,18 @@ class WorkflowExecutor:
             # input schema (the field-filter above is for the merged
             # input, not the render namespace).
             render_ctx = build_condition_context(state.outputs)
+            # Promote the trigger payload's keys so ``{{ alert_text }}``
+            # works at every step, not just the entry. The trigger
+            # payload is workflow-global; immediate upstream output is
+            # step-local and shadowed below if there's a key clash.
+            trigger_payload = state.metadata.get("trigger_payload") or {}
+            if isinstance(trigger_payload, dict):
+                for k, v in trigger_payload.items():
+                    if k != "node":
+                        render_ctx[k] = v
+            # Then promote the immediate upstream payload (overrides
+            # trigger keys with the same name -- step-local wins).
             for k, v in raw_base.items():
-                # Don't clobber the ``node`` namespace if a payload
-                # happens to use that key.
                 if k != "node":
                     render_ctx[k] = v
             try:
