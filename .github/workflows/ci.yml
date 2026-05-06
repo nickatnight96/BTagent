@@ -246,6 +246,167 @@ jobs:
       - name: Run agent evaluation suite
         run: pytest tests/agent_eval/ -v || echo "No agent eval tests configured yet"
 
+  # ── E2E (Playwright Browser Tests) ───────────────────────────
+  # Real browser-driven UAT — covers what the API-level UAT below
+  # cannot: login form, cookie auth, click flows, live WS events,
+  # protected-route guards, XSS sanitisation, etc.
+  #
+  # Stack composition mirrors ``make dev``: Postgres + Redis as service
+  # containers, backend uvicorn on :8000, frontend Vite preview on :5173.
+  # Playwright runs headless Chromium against :5173, fixtures use the
+  # API at :8000 to seed state.
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [backend-tests]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: btagent
+          POSTGRES_PASSWORD: btagent_ci_password
+          POSTGRES_DB: btagent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U btagent"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://btagent:btagent_ci_password@localhost:5432/btagent_test
+      BTAGENT_REDIS_URL: redis://localhost:6379
+      BTAGENT_ENV: test
+      BTAGENT_JWT_SECRET: ci-test-secret-not-for-production
+      BTAGENT_MOCK_CONNECTORS: "true"
+      # Seed-data.py uses BTAGENT_ENV=test to make passwords deterministic
+      # (password === username) so the fixtures can log in without
+      # leaking real secrets.
+      E2E_BASE_URL: http://localhost:5173
+      E2E_API_URL: http://localhost:8000
+      E2E_MODE: ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install uv + Python deps
+        run: |
+          pip install uv
+          uv pip install --system -e shared/
+          uv pip install --system -e engine/
+          uv pip install --system -e agents/
+          uv pip install --system -e "backend/[dev]"
+
+      - name: Install frontend deps + build
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          # Vite ``preview`` serves the prod bundle. ``build`` failures
+          # don't block the job here — the type errors are tracked in
+          # the Frontend job. We need *some* artifact to preview.
+          npm run build || echo "build had non-fatal errors"
+
+      - name: Install Playwright + Chromium
+        working-directory: tests/e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run database migrations
+        run: cd backend && alembic upgrade head
+
+      - name: Seed database with deterministic test users
+        run: python infra/scripts/seed-data.py
+
+      - name: Start backend (uvicorn)
+        run: |
+          cd backend
+          uvicorn btagent_backend.main:app --host 0.0.0.0 --port 8000 \
+            > /tmp/backend.log 2>&1 &
+          # Wait for health, fail fast if it never comes up.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/v1/health > /dev/null; then
+              echo "Backend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Backend failed to start. Last 100 log lines:"
+          tail -n 100 /tmp/backend.log
+          exit 1
+
+      - name: Start frontend (vite preview)
+        working-directory: frontend
+        run: |
+          # ``vite preview`` serves the prod bundle on the configured
+          # port. Backgrounded so the next step can run tests.
+          npx vite preview --host 0.0.0.0 --port 5173 \
+            > /tmp/frontend.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5173 > /dev/null; then
+              echo "Frontend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Frontend failed to start. Last 100 log lines:"
+          tail -n 100 /tmp/frontend.log
+          exit 1
+
+      - name: Run Playwright tests
+        working-directory: tests/e2e
+        run: npx playwright test --reporter=html,junit,github
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Upload Playwright traces / videos
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: tests/e2e/test-results/
+          retention-days: 14
+
+      - name: Upload backend log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-log
+          path: /tmp/backend.log
+          retention-days: 7
+
   # ── UAT (User Acceptance Tests) ─────────────────────────────
   uat:
     name: UAT
@@ -366,7 +527,7 @@ jobs:
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [lint, backend-tests, frontend]
+    needs: [lint, backend-tests, frontend, e2e]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_IMAGE_BUILD == 'true'
     permissions:
       contents: read
