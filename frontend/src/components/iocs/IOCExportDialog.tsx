@@ -88,16 +88,25 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
         title="Export IOCs"
         description="Export indicators in your preferred format with optional filters."
       >
+        <div data-testid="ioc-export">
         {/* Format selector */}
         <div className="space-y-3 mb-5">
           <label className="block text-xs text-slate-500 font-medium">
             Export Format
           </label>
-          <div className="grid grid-cols-3 gap-2">
+          <div
+            className="grid grid-cols-3 gap-2"
+            role="radiogroup"
+            aria-label="Export format"
+          >
             {FORMAT_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 onClick={() => setFormat(opt.value)}
+                role="radio"
+                aria-checked={format === opt.value}
+                aria-label={`Export as ${opt.label}`}
+                data-testid={`ioc-export-format-${opt.value}-button`}
                 className={`flex flex-col items-start p-3 rounded-lg border text-left transition-colors ${
                   format === opt.value
                     ? "bg-blue-600/10 border-blue-500/30 text-blue-400"
@@ -127,6 +136,8 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
             <select
               value={investigationId}
               onChange={(e) => setInvestigationId(e.target.value)}
+              aria-label="Filter export by investigation"
+              data-testid="ioc-export-investigation-input"
               className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             >
               <option value="">All Investigations</option>
@@ -146,6 +157,8 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
             <select
               value={iocType}
               onChange={(e) => setIocType(e.target.value as IOCType | "")}
+              aria-label="Filter export by IOC type"
+              data-testid="ioc-export-type-input"
               className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             >
               {IOC_TYPE_OPTIONS.map((opt) => (
@@ -168,6 +181,8 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
               step="5"
               value={confidenceMin * 100}
               onChange={(e) => setConfidenceMin(Number(e.target.value) / 100)}
+              aria-label="Minimum confidence for export"
+              data-testid="ioc-export-confidence-input"
               className="w-full accent-blue-500"
             />
           </div>
@@ -180,6 +195,8 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
             <select
               value={tlpMax}
               onChange={(e) => setTlpMax(e.target.value as TLP | "")}
+              aria-label="Maximum TLP level for export"
+              data-testid="ioc-export-tlp-input"
               className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             >
               {TLP_OPTIONS.map((opt) => (
@@ -193,9 +210,13 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
 
         {/* TLP warning */}
         {showTlpWarning && (
-          <div className="mb-5 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+          <div
+            className="mb-5 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg"
+            role="alert"
+            data-testid="ioc-export-tlp-warning"
+          >
             <div className="flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
               <div>
                 <p className="text-sm font-medium text-amber-400">
                   TLP Handling Warning
@@ -211,18 +232,25 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
         )}
 
         <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={handleClose}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleClose}
+            data-testid="ioc-export-cancel-button"
+          >
             Cancel
           </Button>
           <Button
             size="sm"
             onClick={handleExport}
             isLoading={isExporting}
+            data-testid="ioc-export-submit-button"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-4 h-4" aria-hidden="true" />
             Export IOCs
           </Button>
         </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
