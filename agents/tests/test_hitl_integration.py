@@ -154,9 +154,9 @@ async def test_hitl_gate_pauses_graph_without_raising() -> None:
 
     # The propose node ran; the gate node did NOT run yet.
     assert result["status"] == InvestigationStatus.PAUSED_HITL
-    assert any(
-        a["status"] == ContainmentStatus.PROPOSED for a in result["containment_actions"]
-    ), "expected the propose node to record a PROPOSED containment action"
+    assert any(a["status"] == ContainmentStatus.PROPOSED for a in result["containment_actions"]), (
+        "expected the propose node to record a PROPOSED containment action"
+    )
     assert not any(
         isinstance(m, AIMessage) and "HITL response" in (m.content or "")
         for m in result["messages"]
@@ -185,9 +185,7 @@ async def test_hitl_gate_resumes_with_approval() -> None:
     )
 
     # Inject the analyst's approval into the paused checkpoint.
-    await compiled.aupdate_state(
-        config, {"messages": [HumanMessage(content="approve")]}
-    )
+    await compiled.aupdate_state(config, {"messages": [HumanMessage(content="approve")]})
 
     # Resume — passing None tells LangGraph to continue from the checkpoint.
     final = await compiled.ainvoke(None, config=config)
@@ -202,9 +200,7 @@ async def test_hitl_gate_resumes_with_approval() -> None:
         for m in final["messages"]
     ), "execute node should have run after approval"
     assert final["status"] == InvestigationStatus.CONTAINED
-    assert all(
-        a["status"] == ContainmentStatus.APPROVED for a in final["containment_actions"]
-    )
+    assert all(a["status"] == ContainmentStatus.APPROVED for a in final["containment_actions"])
 
     # And the graph is fully done — no further nodes pending.
     snapshot = await compiled.aget_state(config)
@@ -226,15 +222,11 @@ async def test_hitl_gate_resumes_with_rejection() -> None:
         config=config,
     )
 
-    await compiled.aupdate_state(
-        config, {"messages": [HumanMessage(content="deny")]}
-    )
+    await compiled.aupdate_state(config, {"messages": [HumanMessage(content="deny")]})
 
     final = await compiled.ainvoke(None, config=config)
 
-    assert all(
-        a["status"] == ContainmentStatus.REJECTED for a in final["containment_actions"]
-    )
+    assert all(a["status"] == ContainmentStatus.REJECTED for a in final["containment_actions"])
     snapshot = await compiled.aget_state(config)
     assert snapshot.next == ()
 

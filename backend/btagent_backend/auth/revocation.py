@@ -106,7 +106,9 @@ async def revoke(jti: str, ttl_seconds: int) -> None:
             await redis.set(_redis_key(jti), "1", ex=ttl_seconds)
             return
         except Exception as exc:
-            logger.warning("Redis SET failed during revoke(%s): %s; using in-memory store", jti, exc)
+            logger.warning(
+                "Redis SET failed during revoke(%s): %s; using in-memory store", jti, exc
+            )
 
     _local_revoked[jti] = time.time() + ttl_seconds
 

@@ -170,9 +170,7 @@ class CircuitBreaker:
                     # Reset the backoff schedule on a clean recovery so the
                     # next outage starts again at the base wait.
                     self._open_cycles = 0
-                    logger.info(
-                        "Circuit %s -> CLOSED (backoff reset)", self.connection_id
-                    )
+                    logger.info("Circuit %s -> CLOSED (backoff reset)", self.connection_id)
             elif self._state == CircuitState.CLOSED and self._failure_count > 0:
                 self._failure_count = max(0, self._failure_count - 1)
 
@@ -186,8 +184,7 @@ class CircuitBreaker:
                 self._open_cycles += 1
                 next_wait = self._compute_recovery_timeout()
                 logger.warning(
-                    "Circuit %s re-OPENED (failure in HALF_OPEN, cycle=%d, "
-                    "next wait=%.1fs): %s",
+                    "Circuit %s re-OPENED (failure in HALF_OPEN, cycle=%d, next wait=%.1fs): %s",
                     self.connection_id,
                     self._open_cycles,
                     next_wait,
@@ -200,8 +197,7 @@ class CircuitBreaker:
                 self._open_cycles += 1
                 next_wait = self._compute_recovery_timeout()
                 logger.warning(
-                    "Circuit %s OPENED after %d failures (cycle=%d, "
-                    "next wait=%.1fs): %s",
+                    "Circuit %s OPENED after %d failures (cycle=%d, next wait=%.1fs): %s",
                     self.connection_id,
                     self._failure_count,
                     self._open_cycles,

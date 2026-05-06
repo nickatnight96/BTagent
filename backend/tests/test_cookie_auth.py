@@ -150,9 +150,7 @@ async def test_login_sets_both_cookies_with_correct_attributes(
 
 
 @pytest.mark.asyncio
-async def test_request_with_only_cookie_succeeds(
-    client: AsyncClient, sample_user: UserRow
-):
+async def test_request_with_only_cookie_succeeds(client: AsyncClient, sample_user: UserRow):
     """After login, /auth/me works with cookies only (no Authorization header)."""
     login = await client.post(
         "/api/v1/auth/login",
@@ -181,9 +179,7 @@ async def test_request_with_only_authorization_header_still_succeeds(
     # Make sure no cookies leak in from a prior test.
     client.cookies.clear()
 
-    resp = await client.get(
-        "/api/v1/auth/me", headers=auth_header(pair.access_token)
-    )
+    resp = await client.get("/api/v1/auth/me", headers=auth_header(pair.access_token))
     assert resp.status_code == 200
     assert resp.json()["username"] == sample_user.username
 
@@ -278,13 +274,9 @@ async def test_refresh_reads_cookie_and_writes_new_cookies(
 
 
 @pytest.mark.asyncio
-async def test_revoked_cookie_token_rejected(
-    client: AsyncClient, sample_user: UserRow
-):
+async def test_revoked_cookie_token_rejected(client: AsyncClient, sample_user: UserRow):
     """Set the cookie manually, revoke its jti, expect 401."""
-    token, jti = create_access_token(
-        sample_user.id, sample_user.username, sample_user.role
-    )
+    token, jti = create_access_token(sample_user.id, sample_user.username, sample_user.role)
     assert jti is not None
 
     client.cookies.clear()
@@ -335,9 +327,7 @@ async def _ensure_ws_tables() -> None:
     tables = [t for name, t in Base.metadata.tables.items() if name in needed]
     async with _test_engine.begin() as conn:
         await conn.run_sync(
-            lambda sync_conn: Base.metadata.create_all(
-                sync_conn, tables=tables, checkfirst=True
-            )
+            lambda sync_conn: Base.metadata.create_all(sync_conn, tables=tables, checkfirst=True)
         )
 
     from btagent_backend.db.models import OrganizationRow

@@ -28,13 +28,9 @@ from typing import Any
 
 from btagent_shared.types.mcp import MCPServerConfig
 
-DEFAULT_MAX_RESPONSE_BYTES = int(
-    os.getenv("BTAGENT_MCP_MAX_RESPONSE_BYTES", str(10 * 1024 * 1024))
-)
+DEFAULT_MAX_RESPONSE_BYTES = int(os.getenv("BTAGENT_MCP_MAX_RESPONSE_BYTES", str(10 * 1024 * 1024)))
 DEFAULT_VERIFY_SSL = os.getenv("BTAGENT_MCP_VERIFY_SSL", "true").lower() != "false"
-DEFAULT_RECOVERY_TIMEOUT_MAX = float(
-    os.getenv("BTAGENT_MCP_CIRCUIT_RECOVERY_TIMEOUT_MAX", "600")
-)
+DEFAULT_RECOVERY_TIMEOUT_MAX = float(os.getenv("BTAGENT_MCP_CIRCUIT_RECOVERY_TIMEOUT_MAX", "600"))
 
 
 class MCPHardenedServerConfig(MCPServerConfig):

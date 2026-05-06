@@ -54,9 +54,7 @@ class TLPViolation(Exception):
         # classification_hook gate; new call sites should treat it as the
         # generic channel identifier.
         self.provider = channel
-        super().__init__(
-            f"TLP:{tlp.value.upper()} data cannot be sent to channel {channel!r}"
-        )
+        super().__init__(f"TLP:{tlp.value.upper()} data cannot be sent to channel {channel!r}")
 
 
 EgressKind = Literal[
@@ -161,32 +159,28 @@ def assert_tlp_allows_egress(
     """
     if egress_kind not in _VALID_EGRESS_KINDS:
         raise ValueError(
-            f"Unknown egress_kind {egress_kind!r}; expected one of "
-            f"{sorted(_VALID_EGRESS_KINDS)}"
+            f"Unknown egress_kind {egress_kind!r}; expected one of {sorted(_VALID_EGRESS_KINDS)}"
         )
 
     ctx_tlp = _resolve_classification(classification_ctx)
 
     if ctx_tlp == TLP.RED:
         logger.error(
-            "TLP egress block: investigation classification is TLP:RED; "
-            "refusing egress via %s",
+            "TLP egress block: investigation classification is TLP:RED; refusing egress via %s",
             egress_kind,
         )
         raise TLPViolation(TLP.RED, f"egress:{egress_kind}")
 
     if _scan_payload_for_red(payload):
         logger.error(
-            "TLP egress block: payload contains TLP:RED-tagged data; "
-            "refusing egress via %s",
+            "TLP egress block: payload contains TLP:RED-tagged data; refusing egress via %s",
             egress_kind,
         )
         raise TLPViolation(TLP.RED, f"egress:{egress_kind}")
 
     if ctx_tlp == TLP.AMBER_STRICT:
         logger.warning(
-            "TLP:AMBER_STRICT data permitted to egress via %s "
-            "(allowed but auditable)",
+            "TLP:AMBER_STRICT data permitted to egress via %s (allowed but auditable)",
             egress_kind,
         )
 

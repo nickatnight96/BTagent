@@ -448,9 +448,7 @@ class KnowledgeService:
             select(InvestigationRow).where(InvestigationRow.id == investigation_id)
         )
         investigation = inv_result.scalar_one_or_none()
-        investigation_tlp = (
-            investigation.tlp_level if investigation is not None else None
-        )
+        investigation_tlp = investigation.tlp_level if investigation is not None else None
 
         result = await db.execute(
             select(IOCRow).where(

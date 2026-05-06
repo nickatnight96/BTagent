@@ -119,9 +119,7 @@ def test_red_tag_in_nested_metadata_blocks() -> None:
         },
     }
     with pytest.raises(TLPViolation):
-        assert_tlp_allows_egress(
-            payload, "knowledge_ingest", classification_ctx=TLP.AMBER
-        )
+        assert_tlp_allows_egress(payload, "knowledge_ingest", classification_ctx=TLP.AMBER)
 
 
 # --------------------------------------------------------------------------- #

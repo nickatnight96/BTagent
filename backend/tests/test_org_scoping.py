@@ -63,9 +63,7 @@ async def test_user_inherits_default_org_when_unspecified(
     db_session.add(user)
     await db_session.commit()
 
-    result = await db_session.execute(
-        select(UserRow).where(UserRow.id == user.id)
-    )
+    result = await db_session.execute(select(UserRow).where(UserRow.id == user.id))
     fetched = result.scalar_one()
     assert fetched.org_id == "org_default"
 
@@ -143,6 +141,4 @@ async def test_user_delete_sets_investigation_assigned_to_null(
 
     refreshed = await db_session.get(InvestigationRow, inv_id)
     assert refreshed is not None, "Investigation must survive user deletion"
-    assert refreshed.assigned_to is None, (
-        "assigned_to must be set NULL by the FK ondelete rule"
-    )
+    assert refreshed.assigned_to is None, "assigned_to must be set NULL by the FK ondelete rule"

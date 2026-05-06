@@ -102,44 +102,33 @@ class TestTLSVerification:
         assert isinstance(t, HTTPTransport)
         assert t.verify_ssl is False
 
-    async def test_http_verify_ssl_off_logs_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_http_verify_ssl_off_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         t = HTTPTransport(server_url="https://example.com", verify_ssl=False)
         caplog.set_level(logging.WARNING, logger="btagent.mcp.transports")
         await t.connect()
         try:
             assert any(
-                "TLS verification DISABLED" in rec.message
-                and rec.levelno == logging.WARNING
+                "TLS verification DISABLED" in rec.message and rec.levelno == logging.WARNING
                 for rec in caplog.records
             ), f"expected WARNING about disabled TLS, got: {caplog.records}"
         finally:
             await t.disconnect()
 
-    async def test_sse_verify_ssl_off_logs_warning(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_sse_verify_ssl_off_logs_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         t = SSETransport(server_url="https://example.com", verify_ssl=False)
         caplog.set_level(logging.WARNING, logger="btagent.mcp.transports")
         await t.connect()
         try:
-            assert any(
-                "TLS verification DISABLED" in rec.message for rec in caplog.records
-            )
+            assert any("TLS verification DISABLED" in rec.message for rec in caplog.records)
         finally:
             await t.disconnect()
 
-    async def test_http_verify_ssl_on_does_not_warn(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_http_verify_ssl_on_does_not_warn(self, caplog: pytest.LogCaptureFixture) -> None:
         t = HTTPTransport(server_url="https://example.com", verify_ssl=True)
         caplog.set_level(logging.WARNING, logger="btagent.mcp.transports")
         await t.connect()
         try:
-            assert not any(
-                "TLS verification DISABLED" in rec.message for rec in caplog.records
-            )
+            assert not any("TLS verification DISABLED" in rec.message for rec in caplog.records)
         finally:
             await t.disconnect()
 
@@ -160,9 +149,7 @@ class _ClockStub:
         self.now += seconds
 
 
-def _trip_to_open(
-    cb: CircuitBreaker, clock: _ClockStub, *, count: int | None = None
-) -> None:
+def _trip_to_open(cb: CircuitBreaker, clock: _ClockStub, *, count: int | None = None) -> None:
     """Drive the breaker into OPEN by recording threshold failures."""
     n = count if count is not None else cb.failure_threshold
     for _ in range(n):
@@ -227,8 +214,7 @@ class TestExponentialBackoff:
 
             assert cb.state == CircuitState.OPEN, f"cycle {cycle}: not OPEN"
             assert cb.current_recovery_timeout == expected_wait, (
-                f"cycle {cycle}: expected wait {expected_wait}s, "
-                f"got {cb.current_recovery_timeout}s"
+                f"cycle {cycle}: expected wait {expected_wait}s, got {cb.current_recovery_timeout}s"
             )
 
     def test_backoff_caps_at_recovery_timeout_max(self) -> None:
@@ -348,9 +334,7 @@ class TestResponseSizeCap:
         assert out == {"hello": "world"}
         assert "_truncated" not in out
 
-    def test_enforce_cap_truncates_oversize_dict(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_enforce_cap_truncates_oversize_dict(self, caplog: pytest.LogCaptureFixture) -> None:
         # 5 KiB dict, cap 1 KiB -> truncated envelope
         big = {"data": "x" * 5000}
         caplog.set_level(logging.WARNING, logger="btagent.mcp.transports")
@@ -363,8 +347,7 @@ class TestResponseSizeCap:
         assert out["_truncated_limit_bytes"] == 1024
         assert "_truncated_preview" in out
         assert any(
-            "truncated" in rec.message and rec.levelno == logging.WARNING
-            for rec in caplog.records
+            "truncated" in rec.message and rec.levelno == logging.WARNING for rec in caplog.records
         )
 
     def test_enforce_cap_truncates_oversize_string(self) -> None:
@@ -377,9 +360,7 @@ class TestResponseSizeCap:
         assert out["_truncated"] is True
         assert "_truncated_parse_error" in out
 
-    async def test_http_receive_caps_oversize_body(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_http_receive_caps_oversize_body(self, caplog: pytest.LogCaptureFixture) -> None:
         big_body = b"x" * (2 * 1024 * 1024)  # 2 MiB
         cap = 256 * 1024  # 256 KiB
 
@@ -398,9 +379,7 @@ class TestResponseSizeCap:
                     async def __aenter__(self_ctx) -> Any:
                         return resp
 
-                    async def __aexit__(
-                        self_ctx, exc_type: Any, exc: Any, tb: Any
-                    ) -> None:
+                    async def __aexit__(self_ctx, exc_type: Any, exc: Any, tb: Any) -> None:
                         return None
 
                 return _Ctx()
@@ -414,9 +393,7 @@ class TestResponseSizeCap:
         assert result["_truncated_transport"] == "http"
         assert result["_truncated_limit_bytes"] == cap
         assert result["_truncated_size_bytes"] >= cap
-        assert any(
-            "truncated" in rec.message for rec in caplog.records
-        )
+        assert any("truncated" in rec.message for rec in caplog.records)
 
     async def test_http_receive_passes_small_body(self) -> None:
         small = json.dumps({"events": [1, 2, 3]}).encode()
@@ -431,9 +408,7 @@ class TestResponseSizeCap:
                     async def __aenter__(self_ctx) -> Any:
                         return resp
 
-                    async def __aexit__(
-                        self_ctx, exc_type: Any, exc: Any, tb: Any
-                    ) -> None:
+                    async def __aexit__(self_ctx, exc_type: Any, exc: Any, tb: Any) -> None:
                         return None
 
                 return _Ctx()

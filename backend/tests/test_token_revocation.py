@@ -76,9 +76,7 @@ async def test_revoke_empty_jti_is_noop():
 
 
 @pytest.mark.asyncio
-async def test_token_accepted_when_not_revoked(
-    client: AsyncClient, analyst_token: str
-):
+async def test_token_accepted_when_not_revoked(client: AsyncClient, analyst_token: str):
     """A freshly-minted access token is accepted by /auth/me."""
     resp = await client.get("/api/v1/auth/me", headers=auth_header(analyst_token))
     assert resp.status_code == 200
@@ -87,9 +85,7 @@ async def test_token_accepted_when_not_revoked(
 @pytest.mark.asyncio
 async def test_token_rejected_after_revoke(client: AsyncClient, sample_user: UserRow):
     """Revoking an access token's jti causes /auth/me to return 401."""
-    token, jti = create_access_token(
-        sample_user.id, sample_user.username, sample_user.role
-    )
+    token, jti = create_access_token(sample_user.id, sample_user.username, sample_user.role)
 
     # Pre-revocation: accepted.
     resp = await client.get("/api/v1/auth/me", headers=auth_header(token))
@@ -108,9 +104,7 @@ async def test_token_rejected_after_revoke(client: AsyncClient, sample_user: Use
 
 
 @pytest.mark.asyncio
-async def test_logout_revokes_access_and_refresh_tokens(
-    client: AsyncClient, sample_user: UserRow
-):
+async def test_logout_revokes_access_and_refresh_tokens(client: AsyncClient, sample_user: UserRow):
     """POST /auth/logout revokes both access and refresh tokens server-side."""
     pair = create_token_pair(sample_user.id, sample_user.username, sample_user.role)
 
@@ -126,9 +120,7 @@ async def test_logout_revokes_access_and_refresh_tokens(
     assert resp.status_code == 204
 
     # Access token now rejected.
-    me_after = await client.get(
-        "/api/v1/auth/me", headers=auth_header(pair.access_token)
-    )
+    me_after = await client.get("/api/v1/auth/me", headers=auth_header(pair.access_token))
     assert me_after.status_code == 401
 
     # Refresh token now rejected.
@@ -146,14 +138,10 @@ async def test_logout_without_refresh_token_still_revokes_access(
     """Logout works without a body — access token is still revoked."""
     pair = create_token_pair(sample_user.id, sample_user.username, sample_user.role)
 
-    resp = await client.post(
-        "/api/v1/auth/logout", headers=auth_header(pair.access_token)
-    )
+    resp = await client.post("/api/v1/auth/logout", headers=auth_header(pair.access_token))
     assert resp.status_code == 204
 
-    me_after = await client.get(
-        "/api/v1/auth/me", headers=auth_header(pair.access_token)
-    )
+    me_after = await client.get("/api/v1/auth/me", headers=auth_header(pair.access_token))
     assert me_after.status_code == 401
 
 
@@ -167,45 +155,31 @@ async def test_refresh_token_rotation_invalidates_old_refresh(
     client: AsyncClient, sample_user: UserRow
 ):
     """A refresh token can only be redeemed once — re-use returns 401."""
-    refresh_token, _ = create_refresh_token(
-        sample_user.id, sample_user.username, sample_user.role
-    )
+    refresh_token, _ = create_refresh_token(sample_user.id, sample_user.username, sample_user.role)
 
     # First redemption: returns a fresh pair.
-    first = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-    )
+    first = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert first.status_code == 200
     new_pair = first.json()
     assert "access_token" in new_pair
     assert new_pair["refresh_token"] != refresh_token  # rotation
 
     # Second redemption with the *old* refresh token: rejected.
-    second = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-    )
+    second = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert second.status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_refresh_returns_new_usable_pair(
-    client: AsyncClient, sample_user: UserRow
-):
+async def test_refresh_returns_new_usable_pair(client: AsyncClient, sample_user: UserRow):
     """The new pair from /refresh is independent and usable."""
-    refresh_token, _ = create_refresh_token(
-        sample_user.id, sample_user.username, sample_user.role
-    )
+    refresh_token, _ = create_refresh_token(sample_user.id, sample_user.username, sample_user.role)
 
-    resp = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-    )
+    resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert resp.status_code == 200
     new_pair = resp.json()
 
     # New access token works.
-    me = await client.get(
-        "/api/v1/auth/me", headers=auth_header(new_pair["access_token"])
-    )
+    me = await client.get("/api/v1/auth/me", headers=auth_header(new_pair["access_token"]))
     assert me.status_code == 200
 
     # New refresh token also works (and rotates again).
@@ -241,11 +215,9 @@ async def test_legacy_token_without_jti_accepted_with_warning(
     )
 
     with caplog.at_level(logging.WARNING, logger="btagent.auth.middleware"):
-        resp = await client.get(
-            "/api/v1/auth/me", headers=auth_header(legacy_token)
-        )
+        resp = await client.get("/api/v1/auth/me", headers=auth_header(legacy_token))
 
     assert resp.status_code == 200
-    assert any(
-        "legacy access token without jti" in rec.message for rec in caplog.records
-    ), f"expected legacy-token warning, got: {[r.message for r in caplog.records]}"
+    assert any("legacy access token without jti" in rec.message for rec in caplog.records), (
+        f"expected legacy-token warning, got: {[r.message for r in caplog.records]}"
+    )

@@ -167,9 +167,7 @@ class StdioTransport(MCPTransportBase):
             raise ConnectionError("StdioTransport: subprocess closed stdout")
 
         if len(line) > self.max_response_bytes:
-            return _truncated_envelope(
-                transport="stdio", raw=line, limit=self.max_response_bytes
-            )
+            return _truncated_envelope(transport="stdio", raw=line, limit=self.max_response_bytes)
         try:
             return json.loads(line.decode())
         except json.JSONDecodeError as exc:
@@ -260,9 +258,7 @@ class HTTPTransport(MCPTransportBase):
         url = f"{self.server_url.rstrip('/')}/mcp"
         async with self._session.get(url) as resp:
             resp.raise_for_status()
-            return await _read_capped_json(
-                resp, transport="http", limit=self.max_response_bytes
-            )
+            return await _read_capped_json(resp, transport="http", limit=self.max_response_bytes)
 
     @property
     def is_connected(self) -> bool:
@@ -356,9 +352,7 @@ class SSETransport(MCPTransportBase):
 # ---------------------------------------------------------------------------
 # Helpers -- streaming read with cap enforcement
 # ---------------------------------------------------------------------------
-async def _read_capped_json(
-    resp: Any, *, transport: str, limit: int
-) -> dict[str, Any]:
+async def _read_capped_json(resp: Any, *, transport: str, limit: int) -> dict[str, Any]:
     """Read an aiohttp response in bounded chunks and parse as JSON.
 
     Returns a truncation envelope (rather than parsed JSON) when the body

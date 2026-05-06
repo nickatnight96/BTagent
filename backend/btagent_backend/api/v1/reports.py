@@ -16,9 +16,7 @@ from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services.report_service import ReportService
 
 
-async def _scope_or_404(
-    db: AsyncSession, user: CurrentUser, investigation_id: str
-) -> None:
+async def _scope_or_404(db: AsyncSession, user: CurrentUser, investigation_id: str) -> None:
     """Look up an investigation and 404 if the caller cannot access it.
 
     AUTH-B1: report endpoints take ``investigation_id`` from the request body,
@@ -32,6 +30,7 @@ async def _scope_or_404(
     if inv is None:
         raise HTTPException(status_code=404, detail="Not found")
     assert_can_access_investigation(user, inv)
+
 
 logger = logging.getLogger("btagent.api.reports")
 

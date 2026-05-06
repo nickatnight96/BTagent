@@ -28,9 +28,7 @@ router = APIRouter(prefix="/iocs", tags=["iocs"])
 _ORG_WIDE_ROLES = frozenset({"admin", "incident_commander", "senior_analyst"})
 
 
-async def _load_investigation_or_404(
-    db: AsyncSession, investigation_id: str
-) -> InvestigationRow:
+async def _load_investigation_or_404(db: AsyncSession, investigation_id: str) -> InvestigationRow:
     """Fetch an investigation row or raise 404 (no scoping check)."""
     result = await db.execute(
         select(InvestigationRow).where(InvestigationRow.id == investigation_id)

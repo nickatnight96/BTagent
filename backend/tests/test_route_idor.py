@@ -162,9 +162,7 @@ async def cross_org_setup(db_session: AsyncSession, org_a_setup):
     """Add a second organization with its own analyst + investigation."""
     await _ensure_org(db_session, "org_b")
     eve = await _make_user(db_session, role="analyst", org_id="org_b", label="eve")
-    eve_inv = await _make_investigation(
-        db_session, owner=eve, title="Eve case", org_id="org_b"
-    )
+    eve_inv = await _make_investigation(db_session, owner=eve, title="Eve case", org_id="org_b")
     eve_ioc = await _make_ioc(db_session, investigation=eve_inv, value="10.0.0.99")
     return {
         **org_a_setup,
@@ -180,9 +178,7 @@ async def cross_org_setup(db_session: AsyncSession, org_a_setup):
 
 
 @pytest.mark.asyncio
-async def test_analyst_cannot_get_other_analysts_investigation(
-    client: AsyncClient, org_a_setup
-):
+async def test_analyst_cannot_get_other_analysts_investigation(client: AsyncClient, org_a_setup):
     """Alice (analyst) gets 404 — not 403 — for Bob's investigation."""
     resp = await client.get(
         f"/api/v1/investigations/{org_a_setup['bob_inv'].id}",
@@ -215,9 +211,7 @@ async def test_senior_analyst_can_get_other_analysts_investigation(
 
 
 @pytest.mark.asyncio
-async def test_admin_can_access_any_investigation_in_org(
-    client: AsyncClient, org_a_setup
-):
+async def test_admin_can_access_any_investigation_in_org(client: AsyncClient, org_a_setup):
     """Admins are org-wide read/write."""
     resp = await client.get(
         f"/api/v1/investigations/{org_a_setup['alice_inv'].id}",
@@ -275,9 +269,7 @@ async def test_post_ioc_with_inaccessible_investigation_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_cross_org_get_investigation_returns_404(
-    client: AsyncClient, cross_org_setup
-):
+async def test_cross_org_get_investigation_returns_404(client: AsyncClient, cross_org_setup):
     """A user from org_default cannot read an investigation in org_b."""
     resp = await client.get(
         f"/api/v1/investigations/{cross_org_setup['eve_inv'].id}",
@@ -312,9 +304,7 @@ async def test_cross_org_get_ioc_returns_404(client: AsyncClient, cross_org_setu
 
 
 @pytest.mark.asyncio
-async def test_list_investigations_excludes_other_orgs(
-    client: AsyncClient, cross_org_setup
-):
+async def test_list_investigations_excludes_other_orgs(client: AsyncClient, cross_org_setup):
     """Listing as Alice never returns Eve's investigation from org_b."""
     resp = await client.get(
         "/api/v1/investigations",
@@ -327,9 +317,7 @@ async def test_list_investigations_excludes_other_orgs(
 
 
 @pytest.mark.asyncio
-async def test_list_investigations_analyst_only_sees_own(
-    client: AsyncClient, org_a_setup
-):
+async def test_list_investigations_analyst_only_sees_own(client: AsyncClient, org_a_setup):
     """Plain analyst's list only contains investigations they're assigned to."""
     resp = await client.get(
         "/api/v1/investigations",
@@ -343,9 +331,7 @@ async def test_list_investigations_analyst_only_sees_own(
 
 
 @pytest.mark.asyncio
-async def test_list_investigations_senior_sees_org_wide(
-    client: AsyncClient, org_a_setup
-):
+async def test_list_investigations_senior_sees_org_wide(client: AsyncClient, org_a_setup):
     """Senior analyst's list contains investigations they don't own (same org)."""
     resp = await client.get(
         "/api/v1/investigations",

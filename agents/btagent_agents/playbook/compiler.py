@@ -40,12 +40,9 @@ _BASE_STEP_KEYS = frozenset(
     {"id", "type", "name", "description", "config", "next_step", "on_failure"}
 )
 ALLOWED_STEP_KEYS_BY_TYPE: dict[StepType, frozenset[str]] = {
-    StepType.ACTION: _BASE_STEP_KEYS
-    | frozenset({"tool_name", "arguments", "timeout_seconds"}),
-    StepType.DECISION: _BASE_STEP_KEYS
-    | frozenset({"condition", "true_branch", "false_branch"}),
-    StepType.HITL_GATE: _BASE_STEP_KEYS
-    | frozenset({"prompt", "timeout_seconds", "required_role"}),
+    StepType.ACTION: _BASE_STEP_KEYS | frozenset({"tool_name", "arguments", "timeout_seconds"}),
+    StepType.DECISION: _BASE_STEP_KEYS | frozenset({"condition", "true_branch", "false_branch"}),
+    StepType.HITL_GATE: _BASE_STEP_KEYS | frozenset({"prompt", "timeout_seconds", "required_role"}),
     StepType.PARALLEL_FORK: _BASE_STEP_KEYS | frozenset({"branches"}),
     StepType.JOIN: _BASE_STEP_KEYS,
     StepType.END: _BASE_STEP_KEYS,
@@ -62,9 +59,7 @@ class PlaybookCompiler:
         Raises yaml.YAMLError on parse failure.
         """
         if len(yaml_str.encode("utf-8")) > MAX_PLAYBOOK_BYTES:
-            raise ValueError(
-                f"Playbook YAML exceeds {MAX_PLAYBOOK_BYTES} bytes"
-            )
+            raise ValueError(f"Playbook YAML exceeds {MAX_PLAYBOOK_BYTES} bytes")
         raw = yaml.safe_load(yaml_str)
         if not isinstance(raw, dict):
             raise ValueError("Playbook YAML must be a mapping at top level")
@@ -92,8 +87,7 @@ class PlaybookCompiler:
         unknown = set(raw.keys()) - ALLOWED_STEP_KEYS_BY_TYPE[step_type]
         if unknown:
             raise ValueError(
-                f"Step '{step_id}' has unknown keys for type '{step_type.value}': "
-                f"{sorted(unknown)}"
+                f"Step '{step_id}' has unknown keys for type '{step_type.value}': {sorted(unknown)}"
             )
 
         try:
@@ -170,18 +164,14 @@ class PlaybookCompiler:
             raise ValueError(f"Step '{step_id}' branches must be a list")
         if len(branches) > MAX_PARALLEL_BRANCHES:
             raise ValueError(
-                f"Step '{step_id}' has {len(branches)} branches "
-                f"(max {MAX_PARALLEL_BRANCHES})"
+                f"Step '{step_id}' has {len(branches)} branches (max {MAX_PARALLEL_BRANCHES})"
             )
         for i, branch in enumerate(branches):
             if not isinstance(branch, list):
-                raise ValueError(
-                    f"Step '{step_id}' branch[{i}] must be a list of step ids"
-                )
+                raise ValueError(f"Step '{step_id}' branch[{i}] must be a list of step ids")
             if len(branch) > MAX_BRANCH_DEPTH:
                 raise ValueError(
-                    f"Step '{step_id}' branch[{i}] has {len(branch)} steps "
-                    f"(max {MAX_BRANCH_DEPTH})"
+                    f"Step '{step_id}' branch[{i}] has {len(branch)} steps (max {MAX_BRANCH_DEPTH})"
                 )
             for j, step_ref in enumerate(branch):
                 if not isinstance(step_ref, str) or not step_ref:
