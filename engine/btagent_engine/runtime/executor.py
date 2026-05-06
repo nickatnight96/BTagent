@@ -49,6 +49,12 @@ from btagent_engine.compiler.workflow import Workflow, WorkflowNode
 from btagent_engine.middleware.base import Middleware, Runner
 from btagent_engine.middleware.hitl import HITLPause
 from btagent_engine.node import Node, NodeContext, NodeRegistry
+from btagent_engine.runtime.conditions import (
+    ConditionEvaluationError,
+    build_condition_context,
+    coerce_to_branch,
+    evaluate_condition,
+)
 from btagent_engine.runtime.state import WorkflowState
 
 # Synthetic node ids the compiler emits for structural ``join`` / ``end``
@@ -264,6 +270,17 @@ class WorkflowExecutor:
             # Regular execute path. Resolve, build input, run via Runner.
             node_instance = self._resolve_node(wf_node)
             node_input = self._build_input(node_instance, carried_payload, wf_node.config)
+
+            # DecisionNode condition evaluation: when the compiler stashed a
+            # YAML-authored ``condition`` string in the step config, evaluate
+            # it now against the current workflow state and force the result
+            # into the DecisionNode's ``value`` input. The Node itself stays
+            # unchanged -- it still emits ``branch=str(value)`` -- so the
+            # back-compat path (literal ``value`` in input) keeps working
+            # whenever the condition is empty / unset.
+            if wf_node.node_id == _DECISION_NODE_ID:
+                node_input = self._apply_condition(wf_node, node_input, state)
+
             output = await self._execute_node(
                 node=node_instance,
                 node_input=node_input,
@@ -483,6 +500,54 @@ class WorkflowExecutor:
             # Static config wins on collision per the brief.
             base.update(config)
         return base
+
+    def _apply_condition(
+        self,
+        wf_node: WorkflowNode,
+        node_input: BaseModel | dict[str, Any],
+        state: WorkflowState,
+    ) -> dict[str, Any]:
+        """Evaluate a stashed ``condition`` string and rewrite the input ``value``.
+
+        No-op when the step has no ``condition`` (or it's an empty string)
+        -- the Sprint 2.5A Python-driven path with a literal ``value`` on
+        the input continues to work unchanged.
+
+        The evaluated value is coerced to the same string-branch shape
+        DecisionNode itself produces (``"true"`` / ``"false"`` for bools,
+        ``str(value)`` otherwise) and stuffed into ``value`` so the Node's
+        own ``run`` doesn't have to know about conditions at all.
+        """
+        condition = wf_node.config.get("condition") if wf_node.config else None
+        if not isinstance(condition, str) or not condition.strip():
+            # Back-compat: no condition => let DecisionNode see the
+            # upstream-provided ``value`` verbatim. We still drop unknown
+            # keys here because DecisionNodeInput is ``extra="forbid"`` and
+            # the upstream output may carry sibling fields (e.g. an
+            # echo-shaped ``{value: True, ...}``) that the schema rejects.
+            base = (
+                dict(node_input) if isinstance(node_input, dict) else node_input.model_dump()
+            )
+            return {"value": base.get("value")}
+
+        context = build_condition_context(state.outputs)
+        try:
+            raw = evaluate_condition(condition, context)
+        except ConditionEvaluationError as exc:
+            raise WorkflowExecutionError(
+                f"Decision node {wf_node.step_id!r} condition "
+                f"{condition!r} failed: {exc}",
+                node_id=wf_node.step_id,
+                reason="condition evaluation failed",
+                cause=exc,
+            ) from exc
+
+        # Replace the input outright -- DecisionNodeInput is ``extra="forbid"``,
+        # so any sibling fields the upstream node or static config carried
+        # would fail validation. The coerced branch label goes into ``value``;
+        # DecisionNode's ``run`` then ``str(value)`` and emits it as ``branch``
+        # for routing against the compiler-emitted out-edge labels.
+        return {"value": coerce_to_branch(raw)}
 
     def _coerce_passthrough(
         self,

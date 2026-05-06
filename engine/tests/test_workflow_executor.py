@@ -687,3 +687,151 @@ async def test_single_node_workflow_returns_that_nodes_output():
     assert result.nodes_executed == ["only"]
     assert isinstance(result.final_output, _IntOutput)
     assert result.final_output.n == 42
+
+
+# --------------------------------------------------------------------------- #
+# Sprint 4D: condition evaluation on DecisionNode
+# --------------------------------------------------------------------------- #
+
+
+class _ScorerInput(BaseModel):
+    """Input that drives our scorer node -- value passed in via static config."""
+
+    severity: str = "low"
+    score: float = 0.0
+
+
+class _ScorerOutput(BaseModel):
+    severity: str
+    score: float
+
+
+class _ScorerNode(Node[_ScorerInput, _ScorerOutput]):
+    """Tiny scorer-shaped node used as the condition's upstream reference.
+
+    A condition like ``node['scorer'].severity == 'critical'`` reads
+    against the validated output of this node.
+    """
+
+    meta: ClassVar[NodeMeta] = NodeMeta(
+        id="test.executor.scorer",
+        name="Scorer",
+        version="0.1.0",
+        category=NodeCategory.DATA,
+    )
+    input_schema = _ScorerInput
+    output_schema = _ScorerOutput
+
+    async def run(self, input: _ScorerInput, ctx: NodeContext) -> _ScorerOutput:
+        return _ScorerOutput(severity=input.severity, score=input.score)
+
+
+@pytest.fixture(autouse=True)
+def _register_scorer_node():
+    """Register the Sprint 4D scorer node alongside the suite-wide fixtures."""
+    NodeRegistry.unregister(_ScorerNode.meta.id)
+    NodeRegistry.register(_ScorerNode)
+    yield
+    NodeRegistry.unregister(_ScorerNode.meta.id)
+
+
+async def test_condition_evaluates_against_upstream_output_and_routes_true():
+    """A YAML-style ``condition`` reads ``node['scorer'].severity`` and routes."""
+    # decision step's config carries the stashed condition string the
+    # compiler would emit for ``severity == 'critical'``.
+    gate = WorkflowNode(
+        step_id="gate",
+        node_id="decision.branch",
+        config={"condition": "node['scorer'].severity == 'critical'"},
+    )
+    wf = _wf(
+        nodes=[
+            _action("scorer", _ScorerNode.meta.id, severity="critical", score=0.9),
+            gate,
+            _action("yes", _DoubleNode.meta.id, n=4),
+            _action("no", _AddOneNode.meta.id, n=4),
+        ],
+        edges=[
+            WorkflowEdge(source="scorer", target="gate", label="next"),
+            WorkflowEdge(source="gate", target="yes", label="true"),
+            WorkflowEdge(source="gate", target="no", label="false"),
+        ],
+    )
+    # Initial input goes to scorer (via _build_input + static config merge).
+    result = await WorkflowExecutor().execute(wf, {}, _ctx())
+    assert "yes" in result.outputs
+    assert "no" not in result.outputs
+    # The DecisionNode itself recorded ``branch='true'``.
+    assert result.outputs["gate"].branch == "true"  # type: ignore[attr-defined]
+
+
+async def test_condition_evaluates_to_false_and_routes_to_other_branch():
+    """Same workflow, different upstream value -> the false branch fires."""
+    gate = WorkflowNode(
+        step_id="gate",
+        node_id="decision.branch",
+        config={"condition": "node['scorer'].score > 0.7"},
+    )
+    wf = _wf(
+        nodes=[
+            _action("scorer", _ScorerNode.meta.id, severity="low", score=0.1),
+            gate,
+            _action("yes", _DoubleNode.meta.id, n=4),
+            _action("no", _AddOneNode.meta.id, n=4),
+        ],
+        edges=[
+            WorkflowEdge(source="scorer", target="gate", label="next"),
+            WorkflowEdge(source="gate", target="yes", label="true"),
+            WorkflowEdge(source="gate", target="no", label="false"),
+        ],
+    )
+    result = await WorkflowExecutor().execute(wf, {}, _ctx())
+    assert "no" in result.outputs
+    assert "yes" not in result.outputs
+    assert result.outputs["gate"].branch == "false"  # type: ignore[attr-defined]
+
+
+async def test_decision_without_condition_still_uses_literal_value_input():
+    """Sprint-2.5A back-compat: a DecisionNode whose config has no ``condition``
+    falls back to the literal ``value`` field on its input."""
+    # Note: NO 'condition' key in config.
+    wf = _wf(
+        nodes=[
+            _action("pre", _DecideValueNode.meta.id),
+            _action("gate", "decision.branch"),
+            _action("yes", _DoubleNode.meta.id, n=4),
+            _action("no", _AddOneNode.meta.id, n=4),
+        ],
+        edges=[
+            WorkflowEdge(source="pre", target="gate", label="next"),
+            WorkflowEdge(source="gate", target="yes", label="true"),
+            WorkflowEdge(source="gate", target="no", label="false"),
+        ],
+    )
+    result = await WorkflowExecutor().execute(wf, {"value": True}, _ctx())
+    assert "yes" in result.outputs
+    assert "no" not in result.outputs
+
+
+async def test_condition_referencing_unknown_step_raises_workflow_error():
+    """Missing variable in the condition surfaces as WorkflowExecutionError."""
+    gate = WorkflowNode(
+        step_id="gate",
+        node_id="decision.branch",
+        config={"condition": "node['missing'].score > 0.7"},
+    )
+    wf = _wf(
+        nodes=[
+            _action("scorer", _ScorerNode.meta.id, severity="low", score=0.0),
+            gate,
+            _action("yes", _DoubleNode.meta.id, n=1),
+        ],
+        edges=[
+            WorkflowEdge(source="scorer", target="gate", label="next"),
+            WorkflowEdge(source="gate", target="yes", label="true"),
+        ],
+    )
+    with pytest.raises(WorkflowExecutionError) as ei:
+        await WorkflowExecutor().execute(wf, {}, _ctx())
+    assert ei.value.node_id == "gate"
+    assert ei.value.reason == "condition evaluation failed"
