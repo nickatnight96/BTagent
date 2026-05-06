@@ -16,16 +16,25 @@ class ApiError extends Error {
 }
 
 interface AuthStoreSlice {
-  accessToken: string | null;
-  refreshTokens: () => Promise<boolean>;
-  logout: () => void;
+  // Phase C2: tokens live in httpOnly cookies. The store no longer holds
+  // them. We only need a hook for the 401 path so the client can clear the
+  // local user and bounce to /login.
+  logout: () => Promise<void> | void;
 }
 
-// Auth store accessor, set externally to avoid circular dependency
+// Auth store accessor, set externally to avoid circular dependency.
 let _getAuthState: (() => AuthStoreSlice) | null = null;
+
+// Optional unauthenticated handler — installed by App bootstrap so the
+// client can redirect on 401 without importing react-router here.
+let _onUnauthenticated: (() => void) | null = null;
 
 export function setAuthStoreAccessor(accessor: () => AuthStoreSlice): void {
   _getAuthState = accessor;
+}
+
+export function setUnauthenticatedHandler(handler: () => void): void {
+  _onUnauthenticated = handler;
 }
 
 function getAuthStore(): AuthStoreSlice {
@@ -47,31 +56,28 @@ async function request<T>(
     headers.set("Content-Type", "application/json");
   }
 
-  if (!skipAuth) {
-    const authState = getAuthStore();
-    if (authState.accessToken) {
-      headers.set("Authorization", `Bearer ${authState.accessToken}`);
-    }
-  }
-
   const url = endpoint.startsWith("http") ? endpoint : `${BASE_URL}${endpoint}`;
 
-  let response = await fetch(url, { ...rest, headers });
+  // `credentials: "include"` makes the browser attach the httpOnly auth
+  // cookies to every API call. The server reads them; JS never sees them.
+  const response = await fetch(url, {
+    ...rest,
+    headers,
+    credentials: "include",
+  });
 
-  // Auto-refresh on 401
   if (response.status === 401 && !skipAuth) {
-    const authState = getAuthStore();
-    const refreshed = await authState.refreshTokens();
-    if (refreshed) {
-      const retryAuthState = getAuthStore();
-      if (retryAuthState.accessToken) {
-        headers.set("Authorization", `Bearer ${retryAuthState.accessToken}`);
-      }
-      response = await fetch(url, { ...rest, headers });
-    } else {
-      authState.logout();
-      throw new ApiError(401, "Unauthorized", null);
+    // Cookie missing/expired/revoked. Clear the local user and let the
+    // installed handler (typically a router redirect) take over.
+    try {
+      await getAuthStore().logout();
+    } catch {
+      // ignore — we're already in the failure path
     }
+    if (_onUnauthenticated) {
+      _onUnauthenticated();
+    }
+    throw new ApiError(401, "Unauthorized", null);
   }
 
   if (!response.ok) {
