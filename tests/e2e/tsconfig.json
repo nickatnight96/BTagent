@@ -15,6 +15,7 @@
     "paths": {
       "@e2e/*": ["./*"]
     },
+    "ignoreDeprecations": "6.0",
     "types": ["node", "@playwright/test"]
   },
   "include": ["**/*.ts"],
