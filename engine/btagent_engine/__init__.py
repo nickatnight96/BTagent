@@ -35,17 +35,33 @@ Context cascade (Sprint 2C) -- ``btagent_engine.context``:
 * ``apply_cascade`` -- reduce a too-big conversation through 4 layers
   (externalise / compress / prune / summarize) until it fits a budget.
 
-Integrations (Sprint 2A1 + 2A2) -- ``btagent_engine.integrations``:
+Integrations (Sprint 2A1 + 2A2 + 2.5B) -- ``btagent_engine.integrations``:
 
 * 9 vendor connector Nodes (GreyNoise, Splunk, CrowdStrike, Sentinel,
   Elastic, VirusTotal, Shodan, AbuseIPDB, MISP) all honouring
   ``BTAGENT_MOCK_CONNECTORS``.
+* ``LLMCallNode`` (reasoning category) honouring ``BTAGENT_MOCK_LLM``;
+  writes ``BudgetUsage`` to ``ctx.metadata`` so PromptBudgetMiddleware
+  can enforce the cap.
 
 Middleware (Sprint 2B) -- ``btagent_engine.middleware``:
 
 * 6 cross-cutting middlewares (ClassificationMiddleware,
   EventEmitterMiddleware, EvidenceChainMiddleware, HITLMiddleware,
   PromptBudgetMiddleware, ScopeEnforcementMiddleware).
+
+Triggers (Sprint 2.5B) -- ``btagent_engine.triggers``:
+
+* ``ManualTriggerNode`` -- the simplest workflow entry point;
+  webhook / schedule / alert variants ship in Phase 3.
+
+Runtime (Sprint 2.5A) -- ``btagent_engine.runtime``:
+
+* ``WorkflowExecutor`` walks a compiled :class:`Workflow` end-to-end,
+  routing every step through ``Runner.execute`` so the middleware
+  chain applies uniformly. Surfaces ``WorkflowPaused`` for HITL
+  checkpoints and ``WorkflowExecutionError`` for structural / step
+  failures.
 """
 
 from btagent_engine.middleware import Middleware, Runner
@@ -57,6 +73,13 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.runtime import (
+    WorkflowExecutionError,
+    WorkflowExecutor,
+    WorkflowPaused,
+    WorkflowRunResult,
+    WorkflowState,
+)
 
 __all__ = [
     "Middleware",
@@ -67,4 +90,9 @@ __all__ = [
     "NodeMeta",
     "NodeRegistry",
     "Runner",
+    "WorkflowExecutionError",
+    "WorkflowExecutor",
+    "WorkflowPaused",
+    "WorkflowRunResult",
+    "WorkflowState",
 ]

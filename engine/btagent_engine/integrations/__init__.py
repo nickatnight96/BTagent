@@ -31,6 +31,11 @@ from btagent_engine.integrations.greynoise import (
     GreyNoiseLookupIPNode,
     GreyNoiseLookupIPOutput,
 )
+from btagent_engine.integrations.llm_call import (
+    LLMCallInput,
+    LLMCallNode,
+    LLMCallOutput,
+)
 from btagent_engine.integrations.misp import (
     MISPGetEventInput,
     MISPGetEventNode,
@@ -82,6 +87,9 @@ __all__ = [
     "GreyNoiseLookupIPInput",
     "GreyNoiseLookupIPNode",
     "GreyNoiseLookupIPOutput",
+    "LLMCallInput",
+    "LLMCallNode",
+    "LLMCallOutput",
     "MISPGetEventInput",
     "MISPGetEventNode",
     "MISPGetEventOutput",
