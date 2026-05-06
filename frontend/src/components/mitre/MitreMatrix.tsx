@@ -180,26 +180,39 @@ export function MitreMatrix() {
     <>
       <Header title="MITRE ATT&CK Matrix" />
 
-      <div className="flex-1 overflow-hidden flex flex-col p-6">
+      <div className="flex-1 overflow-hidden flex flex-col p-6" data-testid="mitre-matrix">
         {/* Toolbar */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-3 flex-1 w-full lg:w-auto">
             {/* Search */}
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Search
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"
+                aria-hidden="true"
+              />
               <input
                 type="text"
                 placeholder="Search techniques..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search techniques"
+                data-testid="mitre-matrix-search-input"
                 className="w-full bg-slate-900 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-colors"
               />
             </div>
 
             {/* View toggle */}
-            <div className="flex items-center gap-0.5 bg-slate-900 border border-slate-700/50 rounded-lg p-0.5">
+            <div
+              className="flex items-center gap-0.5 bg-slate-900 border border-slate-700/50 rounded-lg p-0.5"
+              role="tablist"
+              aria-label="Matrix view mode"
+              data-testid="mitre-matrix-view-toggle"
+            >
               <button
                 onClick={() => handleViewToggle("global")}
+                role="tab"
+                aria-selected={viewMode === "global"}
+                data-testid="mitre-matrix-view-toggle-global"
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   viewMode === "global"
                     ? "bg-blue-600/20 text-blue-400"
@@ -210,6 +223,9 @@ export function MitreMatrix() {
               </button>
               <button
                 onClick={() => handleViewToggle("investigation")}
+                role="tab"
+                aria-selected={viewMode === "investigation"}
+                data-testid="mitre-matrix-view-toggle-investigation"
                 className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   viewMode === "investigation"
                     ? "bg-blue-600/20 text-blue-400"
@@ -229,6 +245,8 @@ export function MitreMatrix() {
                 onChange={(e) =>
                   setInvestigationFilter(e.target.value || null)
                 }
+                aria-label="Filter by investigation"
+                data-testid="mitre-matrix-investigation-filter-input"
                 className="bg-slate-800 border border-slate-600/50 rounded-md px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 max-w-[200px]"
               >
                 <option value="">Select Investigation</option>
@@ -244,8 +262,9 @@ export function MitreMatrix() {
               variant="secondary"
               size="sm"
               onClick={handleExportNavigator}
+              data-testid="mitre-matrix-export-button"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4" aria-hidden="true" />
               Navigator Export
             </Button>
           </div>
@@ -253,13 +272,17 @@ export function MitreMatrix() {
 
         {/* Coverage score badge */}
         {coverage && (
-          <div className="flex items-center gap-4 mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg">
+          <div
+            className="flex items-center gap-4 mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg"
+            data-testid="mitre-matrix-coverage"
+          >
             <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-blue-400" />
+              <BarChart3 className="w-4 h-4 text-blue-400" aria-hidden="true" />
               <span className="text-xs font-medium text-slate-400">
                 Coverage Score
               </span>
               <Badge
+                data-testid="mitre-matrix-coverage-score"
                 className={`text-sm font-bold ${
                   (coverage?.coverage_score ?? 0) >= 70
                     ? "bg-green-500/20 text-green-400 border-green-500/30"
@@ -319,12 +342,25 @@ export function MitreMatrix() {
 
         {/* Matrix */}
         {isLoading && techniques.length === 0 ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 text-slate-500 animate-spin" />
+          <div
+            className="flex items-center justify-center py-20"
+            data-testid="mitre-matrix-loading"
+          >
+            <Loader2
+              className="w-8 h-8 text-slate-500 animate-spin"
+              aria-label="Loading MITRE techniques"
+            />
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <AlertTriangle className="w-10 h-10 text-amber-500 mb-3" />
+          <div
+            className="flex flex-col items-center justify-center py-20 text-slate-400"
+            role="alert"
+            data-testid="mitre-matrix-error"
+          >
+            <AlertTriangle
+              className="w-10 h-10 text-amber-500 mb-3"
+              aria-hidden="true"
+            />
             <p className="text-sm">{error}</p>
             <Button
               variant="ghost"
@@ -334,13 +370,17 @@ export function MitreMatrix() {
                 void fetchCoverage();
               }}
               className="mt-3"
+              data-testid="mitre-matrix-retry-button"
             >
               Retry
             </Button>
           </div>
         ) : techniques.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <Grid3X3 className="w-10 h-10 text-slate-600 mb-3" />
+          <div
+            className="flex flex-col items-center justify-center py-20 text-slate-400"
+            data-testid="mitre-matrix-empty"
+          >
+            <Grid3X3 className="w-10 h-10 text-slate-600 mb-3" aria-hidden="true" />
             <p className="text-sm font-medium text-slate-300">
               No techniques loaded
             </p>
@@ -355,12 +395,18 @@ export function MitreMatrix() {
               style={{
                 gridTemplateColumns: `repeat(${TACTIC_ORDER.length}, minmax(90px, 1fr))`,
               }}
+              role="grid"
+              aria-label="MITRE ATT&CK technique matrix"
+              data-testid="mitre-matrix-grid"
             >
               {/* Tactic headers */}
               {TACTIC_ORDER.map((tactic) => (
                 <div
                   key={`header-${tactic}`}
                   className="sticky top-0 z-10 bg-slate-900 border-b border-slate-700/50 px-2 py-2.5 text-center"
+                  role="columnheader"
+                  aria-label={`Tactic: ${TACTIC_LABELS[tactic] ?? tactic}`}
+                  data-testid={`mitre-tactic-column-${tactic}`}
                 >
                   <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider leading-tight">
                     {TACTIC_LABELS[tactic] ?? tactic}
@@ -394,6 +440,8 @@ export function MitreMatrix() {
                       }}
                       className={`group relative min-h-[36px] px-1.5 py-1.5 border rounded text-left transition-all duration-150 hover:scale-[1.02] hover:z-10 hover:shadow-lg hover:shadow-black/30 ${countToColor(cell.count)}`}
                       title={`${cell.id}: ${cell.name} (${cell.count} tagged)`}
+                      aria-label={`${cell.name} (${cell.id}) under ${TACTIC_LABELS[tactic] ?? tactic}, ${cell.count} tagged`}
+                      data-testid={`mitre-technique-cell-${cell.id}`}
                     >
                       <div className="text-[9px] font-mono text-slate-500 group-hover:text-slate-400 leading-none">
                         {cell.id}
@@ -415,7 +463,10 @@ export function MitreMatrix() {
             </div>
 
             {maxRows > 60 && (
-              <p className="text-[10px] text-slate-600 text-center mt-2">
+              <p
+                className="text-[10px] text-slate-600 text-center mt-2"
+                data-testid="mitre-matrix-truncation-notice"
+              >
                 Showing first 60 rows. Use search to find specific techniques.
               </p>
             )}
