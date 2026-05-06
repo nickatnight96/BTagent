@@ -10,6 +10,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Default to read-only token; jobs that need to push images / packages
+# elevate locally via their own ``permissions:`` block.
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "20"
@@ -35,6 +40,66 @@ jobs:
 
       - name: Ruff format check
         run: ruff format --check backend/ agents/ shared/
+
+  # ── Secret scanning ─────────────────────────────────────────
+  # Fails the pipeline if any secret-shaped string is committed -- including
+  # keys accidentally added to test fixtures or copied into a workflow env.
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans the full history; need the depth.
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Dependency vulnerability audit ──────────────────────────
+  # Surfaces CVEs in Python + Node dependency trees on every PR. Findings are
+  # advisory in the short term (``continue-on-error``) so a brand-new CVE in
+  # a transitive dep doesn't immediately block merges -- promote to required
+  # once the team has a triage workflow established.
+  python-audit:
+    name: Python Dependency Audit
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install deps + pip-audit
+        run: |
+          pip install uv pip-audit
+          uv pip install --system -e shared/
+          uv pip install --system -e agents/
+          uv pip install --system -e "backend/[dev]"
+
+      - name: Run pip-audit
+        run: pip-audit --strict
+
+  npm-audit:
+    name: Node Dependency Audit
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: npm audit
+        run: npm audit --audit-level=high
 
   # ── Backend + Agent Unit Tests ──────────────────────────────
   backend-tests:
@@ -98,7 +163,10 @@ jobs:
         run: pytest backend/tests/ -v --cov=btagent_backend --cov-report=xml:coverage-backend.xml --cov-report=term-missing
 
       - name: Run agent tests
-        run: pytest agents/tests/ -v --no-header || echo "No agent unit tests found (tested via UAT)"
+        # Mandatory now that agents/tests/ is populated (Phase 0 onward).
+        # Previous form swallowed missing-tests with ``|| echo`` which would
+        # also have hidden a real test failure.
+        run: pytest agents/tests/ -v --no-header
 
       - name: Upload coverage
         if: always()
@@ -241,10 +309,12 @@ jobs:
         run: npm install
 
       - name: Type check
-        run: npx tsc --noEmit || echo "TypeScript check completed with warnings"
+        # Fail loudly. The previous ``|| echo`` masked real type errors and
+        # let the build proceed with broken code.
+        run: npx tsc --noEmit
 
       - name: Build
-        run: npm run build || echo "Build completed with warnings"
+        run: npm run build
 
   # ── Build & Push Docker Images ──────────────────────────────
   build-images:
@@ -274,9 +344,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/nickatnight96/btagent-backend
+          # Only commit-SHA tags ship from CI. ``latest`` was previously also
+          # tagged, which is mutable and not bound to a commit -- a manual
+          # push could silently make ``latest`` point at unversioned code.
+          # Production deploys reference the SHA via the deploy workflow.
           tags: |
             type=sha,prefix=
-            type=raw,value=latest
 
       - name: Build and push backend
         uses: docker/build-push-action@v6
@@ -294,9 +367,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/nickatnight96/btagent-frontend
+          # Only commit-SHA tags ship from CI. ``latest`` was previously also
+          # tagged, which is mutable and not bound to a commit -- a manual
+          # push could silently make ``latest`` point at unversioned code.
+          # Production deploys reference the SHA via the deploy workflow.
           tags: |
             type=sha,prefix=
-            type=raw,value=latest
 
       - name: Build and push frontend
         uses: docker/build-push-action@v6

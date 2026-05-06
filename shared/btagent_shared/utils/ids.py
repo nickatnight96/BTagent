@@ -18,6 +18,7 @@ PREFIXES = {
     "cp": "cp",  # Checkpoint (HITL)
     "rpt": "rpt",  # Report
     "ntf": "ntf",  # Notification
+    "org": "org",  # Organization (tenant scope)
 }
 
 

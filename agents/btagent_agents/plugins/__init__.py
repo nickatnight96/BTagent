@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import logging
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,16 +13,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Required prefix for any module path resolved through this registry. Defense in
+# depth: even if PLUGIN_MODULES is ever mutated at runtime, load_plugin will
+# refuse to import anything outside the plugin namespace.
+_ALLOWED_MODULE_PREFIX = "btagent_agents.plugins."
+
 # Map of plugin name → fully-qualified module path containing the plugin class.
-PLUGIN_MODULES: dict[str, str] = {
-    "triage": "btagent_agents.plugins.triage",
-    "query": "btagent_agents.plugins.query",
-    "enrichment": "btagent_agents.plugins.enrichment",
-    "knowledge": "btagent_agents.plugins.knowledge",
-    "coordination": "btagent_agents.plugins.coordination",
-    "report": "btagent_agents.plugins.report",
-    "mitigation": "btagent_agents.plugins.mitigation",
-}
+# Wrapped in MappingProxyType so callers cannot inject new entries; updates must
+# go through a code change + review, not runtime mutation.
+PLUGIN_MODULES: Mapping[str, str] = MappingProxyType(
+    {
+        "triage": "btagent_agents.plugins.triage",
+        "query": "btagent_agents.plugins.query",
+        "enrichment": "btagent_agents.plugins.enrichment",
+        "knowledge": "btagent_agents.plugins.knowledge",
+        "coordination": "btagent_agents.plugins.coordination",
+        "report": "btagent_agents.plugins.report",
+        "mitigation": "btagent_agents.plugins.mitigation",
+    }
+)
 
 # In-process cache of already-loaded plugin instances.
 _loaded_plugins: dict[str, DefensivePlugin] = {}
@@ -38,6 +49,15 @@ def load_plugin(name: str) -> DefensivePlugin | None:
     module_path = PLUGIN_MODULES.get(name)
     if module_path is None:
         logger.warning("Unknown plugin requested: %s", name)
+        return None
+
+    if not module_path.startswith(_ALLOWED_MODULE_PREFIX):
+        logger.error(
+            "Refusing to load plugin %s: module path %s outside %s",
+            name,
+            module_path,
+            _ALLOWED_MODULE_PREFIX,
+        )
         return None
 
     try:
