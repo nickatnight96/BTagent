@@ -59,7 +59,10 @@ export function PlaybookConfigPanel() {
 
   if (!selectedNode) {
     return (
-      <div className="w-72 bg-slate-900 border-l border-slate-700/50 flex flex-col items-center justify-center text-center p-6">
+      <div
+        className="w-72 bg-slate-900 border-l border-slate-700/50 flex flex-col items-center justify-center text-center p-6"
+        data-testid="playbook-config-empty"
+      >
         <p className="text-sm text-slate-500">
           Select a node on the canvas to configure its properties.
         </p>
@@ -71,7 +74,10 @@ export function PlaybookConfigPanel() {
   const nodeData = selectedNode.data as Record<string, unknown>;
 
   return (
-    <div className="w-72 bg-slate-900 border-l border-slate-700/50 flex flex-col h-full">
+    <div
+      className="w-72 bg-slate-900 border-l border-slate-700/50 flex flex-col h-full"
+      data-testid="playbook-config"
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-3 border-b border-slate-700/50">
         <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
@@ -80,8 +86,10 @@ export function PlaybookConfigPanel() {
         <button
           onClick={handleClose}
           className="p-1 rounded text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"
+          aria-label="Close node config panel"
+          data-testid="playbook-config-close-button"
         >
-          <X className="w-4 h-4" />
+          <X className="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
 
@@ -95,6 +103,7 @@ export function PlaybookConfigPanel() {
             onChange={(e) => handleUpdate("label", e.target.value)}
             className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500 transition-colors"
             placeholder="Node name"
+            data-testid="playbook-config-label-input"
           />
         </FieldGroup>
 
@@ -137,6 +146,7 @@ export function PlaybookConfigPanel() {
             value={selectedNode.id}
             readOnly
             className="w-full px-2.5 py-1.5 text-xs bg-slate-800/50 border border-slate-700/50 rounded-md text-slate-500 font-mono cursor-default"
+            data-testid="playbook-config-node-id-input"
           />
         </FieldGroup>
       </div>
@@ -146,6 +156,7 @@ export function PlaybookConfigPanel() {
         <button
           onClick={handleDelete}
           className="w-full px-3 py-1.5 text-sm font-medium text-red-400 bg-red-500/10 border border-red-500/20 rounded-md hover:bg-red-500/20 transition-colors"
+          data-testid="playbook-config-delete-button"
         >
           Delete Node
         </button>
@@ -181,6 +192,7 @@ function TriggerConfig({
           value={data.triggerType ?? TriggerType.MANUAL}
           onChange={(e) => onUpdate("triggerType", e.target.value)}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
+          data-testid="playbook-config-trigger-type-input"
         >
           {Object.values(TriggerType).map((t) => (
             <option key={t} value={t}>
@@ -204,6 +216,7 @@ function TriggerConfig({
           rows={4}
           className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500 resize-none"
           placeholder='{"severity": "critical"}'
+          data-testid="playbook-config-trigger-parameters-input"
         />
       </FieldGroup>
     </>
@@ -224,6 +237,7 @@ function ActionConfig({
           value={data.toolName ?? ""}
           onChange={(e) => onUpdate("toolName", e.target.value)}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
+          data-testid="playbook-config-action-tool-input"
         >
           <option value="">Select a tool...</option>
           {TOOL_CATALOG.map((tool) => (
@@ -248,6 +262,7 @@ function ActionConfig({
           rows={5}
           className="w-full px-2.5 py-1.5 text-xs font-mono bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500 resize-none"
           placeholder='{"query": "..."}'
+          data-testid="playbook-config-action-arguments-input"
         />
       </FieldGroup>
 
@@ -259,6 +274,7 @@ function ActionConfig({
           min={1}
           max={86400}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
+          data-testid="playbook-config-action-timeout-input"
         />
       </FieldGroup>
 
@@ -267,6 +283,7 @@ function ActionConfig({
           value={data.onFailure ?? OnFailure.ABORT}
           onChange={(e) => onUpdate("onFailure", e.target.value)}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
+          data-testid="playbook-config-action-on-failure-input"
         >
           {Object.values(OnFailure).map((f) => (
             <option key={f} value={f}>
@@ -294,6 +311,7 @@ function DecisionConfig({
         rows={3}
         className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500 resize-none"
         placeholder='e.g., result.severity == "critical"'
+        data-testid="playbook-config-decision-condition-input"
       />
       <p className="text-xs text-slate-500 mt-1">
         Key-path comparison. True branch goes to &quot;Yes&quot; output, false branch to &quot;No&quot;.
@@ -318,6 +336,7 @@ function HITLGateConfig({
           rows={3}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500 resize-none"
           placeholder="Approve containment action?"
+          data-testid="playbook-config-hitl-prompt-input"
         />
       </FieldGroup>
 
@@ -329,6 +348,7 @@ function HITLGateConfig({
           min={60}
           max={86400}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
+          data-testid="playbook-config-hitl-timeout-input"
         />
       </FieldGroup>
 
@@ -337,6 +357,7 @@ function HITLGateConfig({
           value={data.requiredRole ?? "senior_analyst"}
           onChange={(e) => onUpdate("requiredRole", e.target.value)}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
+          data-testid="playbook-config-hitl-role-input"
         >
           {ROLE_OPTIONS.map((role) => (
             <option key={role} value={role}>
@@ -386,6 +407,7 @@ function ParallelConfig({
           min={2}
           max={8}
           className="w-full px-2.5 py-1.5 text-sm bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
+          data-testid="playbook-config-parallel-branch-count-input"
         />
       </FieldGroup>
 
@@ -399,6 +421,8 @@ function ParallelConfig({
               onChange={(e) => handleLabelChange(i, e.target.value)}
               className="w-full px-2.5 py-1.5 text-xs bg-slate-800 border border-slate-700 rounded-md text-slate-100 focus:outline-none focus:border-blue-500"
               placeholder={`Branch ${i + 1}`}
+              aria-label={`Branch ${i + 1} label`}
+              data-testid={`playbook-config-parallel-branch-label-input-${i}`}
             />
           ))}
         </div>
