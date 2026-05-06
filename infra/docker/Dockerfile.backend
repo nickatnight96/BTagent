@@ -1,6 +1,19 @@
 # BTagent backend — multi-stage build
+#
+# Supply chain: base image is pinned via build-arg so prod builds can lock to
+# a specific digest without editing the file. Default is the minor-version
+# tag, which still floats on patch releases. To fully lock, set
+# ``BASE_IMAGE_DIGEST`` in CI to the output of:
+#
+#     docker pull python:3.12-slim-bookworm
+#     docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim-bookworm
+#
+# and pass it as ``--build-arg BASE_IMAGE_DIGEST=sha256:...``.
+ARG BASE_IMAGE=python:3.12-slim-bookworm
+ARG BASE_IMAGE_DIGEST=
+
 # Stage 1: Build
-FROM python:3.12-slim-bookworm AS builder
+FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}} AS builder
 
 WORKDIR /app
 RUN pip install --no-cache-dir uv
@@ -24,7 +37,7 @@ COPY backend/migrations/ backend/migrations/
 COPY agents/btagent_agents/ agents/btagent_agents/
 
 # Stage 2: Production
-FROM python:3.12-slim-bookworm
+FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}}
 
 # Security: non-root user
 RUN useradd --create-home --shell /bin/bash --uid 1000 btagent
