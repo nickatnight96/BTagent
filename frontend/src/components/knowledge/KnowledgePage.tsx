@@ -8,12 +8,12 @@ export function KnowledgePage() {
   const [showIngestModal, setShowIngestModal] = useState(false);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="knowledge">
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-600/20 border border-purple-500/30">
-            <BookOpen className="w-4 h-4 text-purple-400" />
+            <BookOpen className="w-4 h-4 text-purple-400" aria-hidden="true" />
           </div>
           <div>
             <h1 className="text-lg font-semibold text-slate-100">Knowledge Base</h1>
@@ -25,8 +25,9 @@ export function KnowledgePage() {
         <button
           onClick={() => setShowIngestModal(true)}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          data-testid="knowledge-ingest-open-button"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-4 h-4" aria-hidden="true" />
           Ingest Document
         </button>
       </div>
