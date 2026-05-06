@@ -53,10 +53,21 @@ jobs:
           # gitleaks scans the full history; need the depth.
           fetch-depth: 0
 
-      - name: Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install gitleaks
+        # Pinned to a specific release so a future gitleaks-action license
+        # change can't surprise us. Direct binary download keeps the step
+        # transparent (no third-party action wrapping the scan).
+        run: |
+          curl -sSL \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.21.4/gitleaks_8.21.4_linux_x64.tar.gz \
+            | sudo tar xz -C /usr/local/bin/ gitleaks
+          gitleaks version
+
+      - name: Run gitleaks
+        # Repo-root ``.gitleaks.toml`` allowlists the test fixtures
+        # (admin/admin in tests/uat, deterministic JWT secret in conftest)
+        # that the audit confirmed as known-public-by-design.
+        run: gitleaks detect --config=.gitleaks.toml --no-banner --redact
 
   # ── Dependency vulnerability audit ──────────────────────────
   # Surfaces CVEs in Python + Node dependency trees on every PR. Findings are

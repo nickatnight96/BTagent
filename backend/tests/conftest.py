@@ -73,11 +73,34 @@ get_settings.cache_clear()
 
 from btagent_backend.db.models import Base  # noqa: E402
 
+# Force registration of every Base subclass with ``Base.metadata`` BEFORE the
+# JSONB → JSON swap below. Importing ``btagent_backend.db.models`` alone only
+# registers the four core tables; ``models_knowledge``, ``models_mitre``, and
+# ``models_playbook`` define their own tables and only join the metadata
+# registry when their modules are imported. Without these side-effect
+# imports, their JSONB columns survive untouched and SQLite chokes on them
+# at table-creation time (``JSONB cannot render in SQLite``).
+import btagent_backend.db.models_knowledge  # noqa: E402, F401
+import btagent_backend.db.models_mitre  # noqa: E402, F401
+import btagent_backend.db.models_playbook  # noqa: E402, F401
+
 # PostgreSQL JSONB columns are incompatible with SQLite — swap to plain JSON.
 for _table in Base.metadata.tables.values():
     for _col in _table.columns:
         if isinstance(_col.type, JSONB):
             _col.type = JSON()
+    # PG-specific indexes (GIN, HNSW, expression-based to_tsvector, etc.)
+    # cannot be rendered by SQLite. Drop any index that opts into a
+    # postgresql-specific feature; production PG schemas still create them
+    # via Alembic, but the in-memory test schema is built from
+    # ``Base.metadata.create_all`` which can't translate them.
+    _pg_only_indexes = [
+        idx
+        for idx in _table.indexes
+        if any(idx.dialect_options.get("postgresql", {}).get(k) for k in ("using", "with", "ops"))
+    ]
+    for _idx in _pg_only_indexes:
+        _table.indexes.discard(_idx)
 
 
 # Turn on foreign-key enforcement for SQLite (off by default).
