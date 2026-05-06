@@ -73,11 +73,34 @@ get_settings.cache_clear()
 
 from btagent_backend.db.models import Base  # noqa: E402
 
+# Force registration of every Base subclass with ``Base.metadata`` BEFORE the
+# JSONB → JSON swap below. Importing ``btagent_backend.db.models`` alone only
+# registers the four core tables; ``models_knowledge``, ``models_mitre``, and
+# ``models_playbook`` define their own tables and only join the metadata
+# registry when their modules are imported. Without these side-effect
+# imports, their JSONB columns survive untouched and SQLite chokes on them
+# at table-creation time (``JSONB cannot render in SQLite``).
+import btagent_backend.db.models_knowledge  # noqa: E402, F401
+import btagent_backend.db.models_mitre  # noqa: E402, F401
+import btagent_backend.db.models_playbook  # noqa: E402, F401
+
 # PostgreSQL JSONB columns are incompatible with SQLite — swap to plain JSON.
 for _table in Base.metadata.tables.values():
     for _col in _table.columns:
         if isinstance(_col.type, JSONB):
             _col.type = JSON()
+    # PG-specific indexes (GIN, HNSW, expression-based to_tsvector, etc.)
+    # cannot be rendered by SQLite. Drop any index that opts into a
+    # postgresql-specific feature; production PG schemas still create them
+    # via Alembic, but the in-memory test schema is built from
+    # ``Base.metadata.create_all`` which can't translate them.
+    _pg_only_indexes = [
+        idx
+        for idx in _table.indexes
+        if any(idx.dialect_options.get("postgresql", {}).get(k) for k in ("using", "with", "ops"))
+    ]
+    for _idx in _pg_only_indexes:
+        _table.indexes.discard(_idx)
 
 
 # Turn on foreign-key enforcement for SQLite (off by default).
@@ -97,13 +120,46 @@ def _enable_sqlite_fk(dbapi_conn, connection_record):
 
 @pytest_asyncio.fixture(scope="session")
 async def _init_db():
-    """Create all tables once for the entire test session."""
+    """Create all tables once for the entire test session.
+
+    Also seeds the default organization row required by the org-scoping FK
+    constraint added in migration ``0006_org_scoping``.
+    """
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Seed the default org so user/investigation/ioc/evidence FK checks pass.
+    from btagent_backend.db.models import DEFAULT_ORG_ID, OrganizationRow
+
+    async with _test_session_factory() as session:
+        existing = await session.get(OrganizationRow, DEFAULT_ORG_ID)
+        if existing is None:
+            session.add(
+                OrganizationRow(
+                    id=DEFAULT_ORG_ID,
+                    name="Default Organization",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+
     yield
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await _test_engine.dispose()
+
+
+@pytest_asyncio.fixture()
+async def sample_org(_init_db, db_session: "AsyncSession"):
+    """Return the seeded default organization row.
+
+    Tests that need an explicit org reference can depend on this fixture; the
+    underlying row is created in ``_init_db`` so any fixture / test that
+    inserts an org-scoped row already has a valid FK target.
+    """
+    from btagent_backend.db.models import DEFAULT_ORG_ID, OrganizationRow
+
+    return await db_session.get(OrganizationRow, DEFAULT_ORG_ID)
 
 
 @pytest_asyncio.fixture()
@@ -157,7 +213,7 @@ from btagent_shared.types.enums import InvestigationStatus, Severity  # noqa: E4
 from btagent_shared.utils.ids import generate_id  # noqa: E402
 
 from btagent_backend.auth.jwt import create_token_pair, hash_password  # noqa: E402
-from btagent_backend.db.models import InvestigationRow, UserRow  # noqa: E402
+from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, UserRow  # noqa: E402
 
 _ADMIN_PASSWORD = "Admin-P@ss-123!"
 _ANALYST_PASSWORD = "Analyst-P@ss-456!"
@@ -175,6 +231,7 @@ async def sample_user(db_session: AsyncSession):
     n = next(_user_counter)
     user = UserRow(
         id=generate_id("usr"),
+        org_id=DEFAULT_ORG_ID,
         username=f"testanalyst_{n}",
         email=f"analyst_{n}@btagent.test",
         password_hash=hash_password(_ANALYST_PASSWORD),
@@ -192,6 +249,7 @@ async def admin_user(db_session: AsyncSession):
     n = next(_user_counter)
     user = UserRow(
         id=generate_id("usr"),
+        org_id=DEFAULT_ORG_ID,
         username=f"testadmin_{n}",
         email=f"admin_{n}@btagent.test",
         password_hash=hash_password(_ADMIN_PASSWORD),
@@ -226,6 +284,7 @@ async def sample_investigation(db_session: AsyncSession, sample_user: UserRow):
     """Create and return a test investigation in INVESTIGATING status."""
     inv = InvestigationRow(
         id=generate_id("inv"),
+        org_id=DEFAULT_ORG_ID,
         title="Test Phishing Investigation",
         description="Automated test investigation for unit tests",
         status=InvestigationStatus.INVESTIGATING.value,

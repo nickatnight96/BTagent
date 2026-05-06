@@ -1,0 +1,61 @@
+# Exclude development / VCS artefacts from the docker build context. Keeps
+# image layers small, prevents host secrets and developer state from leaking
+# into the published image, and avoids cache-busting from unrelated edits.
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+**/*.egg-info/
+**/build/
+**/dist/
+
+# Node
+**/node_modules/
+**/npm-debug.log*
+**/.npm/
+frontend/dist/
+frontend/.vite/
+frontend/tsconfig.tsbuildinfo
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Claude Code workspace state
+.claude/
+
+# Test / coverage artefacts
+**/coverage/
+**/htmlcov/
+**/.coverage
+coverage*.xml
+.benchmarks/
+
+# Local secrets / env
+**/.env
+**/.env.*
+!**/.env.example
+**/secrets/
+
+# Documentation rendering artefacts
+docs/_build/
+site/
+
+# Container artefacts (don't bake images-in-images by accident)
+*.tar
+*.tar.gz
