@@ -90,7 +90,7 @@ async def test_knowledge_ingest_red_classification_raises(db_session: AsyncSessi
             db_session,
             title="Restricted Note",
             content="some body",
-            source_type="manual",
+            source_type="runbook",
             classification="red",
         )
 
@@ -102,11 +102,11 @@ async def test_knowledge_ingest_green_classification_succeeds(db_session: AsyncS
         db_session,
         title="Public Note",
         content="public threat brief",
-        source_type="manual",
+        source_type="runbook",
         classification="green",
     )
     assert doc.title == "Public Note"
-    assert doc.source_type == "manual"
+    assert doc.source_type == "runbook"
 
 
 @pytest.mark.asyncio
@@ -119,7 +119,7 @@ async def test_knowledge_ingest_no_classification_defaults_to_green(
         db_session,
         title="Untagged Note",
         content="content",
-        source_type="manual",
+        source_type="runbook",
     )
     assert doc.title == "Untagged Note"
 
