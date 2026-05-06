@@ -23,6 +23,8 @@ from typing import Any
 
 from btagent_shared.types.mcp import MCPConnectionStatus, MCPServerConfig
 
+from btagent_agents.mcp.config import get_recovery_timeout_max
+
 logger = logging.getLogger("btagent.mcp.registry")
 
 # ---------------------------------------------------------------------------
@@ -37,6 +39,7 @@ SHUTDOWN_TIMEOUT = float(os.getenv("BTAGENT_MCP_SHUTDOWN_TIMEOUT", "10"))
 # Circuit breaker defaults
 CB_FAILURE_THRESHOLD = int(os.getenv("BTAGENT_MCP_CIRCUIT_FAILURE_THRESHOLD", "5"))
 CB_RECOVERY_TIMEOUT = float(os.getenv("BTAGENT_MCP_CIRCUIT_RECOVERY_TIMEOUT", "30"))
+CB_RECOVERY_TIMEOUT_MAX = float(os.getenv("BTAGENT_MCP_CIRCUIT_RECOVERY_TIMEOUT_MAX", "600"))
 CB_SUCCESS_THRESHOLD = int(os.getenv("BTAGENT_MCP_CIRCUIT_SUCCESS_THRESHOLD", "2"))
 
 
@@ -63,23 +66,42 @@ class CircuitOpenError(Exception):
 
 @dataclass
 class CircuitBreaker:
-    """Per-connection circuit breaker implementation.
+    """Per-connection circuit breaker with exponential-backoff recovery.
 
     States:
         CLOSED   -- normal, requests pass through
         OPEN     -- failures exceeded threshold, requests fail fast
         HALF_OPEN -- recovery window, testing if service is back
+
+    Recovery schedule
+    ~~~~~~~~~~~~~~~~~
+    The first time the breaker trips it waits ``recovery_timeout`` seconds
+    before transitioning to HALF_OPEN. Each subsequent re-trip (a failure
+    while HALF_OPEN, or another threshold breach without an intervening
+    successful close) doubles the wait, capped at ``recovery_timeout_max``::
+
+        attempt:  1     2     3     4     5      6+
+        wait(s):  30    60    120   240   480    600 (cap)
+
+    On a successful close (HALF_OPEN -> CLOSED) the schedule resets, so a
+    transient outage followed by recovery returns to the original 30s base.
+    This avoids hammering a downed service every 30s indefinitely while
+    still giving healthy services fast recovery.
     """
 
     connection_id: str
     failure_threshold: int = CB_FAILURE_THRESHOLD
     recovery_timeout: float = CB_RECOVERY_TIMEOUT
+    recovery_timeout_max: float = CB_RECOVERY_TIMEOUT_MAX
     success_threshold: int = CB_SUCCESS_THRESHOLD
 
     _state: CircuitState = field(default=CircuitState.CLOSED, init=False)
     _failure_count: int = field(default=0, init=False)
     _success_count: int = field(default=0, init=False)
     _last_failure_time: float = field(default=0.0, init=False)
+    # Number of consecutive trips into the OPEN state without a successful
+    # close in between. Drives the exponential backoff exponent.
+    _open_cycles: int = field(default=0, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
     # ----- properties -----
@@ -98,19 +120,40 @@ class CircuitBreaker:
     def is_available(self) -> bool:
         return self.state != CircuitState.OPEN
 
+    @property
+    def current_recovery_timeout(self) -> float:
+        """Currently scheduled wait before the next HALF_OPEN attempt."""
+        with self._lock:
+            return self._compute_recovery_timeout()
+
     # ----- internal -----
+
+    def _compute_recovery_timeout(self) -> float:
+        """Exponential backoff: base * 2^(open_cycles - 1), capped (caller holds lock)."""
+        if self._open_cycles <= 0:
+            return self.recovery_timeout
+        # ``open_cycles`` of 1 means "first time we tripped" -> base wait.
+        exponent = max(0, self._open_cycles - 1)
+        # Defensive cap on the exponent to keep ``2 ** exponent`` cheap for
+        # pathological inputs (the value is clamped by ``min`` immediately).
+        exponent = min(exponent, 32)
+        wait = self.recovery_timeout * (2**exponent)
+        return min(wait, self.recovery_timeout_max)
 
     def _effective_state(self) -> CircuitState:
         """Evaluate state considering recovery timeout (caller holds lock)."""
         if self._state == CircuitState.OPEN:
             elapsed = time.time() - self._last_failure_time
-            if elapsed >= self.recovery_timeout:
+            wait = self._compute_recovery_timeout()
+            if elapsed >= wait:
                 self._state = CircuitState.HALF_OPEN
                 self._success_count = 0
                 logger.info(
-                    "Circuit %s -> HALF_OPEN after %.1fs",
+                    "Circuit %s -> HALF_OPEN after %.1fs (cycle=%d, wait=%.1fs)",
                     self.connection_id,
                     elapsed,
+                    self._open_cycles,
+                    wait,
                 )
         return self._state
 
@@ -124,7 +167,10 @@ class CircuitBreaker:
                     self._state = CircuitState.CLOSED
                     self._failure_count = 0
                     self._success_count = 0
-                    logger.info("Circuit %s -> CLOSED", self.connection_id)
+                    # Reset the backoff schedule on a clean recovery so the
+                    # next outage starts again at the base wait.
+                    self._open_cycles = 0
+                    logger.info("Circuit %s -> CLOSED (backoff reset)", self.connection_id)
             elif self._state == CircuitState.CLOSED and self._failure_count > 0:
                 self._failure_count = max(0, self._failure_count - 1)
 
@@ -135,19 +181,27 @@ class CircuitBreaker:
 
             if self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.OPEN
+                self._open_cycles += 1
+                next_wait = self._compute_recovery_timeout()
                 logger.warning(
-                    "Circuit %s re-OPENED (failure in HALF_OPEN): %s",
+                    "Circuit %s re-OPENED (failure in HALF_OPEN, cycle=%d, next wait=%.1fs): %s",
                     self.connection_id,
+                    self._open_cycles,
+                    next_wait,
                     error,
                 )
             elif (
                 self._state == CircuitState.CLOSED and self._failure_count >= self.failure_threshold
             ):
                 self._state = CircuitState.OPEN
+                self._open_cycles += 1
+                next_wait = self._compute_recovery_timeout()
                 logger.warning(
-                    "Circuit %s OPENED after %d failures: %s",
+                    "Circuit %s OPENED after %d failures (cycle=%d, next wait=%.1fs): %s",
                     self.connection_id,
                     self._failure_count,
+                    self._open_cycles,
+                    next_wait,
                     error,
                 )
 
@@ -156,7 +210,8 @@ class CircuitBreaker:
         with self._lock:
             state = self._effective_state()
             if state == CircuitState.OPEN:
-                retry_after = self.recovery_timeout - (time.time() - self._last_failure_time)
+                wait = self._compute_recovery_timeout()
+                retry_after = wait - (time.time() - self._last_failure_time)
                 raise CircuitOpenError(self.connection_id, state, max(0, retry_after))
 
     def reset(self) -> None:
@@ -165,6 +220,7 @@ class CircuitBreaker:
             self._failure_count = 0
             self._success_count = 0
             self._last_failure_time = 0.0
+            self._open_cycles = 0
             logger.info("Circuit %s manually reset", self.connection_id)
 
     def get_stats(self) -> dict[str, Any]:
@@ -177,6 +233,9 @@ class CircuitBreaker:
                 "last_failure_time": self._last_failure_time,
                 "failure_threshold": self.failure_threshold,
                 "recovery_timeout": self.recovery_timeout,
+                "recovery_timeout_max": self.recovery_timeout_max,
+                "open_cycles": self._open_cycles,
+                "current_recovery_timeout": self._compute_recovery_timeout(),
             }
 
 
@@ -208,10 +267,15 @@ class ManagedConnection:
     _connected: bool = field(default=False, init=False)
 
     def __post_init__(self) -> None:
+        # ``circuit_breaker_recovery_max`` is only present on the local
+        # ``MCPHardenedServerConfig`` subclass; legacy ``MCPServerConfig``
+        # callers fall through to the env-driven default. This keeps
+        # backwards compatibility for ad-hoc and existing config sites.
         self.circuit_breaker = CircuitBreaker(
             connection_id=self.connection_id,
             failure_threshold=self.config.circuit_breaker_threshold,
             recovery_timeout=float(self.config.circuit_breaker_recovery),
+            recovery_timeout_max=get_recovery_timeout_max(self.config),
         )
 
     # ----- properties -----
