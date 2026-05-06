@@ -158,8 +158,8 @@ class ScoreSeverityOutput(BaseModel):
     )
     rationale: list[str] = Field(
         ...,
-        description="Per-contribution audit trail, e.g. \"+0.30: keyword "
-        "'ransomware' matched\" or \"FORCE_CRITICAL: technique T1486\".",
+        description='Per-contribution audit trail, e.g. "+0.30: keyword '
+        '\'ransomware\' matched" or "FORCE_CRITICAL: technique T1486".',
     )
 
 
@@ -200,8 +200,7 @@ class ScoreSeverityNode(Node[ScoreSeverityInput, ScoreSeverityOutput]):
             if tid in _FORCE_CRITICAL_TECHNIQUES:
                 forced_critical = True
                 rationale.append(
-                    f"FORCE_CRITICAL: confirmed MITRE technique {tid} "
-                    f"is in the high-impact set"
+                    f"FORCE_CRITICAL: confirmed MITRE technique {tid} is in the high-impact set"
                 )
 
         lower = input.text.lower()
@@ -218,8 +217,7 @@ class ScoreSeverityNode(Node[ScoreSeverityInput, ScoreSeverityOutput]):
                     score += weight
                     sign = "+" if weight >= 0 else ""
                     rationale.append(
-                        f"{sign}{weight:.2f}: {table_name} keyword "
-                        f"'{keyword}' matched"
+                        f"{sign}{weight:.2f}: {table_name} keyword '{keyword}' matched"
                     )
 
         # IOC count contribution (capped).

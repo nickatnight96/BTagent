@@ -301,9 +301,7 @@ def _layer3_inject(
         system_msgs = [messages[0]]
     summary_msg: dict[str, Any] = {
         "role": "system",
-        "content": (
-            "[Conversation summary -- earlier messages have been condensed]\n\n" + summary
-        ),
+        "content": ("[Conversation summary -- earlier messages have been condensed]\n\n" + summary),
     }
     tail = messages[-keep_last:] if keep_last < len(messages) else messages
     return system_msgs + [summary_msg] + tail

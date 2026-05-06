@@ -171,17 +171,13 @@ def test_node_error_maps_to_error_with_source_from_category(category, expected_s
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize(
-    "category", ["decision", "data", "output", "trigger", "knowledge"]
-)
+@pytest.mark.parametrize("category", ["decision", "data", "output", "trigger", "knowledge"])
 def test_non_legacy_category_start_returns_none(category):
     event = _make("node.start", category=category, node_id=f"{category}.example")
     assert adapt_engine_event(event) is None
 
 
-@pytest.mark.parametrize(
-    "category", ["decision", "data", "output", "trigger", "knowledge"]
-)
+@pytest.mark.parametrize("category", ["decision", "data", "output", "trigger", "knowledge"])
 def test_non_legacy_category_end_returns_none(category):
     event = _make(
         "node.end",

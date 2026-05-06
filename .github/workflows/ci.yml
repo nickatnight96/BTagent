@@ -36,10 +36,14 @@ jobs:
         run: pip install ruff
 
       - name: Ruff check
-        run: ruff check backend/ agents/ shared/
+        # Engine/ is included so the workspace package gets the same
+        # lint coverage as the original three -- prevents format-only
+        # drift from sub-agents who only run ``ruff check`` (not
+        # ``ruff format``) before committing.
+        run: ruff check backend/ agents/ shared/ engine/
 
       - name: Ruff format check
-        run: ruff format --check backend/ agents/ shared/
+        run: ruff format --check backend/ agents/ shared/ engine/
 
   # ── Secret scanning ─────────────────────────────────────────
   # Fails the pipeline if any secret-shaped string is committed -- including
@@ -92,7 +96,11 @@ jobs:
         continue-on-error: true
         run: |
           pip install uv pip-audit
+          # Install the workspace packages in dep order. ``engine`` must
+          # come before ``agents`` because Sprint 5 made ``btagent-engine``
+          # a runtime dep of ``btagent-agents``.
           uv pip install --system -e shared/
+          uv pip install --system -e engine/
           uv pip install --system -e agents/
           uv pip install --system -e "backend/[dev]"
 
@@ -172,7 +180,11 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Install the workspace packages in dep order. ``engine`` must
+          # come before ``agents`` because Sprint 5 made ``btagent-engine``
+          # a runtime dep of ``btagent-agents``.
           uv pip install --system -e shared/
+          uv pip install --system -e engine/
           uv pip install --system -e agents/
           uv pip install --system -e "backend/[dev]"
 
@@ -223,7 +235,11 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Install the workspace packages in dep order. ``engine`` must
+          # come before ``agents`` because Sprint 5 made ``btagent-engine``
+          # a runtime dep of ``btagent-agents``.
           uv pip install --system -e shared/
+          uv pip install --system -e engine/
           uv pip install --system -e agents/
           uv pip install --system -e "backend/[dev]"
 
@@ -286,7 +302,11 @@ jobs:
 
       - name: Install dependencies
         run: |
+          # Install the workspace packages in dep order. ``engine`` must
+          # come before ``agents`` because Sprint 5 made ``btagent-engine``
+          # a runtime dep of ``btagent-agents``.
           uv pip install --system -e shared/
+          uv pip install --system -e engine/
           uv pip install --system -e agents/
           uv pip install --system -e "backend/[dev]"
 

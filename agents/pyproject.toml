@@ -46,3 +46,11 @@ ignore = ["B008", "E501", "B904", "F841", "B007", "F401", "B905", "B017"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["tests"]
+
+[tool.uv.sources]
+# Workspace path-deps. Without these, ``uv pip install -e agents/`` would
+# try to fetch ``btagent-shared`` and ``btagent-engine`` from PyPI (where
+# they don't exist) instead of using the sibling source trees. Mirrors
+# the pattern engine/pyproject.toml uses for ``btagent-shared``.
+btagent-shared = { path = "../shared", editable = true }
+btagent-engine = { path = "../engine", editable = true }

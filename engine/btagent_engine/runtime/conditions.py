@@ -134,9 +134,7 @@ def evaluate_condition(expression: str, context: dict[str, Any]) -> Any:
             expression=None,
         )
     if not expression.strip():
-        raise ConditionEvaluationError(
-            "Condition expression is empty", expression=expression
-        )
+        raise ConditionEvaluationError("Condition expression is empty", expression=expression)
 
     try:
         tree = ast.parse(expression, mode="eval")

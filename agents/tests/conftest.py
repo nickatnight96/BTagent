@@ -24,8 +24,6 @@ for path in (_AGENTS_ROOT, _SHARED_ROOT, _ENGINE_ROOT):
 # Drop any pre-imported stale btagent_agents / btagent_engine modules so the
 # path-prepended copy wins on first import.
 for mod in [
-    m
-    for m in list(sys.modules)
-    if m.startswith("btagent_agents") or m.startswith("btagent_engine")
+    m for m in list(sys.modules) if m.startswith("btagent_agents") or m.startswith("btagent_engine")
 ]:
     del sys.modules[mod]

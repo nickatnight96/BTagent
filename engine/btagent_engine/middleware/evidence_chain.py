@@ -49,8 +49,7 @@ class EvidenceRecord(_BaseModel):
     prev_hash: str = Field(
         ...,
         description=(
-            "SHA-256 of the previous record in this chain, or GENESIS_HASH "
-            "for the first."
+            "SHA-256 of the previous record in this chain, or GENESIS_HASH for the first."
         ),
     )
     link_hash: str = Field(

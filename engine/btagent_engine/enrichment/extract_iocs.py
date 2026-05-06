@@ -88,9 +88,7 @@ def _refang(text: str) -> str:
 # with the additions called out in the module docstring.
 
 _IOC_PATTERNS: dict[str, re.Pattern[str]] = {
-    "ipv4": re.compile(
-        r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|1?\d\d?)\b"
-    ),
+    "ipv4": re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|1?\d\d?)\b"),
     # IPv6 -- a deliberately permissive pattern that matches the common
     # forms (full, compressed ``::``, mixed v4-mapped). Anything fancier
     # gets validated by ipaddress in the dedup Node downstream.
@@ -122,14 +120,10 @@ _IOC_PATTERNS: dict[str, re.Pattern[str]] = {
     "hash_sha256": re.compile(r"\b[0-9a-fA-F]{64}\b"),
     "hash_sha1": re.compile(r"\b[0-9a-fA-F]{40}\b"),
     "hash_md5": re.compile(r"\b[0-9a-fA-F]{32}\b"),
-    "email": re.compile(
-        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
-    ),
+    "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
     # Windows path: drive letter + backslash separators. Accepts mixed
     # quoting analysts paste from event viewer.
-    "file_path_windows": re.compile(
-        r"[A-Za-z]:\\(?:[^\s<>:\"|?*\\/]+\\)*[^\s<>:\"|?*\\/]+"
-    ),
+    "file_path_windows": re.compile(r"[A-Za-z]:\\(?:[^\s<>:\"|?*\\/]+\\)*[^\s<>:\"|?*\\/]+"),
     # Unix path: starts with / and has at least one further segment to
     # avoid grabbing every URL fragment. Excludes spaces.
     "file_path_unix": re.compile(r"(?<![A-Za-z0-9])/(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+"),
@@ -249,11 +243,7 @@ class ExtractIOCsNode(Node[ExtractIOCsInput, ExtractIOCsOutput]):
 
                 # RFC-1918 / loopback / link-local skip for ipv4 unless
                 # the caller asked for ip-class results explicitly.
-                if (
-                    ioc_type == "ipv4"
-                    and not explicit_ip_request
-                    and _is_private_ipv4(value)
-                ):
+                if ioc_type == "ipv4" and not explicit_ip_request and _is_private_ipv4(value):
                     continue
 
                 key = (ioc_type, value)

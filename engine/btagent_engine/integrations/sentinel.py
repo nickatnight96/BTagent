@@ -55,9 +55,7 @@ _MOCK_PROCESS_ROWS: list[dict[str, Any]] = [
         "Computer": "WS-JSMITH-PC",
         "Account": "ACME\\jsmith",
         "EventID": 4688,
-        "NewProcessName": (
-            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-        ),
+        "NewProcessName": ("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
         "ParentProcessName": "C:\\Windows\\System32\\cmd.exe",
         "CommandLine": "powershell.exe -enc SQBFAFgAIAAoAE4AZQB3...",
     },

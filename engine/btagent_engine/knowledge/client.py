@@ -105,9 +105,7 @@ class FakeKnowledgeClient:
         top_k: int = 5,
         source_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        self.search_calls.append(
-            {"query": query, "top_k": top_k, "source_type": source_type}
-        )
+        self.search_calls.append({"query": query, "top_k": top_k, "source_type": source_type})
         results = self._seeded
         if source_type is not None:
             results = [c for c in results if c.get("source_type") == source_type]

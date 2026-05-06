@@ -84,8 +84,7 @@ async def test_search_passes_source_type_filter_through_to_client():
     the filter so we can assert end-to-end behaviour."""
     fake = FakeKnowledgeClient()
     fake.seed(
-        _seed_chunks(2, source_type="runbook")
-        + _seed_chunks(2, source_type="cti_report"),
+        _seed_chunks(2, source_type="runbook") + _seed_chunks(2, source_type="cti_report"),
     )
     node = KnowledgeSearchNode(client=fake)
 

@@ -76,9 +76,7 @@ logger = logging.getLogger("btagent.orchestrator.engine_runner")
 EmitCallable = Callable[..., Awaitable[None]]
 
 
-def _resolve_provider_handle(
-    router: TLPAwareLLMRouter, tlp: TLP
-) -> Callable[[str], str]:
+def _resolve_provider_handle(router: TLPAwareLLMRouter, tlp: TLP) -> Callable[[str], str]:
     """Adapter that turns ``TLPAwareLLMRouter.resolve(tlp, tier)`` into the
     simpler ``model_handle -> provider`` callable that
     ``LLMRouterMiddleware`` expects.
@@ -138,9 +136,7 @@ def build_middleware_chain(
         )
     )
 
-    chain.append(
-        LLMRouterMiddleware(model_to_provider=_resolve_provider_handle(llm_router, tlp))
-    )
+    chain.append(LLMRouterMiddleware(model_to_provider=_resolve_provider_handle(llm_router, tlp)))
 
     if budget_max_cost_usd is not None:
         chain.append(PromptBudgetMiddleware(max_cost_usd=budget_max_cost_usd))

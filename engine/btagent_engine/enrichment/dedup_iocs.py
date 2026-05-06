@@ -86,9 +86,7 @@ def _normalise_url(value: str) -> str:
         # Malformed -- best-effort lower of the whole thing's host-ish bit.
         return raw
     netloc = parts.netloc.lower()
-    return urlunsplit(
-        (parts.scheme.lower(), netloc, parts.path, parts.query, parts.fragment)
-    )
+    return urlunsplit((parts.scheme.lower(), netloc, parts.path, parts.query, parts.fragment))
 
 
 def _normalise_hash(value: str) -> str:
@@ -168,8 +166,7 @@ class DedupIOCsInput(BaseModel):
 class DedupIOCsOutput(BaseModel):
     iocs: list[dict[str, Any]] = Field(
         ...,
-        description="Canonicalised, collapsed IOCs. Order matches first-"
-        "occurrence in the input.",
+        description="Canonicalised, collapsed IOCs. Order matches first-occurrence in the input.",
     )
     duplicates_removed: int = Field(
         ...,

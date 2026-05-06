@@ -43,9 +43,7 @@ async def test_manual_trigger_arbitrary_payload_round_trips_unchanged():
         "iocs": ["8.8.8.8", "evil.com"],
         "metadata": {"priority": "high", "tlp": "amber"},
     }
-    out = await ManualTriggerNode().run(
-        ManualTriggerInput(payload=payload), _ctx()
-    )
+    out = await ManualTriggerNode().run(ManualTriggerInput(payload=payload), _ctx())
     assert out.payload == payload
 
 
@@ -87,8 +85,6 @@ async def test_manual_trigger_output_is_independent_of_input_object():
     against accidental aliasing if a future variant adds output-only
     fields."""
     payload = {"k": "v"}
-    out = await ManualTriggerNode().run(
-        ManualTriggerInput(payload=payload), _ctx()
-    )
+    out = await ManualTriggerNode().run(ManualTriggerInput(payload=payload), _ctx())
     payload["k"] = "mutated"
     assert out.payload == {"k": "v"}

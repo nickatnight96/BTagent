@@ -27,7 +27,11 @@ def _ctx() -> NodeContext:
     [
         ("Connection from 8.8.8.8 to corp", "ipv4", "8.8.8.8"),
         ("v6 route 2001:db8::1 logged", "ipv6", "2001:db8::1"),
-        ("payload at https://evil.example.com/x.bin downloaded", "url", "https://evil.example.com/x.bin"),
+        (
+            "payload at https://evil.example.com/x.bin downloaded",
+            "url",
+            "https://evil.example.com/x.bin",
+        ),
         ("phishing pointed at evil-payload.top earlier", "domain", "evil-payload.top"),
         (
             "md5 d41d8cd98f00b204e9800998ecf8427e seen on host",
@@ -89,10 +93,7 @@ async def test_extract_defanged_url_with_hxxp_is_matched() -> None:
         ExtractIOCsInput(text="dropper hxxps://bad[.]example[.]com/x found"),
         _ctx(),
     )
-    assert any(
-        i.type == "url" and i.value.startswith("https://bad.example.com/")
-        for i in out.iocs
-    )
+    assert any(i.type == "url" and i.value.startswith("https://bad.example.com/") for i in out.iocs)
 
 
 # ---------------------------------------------------------------------------

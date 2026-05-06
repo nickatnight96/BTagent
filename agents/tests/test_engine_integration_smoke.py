@@ -77,6 +77,7 @@ def emitted_events() -> list[tuple[str, dict]]:
 def emit_callable(emitted_events):
     async def _emit(event_type, /, **payload):
         emitted_events.append((event_type, payload))
+
     return _emit
 
 

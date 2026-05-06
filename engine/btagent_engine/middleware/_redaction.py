@@ -40,17 +40,13 @@ _AWS_AKID_RE: Final = re.compile(r"AKIA[0-9A-Z]{16}")
 # alphanumerics and `/`/`+` so we don't catch a fragment of a longer token.
 # `=` is not excluded -- it's base64 padding and the typical env-style
 # "KEY=value" separator.
-_AWS_SECRET_NEAR_RE: Final = re.compile(
-    r"(?<![A-Za-z0-9/+])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])"
-)
+_AWS_SECRET_NEAR_RE: Final = re.compile(r"(?<![A-Za-z0-9/+])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])")
 
 _SLACK_RE: Final = re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}")
 
 _GITHUB_RE: Final = re.compile(r"gh[pousr]_[A-Za-z0-9]{36,}")
 
-_JWT_RE: Final = re.compile(
-    r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
-)
+_JWT_RE: Final = re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}")
 
 _BASIC_AUTH_URL_RE: Final = re.compile(r"(?P<scheme>https?://)[^:/\s]+:[^@/\s]+@")
 
@@ -86,10 +82,7 @@ def _redact_basic_auth(text: str) -> str:
 
 def _redact_generic_key(text: str) -> str:
     def _sub(m: re.Match[str]) -> str:
-        return (
-            f"{m.group('k')}{m.group('sep')}{m.group('q')}"
-            f"[REDACTED:credential]{m.group('q')}"
-        )
+        return f"{m.group('k')}{m.group('sep')}{m.group('q')}[REDACTED:credential]{m.group('q')}"
 
     return _GENERIC_KEY_RE.sub(_sub, text)
 

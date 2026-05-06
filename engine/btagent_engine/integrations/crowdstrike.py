@@ -190,9 +190,7 @@ class CrowdStrikeListDetectionsNode(
 
 
 @NodeRegistry.register
-class CrowdStrikeIsolateHostNode(
-    Node[CrowdStrikeIsolateHostInput, CrowdStrikeIsolateHostOutput]
-):
+class CrowdStrikeIsolateHostNode(Node[CrowdStrikeIsolateHostInput, CrowdStrikeIsolateHostOutput]):
     """Network-contain a host via CrowdStrike Falcon.
 
     This is a destructive containment action; in a real deployment the

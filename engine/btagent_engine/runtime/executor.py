@@ -490,8 +490,7 @@ class WorkflowExecutor:
             base = {}
         else:  # pragma: no cover -- guarded by Runner.execute signature
             raise WorkflowExecutionError(
-                f"Cannot build input for {node.meta.id!r} from "
-                f"{type(upstream_payload).__name__}",
+                f"Cannot build input for {node.meta.id!r} from {type(upstream_payload).__name__}",
                 node_id=None,
                 reason="bad upstream type",
             )
@@ -525,9 +524,7 @@ class WorkflowExecutor:
             # keys here because DecisionNodeInput is ``extra="forbid"`` and
             # the upstream output may carry sibling fields (e.g. an
             # echo-shaped ``{value: True, ...}``) that the schema rejects.
-            base = (
-                dict(node_input) if isinstance(node_input, dict) else node_input.model_dump()
-            )
+            base = dict(node_input) if isinstance(node_input, dict) else node_input.model_dump()
             return {"value": base.get("value")}
 
         context = build_condition_context(state.outputs)
@@ -535,8 +532,7 @@ class WorkflowExecutor:
             raw = evaluate_condition(condition, context)
         except ConditionEvaluationError as exc:
             raise WorkflowExecutionError(
-                f"Decision node {wf_node.step_id!r} condition "
-                f"{condition!r} failed: {exc}",
+                f"Decision node {wf_node.step_id!r} condition {condition!r} failed: {exc}",
                 node_id=wf_node.step_id,
                 reason="condition evaluation failed",
                 cause=exc,
@@ -636,8 +632,7 @@ class WorkflowExecutor:
         """
         if len(state.nodes_executed) >= MAX_STEPS:
             raise WorkflowExecutionError(
-                f"Workflow exceeded {MAX_STEPS} executed steps "
-                f"(would-be next: {next_step_id!r})",
+                f"Workflow exceeded {MAX_STEPS} executed steps (would-be next: {next_step_id!r})",
                 node_id=next_step_id,
                 reason="step cap exceeded",
             )

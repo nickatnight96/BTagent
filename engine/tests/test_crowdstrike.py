@@ -74,8 +74,7 @@ async def test_list_detections_accepts_dict_payload_through_runner():
 
 def test_list_detections_node_is_registered():
     assert (
-        NodeRegistry.get("integration.crowdstrike.list_detections")
-        is CrowdStrikeListDetectionsNode
+        NodeRegistry.get("integration.crowdstrike.list_detections") is CrowdStrikeListDetectionsNode
     )
 
 
@@ -127,9 +126,7 @@ async def test_isolate_host_accepts_dict_payload_through_runner():
 
 
 def test_isolate_host_node_is_registered():
-    assert (
-        NodeRegistry.get("integration.crowdstrike.isolate_host") is CrowdStrikeIsolateHostNode
-    )
+    assert NodeRegistry.get("integration.crowdstrike.isolate_host") is CrowdStrikeIsolateHostNode
 
 
 async def test_isolate_host_raises_in_non_mock_mode(monkeypatch):

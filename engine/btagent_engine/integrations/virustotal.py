@@ -242,9 +242,7 @@ class VirusTotalIPLookupNode(Node[VirusTotalIPLookupInput, VirusTotalIPLookupOut
 
 
 @NodeRegistry.register
-class VirusTotalDomainLookupNode(
-    Node[VirusTotalDomainLookupInput, VirusTotalDomainLookupOutput]
-):
+class VirusTotalDomainLookupNode(Node[VirusTotalDomainLookupInput, VirusTotalDomainLookupOutput]):
     """Look up a domain on VirusTotal and return its reputation / detection stats."""
 
     meta = NodeMeta(

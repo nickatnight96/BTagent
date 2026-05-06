@@ -109,6 +109,4 @@ def test_requires_approval_l4_only_blocks_l0_actions():
     # account_disable is L0 by default -> blocked at L4
     assert requires_approval("integration.disable_account", AutonomyLevel.L4_FULL_AUTO, ia)
     # virustotal lookup is L3 by default -> not blocked at L4
-    assert not requires_approval(
-        "integration.virustotal.lookup", AutonomyLevel.L4_FULL_AUTO, ia
-    )
+    assert not requires_approval("integration.virustotal.lookup", AutonomyLevel.L4_FULL_AUTO, ia)

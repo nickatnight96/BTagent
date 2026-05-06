@@ -112,9 +112,7 @@ def test_triage_template_has_manual_trigger_and_decision() -> None:
     decision_nodes = [n for n in workflow.nodes if n.node_id == "decision.branch"]
     assert decision_nodes, "Triage template missing a DecisionNode (severity branch)"
     # The decision must have both a true and a false out-edge.
-    branch_labels = {
-        e.label for e in workflow.edges if e.source == decision_nodes[0].step_id
-    }
+    branch_labels = {e.label for e in workflow.edges if e.source == decision_nodes[0].step_id}
     assert {"true", "false"}.issubset(branch_labels)
 
 
@@ -150,9 +148,7 @@ def test_enrichment_template_parallel_fork_has_five_cti_branches() -> None:
     assert parallel_nodes, "Enrichment template missing a ParallelNode fan-out"
     fork = parallel_nodes[0]
     branches = fork.config.get("branches", [])
-    assert len(branches) == 5, (
-        f"Enrichment fan-out has {len(branches)} branches (want 5)"
-    )
+    assert len(branches) == 5, f"Enrichment fan-out has {len(branches)} branches (want 5)"
     expected_ids = {
         "integration.virustotal.ip_lookup",
         "integration.shodan.host_lookup",
@@ -187,6 +183,4 @@ def test_template_action_nodes_are_registered(name: str) -> None:
             continue
         if NodeRegistry.get(node.node_id) is None:
             unregistered.append((node.step_id, node.node_id))
-    assert not unregistered, (
-        f"Template {name!r} references unregistered Node ids: {unregistered}"
-    )
+    assert not unregistered, f"Template {name!r} references unregistered Node ids: {unregistered}"

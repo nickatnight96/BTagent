@@ -29,9 +29,7 @@ from btagent_engine.compiler import Workflow, compile_playbook
 TemplateName = Literal["triage", "query", "enrichment", "knowledge"]
 
 _TEMPLATE_DIR: Final[Path] = Path(__file__).resolve().parent
-_KNOWN_TEMPLATES: Final[frozenset[str]] = frozenset(
-    {"triage", "query", "enrichment", "knowledge"}
-)
+_KNOWN_TEMPLATES: Final[frozenset[str]] = frozenset({"triage", "query", "enrichment", "knowledge"})
 
 # Process-local cache. Compiled workflows are frozen Pydantic models, so
 # sharing a single instance across callers is safe.
@@ -62,8 +60,7 @@ def load_template(name: TemplateName) -> Workflow:
     """
     if name not in _KNOWN_TEMPLATES:
         raise UnknownTemplateError(
-            f"Unknown workflow template {name!r}. "
-            f"Valid names: {available_templates()}"
+            f"Unknown workflow template {name!r}. Valid names: {available_templates()}"
         )
 
     cached = _CACHE.get(name)

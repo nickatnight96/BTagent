@@ -61,16 +61,12 @@ class TransformOutput(BaseModel):
 
 def _apply_rename(payload: dict[str, Any], spec: Any) -> None:
     if not isinstance(spec, str) or "->" not in spec:
-        raise ValueError(
-            f"'rename' rule expects a 'src -> dst' string, got {spec!r}"
-        )
+        raise ValueError(f"'rename' rule expects a 'src -> dst' string, got {spec!r}")
     src, _, dst = spec.partition("->")
     src = src.strip()
     dst = dst.strip()
     if not src or not dst:
-        raise ValueError(
-            f"'rename' rule requires non-empty source and destination, got {spec!r}"
-        )
+        raise ValueError(f"'rename' rule requires non-empty source and destination, got {spec!r}")
     if src in payload:
         payload[dst] = payload.pop(src)
 
@@ -92,9 +88,7 @@ def _apply_set(payload: dict[str, Any], spec: Any) -> None:
 
 def _apply_keep_only(payload: dict[str, Any], spec: Any) -> None:
     if not isinstance(spec, list) or not all(isinstance(k, str) for k in spec):
-        raise ValueError(
-            f"'keep_only' rule expects a list of field-name strings, got {spec!r}"
-        )
+        raise ValueError(f"'keep_only' rule expects a list of field-name strings, got {spec!r}")
     keep = set(spec)
     for k in list(payload.keys()):
         if k not in keep:
@@ -128,9 +122,7 @@ class TransformNode(Node[TransformInput, TransformOutput]):
 
         for index, rule in enumerate(input.rules):
             if not isinstance(rule, dict) or len(rule) != 1:
-                raise ValueError(
-                    f"Rule #{index} must be a single-key dict, got {rule!r}"
-                )
+                raise ValueError(f"Rule #{index} must be a single-key dict, got {rule!r}")
             (key,) = rule.keys()
             if key not in _KNOWN_RULE_KEYS:
                 raise ValueError(

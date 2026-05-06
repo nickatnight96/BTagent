@@ -590,9 +590,7 @@ async def test_middleware_sees_each_node_in_graph_order():
             WorkflowEdge(source="b", target="c", label="next"),
         ],
     )
-    await WorkflowExecutor(middlewares=[_RecordingMW(log)]).execute(
-        wf, {"n": 1}, _ctx()
-    )
+    await WorkflowExecutor(middlewares=[_RecordingMW(log)]).execute(wf, {"n": 1}, _ctx())
     assert log == [
         f"before:{_EchoNode.meta.id}",
         f"after:{_EchoNode.meta.id}",
@@ -662,10 +660,7 @@ async def test_step_cap_aborts_pathological_workflow():
     """
     n = MAX_STEPS + 5
     nodes = [_action(f"s{i}", _EchoNode.meta.id) for i in range(n)]
-    edges = [
-        WorkflowEdge(source=f"s{i}", target=f"s{i + 1}", label="next")
-        for i in range(n - 1)
-    ]
+    edges = [WorkflowEdge(source=f"s{i}", target=f"s{i + 1}", label="next") for i in range(n - 1)]
     wf = _wf(nodes=nodes, edges=edges)
     with pytest.raises(WorkflowExecutionError) as ei:
         await WorkflowExecutor().execute(wf, {"n": 1}, _ctx())

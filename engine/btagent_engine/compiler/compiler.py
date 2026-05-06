@@ -124,9 +124,7 @@ class CompiledStep(BaseModel):
 
 def _parse_yaml(yaml_str: str) -> dict[str, Any]:
     if len(yaml_str.encode("utf-8")) > MAX_PLAYBOOK_BYTES:
-        raise PlaybookCompileError(
-            f"Playbook YAML exceeds {MAX_PLAYBOOK_BYTES} bytes"
-        )
+        raise PlaybookCompileError(f"Playbook YAML exceeds {MAX_PLAYBOOK_BYTES} bytes")
     raw = yaml.safe_load(yaml_str)
     if not isinstance(raw, dict):
         raise PlaybookCompileError("Playbook YAML must be a mapping at top level")
@@ -143,9 +141,7 @@ def _validate_branches(step_id: str, branches: Any) -> list[list[str]]:
     cleaned: list[list[str]] = []
     for i, branch in enumerate(branches):
         if not isinstance(branch, list):
-            raise PlaybookCompileError(
-                f"Step '{step_id}' branch[{i}] must be a list of step ids"
-            )
+            raise PlaybookCompileError(f"Step '{step_id}' branch[{i}] must be a list of step ids")
         if len(branch) > MAX_BRANCH_DEPTH:
             raise PlaybookCompileError(
                 f"Step '{step_id}' branch[{i}] has {len(branch)} steps (max {MAX_BRANCH_DEPTH})"
@@ -161,9 +157,7 @@ def _validate_branches(step_id: str, branches: Any) -> list[list[str]]:
 
 def _parse_step(raw: Any) -> CompiledStep:
     if not isinstance(raw, dict):
-        raise PlaybookCompileError(
-            f"Step entry must be a mapping, got {type(raw).__name__}"
-        )
+        raise PlaybookCompileError(f"Step entry must be a mapping, got {type(raw).__name__}")
 
     step_id = raw.get("id")
     if not isinstance(step_id, str) or not step_id:
@@ -172,8 +166,7 @@ def _parse_step(raw: Any) -> CompiledStep:
     step_type = raw.get("type", "action")
     if step_type not in _KNOWN_STEP_TYPES:
         raise PlaybookCompileError(
-            f"Step '{step_id}' has unknown type '{step_type}'. "
-            f"Allowed: {sorted(_KNOWN_STEP_TYPES)}"
+            f"Step '{step_id}' has unknown type '{step_type}'. Allowed: {sorted(_KNOWN_STEP_TYPES)}"
         )
 
     unknown = set(raw.keys()) - _ALLOWED_STEP_KEYS_BY_TYPE[step_type]
@@ -184,9 +177,7 @@ def _parse_step(raw: Any) -> CompiledStep:
 
     on_failure = raw.get("on_failure", "abort")
     if on_failure not in {"skip", "abort", "retry"}:
-        raise PlaybookCompileError(
-            f"Step '{step_id}' invalid on_failure: {on_failure!r}"
-        )
+        raise PlaybookCompileError(f"Step '{step_id}' invalid on_failure: {on_failure!r}")
 
     branches_raw = raw.get("branches", [])
     branches = _validate_branches(step_id, branches_raw) if step_type == "parallel_fork" else []
@@ -265,19 +256,13 @@ def _build_edges(step: CompiledStep, step_ids: set[str]) -> list[WorkflowEdge]:
     edges: list[WorkflowEdge] = []
     if step.type == "decision":
         if step.true_branch and step.true_branch in step_ids:
-            edges.append(
-                WorkflowEdge(source=step.id, target=step.true_branch, label="true")
-            )
+            edges.append(WorkflowEdge(source=step.id, target=step.true_branch, label="true"))
         if step.false_branch and step.false_branch in step_ids:
-            edges.append(
-                WorkflowEdge(source=step.id, target=step.false_branch, label="false")
-            )
+            edges.append(WorkflowEdge(source=step.id, target=step.false_branch, label="false"))
         # decision steps may also have a downstream `next_step` that
         # both branches reconverge on.
         if step.next_step and step.next_step in step_ids:
-            edges.append(
-                WorkflowEdge(source=step.id, target=step.next_step, label="next")
-            )
+            edges.append(WorkflowEdge(source=step.id, target=step.next_step, label="next"))
         return edges
 
     if step.type == "parallel_fork":
@@ -297,9 +282,7 @@ def _build_edges(step: CompiledStep, step_ids: set[str]) -> list[WorkflowEdge]:
                 if a in step_ids and b in step_ids:
                     edges.append(WorkflowEdge(source=a, target=b, label="next"))
         if step.next_step and step.next_step in step_ids:
-            edges.append(
-                WorkflowEdge(source=step.id, target=step.next_step, label="join")
-            )
+            edges.append(WorkflowEdge(source=step.id, target=step.next_step, label="join"))
         return edges
 
     if step.next_step and step.next_step in step_ids:
@@ -362,13 +345,9 @@ def compile_playbook(yaml_str: str) -> Workflow:
 
     steps_raw = raw.get("steps")
     if not isinstance(steps_raw, list):
-        raise PlaybookCompileError(
-            "Missing or invalid field: steps (must be a list)"
-        )
+        raise PlaybookCompileError("Missing or invalid field: steps (must be a list)")
     if len(steps_raw) > MAX_STEPS:
-        raise PlaybookCompileError(
-            f"Playbook has {len(steps_raw)} steps (max {MAX_STEPS})"
-        )
+        raise PlaybookCompileError(f"Playbook has {len(steps_raw)} steps (max {MAX_STEPS})")
 
     trigger_raw = raw["trigger"]
     if not isinstance(trigger_raw, dict):

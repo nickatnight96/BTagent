@@ -218,8 +218,7 @@ steps:
 def test_compile_enforces_step_count_cap():
     # 501 steps -> over the cap of 500
     steps = "\n".join(
-        f"  - {{id: s{i}, type: action, tool_name: integration.test.echo}}"
-        for i in range(501)
+        f"  - {{id: s{i}, type: action, tool_name: integration.test.echo}}" for i in range(501)
     )
     yaml_str = f"""
 name: TooMany
@@ -288,7 +287,10 @@ def _find_library_yamls() -> list[Path]:
     """Locate any playbook YAML the repo ships, without importing agents code."""
     candidates: list[Path] = []
     repo_root = Path(__file__).resolve().parents[2]
-    for sub in ("agents/btagent_agents/playbook/library", "agents/btagent_agents/playbook/templates"):
+    for sub in (
+        "agents/btagent_agents/playbook/library",
+        "agents/btagent_agents/playbook/templates",
+    ):
         d = repo_root / sub
         if d.is_dir():
             for p in sorted(d.glob("*.yaml")):

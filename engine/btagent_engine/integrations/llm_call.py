@@ -92,9 +92,7 @@ class _Message(BaseModel):
     @classmethod
     def _role_allowed(cls, v: str) -> str:
         if v not in _ALLOWED_ROLES:
-            raise ValueError(
-                f"role must be one of {sorted(_ALLOWED_ROLES)}, got {v!r}"
-            )
+            raise ValueError(f"role must be one of {sorted(_ALLOWED_ROLES)}, got {v!r}")
         return v
 
 
@@ -140,9 +138,7 @@ class LLMCallInput(BaseModel):
             try:
                 parsed = _Message.model_validate(msg)
             except Exception as exc:  # ValidationError or TypeError
-                raise ValueError(
-                    f"messages[{i}] is not a valid chat message: {exc}"
-                ) from exc
+                raise ValueError(f"messages[{i}] is not a valid chat message: {exc}") from exc
             if parsed.role == "user":
                 has_user = True
         if not has_user:

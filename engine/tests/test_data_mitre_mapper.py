@@ -142,9 +142,7 @@ async def test_output_ordering_is_deterministic():
     )
     a = await MitreMapperNode().run(MitreMapperInput(text=text), _ctx())
     b = await MitreMapperNode().run(MitreMapperInput(text=text), _ctx())
-    assert [t.technique_id for t in a.techniques] == [
-        t.technique_id for t in b.techniques
-    ]
+    assert [t.technique_id for t in a.techniques] == [t.technique_id for t in b.techniques]
     confidences = [t.confidence for t in a.techniques]
     assert confidences == sorted(confidences, reverse=True)
 
