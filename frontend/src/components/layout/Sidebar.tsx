@@ -7,6 +7,7 @@ interface NavItem {
   label: string;
   path: string;
   icon: React.ReactNode;
+  testId: string;
 }
 
 const navItems: NavItem[] = [
@@ -14,36 +15,43 @@ const navItems: NavItem[] = [
     label: "PunchList",
     path: "/",
     icon: <LayoutDashboard className="w-5 h-5" />,
+    testId: "nav-punchlist-link",
   },
   {
     label: "Investigations",
     path: "/",
     icon: <Search className="w-5 h-5" />,
+    testId: "nav-investigations-link",
   },
   {
     label: "IOC Notebook",
     path: "/iocs",
     icon: <Database className="w-5 h-5" />,
+    testId: "nav-iocs-link",
   },
   {
     label: "ATT&CK Matrix",
     path: "/mitre",
     icon: <Grid3X3 className="w-5 h-5" />,
+    testId: "nav-mitre-link",
   },
   {
     label: "Knowledge Base",
     path: "/knowledge",
     icon: <BookOpen className="w-5 h-5" />,
+    testId: "nav-knowledge-link",
   },
   {
     label: "Playbooks",
     path: "/playbooks",
     icon: <Workflow className="w-5 h-5" />,
+    testId: "nav-playbooks-link",
   },
   {
     label: "Settings",
     path: "/settings",
     icon: <Settings className="w-5 h-5" />,
+    testId: "nav-settings-link",
   },
 ];
 
@@ -63,21 +71,29 @@ export function Sidebar() {
         "flex flex-col bg-slate-900 border-r border-slate-700/50 transition-all duration-300 h-full",
         sidebarOpen ? "w-60" : "w-16",
       )}
+      data-testid="sidebar"
+      data-sidebar-open={sidebarOpen}
     >
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-16 border-b border-slate-700/50 shrink-0">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 shrink-0">
-          <Shield className="w-4 h-4 text-blue-400" />
+          <Shield className="w-4 h-4 text-blue-400" aria-hidden="true" />
         </div>
         {sidebarOpen && (
-          <span className="text-lg font-bold text-slate-100 tracking-tight whitespace-nowrap">
+          <span
+            className="text-lg font-bold text-slate-100 tracking-tight whitespace-nowrap"
+            data-testid="sidebar-brand"
+          >
             BTagent
           </span>
         )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
+      <nav
+        className="flex-1 px-2 py-4 space-y-1 overflow-y-auto"
+        aria-label="Primary"
+      >
         {navItems.map((item) => (
           <button
             key={item.label}
@@ -90,6 +106,9 @@ export function Sidebar() {
               !sidebarOpen && "justify-center px-2",
             )}
             title={!sidebarOpen ? item.label : undefined}
+            aria-label={item.label}
+            aria-current={isActive(item.path) ? "page" : undefined}
+            data-testid={item.testId}
           >
             {item.icon}
             {sidebarOpen && <span>{item.label}</span>}
@@ -103,6 +122,9 @@ export function Sidebar() {
           onClick={toggleSidebar}
           className="flex items-center justify-center w-full p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
           title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          aria-expanded={sidebarOpen}
+          data-testid="sidebar-collapse-toggle"
         >
           {sidebarOpen ? (
             <ChevronLeft className="w-5 h-5" />
