@@ -14,13 +14,18 @@ from pathlib import Path
 
 _AGENTS_ROOT = Path(__file__).resolve().parent.parent
 _SHARED_ROOT = _AGENTS_ROOT.parent / "shared"
+_ENGINE_ROOT = _AGENTS_ROOT.parent / "engine"
 
-for path in (_AGENTS_ROOT, _SHARED_ROOT):
+for path in (_AGENTS_ROOT, _SHARED_ROOT, _ENGINE_ROOT):
     p = str(path)
     if p not in sys.path:
         sys.path.insert(0, p)
 
-# Drop any pre-imported stale btagent_agents modules so the path-prepended
-# copy wins on first import.
-for mod in [m for m in list(sys.modules) if m.startswith("btagent_agents")]:
+# Drop any pre-imported stale btagent_agents / btagent_engine modules so the
+# path-prepended copy wins on first import.
+for mod in [
+    m
+    for m in list(sys.modules)
+    if m.startswith("btagent_agents") or m.startswith("btagent_engine")
+]:
     del sys.modules[mod]
