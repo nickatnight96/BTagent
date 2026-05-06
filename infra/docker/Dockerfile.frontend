@@ -1,15 +1,31 @@
 # BTagent frontend — multi-stage build
+#
+# Supply chain: build / runtime base images pinned via build-args so prod
+# builds can lock to specific digests. Default is the minor-version tag,
+# which still floats on patch releases. To fully lock:
+#
+#     docker pull node:20-alpine
+#     docker pull nginx:1.27-alpine
+#     docker inspect --format='{{index .RepoDigests 0}}' <image>
+#
+# and pass --build-arg NODE_DIGEST=sha256:... and --build-arg NGINX_DIGEST=...
+ARG NODE_IMAGE=node:20-alpine
+ARG NODE_DIGEST=
+ARG NGINX_IMAGE=nginx:1.27-alpine
+ARG NGINX_DIGEST=
+
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM ${NODE_IMAGE}${NODE_DIGEST:+@${NODE_DIGEST}} AS builder
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+# Use ``npm ci`` so the lockfile is honoured and rebuilds are deterministic.
+RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
 # Stage 2: Serve with nginx
-FROM nginx:alpine
+FROM ${NGINX_IMAGE}${NGINX_DIGEST:+@${NGINX_DIGEST}}
 
 # Security: non-root
 RUN adduser -D -u 1000 btagent && \
