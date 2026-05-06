@@ -115,9 +115,6 @@ def _stub_hub_for(app):
 # ---------------------------------------------------------------------------
 
 
-_TABLES_CREATED = False
-
-
 def _retranslate_jsonb_to_json() -> None:
     """Sweep all metadata tables for JSONB and replace with JSON.
 
@@ -140,10 +137,13 @@ async def _ensure_core_tables() -> None:
     on the full ``Base.metadata`` because PG-only models (knowledge / mitre)
     carry FTS indexes (``to_tsvector('english', ...)``) that SQLite cannot
     compile.
+
+    Run on every fixture call (no module-level cache flag): when CI has
+    Redis available, ``TestClient.__enter__/__exit__`` triggers an app
+    lifespan whose side effects can leave the in-memory SQLite without the
+    tables we need. ``create_all(checkfirst=True)`` and the org-row insert
+    are both idempotent, so re-running is cheap and safe.
     """
-    global _TABLES_CREATED  # noqa: PLW0603
-    if _TABLES_CREATED:
-        return
     _retranslate_jsonb_to_json()
 
     # Names of the tables this test file actually exercises. ``organizations``
@@ -172,8 +172,6 @@ async def _ensure_core_tables() -> None:
                 )
             )
             await s.commit()
-
-    _TABLES_CREATED = True
 
 
 @pytest_asyncio.fixture()

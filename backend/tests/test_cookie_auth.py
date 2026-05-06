@@ -298,9 +298,6 @@ async def test_revoked_cookie_token_rejected(client: AsyncClient, sample_user: U
 # ---------------------------------------------------------------------------
 
 
-_WS_TABLES_CREATED = False
-
-
 def _retranslate_jsonb_to_json() -> None:
     from sqlalchemy import JSON
     from sqlalchemy.dialects.postgresql import JSONB
@@ -318,10 +315,13 @@ async def _ensure_ws_tables() -> None:
     (knowledge / mitre) carry FTS indexes (``to_tsvector('english', ...)``)
     that SQLite cannot compile. We pick out only the tables exercised here.
     The ``organizations`` row is seeded so the user/investigation FK passes.
+
+    Run on every test (no module-level cache flag): when a Redis-backed
+    Lifespan runs in CI between WS tests, ``TestClient.__exit__`` triggers
+    a startup/shutdown cycle whose side effects can leave the in-memory
+    SQLite without the tables we need. ``create_all(checkfirst=True)`` and
+    the org-row insert are both idempotent, so re-running is cheap and safe.
     """
-    global _WS_TABLES_CREATED  # noqa: PLW0603
-    if _WS_TABLES_CREATED:
-        return
     _retranslate_jsonb_to_json()
     needed = {"organizations", "users", "investigations"}
     tables = [t for name, t in Base.metadata.tables.items() if name in needed]
@@ -343,8 +343,6 @@ async def _ensure_ws_tables() -> None:
                 )
             )
             await s.commit()
-
-    _WS_TABLES_CREATED = True
 
 
 def _build_ws_app():
