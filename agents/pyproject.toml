@@ -13,6 +13,11 @@ dependencies = [
     "pyyaml>=6.0.0",
     "redis>=5.0.0",
     "btagent-shared",
+    # Phase 1 Sprint 2 introduced the workflow engine as a sibling package.
+    # ``orchestrator/templates/__init__.py`` and the LLM-router middleware
+    # both import from it. Listed here so production installs pull it in
+    # automatically (not just CI / dev test runs).
+    "btagent-engine",
 ]
 
 [project.optional-dependencies]
