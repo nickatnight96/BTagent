@@ -33,11 +33,14 @@ export function PlaybookYAMLEditor() {
   }, [yamlContent]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 border-l border-slate-700/50">
+    <div
+      className="flex flex-col h-full bg-slate-900 border-l border-slate-700/50"
+      data-testid="playbook-yaml"
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-700/50 shrink-0">
         <div className="flex items-center gap-2">
-          <FileCode className="w-4 h-4 text-slate-400" />
+          <FileCode className="w-4 h-4 text-slate-400" aria-hidden="true" />
           <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
             YAML Preview
           </span>
@@ -45,15 +48,17 @@ export function PlaybookYAMLEditor() {
         <button
           onClick={handleCopy}
           className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-slate-400 bg-slate-800 border border-slate-700 rounded hover:bg-slate-700 hover:text-slate-200 transition-colors"
+          aria-label="Copy YAML to clipboard"
+          data-testid="playbook-yaml-copy-button"
         >
           {copied ? (
             <>
-              <Check className="w-3 h-3 text-green-400" />
+              <Check className="w-3 h-3 text-green-400" aria-hidden="true" />
               <span className="text-green-400">Copied</span>
             </>
           ) : (
             <>
-              <Copy className="w-3 h-3" />
+              <Copy className="w-3 h-3" aria-hidden="true" />
               Copy
             </>
           )}
@@ -61,7 +66,10 @@ export function PlaybookYAMLEditor() {
       </div>
 
       {/* YAML content */}
-      <div className="flex-1 overflow-auto p-3">
+      <div
+        className="flex-1 overflow-auto p-3"
+        data-testid="playbook-yaml-editor"
+      >
         <pre className="text-xs font-mono text-slate-300 leading-relaxed whitespace-pre-wrap">
           {yamlContent.split("\n").map((line, i) => (
             <div key={i} className="flex">
