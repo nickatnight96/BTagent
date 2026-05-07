@@ -6,18 +6,24 @@
  * local chromium-linux runner; GitHub Actions ``ubuntu-latest`` has
  * different font-rendering subpixel behaviour and the
  * ``maxDiffPixelRatio: 0.2`` tolerance isn't enough to absorb the
- * delta. Every test was failing at "image diff exceeds threshold".
+ * delta.
  *
- * The fix is a CI-baseline regeneration workflow (``actions/upload-
- * artifact`` + a manually-triggered ``--update-snapshots`` job) that
- * we don't yet have. Until that lands, this whole describe block is
- * skipped — the baseline PNGs stay committed so the spec compiles.
+ * Currently ``describe.skip``'d so the gate doesn't false-flag
+ * every CI run. To re-engage the gate (after #64 closure):
  *
- * TODO(#51 Group D follow-up): wire a manual-trigger workflow that
- * runs ``npx playwright test specs/visual/ --update-snapshots`` on
- * GitHub Actions, uploads the regenerated PNGs as an artifact, and
- * lets a human commit them. After that, drop the ``describe.skip``
- * here and let the gate re-engage.
+ *   1. Trigger the ``Regenerate Visual Baselines`` workflow from
+ *      the Actions tab (``workflow_dispatch``). It re-runs these
+ *      specs with ``--update-snapshots`` against ubuntu-latest.
+ *   2. Download the ``visual-baselines-chromium-linux`` artifact
+ *      (30-day retention) and replace
+ *      ``tests/e2e/specs/visual/snapshots.spec.ts-snapshots/``
+ *      with its contents.
+ *   3. Drop the ``test.describe.skip`` below (revert to plain
+ *      ``test.describe``).
+ *   4. Open a PR; the regular ``e2e`` job will diff against the
+ *      newly committed baselines.
+ *
+ * See ``.github/workflows/regen-visual-baselines.yml``.
  */
 import { test, expect } from "../../fixtures/auth";
 import { seedInvestigationWithIOCs } from "../../fixtures/seed-helpers";
