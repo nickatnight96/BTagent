@@ -2,11 +2,43 @@
  * Knowledge ingest modal — open / fill / submit / cancel paths.
  *
  * Sprint F scope. Drives the KnowledgeIngestModal component end to
- * end via the POM. Submission goes through the real backend so the
- * persistence side-effect is observable in subsequent tests.
+ * end via the POM.
+ *
+ * Backend ingest hits the embedding pipeline (mock in test mode but
+ * still synchronous DB writes for documents + chunks). Under CI load
+ * the round-trip can spike past Playwright's default 10 s expect
+ * timeout. We stub ``POST /api/v1/knowledge/ingest`` and the GET
+ * documents-list so the success-path tests are deterministic and
+ * well under timeout. The "open / cancel / close" tests don't need
+ * the stub — they don't submit.
  */
 import { test, expect } from "../../fixtures/auth";
 import { KnowledgePage } from "../../pages/knowledge-page";
+
+const SUBMIT_TIMEOUT_MS = 30_000;
+
+async function stubIngestEndpoints(
+  page: import("@playwright/test").Page,
+): Promise<void> {
+  await page.route("**/api/v1/knowledge/ingest", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        document_id: `doc_e2e_${Date.now()}`,
+        chunks_created: 1,
+        embeddings_created: 1,
+      }),
+    }),
+  );
+  await page.route("**/api/v1/knowledge/documents*", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ documents: [], total: 0 }),
+    }),
+  );
+}
 
 test.describe("Knowledge ingest modal", () => {
   test("opens via the ingest button", async ({ analystPage }) => {
@@ -21,6 +53,8 @@ test.describe("Knowledge ingest modal", () => {
   test("submitting an empty form surfaces an inline error", async ({
     analystPage,
   }) => {
+    await stubIngestEndpoints(analystPage);
+
     const knowledge = new KnowledgePage(analystPage);
     await knowledge.goto();
     await knowledge.ingestOpenButton.click();
@@ -36,6 +70,8 @@ test.describe("Knowledge ingest modal", () => {
   test("filling all required fields submits successfully", async ({
     analystPage,
   }) => {
+    await stubIngestEndpoints(analystPage);
+
     const knowledge = new KnowledgePage(analystPage);
     await knowledge.goto();
     await knowledge.ingestOpenButton.click();
@@ -47,12 +83,16 @@ test.describe("Knowledge ingest modal", () => {
       source: "runbook",
     });
     await knowledge.ingest.submit();
-    await expect(knowledge.ingest.success).toBeVisible({ timeout: 10_000 });
+    await expect(knowledge.ingest.success).toBeVisible({
+      timeout: SUBMIT_TIMEOUT_MS,
+    });
   });
 
   test("after success the modal stays open with a cleared form", async ({
     analystPage,
   }) => {
+    await stubIngestEndpoints(analystPage);
+
     const knowledge = new KnowledgePage(analystPage);
     await knowledge.goto();
     await knowledge.ingestOpenButton.click();
@@ -63,7 +103,9 @@ test.describe("Knowledge ingest modal", () => {
       source: "runbook",
     });
     await knowledge.ingest.submit();
-    await expect(knowledge.ingest.success).toBeVisible({ timeout: 10_000 });
+    await expect(knowledge.ingest.success).toBeVisible({
+      timeout: SUBMIT_TIMEOUT_MS,
+    });
     // Modal still open so the user can ingest a follow-up doc.
     await expect(knowledge.ingest.dialog).toBeVisible();
     // And the title input is cleared back to empty.
