@@ -8,20 +8,45 @@
  * caller asked for an AMBER or GREEN export. The test asserts the
  * bundle bytes — anything weaker (e.g. count-based assertions) misses
  * the bug class entirely.
+ *
+ * Hydration note: the export dialog reads the investigation list from
+ * the Zustand ``investigationStore`` which is populated by visiting
+ * the dashboard (``/``). Going straight to ``/iocs`` leaves the
+ * store empty and the per-test seeded investigation is missing from
+ * the dropdown. Each test calls ``hydrateInvestigationsThenGotoIOCs``
+ * so the dropdown has the option ``selectOption(investigation.id)``
+ * needs.
  */
+import type { Page } from "@playwright/test";
 import { test, expect } from "../../fixtures/auth";
 import { IOCNotebookPage } from "../../pages/ioc-notebook-page";
 import { seedInvestigationWithIOCs } from "../../fixtures/seed-helpers";
 
 /**
+ * Hydrate the Zustand investigation store by visiting the dashboard
+ * first, then navigate to /iocs. The notebook page itself does not
+ * fetch investigations on mount, so without this the export dialog
+ * dropdown is empty and ``selectOption(seededInvId)`` throws.
+ */
+async function hydrateInvestigationsThenGotoIOCs(
+  page: Page,
+): Promise<IOCNotebookPage> {
+  await page.goto("/");
+  await page.getByTestId("investigation-list").waitFor({
+    state: "visible",
+    timeout: 10_000,
+  });
+  const notebook = new IOCNotebookPage(page);
+  await notebook.goto();
+  return notebook;
+}
+
+/**
  * Trigger the export submit, capture the resulting download, and
  * return the bundle text.
- *
- * The Playwright Download API exposes the saved file path; reading
- * the saved blob gives us the bytes the user would receive.
  */
 async function readDownloadText(
-  page: import("@playwright/test").Page,
+  page: Page,
   notebook: IOCNotebookPage,
 ): Promise<string> {
   const downloadPromise = page.waitForEvent("download", { timeout: 15_000 });
@@ -53,8 +78,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       ],
     });
 
-    const notebook = new IOCNotebookPage(seniorPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(seniorPage);
     await notebook.exportButton.click();
     await notebook.exportDialog.investigationInput.selectOption(
       investigation.id,
@@ -83,8 +107,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       ],
     });
 
-    const notebook = new IOCNotebookPage(seniorPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(seniorPage);
     await notebook.exportButton.click();
     await notebook.exportDialog.investigationInput.selectOption(
       investigation.id,
@@ -116,8 +139,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       ],
     });
 
-    const notebook = new IOCNotebookPage(seniorPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(seniorPage);
     await notebook.exportButton.click();
     await notebook.exportDialog.investigationInput.selectOption(
       investigation.id,
@@ -151,8 +173,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       ],
     });
 
-    const notebook = new IOCNotebookPage(seniorPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(seniorPage);
     await notebook.exportButton.click();
     await notebook.exportDialog.investigationInput.selectOption(
       investigation.id,
@@ -192,8 +213,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       { timeout: 15_000 },
     );
 
-    const notebook = new IOCNotebookPage(seniorPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(seniorPage);
     await notebook.exportButton.click();
     await notebook.exportDialog.investigationInput.selectOption(
       investigation.id,
