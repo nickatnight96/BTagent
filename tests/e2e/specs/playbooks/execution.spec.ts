@@ -11,14 +11,23 @@ import { test, expect } from "../../fixtures/auth";
 import { PlaybookExecutionPage } from "../../pages/playbook-pages";
 import type { BTAgentApiClient } from "../../fixtures/api-client";
 
+// Use a real registered tool name (``severity_scorer`` — a
+// deterministic in-process plugin tool that doesn't hit external
+// APIs). The compiler validates ``tool_name`` against
+// ``backend/btagent_backend/services/playbook_service.py:KNOWN_TOOLS``
+// at create-time, so the previous ``tool: noop`` was rejected as
+// "unknown tool" and the execution route returned 4xx — ``start``
+// was clicking against a playbook that the executor refused to run.
 const NOOP_YAML = `name: e2e-execution
-description: One-step noop for execution tests
+description: One-step deterministic action for execution tests
 trigger:
   type: manual
 steps:
   - id: noop
     type: action
-    tool: noop
+    tool_name: severity_scorer
+    arguments:
+      iocs: []
 `;
 
 interface SeededPlaybook {
