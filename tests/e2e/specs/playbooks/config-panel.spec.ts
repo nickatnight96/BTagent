@@ -126,6 +126,13 @@ test.describe("Playbook config panel", () => {
     const builder = new PlaybookBuilderPage(seniorPage);
     await builder.gotoNew();
     const config = new PlaybookConfigPanel(seniorPage);
+
+    // ReactFlow may auto-select the first node on canvas hydrate. Press
+    // Escape to deselect any active node before asserting the empty
+    // state — Escape is ReactFlow's documented "deselect" key. If
+    // nothing was selected to begin with, this is a no-op.
+    await builder.canvas.click({ position: { x: 5, y: 5 } });
+    await seniorPage.keyboard.press("Escape");
     await expect(config.empty).toBeVisible({ timeout: 10_000 });
   });
 
