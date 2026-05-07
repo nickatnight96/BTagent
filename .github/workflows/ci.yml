@@ -548,7 +548,7 @@ jobs:
 
       - name: Docker metadata (backend)
         id: meta-backend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/nickatnight96/btagent-backend
           # Only commit-SHA tags ship from CI. ``latest`` was previously also
@@ -571,7 +571,7 @@ jobs:
 
       - name: Docker metadata (frontend)
         id: meta-frontend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/nickatnight96/btagent-frontend
           # Only commit-SHA tags ship from CI. ``latest`` was previously also
