@@ -79,7 +79,21 @@ export default defineConfig({
     },
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        // Allow a sandboxed CI runner / restricted local box to point
+        // at a system Chromium when the Playwright CDN isn't reachable.
+        // ``PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`` is the documented
+        // env. Empty string falls through to the bundled binary.
+        ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+          ? {
+              launchOptions: {
+                executablePath:
+                  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+              },
+            }
+          : {}),
+      },
       dependencies: ["setup"],
     },
     // The full multi-browser matrix — Sprint J targets these. Disabled
