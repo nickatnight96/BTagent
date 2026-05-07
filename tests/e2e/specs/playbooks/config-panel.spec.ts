@@ -103,20 +103,57 @@ steps:
 `;
 
 /**
- * Click the first React Flow node visible in the canvas. Without
- * testids on the nodes we have to fall back to a generic class
- * selector — React Flow renders nodes inside ``.react-flow__node``
- * wrappers, which is the third-party library's documented hook for
- * styling. We chain off the canvas locator returned by the POM so we
- * don't bypass the POM with a raw page-level lookup.
+ * Click the first React Flow node of the given ``data-node-type`` on
+ * the canvas. The node templates carry both
+ * ``data-testid="playbook-builder-node-${id}"`` (per-node, stable)
+ * and ``data-node-type="..."`` (type-class, defensive secondary
+ * selector) — see ``frontend/src/components/playbooks/nodes/*.tsx``.
+ *
+ * The ``.react-flow__node`` wrapper sits BETWEEN the canvas and our
+ * testid'd inner div, so the locator chains
+ * ``canvas → [data-node-type=X]``. The wrapper handles ReactFlow's
+ * pointer-event hit-testing, so we click the inner element and let
+ * the event bubble up.
+ *
+ * Returns the locator on success, or null if no node of that type
+ * is mounted yet (the canvas may still be hydrating).
+ */
+async function clickCanvasNodeByType(
+  builder: PlaybookBuilderPage,
+  nodeType: "trigger" | "action" | "decision" | "hitl_gate" | "parallel_fork" | "end",
+): Promise<boolean> {
+  const node = builder.canvas
+    .locator(`[data-node-type="${nodeType}"]`)
+    .first();
+  // Wait briefly for ReactFlow to mount its initial node set.
+  await node.waitFor({ state: "visible", timeout: 5_000 }).catch(() => null);
+  if (await node.count()) {
+    await node.click({ force: true });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Legacy "click any node" helper — used by the close + delete tests
+ * that don't care about the node type. Kept as a thin wrapper around
+ * the new typed helper so we have a single source of truth for the
+ * canvas-click pattern.
  */
 async function clickFirstCanvasNode(
   builder: PlaybookBuilderPage,
 ): Promise<boolean> {
-  const node = builder.canvas.locator(".react-flow__node").first();
-  if (await node.count()) {
-    await node.click({ force: true });
-    return true;
+  for (const t of [
+    "trigger",
+    "action",
+    "decision",
+    "hitl_gate",
+    "parallel_fork",
+    "end",
+  ] as const) {
+    if (await clickCanvasNodeByType(builder, t)) {
+      return true;
+    }
   }
   return false;
 }
@@ -192,19 +229,18 @@ test.describe("Playbook config panel", () => {
     const builder = new PlaybookBuilderPage(seniorPage);
     await builder.gotoEdit(pb.id);
     const config = new PlaybookConfigPanel(seniorPage);
-    const clicked = await clickFirstCanvasNode(builder);
-    test.skip(!clicked, "Canvas did not hydrate any nodes");
+    const clicked = await clickCanvasNodeByType(builder, "action");
+    test.skip(!clicked, "No action node hydrated on canvas");
 
     await expect(config.root).toBeVisible({ timeout: 5_000 });
-    // At least one of the action-typed inputs should be mounted when an
-    // action node is selected. We allow any of the four — the canvas
-    // may select a different node type if multiple are present.
+    // The action panel surfaces tool / arguments / timeout / on-failure
+    // inputs. At least one must be mounted now that we deterministically
+    // selected an action node.
     await expect(
       config.actionToolInput
         .or(config.actionArgumentsInput)
         .or(config.actionTimeoutInput)
-        .or(config.actionOnFailureInput)
-        .or(config.triggerTypeInput),
+        .or(config.actionOnFailureInput),
     ).toBeVisible({ timeout: 5_000 });
   });
 
@@ -220,18 +256,13 @@ test.describe("Playbook config panel", () => {
     const builder = new PlaybookBuilderPage(seniorPage);
     await builder.gotoEdit(pb.id);
     const config = new PlaybookConfigPanel(seniorPage);
-    const clicked = await clickFirstCanvasNode(builder);
-    test.skip(!clicked, "Canvas did not hydrate any nodes");
+    const clicked = await clickCanvasNodeByType(builder, "decision");
+    test.skip(!clicked, "No decision node hydrated on canvas");
 
     await expect(config.root).toBeVisible({ timeout: 5_000 });
-    // Decision-condition input is the type-specific surface; it may
-    // not be the first node selected — fall back to checking the
-    // panel mounted at all.
-    if (await config.decisionConditionInput.isVisible()) {
-      await expect(config.decisionConditionInput).toBeVisible();
-    } else {
-      await expect(config.root).toBeVisible();
-    }
+    await expect(config.decisionConditionInput).toBeVisible({
+      timeout: 5_000,
+    });
   });
 
   test("selecting a HITL node surfaces prompt / role / timeout inputs", async ({
@@ -246,18 +277,13 @@ test.describe("Playbook config panel", () => {
     const builder = new PlaybookBuilderPage(seniorPage);
     await builder.gotoEdit(pb.id);
     const config = new PlaybookConfigPanel(seniorPage);
-    const clicked = await clickFirstCanvasNode(builder);
-    test.skip(!clicked, "Canvas did not hydrate any nodes");
+    const clicked = await clickCanvasNodeByType(builder, "hitl_gate");
+    test.skip(!clicked, "No HITL gate node hydrated on canvas");
 
     await expect(config.root).toBeVisible({ timeout: 5_000 });
-    if (await config.hitlPromptInput.isVisible()) {
-      await expect(config.hitlPromptInput).toBeVisible();
-      await expect(config.hitlRoleInput).toBeVisible();
-      await expect(config.hitlTimeoutInput).toBeVisible();
-    } else {
-      // Selected a different node type — at minimum the panel mounted.
-      await expect(config.root).toBeVisible();
-    }
+    await expect(config.hitlPromptInput).toBeVisible({ timeout: 5_000 });
+    await expect(config.hitlRoleInput).toBeVisible();
+    await expect(config.hitlTimeoutInput).toBeVisible();
   });
 
   test("selecting a parallel node surfaces the branch-count input", async ({
@@ -272,15 +298,13 @@ test.describe("Playbook config panel", () => {
     const builder = new PlaybookBuilderPage(seniorPage);
     await builder.gotoEdit(pb.id);
     const config = new PlaybookConfigPanel(seniorPage);
-    const clicked = await clickFirstCanvasNode(builder);
-    test.skip(!clicked, "Canvas did not hydrate any nodes");
+    const clicked = await clickCanvasNodeByType(builder, "parallel_fork");
+    test.skip(!clicked, "No parallel-fork node hydrated on canvas");
 
     await expect(config.root).toBeVisible({ timeout: 5_000 });
-    if (await config.parallelBranchCountInput.isVisible()) {
-      await expect(config.parallelBranchCountInput).toBeVisible();
-    } else {
-      await expect(config.root).toBeVisible();
-    }
+    await expect(config.parallelBranchCountInput).toBeVisible({
+      timeout: 5_000,
+    });
   });
 
   test("selecting a trigger node surfaces type / parameters inputs", async ({
@@ -295,8 +319,8 @@ test.describe("Playbook config panel", () => {
     const builder = new PlaybookBuilderPage(seniorPage);
     await builder.gotoEdit(pb.id);
     const config = new PlaybookConfigPanel(seniorPage);
-    const clicked = await clickFirstCanvasNode(builder);
-    test.skip(!clicked, "Canvas did not hydrate any nodes");
+    const clicked = await clickCanvasNodeByType(builder, "trigger");
+    test.skip(!clicked, "No trigger node hydrated on canvas");
 
     await expect(config.root).toBeVisible({ timeout: 5_000 });
     if (await config.triggerTypeInput.isVisible()) {
