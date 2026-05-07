@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# BTagent pre-push hook -- lint + format check before code leaves your machine.
+#
+# Why this exists: every Sprint 2/3/4/5 sub-agent we ran wrote new Python
+# without going through ``ruff format``. Each push therefore landed
+# format-only failures on CI's ``Lint`` job (which runs ``ruff format
+# --check``). This hook reproduces the CI check locally so you can't push
+# until it's green.
+#
+# Install (one-time per clone):
+#   git config core.hooksPath .githooks
+#
+# Bypass for a one-off (e.g. WIP push to a personal branch):
+#   git push --no-verify
+#
+# Pre-requisites: ``ruff`` on PATH (``pip install ruff`` or use the
+# project's venv).
+
+set -e
+
+if ! command -v ruff >/dev/null 2>&1; then
+    echo "pre-push: ruff not on PATH; install with 'pip install ruff' or activate the project venv." >&2
+    exit 1
+fi
+
+scope=(backend/ agents/ shared/ engine/)
+existing=()
+for dir in "${scope[@]}"; do
+    if [ -d "$dir" ]; then
+        existing+=("$dir")
+    fi
+done
+
+if [ ${#existing[@]} -eq 0 ]; then
+    # Not a repo root checkout, or freshly cloned; nothing to check.
+    exit 0
+fi
+
+echo "pre-push: ruff format --check ${existing[*]}"
+if ! ruff format --check "${existing[@]}"; then
+    echo ""
+    echo "pre-push: format check FAILED. Run 'ruff format ${existing[*]}' and commit before pushing." >&2
+    exit 1
+fi
+
+echo "pre-push: ruff check ${existing[*]}"
+if ! ruff check "${existing[@]}"; then
+    echo ""
+    echo "pre-push: lint FAILED. Fix the violations and commit before pushing." >&2
+    exit 1
+fi
+
+echo "pre-push: ok"

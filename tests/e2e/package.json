@@ -1,0 +1,34 @@
+{
+  "name": "btagent-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BTagent end-to-end test suite (Playwright)",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:chromium": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "test:webkit": "playwright test --project=webkit",
+    "test:mobile": "playwright test --project=mobile-chrome",
+    "test:auth": "playwright test specs/auth/",
+    "test:investigations": "playwright test specs/investigations/",
+    "test:iocs": "playwright test specs/iocs/",
+    "test:knowledge": "playwright test specs/knowledge/",
+    "test:mitre": "playwright test specs/mitre/",
+    "test:playbooks": "playwright test specs/playbooks/",
+    "test:security": "playwright test specs/security/",
+    "report": "playwright show-report",
+    "install-browsers": "playwright install --with-deps chromium firefox webkit",
+    "install-chromium": "playwright install --with-deps chromium"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.10.0",
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

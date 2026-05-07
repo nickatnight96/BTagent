@@ -1,0 +1,10 @@
+# Playwright artifacts and per-run state
+.auth/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Local dev / IDE
+node_modules/
+*.tsbuildinfo
+.DS_Store

@@ -37,6 +37,7 @@ async def create_ioc(
     enrichment: dict[str, Any] | None = None,
     first_seen: datetime | None = None,
     last_seen: datetime | None = None,
+    org_id: str | None = None,
 ) -> IOCRow:
     """Insert a new IOC row and return it.
 
@@ -70,7 +71,11 @@ async def create_ioc(
     IOCRow
         The newly created DB row (flushed but not yet committed).
     """
-    ioc = IOCRow(
+    # AUTH-B1: ``org_id`` is set explicitly by the caller (route layer) from
+    # the parent investigation's tenant. Falls back to the column default
+    # ("org_default") when the legacy code path doesn't supply it, matching
+    # the pre-Phase-A1 behaviour for non-API call sites (e.g. agent imports).
+    ioc_kwargs: dict[str, Any] = dict(
         id=generate_id("ioc"),
         investigation_id=investigation_id,
         type=ioc_type,
@@ -83,6 +88,9 @@ async def create_ioc(
         first_seen=first_seen or datetime.now(UTC),
         last_seen=last_seen,
     )
+    if org_id is not None:
+        ioc_kwargs["org_id"] = org_id
+    ioc = IOCRow(**ioc_kwargs)
     db.add(ioc)
     await db.flush()
 
@@ -101,6 +109,7 @@ async def create_iocs_bulk(
     *,
     investigation_id: str,
     iocs: list[dict[str, Any]],
+    org_id: str | None = None,
 ) -> list[IOCRow]:
     """Insert multiple IOCs in bulk.
 
@@ -130,6 +139,7 @@ async def create_iocs_bulk(
             context=ioc_data.get("context", ""),
             source=ioc_data.get("source", "bulk_import"),
             enrichment=ioc_data.get("enrichment"),
+            org_id=org_id,
         )
         rows.append(row)
     return rows
@@ -155,8 +165,16 @@ async def list_iocs(
     enriched: bool | None = None,
     page: int = 1,
     page_size: int = 50,
+    investigation_id_in: list[str] | None = None,
 ) -> tuple[list[IOCRow], int]:
     """List IOCs with optional filters and pagination.
+
+    Parameters
+    ----------
+    investigation_id_in : list[str] | None
+        AUTH-B1: when supplied, restrict results to IOCs whose parent
+        investigation_id is in this list. Used by the API layer to enforce
+        per-tenant scoping; an empty list yields no rows.
 
     Returns
     -------
@@ -169,6 +187,12 @@ async def list_iocs(
     if investigation_id:
         query = query.where(IOCRow.investigation_id == investigation_id)
         count_query = count_query.where(IOCRow.investigation_id == investigation_id)
+
+    if investigation_id_in is not None:
+        if not investigation_id_in:
+            return [], 0
+        query = query.where(IOCRow.investigation_id.in_(investigation_id_in))
+        count_query = count_query.where(IOCRow.investigation_id.in_(investigation_id_in))
 
     if ioc_type:
         query = query.where(IOCRow.type == ioc_type)
@@ -209,11 +233,19 @@ async def search_cross_investigation(
     confidence_min: float | None = None,
     page: int = 1,
     page_size: int = 50,
+    investigation_id_in: list[str] | None = None,
 ) -> tuple[list[IOCRow], int]:
     """Search IOCs across all investigations.
 
     This enables analysts to find if an IOC has appeared in other cases,
     supporting correlation and pattern detection.
+
+    Parameters
+    ----------
+    investigation_id_in : list[str] | None
+        AUTH-B1: when supplied, restrict results to IOCs whose parent
+        investigation_id is in this list. Used by the API layer to enforce
+        per-tenant scoping; an empty list yields no rows.
 
     Returns
     -------
@@ -222,6 +254,12 @@ async def search_cross_investigation(
     """
     query = select(IOCRow).order_by(IOCRow.first_seen.desc().nullslast())
     count_query = select(func.count(IOCRow.id))
+
+    if investigation_id_in is not None:
+        if not investigation_id_in:
+            return [], 0
+        query = query.where(IOCRow.investigation_id.in_(investigation_id_in))
+        count_query = count_query.where(IOCRow.investigation_id.in_(investigation_id_in))
 
     if value:
         # Partial match search
