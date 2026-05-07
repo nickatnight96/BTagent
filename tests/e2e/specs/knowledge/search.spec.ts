@@ -10,7 +10,7 @@ import { KnowledgePage } from "../../pages/knowledge-page";
 import { seedKnowledgeDoc } from "../../fixtures/seed-helpers";
 
 test.describe("Knowledge search", () => {
-  test("renders input, submit, and clear controls", async ({
+  test("renders input + submit; clear surfaces once a query is typed", async ({
     analystPage,
   }) => {
     const knowledge = new KnowledgePage(analystPage);
@@ -18,6 +18,11 @@ test.describe("Knowledge search", () => {
     await expect(knowledge.search.root).toBeVisible();
     await expect(knowledge.search.input).toBeVisible();
     await expect(knowledge.search.submitButton).toBeVisible();
+    // The clear (X) button is conditionally rendered — only shown once
+    // the user has typed something — so we don't assert visibility on
+    // page load. Instead, type a character and verify it appears.
+    await expect(knowledge.search.clearButton).toBeHidden();
+    await knowledge.search.input.fill("test");
     await expect(knowledge.search.clearButton).toBeVisible();
   });
 
