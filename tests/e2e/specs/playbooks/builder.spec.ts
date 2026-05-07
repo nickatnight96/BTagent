@@ -22,11 +22,6 @@ steps:
     tool: noop
 `;
 
-const INVALID_YAML = `name: missing-steps
-trigger:
-  type: manual
-`;
-
 interface SeededPlaybook {
   id: string;
   name: string;
@@ -176,32 +171,36 @@ test.describe("Playbook builder", () => {
     await expect(builder.mobileBackButton).toBeVisible();
   });
 
-  // TODO(#51 Group F follow-up): the YAML editor wrapper is a CodeMirror-
-  // / Monaco-style controlled textarea; ``yaml.editor.fill(...)`` does
-  // not propagate to the editor's internal state without a key-event
-  // pump that doesn't exist yet. Until the YAML editor exposes a
-  // ``playbook-yaml-editor-textarea`` testid for the actual textarea
-  // node (rather than the wrapper), this test can't drive it
-  // deterministically.
-  test.skip("invalid YAML pasted into the editor surfaces a validation error", async ({
+  // PlaybookYAMLEditor is a read-only YAML PREVIEW (a syntax-highlighted
+  // ``<pre>`` block generated FROM the canvas via ``nodesToYAML``) — not an
+  // editor. There is no textarea / input to drive. The original test name
+  // ("invalid YAML pasted into the editor") was a misread of the surface.
+  //
+  // The actual YAML-input path on this surface is the import-yaml button,
+  // which spawns a ``<input type="file">`` and reads a ``.yaml`` /
+  // ``.yml`` file. Driving that requires ``setInputFiles`` on a
+  // dynamically-created element — out of scope for this small test;
+  // tracked in a future "YAML file-import e2e" follow-up if desired.
+  //
+  // What we CAN test cheaply on this surface, and what the original
+  // assertion actually exercised, is "the validate button does not
+  // crash the builder when no canvas state has been authored". Keep
+  // that assertion live.
+  test("validate button does not crash an empty builder", async ({
     seniorPage,
   }) => {
     const builder = new PlaybookBuilderPage(seniorPage);
     await builder.gotoNew();
+    await expect(builder.validateButton).toBeVisible();
+    await builder.validateButton.click();
+    // The validator may surface a warning banner (empty playbook is
+    // arguably a validation error) or no banner at all — either is
+    // acceptable; the contract is "the builder stays mounted and
+    // responsive".
+    await expect(builder.root).toBeVisible();
+    // The YAML toggle should still work after a validate cycle.
     await builder.yamlToggle.click();
     const yaml = new PlaybookYamlEditor(seniorPage);
     await expect(yaml.editor).toBeVisible();
-    // Replace the editor contents with the invalid YAML — the toolbar
-    // validate button should still respond gracefully.
-    await yaml.editor.click();
-    await yaml.editor.fill(INVALID_YAML);
-    // Toggle back to the canvas to surface diagram-side validation.
-    await builder.yamlToggle.click();
-    await expect(builder.root).toBeVisible();
-    await builder.validateButton.click();
-    // The error-dismiss button is mounted alongside the error banner.
-    // Allow either presence (validation tripped) or absence (the
-    // backend lenient-parses the doc) — both keep the builder mounted.
-    await expect(builder.root).toBeVisible();
   });
 });
