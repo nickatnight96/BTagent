@@ -3,11 +3,13 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Diamond } from "lucide-react";
 import type { DecisionNodeData } from "@/types/playbook";
 
-function DecisionNodeComponent({ data, selected }: NodeProps) {
+function DecisionNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as DecisionNodeData;
 
   return (
     <div
+      data-testid={`playbook-builder-node-${id}`}
+      data-node-type="decision"
       className={`
         relative min-w-[220px] rounded-lg border-l-4 border-amber-500
         bg-slate-800 shadow-lg transition-all duration-150
