@@ -3,9 +3,16 @@
  *
  * Sprint F scope. Drives the MitreMatrixPage POM end-to-end against
  * the seeded ATT&CK data the backend ships in test mode.
+ *
+ * Timeouts: the matrix renders 14 tactic columns × N (~190+) techniques
+ * on first load and the underlying ``GET /api/v1/mitre/techniques``
+ * fetch is uncached. The default 60 s test timeout is fine, but the
+ * per-locator awaits have to allow for the worst-case CI cold-start.
  */
 import { test, expect } from "../../fixtures/auth";
 import { MitreMatrixPage } from "../../pages/mitre-page";
+
+const MATRIX_RENDER_TIMEOUT_MS = 30_000;
 
 test.describe("MITRE matrix", () => {
   test("matrix grid renders for the analyst persona", async ({
@@ -13,7 +20,9 @@ test.describe("MITRE matrix", () => {
   }) => {
     const matrix = new MitreMatrixPage(analystPage);
     await matrix.goto();
-    await expect(matrix.grid).toBeVisible({ timeout: 15_000 });
+    await expect(matrix.grid).toBeVisible({
+      timeout: MATRIX_RENDER_TIMEOUT_MS,
+    });
   });
 
   test("loading indicator is shown during the initial fetch then resolves", async ({
@@ -28,8 +37,12 @@ test.describe("MITRE matrix", () => {
     await analystPage.goto("/mitre");
     // We may catch the loading spinner — but it's racy. The acceptance
     // is "the grid eventually renders".
-    await expect(matrix.root).toBeVisible({ timeout: 15_000 });
-    await expect(matrix.grid).toBeVisible({ timeout: 15_000 });
+    await expect(matrix.root).toBeVisible({
+      timeout: MATRIX_RENDER_TIMEOUT_MS,
+    });
+    await expect(matrix.grid).toBeVisible({
+      timeout: MATRIX_RENDER_TIMEOUT_MS,
+    });
   });
 
   test("search input narrows visible techniques", async ({ analystPage }) => {
@@ -107,7 +120,9 @@ test.describe("MITRE matrix", () => {
     await analystPage.goto("/mitre");
     // Either we see the error state or the page still loads with empty
     // — both behaviours are acceptable; the matrix shouldn't crash.
-    await expect(matrix.root).toBeVisible({ timeout: 15_000 });
+    await expect(matrix.root).toBeVisible({
+      timeout: MATRIX_RENDER_TIMEOUT_MS,
+    });
     await expect(matrix.error.or(matrix.empty).or(matrix.grid)).toBeVisible({
       timeout: 10_000,
     });
