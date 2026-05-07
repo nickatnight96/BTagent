@@ -139,8 +139,8 @@ export default defineConfig({
           // Backend assumed up via ``make dev``; this is a noop probe.
           // If you want Playwright to start the backend too, replace
           // with the full uvicorn invocation.
-          command: `node -e "require('http').get('${API_URL}/api/v1/health', r => r.statusCode === 200 ? process.exit(0) : process.exit(1)).on('error', () => process.exit(1))"`,
-          url: `${API_URL}/api/v1/health`,
+          command: `node -e "require('http').get('${API_URL}/health', r => r.statusCode === 200 ? process.exit(0) : process.exit(1)).on('error', () => process.exit(1))"`,
+          url: `${API_URL}/health`,
           reuseExistingServer: true,
           timeout: 5_000,
         },

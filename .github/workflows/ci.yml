@@ -351,7 +351,7 @@ jobs:
             > /tmp/backend.log 2>&1 &
           # Wait for health, fail fast if it never comes up.
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:8000/api/v1/health > /dev/null; then
+            if curl -sf http://localhost:8000/health > /dev/null; then
               echo "Backend up after ${i}s"
               exit 0
             fi

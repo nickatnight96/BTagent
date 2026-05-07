@@ -255,7 +255,9 @@ export class BTAgentApiClient {
 
   async health(): Promise<boolean> {
     try {
-      const res = await this.ctx.get("/api/v1/health");
+      // Health is mounted at the root, not under /api/v1 — see backend
+      // ``api/v1/router.py:28`` (``health_router_root = health_router``).
+      const res = await this.ctx.get("/health");
       return res.ok();
     } catch {
       return false;
