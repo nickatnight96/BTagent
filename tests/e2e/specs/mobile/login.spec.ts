@@ -1,15 +1,22 @@
 /**
- * @mobile — login + dashboard on the Pixel 7 viewport.
+ * @mobile — login + dashboard on a Pixel-7-sized viewport.
  *
- * The mobile-chrome project's ``grep`` filter picks up these tests
- * (``make e2e-mobile``). The frontend's ``hidden sm:inline`` and
- * ``hidden md:flex`` classes mean a lot of UI hides on narrow widths;
- * tests here pin the parts that *must* still work — login,
- * navigation toggle, investigation list, opening one investigation.
+ * These tests are tagged ``@mobile`` so the ``mobile-chrome``
+ * project (``make e2e-mobile``) picks them up. The default
+ * ``chromium`` project does NOT filter by tag, so it would also
+ * pick these specs up at the desktop 1280×720 viewport — the
+ * ``header-menu-toggle`` is ``md:hidden`` and the test would fail
+ * because the toggle is intentionally not rendered above 768 px.
+ *
+ * Fix: ``test.use({ viewport })`` forces a 412×915 viewport
+ * regardless of which project runs the spec, so the
+ * ``md:hidden`` boundary is reliably crossed.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect, devices } from "@playwright/test";
 import { LoginPage } from "../../pages/login-page";
 import { TEST_CREDENTIALS } from "../../fixtures/api-client";
+
+test.use({ viewport: devices["Pixel 7"]?.viewport ?? { width: 412, height: 915 } });
 
 test("login form fits the mobile viewport @mobile", async ({ page }) => {
   const login = new LoginPage(page);
@@ -50,8 +57,7 @@ test("mobile menu toggle is visible at narrow widths @mobile", async ({
     TEST_CREDENTIALS.analyst.password,
   );
   // Header's mobile menu button is ``md:hidden``, so it shows up on
-  // sub-768px viewports (Pixel 7 = 412 px). The Sprint A
-  // instrumentation gave it ``aria-label="Toggle navigation menu"``
-  // and a stable ``header-menu-toggle`` testid.
+  // sub-768 px viewports. The ``test.use`` above forces a 412 px
+  // viewport so this assertion is reliable in every project.
   await expect(page.getByTestId("header-menu-toggle")).toBeVisible();
 });
