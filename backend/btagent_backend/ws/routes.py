@@ -163,13 +163,17 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
 
         # Wave-2 Medium #15: hard cap on inbound frame size. Anything past the
         # cap is treated as a protocol violation — close with 1009 ("message
-        # too big") and stop reading.
+        # too big") and stop reading. Raise WebSocketDisconnect *after* the
+        # close so the route's outer ``except WebSocketDisconnect`` short-
+        # circuits ``hub.disconnect``'s fallback ``ws.close()`` (no code),
+        # which would otherwise overwrite the 1009 with a default 1000 close
+        # before the client read drained the close frame.
         if len(raw.encode("utf-8")) > MAX_WS_MESSAGE_BYTES:
             try:
                 await client.ws.close(code=1009, reason="message too big")
             except Exception:
                 pass
-            return
+            raise WebSocketDisconnect(code=1009, reason="message too big")
 
         try:
             msg = ClientMessage.model_validate_json(raw)
