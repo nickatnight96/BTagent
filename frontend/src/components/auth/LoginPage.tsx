@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Shield, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/Button";
@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, isLoading, error, clearError } = useAuthStore();
 
   const [username, setUsername] = useState("");
@@ -26,10 +27,17 @@ export function LoginPage() {
 
       const success = await login(username.trim(), password);
       if (success) {
-        navigate("/", { replace: true });
+        // Honour the ``?redirect=`` query param set by the
+        // ProtectedRoute when an anonymous request was bounced.
+        // Restrict to same-origin paths to avoid open-redirect.
+        const next = searchParams.get("redirect");
+        const target = next && next.startsWith("/") && !next.startsWith("//")
+          ? next
+          : "/";
+        navigate(target, { replace: true });
       }
     },
-    [username, password, login, navigate],
+    [username, password, login, navigate, searchParams],
   );
 
   const handleKeyDown = useCallback(
