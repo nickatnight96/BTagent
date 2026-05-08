@@ -73,11 +73,15 @@ export function NewInvestigationModal({
       setError(null);
 
       try {
+        // Backend expects ``tlp_level: lowercase`` (matching the
+        // shared ``TLP`` enum in ``btagent_shared.types.config``); the
+        // frontend ``TLP`` enum stores uppercase strings for display
+        // in the form, so coerce to lowercase before posting.
         const investigation = await createInvestigation({
           title: title.trim(),
           description: description.trim(),
           severity,
-          tlp,
+          tlp_level: (tlp as string).toLowerCase() as TLP,
           template: template || undefined,
         });
 

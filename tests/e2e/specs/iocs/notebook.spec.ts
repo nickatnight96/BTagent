@@ -90,7 +90,7 @@ test.describe("IOC notebook list", () => {
       iocs: [
         { type: "ip", value: `192.0.2.${(stamp % 240) + 1}` },
         { type: "domain", value: `type-filter-${stamp}.example.invalid` },
-        { type: "hash", value: `${stamp.toString(16).padStart(32, "0")}` },
+        { type: "hash_md5", value: `${stamp.toString(16).padStart(32, "0")}` },
       ],
     });
     const ipIoc = iocs[0];

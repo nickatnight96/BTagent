@@ -123,6 +123,8 @@ export function KnowledgeSearch() {
           data-testid="knowledge-search-filters"
         >
           <button
+            role="tab"
+            aria-selected={sourceFilter === null}
             onClick={() => setSourceFilter(null)}
             className={clsx(
               "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
@@ -139,6 +141,8 @@ export function KnowledgeSearch() {
             return (
               <button
                 key={type}
+                role="tab"
+                aria-selected={sourceFilter === type}
                 onClick={() => setSourceFilter(type)}
                 className={clsx(
                   "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",

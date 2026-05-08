@@ -31,6 +31,11 @@ class IngestRequest(BaseModel):
     content: str = Field(max_length=1_000_000)  # 1MB limit
     source_type: str = Field(max_length=50)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Optional TLP-style classification of the source document. The
+    # knowledge service refuses TLP:RED ingest because the RAG store is
+    # shared across investigations and a lower-clearance retrieval must
+    # not be able to surface restricted content.
+    classification: str | None = Field(default=None, max_length=20)
 
 
 class QueryRequestBody(BaseModel):
@@ -127,12 +132,25 @@ async def ingest_document(
             content=body.content,
             source_type=body.source_type,
             metadata=body.metadata,
+            classification=body.classification,
         )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         )
+    except Exception as exc:
+        # ``btagent_shared.security.TLPViolation`` (raised from
+        # ``assert_tlp_allows_egress`` on TLP:RED ingest) propagates
+        # uncaught otherwise. Surface it as 403 so the API contract
+        # asserted in tests/e2e/specs/knowledge/tlp-block.spec.ts holds.
+        from btagent_shared.security import TLPViolation
+        if isinstance(exc, TLPViolation):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=str(exc),
+            )
+        raise
 
     return {
         "id": doc.id,

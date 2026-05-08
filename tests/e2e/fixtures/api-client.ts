@@ -31,7 +31,15 @@ export interface SeededInvestigation {
 export interface SeededIOC {
   id: string;
   investigation_id: string;
-  type: "ip" | "domain" | "url" | "hash" | "email" | "cve";
+  type:
+    | "ip"
+    | "domain"
+    | "url"
+    | "hash_md5"
+    | "hash_sha1"
+    | "hash_sha256"
+    | "email"
+    | "cve";
   value: string;
   confidence?: number;
   tlp_level: "white" | "green" | "amber" | "red";

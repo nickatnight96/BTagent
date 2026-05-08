@@ -71,10 +71,13 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         page_size: documentsPageSize,
         source_type: params?.source_type ?? sourceFilter ?? undefined,
       });
+      // Defensive fallback to ``[]`` so a malformed response (or
+      // mocked stub) can't crash the page with "Cannot read
+      // properties of undefined (reading 'length')".
       set({
-        documents: response.items,
-        totalDocuments: response.total,
-        documentsPage: response.page,
+        documents: response.items ?? [],
+        totalDocuments: response.total ?? 0,
+        documentsPage: response.page ?? 1,
         isLoading: false,
       });
     } catch (err) {
