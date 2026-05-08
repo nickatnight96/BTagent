@@ -25,7 +25,7 @@ import {
 
 const API_URL = process.env.E2E_API_URL ?? "http://localhost:8000";
 
-test("cross-origin POST with foreign Origin header → rejected", async () => {
+test("cross-origin POST with foreign Origin header → rejected @nginx", async () => {
   // Use a fresh context. Login via cookie, then forge an Origin.
   const cookieClient = await BTAgentApiClient.loginWithCookie(
     TEST_CREDENTIALS.analyst,
