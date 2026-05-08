@@ -213,15 +213,20 @@ export class BTAgentApiClient {
   }
 
   async listIOCs(investigationId: string): Promise<SeededIOC[]> {
-    const res = await this.ctx.get(
-      `/api/v1/investigations/${investigationId}/iocs`,
-    );
+    // The list endpoint lives at ``/api/v1/iocs?investigation_id=...``;
+    // there is no nested ``/investigations/{id}/iocs`` route. Response
+    // shape is the paginated ``IOCListResponse`` ({ items, total, page,
+    // page_size }) — strip down to the items array for callers.
+    const res = await this.ctx.get(`/api/v1/iocs`, {
+      params: { investigation_id: investigationId, page_size: 200 },
+    });
     if (!res.ok()) {
       throw new Error(
         `List IOCs failed: ${res.status()} ${await res.text()}`,
       );
     }
-    return (await res.json()) as SeededIOC[];
+    const body = (await res.json()) as { items: SeededIOC[] };
+    return body.items;
   }
 
   // ------------------------------------------------------------------
