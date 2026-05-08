@@ -138,11 +138,11 @@ test.describe("XSS — investigation title", () => {
 test.describe("XSS — knowledge documents", () => {
   test("escaped in document content rendering", async ({
     analystPage,
-    analystApi,
+    seniorApi,
   }) => {
     const dispose = trapDialogs(analystPage);
     try {
-      await seedKnowledgeDoc(analystApi, {
+      await seedKnowledgeDoc(seniorApi, {
         title: "XSS content harness",
         content: `Pre-text ${XSS_PAYLOAD} post-text`,
       });
@@ -161,11 +161,11 @@ test.describe("XSS — knowledge documents", () => {
 
   test("escaped in document title rendering", async ({
     analystPage,
-    analystApi,
+    seniorApi,
   }) => {
     const dispose = trapDialogs(analystPage);
     try {
-      await seedKnowledgeDoc(analystApi, {
+      await seedKnowledgeDoc(seniorApi, {
         title: `XSS-title ${XSS_PAYLOAD}`,
         content: "Plain content",
       });
@@ -183,11 +183,11 @@ test.describe("XSS — knowledge documents", () => {
 
   test("escaped in knowledge search results", async ({
     analystPage,
-    analystApi,
+    seniorApi,
   }) => {
     const dispose = trapDialogs(analystPage);
     try {
-      await seedKnowledgeDoc(analystApi, {
+      await seedKnowledgeDoc(seniorApi, {
         title: `XSS-srch ${XSS_PAYLOAD} marker-${Date.now()}`,
         content: "Searchable body with marker XSSMARKER",
       });
