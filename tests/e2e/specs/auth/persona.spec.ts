@@ -39,6 +39,6 @@ test("senior persona lands on dashboard with senior_analyst role badge", async (
 
 test("anonymous fixture is unauthenticated", async ({ anonymousPage }) => {
   await anonymousPage.goto("/");
-  await anonymousPage.waitForURL("**/login");
+  await anonymousPage.waitForURL(/\/login(\?|\#|$)/);
   expect(anonymousPage.url()).toContain("/login");
 });

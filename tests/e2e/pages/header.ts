@@ -26,6 +26,6 @@ export class Header {
 
   async logout(): Promise<void> {
     await this.logoutButton.click();
-    await this.page.waitForURL("**/login", { timeout: 5_000 });
+    await this.page.waitForURL(/\/login(\?|\#|$)/, { timeout: 5_000 });
   }
 }
