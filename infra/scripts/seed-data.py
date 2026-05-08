@@ -13,8 +13,77 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared")
 from sqlalchemy import select
 from btagent_backend.db.engine import async_session_factory
 from btagent_backend.db.models import UserRow, InvestigationRow
+from btagent_backend.db.models_mitre import MitreTacticRow, MitreTechniqueRow
 from btagent_backend.auth.jwt import hash_password
 from btagent_shared.utils.ids import generate_id
+
+
+# Minimal MITRE ATT&CK fixture so the matrix UI has data to render in
+# E2E. The full STIX bundle is ~190+ techniques; the test suite only
+# needs (a) a spread of tactics so the matrix grid columns render,
+# (b) the well-known probe technique ids the technique-detail tests
+# fall back to (T1078 / T1059 / T1566 / T1190 / T1486 / T1003 /
+# T1071 / T1027), and (c) one technique whose name contains
+# "kerberoast" for the search-narrow test in
+# tests/e2e/specs/mitre/matrix.spec.ts:48.
+_SEED_MITRE_TACTICS = [
+    {"id": "TA0001", "name": "Initial Access",   "shortname": "initial-access",       "ordinal": 1},
+    {"id": "TA0002", "name": "Execution",        "shortname": "execution",            "ordinal": 2},
+    {"id": "TA0003", "name": "Persistence",      "shortname": "persistence",          "ordinal": 3},
+    {"id": "TA0004", "name": "Privilege Escalation", "shortname": "privilege-escalation", "ordinal": 4},
+    {"id": "TA0005", "name": "Defense Evasion",  "shortname": "defense-evasion",      "ordinal": 5},
+    {"id": "TA0006", "name": "Credential Access","shortname": "credential-access",    "ordinal": 6},
+    {"id": "TA0007", "name": "Discovery",        "shortname": "discovery",            "ordinal": 7},
+    {"id": "TA0008", "name": "Lateral Movement", "shortname": "lateral-movement",     "ordinal": 8},
+    {"id": "TA0009", "name": "Collection",       "shortname": "collection",           "ordinal": 9},
+    {"id": "TA0010", "name": "Exfiltration",     "shortname": "exfiltration",         "ordinal": 10},
+    {"id": "TA0011", "name": "Command and Control", "shortname": "command-and-control", "ordinal": 11},
+    {"id": "TA0040", "name": "Impact",           "shortname": "impact",               "ordinal": 12},
+    {"id": "TA0042", "name": "Resource Development", "shortname": "resource-development", "ordinal": 13},
+    {"id": "TA0043", "name": "Reconnaissance",   "shortname": "reconnaissance",       "ordinal": 14},
+]
+
+_SEED_MITRE_TECHNIQUES = [
+    # Probe ids surveyed by tests/e2e/specs/mitre/technique-detail.spec.ts.
+    {"id": "T1078", "name": "Valid Accounts",                  "tactic": "initial-access"},
+    {"id": "T1059", "name": "Command and Scripting Interpreter","tactic": "execution"},
+    {"id": "T1566", "name": "Phishing",                        "tactic": "initial-access"},
+    {"id": "T1190", "name": "Exploit Public-Facing Application","tactic": "initial-access"},
+    {"id": "T1486", "name": "Data Encrypted for Impact",       "tactic": "impact"},
+    {"id": "T1003", "name": "OS Credential Dumping",           "tactic": "credential-access"},
+    {"id": "T1071", "name": "Application Layer Protocol",      "tactic": "command-and-control"},
+    {"id": "T1027", "name": "Obfuscated Files or Information", "tactic": "defense-evasion"},
+    # Required for the "kerberoast" search-narrow assertion.
+    {"id": "T1558", "name": "Steal or Forge Kerberos Tickets", "tactic": "credential-access"},
+    {"id": "T1558.003", "name": "Kerberoasting", "tactic": "credential-access", "is_subtechnique": True},
+]
+
+
+async def _seed_mitre_attack(session) -> None:
+    """Idempotent: skip if any MITRE tactic already exists."""
+    existing = await session.execute(select(MitreTacticRow).limit(1))
+    if existing.scalar_one_or_none():
+        return
+    for tactic in _SEED_MITRE_TACTICS:
+        session.add(MitreTacticRow(
+            id=tactic["id"],
+            name=tactic["name"],
+            shortname=tactic["shortname"],
+            ordinal=tactic["ordinal"],
+            description=f"Seeded MITRE ATT&CK tactic: {tactic['name']}.",
+        ))
+    for tech in _SEED_MITRE_TECHNIQUES:
+        session.add(MitreTechniqueRow(
+            id=tech["id"],
+            name=tech["name"],
+            tactic=tech["tactic"],
+            description=f"Seeded MITRE ATT&CK technique: {tech['name']}.",
+            platforms=["Windows", "Linux", "macOS"],
+            data_sources=[],
+            detection="",
+            url=f"https://attack.mitre.org/techniques/{tech['id'].replace('.', '/')}/",
+            is_subtechnique=tech.get("is_subtechnique", False),
+        ))
 
 
 def _generate_seed_password(username: str = "") -> str:
@@ -27,6 +96,13 @@ def _generate_seed_password(username: str = "") -> str:
 
 async def seed():
     async with async_session_factory() as session:
+        # MITRE ATT&CK fixture is independent of user seed and idempotent
+        # on its own check — seed it before the early-return on admin
+        # existence so tests targeting the matrix work even on a DB that
+        # already has users but never ran MITRE seeding.
+        await _seed_mitre_attack(session)
+        await session.commit()
+
         # Check if admin exists
         result = await session.execute(select(UserRow).where(UserRow.username == "admin"))
         if result.scalar_one_or_none():
