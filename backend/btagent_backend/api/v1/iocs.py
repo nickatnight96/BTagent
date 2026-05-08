@@ -513,4 +513,3 @@ async def import_stix(
         "ioc_ids": [r.id for r in rows],
         "investigation_id": body.investigation_id,
     }
-

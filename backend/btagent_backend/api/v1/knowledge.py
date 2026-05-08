@@ -145,6 +145,7 @@ async def ingest_document(
         # uncaught otherwise. Surface it as 403 so the API contract
         # asserted in tests/e2e/specs/knowledge/tlp-block.spec.ts holds.
         from btagent_shared.security import TLPViolation
+
         if isinstance(exc, TLPViolation):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
