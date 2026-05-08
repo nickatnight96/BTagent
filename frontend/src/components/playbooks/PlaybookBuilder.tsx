@@ -611,8 +611,11 @@ export function PlaybookBuilder() {
             )}
           </div>
 
-          {/* Right: Config panel */}
-          {selectedNodeId && <PlaybookConfigPanel />}
+          {/* Right: Config panel — always mounted so the empty-state
+              testid (``playbook-config-empty``) is reachable when no
+              node is selected. The panel itself decides whether to
+              render the populated form or the empty placeholder. */}
+          <PlaybookConfigPanel />
         </div>
       </div>
     </div>

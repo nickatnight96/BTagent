@@ -44,10 +44,11 @@ trigger:
 steps:
   - id: act-1
     type: action
-    tool: siem_query
-    args: { query: "*" }
-    timeout: 30
-    on_failure: continue
+    tool_name: severity_scorer
+    arguments:
+      iocs: []
+    timeout_seconds: 30
+    on_failure: skip
 `;
 
 const DECISION_YAML = `name: e2e-decision

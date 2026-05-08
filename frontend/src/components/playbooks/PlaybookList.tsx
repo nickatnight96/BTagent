@@ -223,6 +223,11 @@ export function PlaybookList() {
           </div>
         )}
 
+        {/* Only mount the grid when we actually have rows to render —
+            otherwise the empty-state and the (zero-row) grid are
+            simultaneously visible and any locator that ORs the two
+            (e.g. ``empty.or(grid)``) hits a strict-mode violation. */}
+        {filteredPlaybooks.length > 0 && (
         <div
           className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3"
           data-testid="playbook-list-grid"
@@ -342,6 +347,7 @@ export function PlaybookList() {
             );
           })}
         </div>
+        )}
       </div>
     </div>
   );
