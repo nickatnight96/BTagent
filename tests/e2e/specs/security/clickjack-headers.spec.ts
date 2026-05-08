@@ -4,10 +4,17 @@
  * Pin the response-header policy so a future framework upgrade or
  * proxy reconfiguration can't silently regress the supply-chain
  * hardening commit.
+ *
+ * Tagged ``@nginx``: these headers (X-Frame-Options, X-Content-Type-
+ * Options, HSTS, CSP) are emitted by nginx in production
+ * (``infra/nginx/nginx.conf``) — ``vite preview`` does not add them
+ * in dev. The default chromium-desktop project's ``grepInvert``
+ * filters @nginx out; run ``--project=nginx`` against the full
+ * Docker stack to engage these.
  */
 import { test, expect } from "../../fixtures/auth";
 
-test("authenticated /  ships X-Frame, nosniff, HSTS, CSP", async ({
+test("authenticated /  ships X-Frame, nosniff, HSTS, CSP @nginx", async ({
   analystApi,
 }) => {
   const res = await analystApi.ctx.get("/");
@@ -31,7 +38,7 @@ test("authenticated /  ships X-Frame, nosniff, HSTS, CSP", async ({
   expect(csp.length).toBeGreaterThan(0);
 });
 
-test("CSP does NOT permit unsafe-inline for script-src", async ({
+test("CSP does NOT permit unsafe-inline for script-src @nginx", async ({
   analystApi,
 }) => {
   const res = await analystApi.ctx.get("/");
@@ -50,7 +57,7 @@ test("CSP does NOT permit unsafe-inline for script-src", async ({
   }
 });
 
-test("CSP includes a frame-ancestors directive", async ({ analystApi }) => {
+test("CSP includes a frame-ancestors directive @nginx", async ({ analystApi }) => {
   const res = await analystApi.ctx.get("/");
   const csp = (res.headers()["content-security-policy"] ?? "").toLowerCase();
   // ``frame-ancestors`` is the modern equivalent of X-Frame-Options

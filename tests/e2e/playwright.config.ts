@@ -94,6 +94,24 @@ export default defineConfig({
             }
           : {}),
       },
+      // ``@nginx``-tagged specs assert on headers / behaviours that
+      // production nginx enforces (CSP, HSTS, X-Frame-Options, rate
+      // limiter X-Forwarded-For) but ``vite preview`` does not. Skip
+      // them in the default chromium-desktop project; they run in
+      // the dedicated ``nginx`` project below when a full Docker
+      // stack is available.
+      grepInvert: /@nginx/,
+      dependencies: ["setup"],
+    },
+    // ``nginx``-fronted run for tests that assert on production-only
+    // headers (CSP, HSTS, X-Frame-Options) and rate-limiter behaviour
+    // that depends on the ``X-Forwarded-For`` header nginx forwards.
+    // Opt in via ``--project=nginx`` after booting the full Docker
+    // stack with the nginx ingress.
+    {
+      name: "nginx",
+      use: { ...devices["Desktop Chrome"] },
+      grep: /@nginx/,
       dependencies: ["setup"],
     },
     // The full multi-browser matrix — Sprint J targets these. Disabled

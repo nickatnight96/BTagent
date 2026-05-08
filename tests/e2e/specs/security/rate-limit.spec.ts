@@ -24,7 +24,7 @@ async function freshClient(): Promise<APIRequestContext> {
   });
 }
 
-test("repeated bad logins → 429 after the threshold", async () => {
+test("repeated bad logins → 429 after the threshold @nginx", async () => {
   const ctx = await freshClient();
   let saw429 = false;
   let saw401AtLeastOnce = false;
@@ -47,7 +47,7 @@ test("repeated bad logins → 429 after the threshold", async () => {
   await ctx.dispose();
 });
 
-test("the throttled response includes a Retry-After header", async () => {
+test("the throttled response includes a Retry-After header @nginx", async () => {
   const ctx = await freshClient();
   let throttled: APIResponse | null = null;
   for (let attempt = 0; attempt < 20; attempt++) {
