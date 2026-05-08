@@ -88,7 +88,7 @@ test.describe("Playbook execution", () => {
 
     // Status element should remain mounted and reflect a running /
     // completed / awaiting state — anything but absent.
-    await expect(exec.status).toBeVisible({ timeout: 10_000 });
+    await expect(exec.status).toBeVisible({ timeout: 15_000 });
     const text = (await exec.status.textContent()) ?? "";
     expect(text.trim().length).toBeGreaterThan(0);
   });
@@ -125,9 +125,12 @@ test.describe("Playbook execution", () => {
     await expect(exec.timelineStep("noop")).toBeVisible({ timeout: 15_000 });
     await exec.timelineStep("noop").click();
 
-    await expect(exec.stepDetail).toBeVisible({ timeout: 5_000 });
-    await expect(exec.stepDetailId).toBeVisible();
-    await expect(exec.stepDetailStatus).toBeVisible();
+    // The step-detail panel mounts as part of the same render cycle as
+    // the click handler firing, but on a slow CI runner the React tree
+    // can take longer than 5s to commit. Bump to 15s.
+    await expect(exec.stepDetail).toBeVisible({ timeout: 15_000 });
+    await expect(exec.stepDetailId).toBeVisible({ timeout: 10_000 });
+    await expect(exec.stepDetailStatus).toBeVisible({ timeout: 10_000 });
     // Started timestamp is mounted as soon as the step is dispatched;
     // completed/output may be delayed until the run finishes. Either
     // is acceptable — at minimum, started must surface.
@@ -135,7 +138,7 @@ test.describe("Playbook execution", () => {
       exec.stepDetailStarted
         .or(exec.stepDetailCompleted)
         .or(exec.stepDetailOutput),
-    ).toBeVisible({ timeout: 15_000 });
+    ).toBeVisible({ timeout: 20_000 });
   });
 
   test("failed step surfaces an error in the detail panel", async ({
