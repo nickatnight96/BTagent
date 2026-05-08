@@ -28,10 +28,12 @@ test.describe("Knowledge search", () => {
 
   test("submitting a query renders the results panel", async ({
     analystPage,
-    analystApi,
+    seniorApi,
   }) => {
+    // ``knowledge:ingest`` requires SENIOR_ANALYST (rbac.py:54);
+    // analyst can browse / query but cannot ingest.
     const stamp = Date.now();
-    await seedKnowledgeDoc(analystApi, {
+    await seedKnowledgeDoc(seniorApi, {
       title: `[E2E] Lateral Movement Runbook ${stamp}`,
       content:
         "Lateral movement detection: pivot to host telemetry on every Kerberos golden-ticket alert.",

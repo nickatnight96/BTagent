@@ -68,9 +68,10 @@ test.describe("SQL-i — search inputs do not 5xx", () => {
 
   test("Knowledge search accepts DROP-TABLE — graceful response", async ({
     analystPage,
-    analystApi,
+    seniorApi,
   }) => {
-    await seedKnowledgeDoc(analystApi);
+    // ``knowledge:ingest`` requires SENIOR_ANALYST (rbac.py:54).
+    await seedKnowledgeDoc(seniorApi);
     const knowledge = new KnowledgePage(analystPage);
     await knowledge.goto();
     await knowledge.search.submit(DROP_TABLE);
@@ -84,10 +85,12 @@ test.describe("SQL-i — search inputs do not 5xx", () => {
 
   test("post-injection: seeded data is still readable", async ({
     analystApi,
+    seniorApi,
   }) => {
-    // Seed before anyone has a chance to "drop" anything.
+    // Seed before anyone has a chance to "drop" anything. Knowledge
+    // ingest requires senior; investigations / IOCs are analyst-OK.
     const seeded = await seedInvestigationWithIOCs(analystApi);
-    await seedKnowledgeDoc(analystApi);
+    await seedKnowledgeDoc(seniorApi);
 
     // Trigger the dangerous strings via direct API search params.
     await analystApi.ctx

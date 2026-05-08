@@ -8,12 +8,16 @@ import { test, expect } from "../../fixtures/auth";
 import { KnowledgePage } from "../../pages/knowledge-page";
 import { seedKnowledgeDoc } from "../../fixtures/seed-helpers";
 
+// ``knowledge:ingest`` requires SENIOR_ANALYST (see backend/.../auth/
+// rbac.py:54). The analyst persona has ``knowledge:query`` (read /
+// browse) but cannot ingest. So tests seed via ``seniorApi`` and
+// browse / delete via the analyst page where appropriate.
 test.describe("Knowledge document list", () => {
   test("loads with seeded documents visible", async ({
     analystPage,
-    analystApi,
+    seniorApi,
   }) => {
-    const doc = await seedKnowledgeDoc(analystApi, {
+    const doc = await seedKnowledgeDoc(seniorApi, {
       title: `[E2E] Visible Doc ${Date.now()}`,
     });
     const knowledge = new KnowledgePage(analystPage);
@@ -22,9 +26,9 @@ test.describe("Knowledge document list", () => {
     await expect(knowledge.list.doc(doc.id)).toBeVisible({ timeout: 10_000 });
   });
 
-  test("each card renders its title", async ({ analystPage, analystApi }) => {
+  test("each card renders its title", async ({ analystPage, seniorApi }) => {
     const title = `[E2E] Title Render ${Date.now()}`;
-    const doc = await seedKnowledgeDoc(analystApi, { title });
+    const doc = await seedKnowledgeDoc(seniorApi, { title });
     const knowledge = new KnowledgePage(analystPage);
     await knowledge.goto();
     await expect(knowledge.list.doc(doc.id)).toContainText(title, {
@@ -33,18 +37,21 @@ test.describe("Knowledge document list", () => {
   });
 
   test("delete button removes a doc end-to-end", async ({
-    analystPage,
-    analystApi,
+    adminPage,
+    seniorApi,
+    adminApi,
   }) => {
-    const doc = await seedKnowledgeDoc(analystApi, {
+    // ``knowledge:delete`` requires ADMIN — drive the delete from the
+    // adminPage rather than the analyst.
+    const doc = await seedKnowledgeDoc(seniorApi, {
       title: `[E2E] To Delete ${Date.now()}`,
     });
-    const knowledge = new KnowledgePage(analystPage);
+    const knowledge = new KnowledgePage(adminPage);
     await knowledge.goto();
     await expect(knowledge.list.doc(doc.id)).toBeVisible({ timeout: 10_000 });
 
     // Some browsers show a confirm dialog — accept it pre-emptively.
-    analystPage.once("dialog", (dialog) => dialog.accept());
+    adminPage.once("dialog", (dialog) => dialog.accept());
     await knowledge.list.deleteButton(doc.id).click();
 
     // UI removes the card.
@@ -53,7 +60,7 @@ test.describe("Knowledge document list", () => {
     // Server-side: the doc is gone from the listing endpoint too. The
     // listing endpoint is the same one the UI uses — cross-check it
     // directly to avoid a UI-only assertion.
-    const res = await analystApi.ctx.get(`/api/v1/knowledge/${doc.id}`);
+    const res = await adminApi.ctx.get(`/api/v1/knowledge/${doc.id}`);
     expect([403, 404]).toContain(res.status());
   });
 

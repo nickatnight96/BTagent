@@ -4,14 +4,20 @@
  * The audit-cleanup work wired TLP:RED rejection into the knowledge
  * ingest endpoint. This guards that contract: TLP:RED ingest must
  * return a 4xx and the doc must NOT land in the listing.
+ *
+ * Persona: ``knowledge:ingest`` requires SENIOR_ANALYST (rbac.py:54).
+ * If we drove these via the analyst persona, the 403 would come from
+ * RBAC before TLP is even consulted — masking the contract under
+ * test. Use ``seniorApi`` so the only reason for rejection is the
+ * TLP gate.
  */
 import { test, expect } from "../../fixtures/auth";
 
 test.describe("Knowledge TLP:RED ingest is blocked", () => {
   test("ingest with classification=red returns 4xx", async ({
-    analystApi,
+    seniorApi,
   }) => {
-    const res = await analystApi.ctx.post("/api/v1/knowledge/ingest", {
+    const res = await seniorApi.ctx.post("/api/v1/knowledge/ingest", {
       data: {
         title: `[E2E] TLP-RED Attempt ${Date.now()}`,
         content: "Classified runbook content — must not be ingested.",
@@ -25,12 +31,12 @@ test.describe("Knowledge TLP:RED ingest is blocked", () => {
   });
 
   test("rejected TLP:RED doc is absent from the list endpoint", async ({
-    analystApi,
+    seniorApi,
   }) => {
     const stamp = Date.now();
     const title = `[E2E] TLP-RED Absent ${stamp}`;
-    // Attempt the ingest (expected to fail).
-    const ingestRes = await analystApi.ctx.post(
+    // Attempt the ingest (expected to fail at the TLP gate).
+    const ingestRes = await seniorApi.ctx.post(
       "/api/v1/knowledge/ingest",
       {
         data: {
@@ -45,7 +51,7 @@ test.describe("Knowledge TLP:RED ingest is blocked", () => {
 
     // Now confirm the doc never made it. Use the listing endpoint and
     // assert nothing matches the unique title.
-    const listRes = await analystApi.ctx.get("/api/v1/knowledge/documents");
+    const listRes = await seniorApi.ctx.get("/api/v1/knowledge/documents");
     if (listRes.ok()) {
       const body = (await listRes.json()) as
         | Array<{ title: string }>
@@ -65,11 +71,11 @@ test.describe("Knowledge TLP:RED ingest is blocked", () => {
   });
 
   test("TLP:GREEN ingest still succeeds (positive control)", async ({
-    analystApi,
+    seniorApi,
   }) => {
     // A control case so we know TLP:RED rejection is specifically the
     // classification, not a broken endpoint.
-    const res = await analystApi.ctx.post("/api/v1/knowledge/ingest", {
+    const res = await seniorApi.ctx.post("/api/v1/knowledge/ingest", {
       data: {
         title: `[E2E] TLP-GREEN Control ${Date.now()}`,
         content: "Public-safe runbook content.",
