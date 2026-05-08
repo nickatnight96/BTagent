@@ -225,14 +225,21 @@ class KnowledgeService:
         # --- Vector search ---
         vector_results: list[tuple[str, float]] = []
         if query_embedding is not None:
+            # Use ``CAST(... AS vector)`` instead of ``:embedding::vector``.
+            # SQLAlchemy's ``text()`` with the postgres ``::`` cast
+            # operator next to a named bind (``:embedding::vector``) is
+            # parsed as bind ``:embedding`` followed by another bind
+            # ``:vector`` on some asyncpg paths, which surfaces as
+            # ``PostgresSyntaxError: syntax error at or near ":"`` and a
+            # 500 on the search endpoint.
             vector_sql = text(
                 """
-                SELECT kc.id, 1 - (kc.embedding <=> :embedding::vector) AS similarity
+                SELECT kc.id, 1 - (kc.embedding <=> CAST(:embedding AS vector)) AS similarity
                 FROM knowledge_chunks kc
                 JOIN knowledge_documents kd ON kd.id = kc.document_id
                 WHERE kc.embedding IS NOT NULL
                 {source_filter}
-                ORDER BY kc.embedding <=> :embedding::vector
+                ORDER BY kc.embedding <=> CAST(:embedding AS vector)
                 LIMIT :limit
             """.format(
                     source_filter=(

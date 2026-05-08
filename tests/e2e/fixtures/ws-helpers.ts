@@ -17,7 +17,17 @@
 import { type APIRequestContext, type Browser } from "@playwright/test";
 
 const API_HOST = process.env.E2E_API_URL ?? "http://localhost:8000";
-const WS_HOST = API_HOST.replace(/^http/, "ws");
+// The browser context's auth cookies are scoped to the SPA origin
+// (E2E_BASE_URL — vite preview), not the bare API origin (8000).
+// Going directly to ``ws://127.0.0.1:8000/ws/...`` would mean no
+// cookies are sent and the server closes with 4001 ("Missing auth
+// token"). Route through the SPA origin so the SPA's ``/ws`` proxy
+// forwards the request with the cookies the browser already holds.
+const BASE_HOST = process.env.E2E_BASE_URL ?? "http://localhost:5173";
+const WS_HOST = BASE_HOST.replace(/^http/, "ws");
+// Keep the original API host available to spec helpers that need to
+// hit the REST surface directly (e.g. seeding).
+void API_HOST;
 
 export interface WsEvent {
   /** Engine-style event type ("investigation.updated", "agent.message", "hitl.pause", etc.) */
