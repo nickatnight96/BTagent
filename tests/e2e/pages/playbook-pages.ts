@@ -230,7 +230,14 @@ export class PlaybookExecutionPage {
 
   async goto(playbookId: string): Promise<void> {
     await this.page.goto(`/playbooks/${playbookId}/execute`);
-    await this.root.waitFor({ state: "visible", timeout: 10_000 });
+    await this.root.waitFor({ state: "visible", timeout: 15_000 });
+    // The execution view embeds a ReactFlow canvas; the start-button
+    // and the timeline panel both depend on the canvas finishing its
+    // first hydration tick. Without this wait, ``startButton.click()``
+    // can race the canvas mount and the click never registers — which
+    // surfaces downstream as a missing timeline / step-detail
+    // assertion. 15s allows for the worst-case CI cold-start.
+    await this.canvas.waitFor({ state: "visible", timeout: 15_000 });
   }
 
   /** Per-timeline-step button. */
