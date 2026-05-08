@@ -135,6 +135,7 @@ async def list_iocs(
     investigation_id: str | None = Query(None),
     confidence_min: float | None = Query(None, ge=0.0, le=1.0),
     enriched: bool | None = Query(None),
+    search: str | None = Query(None, description="Substring filter on IOC value (ilike)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -168,6 +169,7 @@ async def list_iocs(
         ioc_type=ioc_type,
         confidence_min=confidence_min,
         enriched=enriched,
+        search=search,
         page=page,
         page_size=page_size,
         investigation_id_in=accessible_investigation_ids,
@@ -227,6 +229,62 @@ async def search_iocs(
     )
 
 
+@router.get("/export", response_model=None)
+async def export_stix(
+    investigation_id: str = Query(...),
+    tlp_level: str = Query("green"),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Export IOCs as a STIX 2.1 JSON bundle.
+
+    Respects TLP enforcement: TLP:RED IOCs are never included in exports.
+    """
+    user.require_permission("ioc:export")
+
+    if tlp_level == "red":
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot export TLP:RED IOCs. Downgrade TLP level before export.",
+        )
+
+    # AUTH-B1: scope check on the parent investigation before exporting.
+    inv = await _load_investigation_or_404(db, investigation_id)
+    assert_can_access_investigation(user, inv)
+
+    rows, _ = await ioc_service.list_iocs(
+        db,
+        investigation_id=investigation_id,
+        page=1,
+        page_size=10000,  # Export all
+    )
+
+    # Filter out TLP:RED IOCs
+    ioc_dicts = [
+        {
+            "id": r.id,
+            "type": r.type,
+            "value": r.value,
+            "confidence": r.confidence,
+            "context": r.context,
+            "tlp_level": r.tlp_level,
+            "enrichment": r.enrichment,
+            "first_seen": r.first_seen.isoformat() if r.first_seen else None,
+        }
+        for r in rows
+        if r.tlp_level != "red"
+    ]
+
+    bundle = stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=tlp_level)
+
+    return bundle
+
+
+# NOTE: ``/{ioc_id}`` MUST stay below the static-path GET routes
+# (``/search``, ``/export``) — FastAPI matches in declaration order
+# and a path-param route here would shadow them, so a request to
+# ``GET /iocs/export`` would fall into ``get_ioc(ioc_id="export")``
+# and 404 with "IOC not found".
 @router.get("/{ioc_id}", response_model=IOCResponse)
 async def get_ioc(
     ioc_id: str,
@@ -456,53 +514,3 @@ async def import_stix(
         "investigation_id": body.investigation_id,
     }
 
-
-@router.get("/export", response_model=None)
-async def export_stix(
-    investigation_id: str = Query(...),
-    tlp_level: str = Query("green"),
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-):
-    """Export IOCs as a STIX 2.1 JSON bundle.
-
-    Respects TLP enforcement: TLP:RED IOCs are never included in exports.
-    """
-    user.require_permission("ioc:export")
-
-    if tlp_level == "red":
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot export TLP:RED IOCs. Downgrade TLP level before export.",
-        )
-
-    # AUTH-B1: scope check on the parent investigation before exporting.
-    inv = await _load_investigation_or_404(db, investigation_id)
-    assert_can_access_investigation(user, inv)
-
-    rows, _ = await ioc_service.list_iocs(
-        db,
-        investigation_id=investigation_id,
-        page=1,
-        page_size=10000,  # Export all
-    )
-
-    # Filter out TLP:RED IOCs
-    ioc_dicts = [
-        {
-            "id": r.id,
-            "type": r.type,
-            "value": r.value,
-            "confidence": r.confidence,
-            "context": r.context,
-            "tlp_level": r.tlp_level,
-            "enrichment": r.enrichment,
-            "first_seen": r.first_seen.isoformat() if r.first_seen else None,
-        }
-        for r in rows
-        if r.tlp_level != "red"
-    ]
-
-    bundle = stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=tlp_level)
-
-    return bundle

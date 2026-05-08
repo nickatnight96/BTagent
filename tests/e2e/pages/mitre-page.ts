@@ -95,6 +95,12 @@ export class MitreMatrixPage {
   async goto(): Promise<void> {
     await this.page.goto("/mitre");
     await this.root.waitFor({ state: "visible", timeout: 10_000 });
+    // Also wait for the grid (or empty / error) to settle so callers
+    // probing technique cells aren't racing the initial fetch.
+    await this.grid
+      .or(this.empty)
+      .or(this.error)
+      .waitFor({ state: "visible", timeout: 30_000 });
   }
 
   /** Tactic-column locator by slug (e.g. ``initial-access``). */

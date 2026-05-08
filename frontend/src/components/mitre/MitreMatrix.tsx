@@ -135,10 +135,19 @@ export function MitreMatrix() {
       matrix[tactic] = [];
     }
 
-    // Group techniques by tactic
+    // Group techniques by tactic. The backend returns ``tactic`` as a
+    // single shortname string (e.g. "initial-access"); the optional
+    // ``tactic_names`` array is legacy and may be missing on every row
+    // in current builds — falling back to the singular field is what
+    // makes the matrix render cells.
     const techByTactic = new Map<string, typeof techniques>();
     for (const tech of techniques) {
-      for (const tacticName of (tech.tactic_names ?? [])) {
+      const names = tech.tactic_names && tech.tactic_names.length > 0
+        ? tech.tactic_names
+        : tech.tactic
+          ? [tech.tactic]
+          : [];
+      for (const tacticName of names) {
         const key = tacticName.toLowerCase().replace(/\s+/g, "-");
         if (!techByTactic.has(key)) {
           techByTactic.set(key, []);

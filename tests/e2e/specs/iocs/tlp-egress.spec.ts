@@ -66,7 +66,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("green");
+    await notebook.exportDialog.tlpInput.selectOption("GREEN");
 
     const text = await readDownloadText(seniorPage, notebook);
     expect(text).toContain(greenValue);
@@ -95,7 +95,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("amber");
+    await notebook.exportDialog.tlpInput.selectOption("AMBER");
 
     // AMBER context shows the warning, but export still proceeds.
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();
@@ -131,9 +131,9 @@ test.describe("STIX export TLP egress (regression)", () => {
     // ``white`` is the legacy alias; ``clear`` is the post-2.0 value
     // and is the option actually rendered. Try the modern value first.
     try {
-      await notebook.exportDialog.tlpInput.selectOption("clear");
+      await notebook.exportDialog.tlpInput.selectOption("CLEAR");
     } catch {
-      await notebook.exportDialog.tlpInput.selectOption("white");
+      await notebook.exportDialog.tlpInput.selectOption("CLEAR");
     }
 
     const text = await readDownloadText(seniorPage, notebook);
@@ -161,7 +161,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("red");
+    await notebook.exportDialog.tlpInput.selectOption("RED");
 
     // The user must be warned before they confirm a TLP:RED export.
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();
@@ -201,7 +201,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("red");
+    await notebook.exportDialog.tlpInput.selectOption("RED");
 
     // Warning must be visible at RED.
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();

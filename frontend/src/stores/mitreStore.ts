@@ -31,7 +31,10 @@ interface MitreState {
   selectTechnique: (technique: MitreTechnique | null) => void;
   fetchTechnique: (id: string) => Promise<void>;
   setInvestigationFilter: (id: string | null) => void;
-  exportNavigator: (investigationId?: string) => Promise<void>;
+  exportNavigator: (
+    investigationId?: string,
+    filenameLabel?: string,
+  ) => Promise<void>;
   clearError: () => void;
 }
 
@@ -121,7 +124,7 @@ export const useMitreStore = create<MitreState>((set, get) => ({
     void get().fetchCoverage(id ?? undefined);
   },
 
-  exportNavigator: async (investigationId) => {
+  exportNavigator: async (investigationId, filenameLabel) => {
     set({ isLoading: true, error: null });
     try {
       const layer: NavigatorLayer = await exportNavigatorApi(investigationId);
@@ -131,7 +134,10 @@ export const useMitreStore = create<MitreState>((set, get) => ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `attack_navigator_${Date.now()}.json`;
+      // Include an optional label (e.g. technique id) in the filename
+      // so downloads from per-technique export buttons are identifiable.
+      const label = filenameLabel ? `_${filenameLabel.toLowerCase()}` : "";
+      a.download = `attack_navigator${label}_${Date.now()}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

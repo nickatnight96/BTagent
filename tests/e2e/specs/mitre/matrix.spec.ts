@@ -59,15 +59,17 @@ test.describe("MITRE matrix", () => {
   }) => {
     const matrix = new MitreMatrixPage(analystPage);
     await matrix.goto();
-    // Click the investigation view; aria-pressed reflects the active toggle.
+    // The view toggle is rendered as a tablist (role="tab" buttons in
+    // a role="tablist" container), so the active state is signalled
+    // by ``aria-selected``, not ``aria-pressed``.
     await matrix.viewToggleInvestigation.click();
     await expect(matrix.viewToggleInvestigation).toHaveAttribute(
-      "aria-pressed",
+      "aria-selected",
       "true",
     );
     await matrix.viewToggleGlobal.click();
     await expect(matrix.viewToggleGlobal).toHaveAttribute(
-      "aria-pressed",
+      "aria-selected",
       "true",
     );
   });
@@ -86,7 +88,9 @@ test.describe("MITRE matrix", () => {
     const matrix = new MitreMatrixPage(analystPage);
     await matrix.goto();
     await matrix.viewToggleInvestigation.click();
-    await matrix.investigationFilterInput.fill(inv.id);
+    // The filter is a native ``<select>``; selectOption is the
+    // correct interaction (``.fill`` errors on selects).
+    await matrix.investigationFilterInput.selectOption(inv.id);
     // Grid should re-render without error.
     await expect(matrix.grid.or(matrix.empty)).toBeVisible({
       timeout: 10_000,
