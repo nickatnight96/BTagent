@@ -10,6 +10,7 @@
 import { test, expect } from "../../fixtures/auth";
 import { IOCNotebookPage } from "../../pages/ioc-notebook-page";
 import { seedInvestigationWithIOCs } from "../../fixtures/seed-helpers";
+import { hydrateInvestigationsThenGotoIOCs } from "../../fixtures/navigation";
 
 test.describe("IOC import modal", () => {
   test("opens via the toolbar button", async ({ analystPage }) => {
@@ -103,8 +104,7 @@ test.describe("IOC import modal", () => {
     });
     const beforeCount = (await analystApi.listIOCs(investigation.id)).length;
 
-    const notebook = new IOCNotebookPage(analystPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(analystPage);
     await notebook.importButton.click();
 
     // Bind the import to the seeded investigation so listIOCs picks
@@ -147,8 +147,7 @@ test.describe("IOC import modal", () => {
     });
     const before = await analystApi.listIOCs(investigation.id);
 
-    const notebook = new IOCNotebookPage(analystPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(analystPage);
     await notebook.importButton.click();
     await expect(notebook.importModal.root).toBeVisible();
 

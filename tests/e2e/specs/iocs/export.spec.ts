@@ -8,6 +8,7 @@
 import { test, expect } from "../../fixtures/auth";
 import { IOCNotebookPage } from "../../pages/ioc-notebook-page";
 import { seedInvestigationWithIOCs } from "../../fixtures/seed-helpers";
+import { hydrateInvestigationsThenGotoIOCs } from "../../fixtures/navigation";
 
 test.describe("IOC export dialog", () => {
   test("opens via the toolbar button", async ({ analystPage }) => {
@@ -28,8 +29,7 @@ test.describe("IOC export dialog", () => {
       iocs: [{ type: "ip", value: `198.18.10.${stamp % 240}` }],
     });
 
-    const notebook = new IOCNotebookPage(analystPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(analystPage);
     await notebook.exportButton.click();
 
     // Selector must include the seeded investigation as an option.
@@ -98,8 +98,7 @@ test.describe("IOC export dialog", () => {
       ],
     });
 
-    const notebook = new IOCNotebookPage(analystPage);
-    await notebook.goto();
+    const notebook = await hydrateInvestigationsThenGotoIOCs(analystPage);
     await notebook.exportButton.click();
     await notebook.exportDialog.investigationInput.selectOption(
       investigation.id,

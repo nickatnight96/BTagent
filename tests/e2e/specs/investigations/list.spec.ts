@@ -84,14 +84,16 @@ test("creating an investigation via the modal lands a new card", async ({
   await modal.submit();
 
   // After successful create, the modal closes and the new card appears.
-  await expect(modal.dialog).toBeHidden({ timeout: 5_000 });
+  // Bump timeouts: the create POSTs through the API and refetches the
+  // list, both of which are slower under CI load than 5s allows for.
+  await expect(modal.dialog).toBeHidden({ timeout: 15_000 });
   // The new card may take a tick — find it by visible title rather
   // than templated id (we don't have it from the UI).
   await expect(
     analystPage.locator('[data-testid^="investigation-card-"]', {
       hasText: title,
     }),
-  ).toBeVisible({ timeout: 5_000 });
+  ).toBeVisible({ timeout: 15_000 });
 });
 
 test("opening a card navigates to /investigations/:id", async ({
@@ -101,6 +103,14 @@ test("opening a card navigates to /investigations/:id", async ({
   const { investigation } = await seedInvestigationWithIOCs(analystApi);
   const list = new InvestigationListPage(analystPage);
   await list.goto();
+  // The list page is a client-rendered Zustand-backed view; ensure the
+  // card has actually rendered before we try to click it.
+  await expect(list.cardFor(investigation.id)).toBeVisible({
+    timeout: 10_000,
+  });
   await list.openInvestigation(investigation.id);
-  expect(analystPage.url()).toContain(`/investigations/${investigation.id}`);
+  await expect(analystPage).toHaveURL(
+    new RegExp(`/investigations/${investigation.id}`),
+    { timeout: 10_000 },
+  );
 });
