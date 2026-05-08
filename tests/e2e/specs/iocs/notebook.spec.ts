@@ -42,11 +42,14 @@ test.describe("IOC notebook list", () => {
     // match any value, then assert the empty placeholder appears.
     const notebook = new IOCNotebookPage(analystPage);
     await notebook.goto();
+    // Let the initial fetch settle so the search-filter applies against
+    // a fully-rendered list; otherwise we can race the empty-state.
+    await analystPage.waitForLoadState("networkidle");
     await notebook.searchInput.fill(
       `__definitely_no_match_${crypto.randomUUID()}`,
     );
-    await expect(notebook.empty).toBeVisible();
-    await expect(notebook.emptyImportButton).toBeVisible();
+    await expect(notebook.empty).toBeVisible({ timeout: 10_000 });
+    await expect(notebook.emptyImportButton).toBeVisible({ timeout: 10_000 });
   });
 
   test("search input narrows the list to matching IOCs", async ({
@@ -67,13 +70,14 @@ test.describe("IOC notebook list", () => {
 
     const notebook = new IOCNotebookPage(analystPage);
     await notebook.goto();
+    await analystPage.waitForLoadState("networkidle");
     // Both visible to start.
-    await expect(notebook.row(ipIoc.id)).toBeVisible();
-    await expect(notebook.row(domainIoc.id)).toBeVisible();
+    await expect(notebook.row(ipIoc.id)).toBeVisible({ timeout: 10_000 });
+    await expect(notebook.row(domainIoc.id)).toBeVisible({ timeout: 10_000 });
 
     await notebook.searchInput.fill(`unique-search-${stamp}`);
-    await expect(notebook.row(domainIoc.id)).toBeVisible();
-    await expect(notebook.row(ipIoc.id)).toBeHidden();
+    await expect(notebook.row(domainIoc.id)).toBeVisible({ timeout: 10_000 });
+    await expect(notebook.row(ipIoc.id)).toBeHidden({ timeout: 10_000 });
   });
 
   test("type filter narrows results to a single IOC type", async ({

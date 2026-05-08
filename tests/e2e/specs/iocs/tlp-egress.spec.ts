@@ -21,25 +21,7 @@ import type { Page } from "@playwright/test";
 import { test, expect } from "../../fixtures/auth";
 import { IOCNotebookPage } from "../../pages/ioc-notebook-page";
 import { seedInvestigationWithIOCs } from "../../fixtures/seed-helpers";
-
-/**
- * Hydrate the Zustand investigation store by visiting the dashboard
- * first, then navigate to /iocs. The notebook page itself does not
- * fetch investigations on mount, so without this the export dialog
- * dropdown is empty and ``selectOption(seededInvId)`` throws.
- */
-async function hydrateInvestigationsThenGotoIOCs(
-  page: Page,
-): Promise<IOCNotebookPage> {
-  await page.goto("/");
-  await page.getByTestId("investigation-list").waitFor({
-    state: "visible",
-    timeout: 10_000,
-  });
-  const notebook = new IOCNotebookPage(page);
-  await notebook.goto();
-  return notebook;
-}
+import { hydrateInvestigationsThenGotoIOCs } from "../../fixtures/navigation";
 
 /**
  * Trigger the export submit, capture the resulting download, and
