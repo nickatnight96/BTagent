@@ -66,6 +66,7 @@ export class BTAgentApiClient {
   private constructor(
     public readonly ctx: APIRequestContext,
     public readonly accessToken: string | null,
+    public readonly refreshToken: string | null = null,
   ) {}
 
   /** Build a fresh client — no auth yet. Use ``login()`` next. */
@@ -124,7 +125,14 @@ export class BTAgentApiClient {
         `Login failed for ${creds.username}: ${res.status()} ${await res.text()}`,
       );
     }
-    const body = (await res.json()) as { access_token: string };
+    // Login response carries both tokens. The refresh token is only
+    // needed by tests that exercise the rotation path (which can't
+    // rely on the cookie-bound refresh because the header client
+    // doesn't carry cookies).
+    const body = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+    };
     await tmp.dispose();
 
     const ctx = await request.newContext({
@@ -134,7 +142,7 @@ export class BTAgentApiClient {
         Authorization: `Bearer ${body.access_token}`,
       },
     });
-    return new BTAgentApiClient(ctx, body.access_token);
+    return new BTAgentApiClient(ctx, body.access_token, body.refresh_token ?? null);
   }
 
   /** Log out — invalidates the access-token jti server-side. */
