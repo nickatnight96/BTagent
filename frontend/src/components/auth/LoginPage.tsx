@@ -14,10 +14,18 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  // Clear any stale errors and auth state on mount
+  // Clear any stale errors on mount. We deliberately do NOT call the
+  // network ``logout()`` here — that would POST to ``/auth/logout``,
+  // which revokes the access-token jti server-side. In a multi-tab /
+  // multi-context environment (and in parallel test runs that share
+  // an .auth storage state across workers) that revocation cascades
+  // into spurious "session expired" redirects on the OTHER context's
+  // next protected request. The login flow itself rotates tokens,
+  // and an explicit Sign-Out button still calls ``logout()``; mounting
+  // the login screen to type credentials should not destroy any
+  // existing session.
   useEffect(() => {
     clearError();
-    useAuthStore.getState().logout();
   }, [clearError]);
 
   const handleSubmit = useCallback(
