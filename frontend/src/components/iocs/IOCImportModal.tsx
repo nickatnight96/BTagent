@@ -132,9 +132,9 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
         investigationId || undefined,
       );
       setImportResult({
-        imported: result.imported,
-        skipped: result.skipped,
-        errors: result.errors.length,
+        imported: result.imported ?? 0,
+        skipped: result.skipped ?? 0,
+        errors: (result.errors ?? []).length,
       });
     } catch (err) {
       setImportError(
@@ -159,12 +159,20 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
         description="Paste CSV data or STIX 2.1 JSON to import indicators of compromise."
         className="max-w-2xl"
       >
+        <div data-testid="ioc-import">
         {/* Format selector */}
         <div className="flex items-center gap-2 mb-4">
           <label className="text-xs text-slate-500 font-medium">Format</label>
-          <div className="flex items-center gap-0.5 bg-slate-800 rounded-md p-0.5">
+          <div
+            className="flex items-center gap-0.5 bg-slate-800 rounded-md p-0.5"
+            role="tablist"
+            aria-label="Import format"
+          >
             <button
               onClick={() => setFormat("csv")}
+              role="tab"
+              aria-selected={format === "csv"}
+              data-testid="ioc-import-format-tab-csv"
               className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                 format === "csv"
                   ? "bg-blue-600/20 text-blue-400"
@@ -172,12 +180,15 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
               }`}
             >
               <span className="flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" />
+                <FileText className="w-3.5 h-3.5" aria-hidden="true" />
                 CSV
               </span>
             </button>
             <button
               onClick={() => setFormat("stix")}
+              role="tab"
+              aria-selected={format === "stix"}
+              data-testid="ioc-import-format-tab-stix"
               className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                 format === "stix"
                   ? "bg-blue-600/20 text-blue-400"
@@ -185,7 +196,7 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
               }`}
             >
               <span className="flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" />
+                <FileText className="w-3.5 h-3.5" aria-hidden="true" />
                 STIX 2.1
               </span>
             </button>
@@ -200,6 +211,8 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
           <select
             value={investigationId}
             onChange={(e) => setInvestigationId(e.target.value)}
+            aria-label="Assign import to investigation"
+            data-testid="ioc-import-investigation-input"
             className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
           >
             <option value="">No investigation</option>
@@ -227,32 +240,34 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
                 : '{"type": "bundle", "objects": [{"type": "indicator", "pattern": "[ipv4-addr:value = \'10.0.0.1\']", ...}]}'
             }
             rows={6}
+            aria-label={format === "csv" ? "Paste CSV IOC data" : "Paste STIX 2.1 JSON"}
+            data-testid="ioc-import-paste-input"
             className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors resize-none"
           />
         </div>
 
         {/* Preview table */}
         {preview.length > 0 && (
-          <div className="mb-4">
+          <div className="mb-4" data-testid="ioc-import-preview">
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-medium text-slate-400">
                 Preview ({preview.length} rows)
               </span>
               <div className="flex items-center gap-3 text-xs">
                 <span className="flex items-center gap-1 text-green-400">
-                  <CheckCircle2 className="w-3 h-3" />
+                  <CheckCircle2 className="w-3 h-3" aria-hidden="true" />
                   {validCount} valid
                 </span>
                 {invalidCount > 0 && (
                   <span className="flex items-center gap-1 text-red-400">
-                    <XCircle className="w-3 h-3" />
+                    <XCircle className="w-3 h-3" aria-hidden="true" />
                     {invalidCount} invalid
                   </span>
                 )}
               </div>
             </div>
             <div className="max-h-48 overflow-auto rounded-lg border border-slate-700/50">
-              <table className="w-full text-xs">
+              <table className="w-full text-xs" data-testid="ioc-import-preview-table">
                 <thead className="bg-slate-900 sticky top-0">
                   <tr>
                     <th className="px-2 py-1.5 text-left text-slate-500 font-medium">
@@ -273,16 +288,17 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
                   {preview.slice(0, 50).map((row, idx) => (
                     <tr
                       key={idx}
+                      data-testid={`ioc-import-preview-row-${idx}`}
                       className={`border-b border-slate-800/50 ${
                         idx % 2 === 0 ? "bg-slate-950" : "bg-slate-900/50"
                       }`}
                     >
                       <td className="px-2 py-1.5">
                         {row.valid ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />
+                          <CheckCircle2 className="w-3.5 h-3.5 text-green-400" aria-label="Valid row" />
                         ) : (
                           <span title={row.error}>
-                            <XCircle className="w-3.5 h-3.5 text-red-400" />
+                            <XCircle className="w-3.5 h-3.5 text-red-400" aria-label={row.error ?? "Invalid row"} />
                           </span>
                         )}
                       </td>
@@ -310,9 +326,12 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
 
         {/* Import result */}
         {importResult && (
-          <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+          <div
+            className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg"
+            data-testid="ioc-import-result"
+          >
             <div className="flex items-center gap-2 mb-1">
-              <CheckCircle2 className="w-4 h-4 text-green-400" />
+              <CheckCircle2 className="w-4 h-4 text-green-400" aria-hidden="true" />
               <span className="text-sm font-medium text-green-400">
                 Import Complete
               </span>
@@ -331,16 +350,25 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
 
         {/* Import error */}
         {importError && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+          <div
+            className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg"
+            role="alert"
+            data-testid="ioc-import-error"
+          >
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-400" />
+              <AlertTriangle className="w-4 h-4 text-red-400" aria-hidden="true" />
               <span className="text-sm text-red-400">{importError}</span>
             </div>
           </div>
         )}
 
         <DialogFooter>
-          <Button variant="ghost" size="sm" onClick={handleClose}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleClose}
+            data-testid="ioc-import-cancel-button"
+          >
             {importResult ? "Done" : "Cancel"}
           </Button>
           {!importResult && (
@@ -349,12 +377,14 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
               onClick={handleImport}
               disabled={validCount === 0 || isImporting}
               isLoading={isImporting}
+              data-testid="ioc-import-submit-button"
             >
-              <Upload className="w-4 h-4" />
+              <Upload className="w-4 h-4" aria-hidden="true" />
               Import {validCount} IOC{validCount !== 1 ? "s" : ""}
             </Button>
           )}
         </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

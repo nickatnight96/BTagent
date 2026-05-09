@@ -104,22 +104,20 @@ def chunk_text(
             # Flush any accumulated content first
             if current_parts:
                 chunk_text_content = "\n\n".join(current_parts)
-                chunks.append(Chunk(
-                    content=chunk_text_content,
-                    index=chunk_index,
-                    token_count=estimate_tokens(chunk_text_content),
-                    metadata=_chunk_metadata(
-                        current_header, chunk_index
-                    ),
-                ))
+                chunks.append(
+                    Chunk(
+                        content=chunk_text_content,
+                        index=chunk_index,
+                        token_count=estimate_tokens(chunk_text_content),
+                        metadata=_chunk_metadata(current_header, chunk_index),
+                    )
+                )
                 chunk_index += 1
                 current_parts = []
                 current_tokens = 0
 
             # Split the large paragraph into sub-chunks
-            sub_chunks = _split_large_text(
-                para, chunk_size, overlap, chunk_index, current_header
-            )
+            sub_chunks = _split_large_text(para, chunk_size, overlap, chunk_index, current_header)
             chunks.extend(sub_chunks)
             chunk_index += len(sub_chunks)
             continue
@@ -128,23 +126,21 @@ def chunk_text(
         if current_tokens + para_tokens > chunk_size and current_parts:
             # Flush current chunk
             chunk_text_content = "\n\n".join(current_parts)
-            chunks.append(Chunk(
-                content=chunk_text_content,
-                index=chunk_index,
-                token_count=estimate_tokens(chunk_text_content),
-                metadata=_chunk_metadata(current_header, chunk_index),
-            ))
+            chunks.append(
+                Chunk(
+                    content=chunk_text_content,
+                    index=chunk_index,
+                    token_count=estimate_tokens(chunk_text_content),
+                    metadata=_chunk_metadata(current_header, chunk_index),
+                )
+            )
             chunk_index += 1
 
             # Start new chunk with overlap from the end of the previous
-            overlap_text = _get_overlap_text(
-                current_parts, overlap
-            )
+            overlap_text = _get_overlap_text(current_parts, overlap)
             if overlap_text:
                 current_parts = [overlap_text, para]
-                current_tokens = (
-                    estimate_tokens(overlap_text) + para_tokens
-                )
+                current_tokens = estimate_tokens(overlap_text) + para_tokens
             else:
                 current_parts = [para]
                 current_tokens = para_tokens
@@ -155,12 +151,14 @@ def chunk_text(
     # Flush remaining content
     if current_parts:
         chunk_text_content = "\n\n".join(current_parts)
-        chunks.append(Chunk(
-            content=chunk_text_content,
-            index=chunk_index,
-            token_count=estimate_tokens(chunk_text_content),
-            metadata=_chunk_metadata(current_header, chunk_index),
-        ))
+        chunks.append(
+            Chunk(
+                content=chunk_text_content,
+                index=chunk_index,
+                token_count=estimate_tokens(chunk_text_content),
+                metadata=_chunk_metadata(current_header, chunk_index),
+            )
+        )
 
     return chunks
 
@@ -214,21 +212,21 @@ def _split_large_text(
         end = min(pos + char_chunk, len(text))
         chunk_content = text[pos:end].strip()
         if chunk_content:
-            chunks.append(Chunk(
-                content=chunk_content,
-                index=idx,
-                token_count=estimate_tokens(chunk_content),
-                metadata=_chunk_metadata(section_header, idx),
-            ))
+            chunks.append(
+                Chunk(
+                    content=chunk_content,
+                    index=idx,
+                    token_count=estimate_tokens(chunk_content),
+                    metadata=_chunk_metadata(section_header, idx),
+                )
+            )
             idx += 1
         pos = end - char_overlap if end < len(text) else end
 
     return chunks
 
 
-def _chunk_metadata(
-    section_header: str | None, chunk_index: int
-) -> dict[str, Any]:
+def _chunk_metadata(section_header: str | None, chunk_index: int) -> dict[str, Any]:
     """Build metadata dict for a chunk."""
     meta: dict[str, Any] = {"chunk_index": chunk_index}
     if section_header:

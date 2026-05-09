@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for the BTagent Playbook system."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
@@ -31,9 +31,7 @@ class PlaybookRow(Base):
     created_by: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("users.id"), nullable=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
@@ -65,12 +63,8 @@ class PlaybookExecutionRow(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     trigger_data: Mapped[dict] = mapped_column(JSONB, default=dict)
     step_results: Mapped[dict] = mapped_column(JSONB, default=dict)
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (

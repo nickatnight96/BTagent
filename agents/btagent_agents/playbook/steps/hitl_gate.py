@@ -7,7 +7,7 @@ Falls back to auto-approve in mock mode for testing.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from btagent_shared.types.playbook import HITLGateStep
@@ -44,7 +44,7 @@ async def execute_hitl_gate_step(
     dict
         Step result with approval status.
     """
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
 
     if mock:
         # Auto-approve in mock/dev mode
@@ -64,7 +64,7 @@ async def execute_hitl_gate_step(
                 "response": "Auto-approved in mock mode",
             },
             "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
         }
 
     # Production path: use LangGraph interrupt
@@ -76,13 +76,15 @@ async def execute_hitl_gate_step(
         )
         # This raises an interrupt that pauses the graph until
         # the human responds via the API.
-        response = interrupt_fn({
-            "type": "hitl_gate",
-            "step_id": step.id,
-            "prompt": step.prompt,
-            "required_role": step.required_role,
-            "timeout_seconds": step.timeout_seconds,
-        })
+        response = interrupt_fn(
+            {
+                "type": "hitl_gate",
+                "step_id": step.id,
+                "prompt": step.prompt,
+                "required_role": step.required_role,
+                "timeout_seconds": step.timeout_seconds,
+            }
+        )
 
         approved = response.get("approved", False) if isinstance(response, dict) else False
         status = "completed" if approved else "rejected"
@@ -97,7 +99,7 @@ async def execute_hitl_gate_step(
                 "response": response,
             },
             "started_at": started_at,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(UTC).isoformat(),
         }
 
     # Fallback: no interrupt function, auto-reject for safety
@@ -115,5 +117,5 @@ async def execute_hitl_gate_step(
             "reason": "No interrupt function available",
         },
         "started_at": started_at,
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
     }

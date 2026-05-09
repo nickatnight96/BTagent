@@ -9,9 +9,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid5, NAMESPACE_URL
+from uuid import NAMESPACE_URL, uuid5
+
+from btagent_shared.security import assert_tlp_allows_egress
 
 logger = logging.getLogger("btagent.services.stix")
 
@@ -68,22 +70,24 @@ def _build_stix_pattern(ioc_type: str, value: str) -> str:
         ip, 1.2.3.4 -> "[ipv4-addr:value = '1.2.3.4']"
         hash_sha256, abc123 -> "[file:hashes.'SHA-256' = 'abc123']"
     """
+    # SEC-P2-004 FIX: Escape single quotes to prevent STIX pattern injection
+    safe_value = value.replace("\\", "\\\\").replace("'", "\\'")
     if ioc_type == "ip":
-        return f"[ipv4-addr:value = '{value}']"
+        return f"[ipv4-addr:value = '{safe_value}']"
     if ioc_type == "domain":
-        return f"[domain-name:value = '{value}']"
+        return f"[domain-name:value = '{safe_value}']"
     if ioc_type == "url":
-        return f"[url:value = '{value}']"
+        return f"[url:value = '{safe_value}']"
     if ioc_type == "hash_md5":
-        return f"[file:hashes.'MD5' = '{value}']"
+        return f"[file:hashes.'MD5' = '{safe_value}']"
     if ioc_type == "hash_sha1":
-        return f"[file:hashes.'SHA-1' = '{value}']"
+        return f"[file:hashes.'SHA-1' = '{safe_value}']"
     if ioc_type == "hash_sha256":
-        return f"[file:hashes.'SHA-256' = '{value}']"
+        return f"[file:hashes.'SHA-256' = '{safe_value}']"
     if ioc_type == "email":
-        return f"[email-addr:value = '{value}']"
+        return f"[email-addr:value = '{safe_value}']"
     # Fallback: custom pattern
-    return f"[x-btagent-ioc:value = '{value}']"
+    return f"[x-btagent-ioc:value = '{safe_value}']"
 
 
 def ioc_to_stix_indicator(
@@ -116,7 +120,7 @@ def ioc_to_stix_indicator(
     pattern = _build_stix_pattern(ioc_type, ioc_value)
     stix_id = _deterministic_id("indicator", f"{ioc_type}:{ioc_value}")
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
     indicator: dict[str, Any] = {
         "type": "indicator",
@@ -164,27 +168,26 @@ def stix_bundle_from_iocs(
     -------
     dict
         STIX 2.1 Bundle object.
-    """
-    # Enforce TLP: never export TLP:RED indicators
-    if tlp_level == "red":
-        logger.warning("Refusing to export TLP:RED IOCs to STIX bundle")
-        return {
-            "type": "bundle",
-            "id": _deterministic_id("bundle", "empty-tlp-red"),
-            "objects": [],
-        }
 
-    indicators = [
-        ioc_to_stix_indicator(ioc, tlp_level=tlp_level)
-        for ioc in iocs
-        if ioc.get("tlp_level", "green") != "red"
-    ]
+    Raises
+    ------
+    btagent_shared.security.TLPViolation
+        If the bundle's TLP context is :attr:`TLP.RED`. Defense-in-depth
+        backstop -- the API layer is expected to 403 before reaching this
+        function, so a raise here means an internal caller bypassed that gate.
+    """
+    # Defense in depth: the API layer (api/v1/iocs.py:export_stix) already
+    # 403s on tlp_level=="red" and pre-filters RED IOCs from the input. The
+    # gate below is the backstop -- it raises if any RED context or
+    # RED-tagged IOC slips past pre-filtering, so internal callers don't
+    # silently drop data.
+    assert_tlp_allows_egress(iocs, "stix_export", classification_ctx=tlp_level)
+
+    indicators = [ioc_to_stix_indicator(ioc, tlp_level=tlp_level) for ioc in iocs]
 
     bundle_id = _deterministic_id(
         "bundle",
-        hashlib.sha256(
-            json.dumps(sorted(i["id"] for i in indicators)).encode()
-        ).hexdigest(),
+        hashlib.sha256(json.dumps(sorted(i["id"] for i in indicators)).encode()).hexdigest(),
     )
 
     return {

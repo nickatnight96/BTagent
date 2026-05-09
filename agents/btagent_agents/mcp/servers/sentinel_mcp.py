@@ -19,9 +19,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.sentinel")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -35,17 +33,9 @@ _MOCK_KQL_RESULTS: dict[str, list[dict[str, Any]]] = {
             "Computer": "WS-JSMITH-PC",
             "Account": "ACME\\jsmith",
             "EventID": 4688,
-            "NewProcessName": (
-                "C:\\Windows\\System32\\"
-                "WindowsPowerShell\\v1.0\\powershell.exe"
-            ),
-            "ParentProcessName": (
-                "C:\\Windows\\System32\\cmd.exe"
-            ),
-            "CommandLine": (
-                "powershell.exe -enc "
-                "SQBFAFgAIAAoAE4AZQB3..."
-            ),
+            "NewProcessName": ("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+            "ParentProcessName": ("C:\\Windows\\System32\\cmd.exe"),
+            "CommandLine": ("powershell.exe -enc SQBFAFgAIAAoAE4AZQB3..."),
             "SubjectLogonId": "0x3E7",
             "Type": "SecurityEvent",
         },
@@ -54,16 +44,11 @@ _MOCK_KQL_RESULTS: dict[str, list[dict[str, Any]]] = {
             "Computer": "WS-JSMITH-PC",
             "Account": "ACME\\jsmith",
             "EventID": 4688,
-            "NewProcessName": (
-                "C:\\Windows\\System32\\cmd.exe"
-            ),
+            "NewProcessName": ("C:\\Windows\\System32\\cmd.exe"),
             "ParentProcessName": (
-                "C:\\Program Files\\Microsoft Office\\"
-                "root\\Office16\\OUTLOOK.EXE"
+                "C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE"
             ),
-            "CommandLine": (
-                'cmd.exe /c "start /b powershell -enc ..."'
-            ),
+            "CommandLine": ('cmd.exe /c "start /b powershell -enc ..."'),
             "SubjectLogonId": "0x3E7",
             "Type": "SecurityEvent",
         },
@@ -77,9 +62,7 @@ _MOCK_KQL_RESULTS: dict[str, list[dict[str, Any]]] = {
             "Location": "US, Virginia",
             "ResultType": 0,
             "ResultDescription": "Success",
-            "ClientAppUsed": (
-                "Mobile Apps and Desktop clients"
-            ),
+            "ClientAppUsed": ("Mobile Apps and Desktop clients"),
             "ConditionalAccessStatus": "success",
             "AuthenticationMethodsUsed": ["MFA Push"],
             "RiskLevelDuringSignIn": "none",
@@ -92,9 +75,7 @@ _MOCK_KQL_RESULTS: dict[str, list[dict[str, Any]]] = {
             "IPAddress": "185.220.101.42",
             "Location": "DE, Frankfurt",
             "ResultType": 50126,
-            "ResultDescription": (
-                "Invalid username or password"
-            ),
+            "ResultDescription": ("Invalid username or password"),
             "ClientAppUsed": "Browser",
             "ConditionalAccessStatus": "failure",
             "AuthenticationMethodsUsed": ["Password"],
@@ -108,9 +89,7 @@ _MOCK_KQL_RESULTS: dict[str, list[dict[str, Any]]] = {
             "IPAddress": "185.220.101.42",
             "Location": "DE, Frankfurt",
             "ResultType": 50126,
-            "ResultDescription": (
-                "Invalid username or password"
-            ),
+            "ResultDescription": ("Invalid username or password"),
             "ClientAppUsed": "Browser",
             "ConditionalAccessStatus": "failure",
             "AuthenticationMethodsUsed": ["Password"],
@@ -152,10 +131,7 @@ _MOCK_INCIDENTS = [
     {
         "incident_id": "inc_sentinel_001",
         "incident_number": 42871,
-        "title": (
-            "Multi-stage attack involving credential "
-            "access and lateral movement"
-        ),
+        "title": ("Multi-stage attack involving credential access and lateral movement"),
         "severity": "High",
         "status": "New",
         "classification": None,
@@ -206,10 +182,7 @@ _MOCK_INCIDENTS = [
     {
         "incident_id": "inc_sentinel_002",
         "incident_number": 42870,
-        "title": (
-            "Suspicious scheduled task creation on "
-            "database server"
-        ),
+        "title": ("Suspicious scheduled task creation on database server"),
         "severity": "Medium",
         "status": "New",
         "classification": None,
@@ -289,16 +262,12 @@ _MOCK_INCIDENTS = [
 _MOCK_ALERTS = [
     {
         "alert_id": "alrt_sentinel_001",
-        "display_name": (
-            "Brute force attack against Azure AD account"
-        ),
+        "display_name": ("Brute force attack against Azure AD account"),
         "severity": "High",
         "status": "New",
         "time_generated": "2026-03-26T07:50:00Z",
         "alert_type": "BruteForce",
-        "provider_name": (
-            "Azure Active Directory Identity Protection"
-        ),
+        "provider_name": ("Azure Active Directory Identity Protection"),
         "description": (
             "Multiple failed sign-in attempts for "
             "jsmith@acme-corp.com from IP 185.220.101.42 "
@@ -319,9 +288,7 @@ _MOCK_ALERTS = [
     },
     {
         "alert_id": "alrt_sentinel_002",
-        "display_name": (
-            "Suspicious PowerShell command line detected"
-        ),
+        "display_name": ("Suspicious PowerShell command line detected"),
         "severity": "High",
         "status": "New",
         "time_generated": "2026-03-26T08:22:10Z",
@@ -372,9 +339,7 @@ _MOCK_ALERTS = [
     },
     {
         "alert_id": "alrt_sentinel_004",
-        "display_name": (
-            "Persistence via scheduled task on server"
-        ),
+        "display_name": ("Persistence via scheduled task on server"),
         "severity": "Medium",
         "status": "New",
         "time_generated": "2026-03-26T06:12:05Z",
@@ -437,9 +402,7 @@ class SentinelMCPServer:
     server_id: str = "sentinel"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -497,19 +460,11 @@ class SentinelMCPServer:
 
     # ---- mock implementations ----
 
-    def _mock_query(
-        self, kql_query: str, timespan: str
-    ) -> dict[str, Any]:
+    def _mock_query(self, kql_query: str, timespan: str) -> dict[str, Any]:
         q_lower = kql_query.lower()
-        if any(
-            k in q_lower
-            for k in ("signin", "aad", "authentication")
-        ):
+        if any(k in q_lower for k in ("signin", "aad", "authentication")):
             rows = _MOCK_KQL_RESULTS["signin"]
-        elif any(
-            k in q_lower
-            for k in ("network", "flow", "connection")
-        ):
+        elif any(k in q_lower for k in ("network", "flow", "connection")):
             rows = _MOCK_KQL_RESULTS["network"]
         else:
             rows = _MOCK_KQL_RESULTS["default"]
@@ -526,18 +481,12 @@ class SentinelMCPServer:
             "is_mock": True,
         }
 
-    def _mock_get_incidents(
-        self, status: str, severity: str
-    ) -> dict[str, Any]:
+    def _mock_get_incidents(self, status: str, severity: str) -> dict[str, Any]:
         incidents = _MOCK_INCIDENTS
         if status != "all":
-            incidents = [
-                i for i in incidents if i["status"] == status
-            ]
+            incidents = [i for i in incidents if i["status"] == status]
         if severity != "all":
-            incidents = [
-                i for i in incidents if i["severity"] == severity
-            ]
+            incidents = [i for i in incidents if i["severity"] == severity]
         return {
             "status": "success",
             "total": len(incidents),
@@ -556,24 +505,14 @@ class SentinelMCPServer:
 
     # ---- real implementations (placeholders) ----
 
-    def _real_query(
-        self, kql_query: str, timespan: str
-    ) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Sentinel KQL query not yet implemented"
-        )
+    def _real_query(self, kql_query: str, timespan: str) -> dict[str, Any]:
+        raise NotImplementedError("Real Sentinel KQL query not yet implemented")
 
-    def _real_get_incidents(
-        self, status: str, severity: str
-    ) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Sentinel incidents not yet implemented"
-        )
+    def _real_get_incidents(self, status: str, severity: str) -> dict[str, Any]:
+        raise NotImplementedError("Real Sentinel incidents not yet implemented")
 
     def _real_get_alerts(self, timespan: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Sentinel alerts not yet implemented"
-        )
+        raise NotImplementedError("Real Sentinel alerts not yet implemented")
 
     # ---- tool metadata ----
 
@@ -596,10 +535,7 @@ class SentinelMCPServer:
                         },
                         "timespan": {
                             "type": "string",
-                            "description": (
-                                "ISO 8601 duration "
-                                "(e.g. PT1H, P1D)"
-                            ),
+                            "description": ("ISO 8601 duration (e.g. PT1H, P1D)"),
                             "default": "P1D",
                         },
                     },
@@ -653,9 +589,7 @@ class SentinelMCPServer:
                     "properties": {
                         "timespan": {
                             "type": "string",
-                            "description": (
-                                "ISO 8601 duration for lookback"
-                            ),
+                            "description": ("ISO 8601 duration for lookback"),
                             "default": "P1D",
                         },
                     },

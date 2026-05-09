@@ -19,9 +19,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.shodan")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +210,7 @@ class ShodanMCPServer:
     server_id: str = "shodan"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -269,9 +265,7 @@ class ShodanMCPServer:
     # ---- mock implementations ----
 
     def _mock_host_info(self, ip: str) -> dict[str, Any]:
-        result = _MOCK_HOST_RESULTS.get(
-            ip, _MOCK_HOST_RESULTS["default"]
-        )
+        result = _MOCK_HOST_RESULTS.get(ip, _MOCK_HOST_RESULTS["default"])
         if result["ip_str"] == "unknown":
             result = {**result, "ip_str": ip}
         return {
@@ -282,9 +276,7 @@ class ShodanMCPServer:
         }
 
     def _mock_search(self, query: str) -> dict[str, Any]:
-        result = _MOCK_SEARCH_RESULTS.get(
-            query, _MOCK_SEARCH_RESULTS["default"]
-        )
+        result = _MOCK_SEARCH_RESULTS.get(query, _MOCK_SEARCH_RESULTS["default"])
         return {
             "status": "success",
             "query": query,
@@ -307,19 +299,13 @@ class ShodanMCPServer:
     # ---- real implementations (placeholders) ----
 
     def _real_host_info(self, ip: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Shodan host info not yet implemented"
-        )
+        raise NotImplementedError("Real Shodan host info not yet implemented")
 
     def _real_search(self, query: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Shodan search not yet implemented"
-        )
+        raise NotImplementedError("Real Shodan search not yet implemented")
 
     def _real_dns_resolve(self, hostnames: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real Shodan DNS resolve not yet implemented"
-        )
+        raise NotImplementedError("Real Shodan DNS resolve not yet implemented")
 
     # ---- LangChain tool registration helpers ----
 
@@ -339,9 +325,7 @@ class ShodanMCPServer:
                     "properties": {
                         "ip": {
                             "type": "string",
-                            "description": (
-                                "IP address to look up"
-                            ),
+                            "description": ("IP address to look up"),
                         },
                     },
                     "required": ["ip"],
@@ -360,10 +344,7 @@ class ShodanMCPServer:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": (
-                                "Shodan search query "
-                                "(e.g. 'product:CobaltStrike')"
-                            ),
+                            "description": ("Shodan search query (e.g. 'product:CobaltStrike')"),
                         },
                     },
                     "required": ["query"],
@@ -381,10 +362,7 @@ class ShodanMCPServer:
                     "properties": {
                         "hostnames": {
                             "type": "string",
-                            "description": (
-                                "Comma-separated hostnames "
-                                "to resolve"
-                            ),
+                            "description": ("Comma-separated hostnames to resolve"),
                         },
                     },
                     "required": ["hostnames"],

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import struct
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -28,9 +27,7 @@ class EmbeddingService(ABC):
     """Abstract base class for embedding generation."""
 
     @abstractmethod
-    async def generate_embeddings(
-        self, texts: list[str]
-    ) -> list[list[float]]:
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         """Generate embedding vectors for a list of texts.
 
         Parameters
@@ -74,9 +71,7 @@ class OpenAIEmbeddingService(EmbeddingService):
     def provider_name(self) -> str:
         return f"openai/{self._model}"
 
-    async def generate_embeddings(
-        self, texts: list[str]
-    ) -> list[list[float]]:
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
@@ -127,9 +122,7 @@ class OllamaEmbeddingService(EmbeddingService):
     def provider_name(self) -> str:
         return f"ollama/{self._model}"
 
-    async def generate_embeddings(
-        self, texts: list[str]
-    ) -> list[list[float]]:
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
@@ -174,9 +167,7 @@ class MockEmbeddingService(EmbeddingService):
     def provider_name(self) -> str:
         return "mock"
 
-    async def generate_embeddings(
-        self, texts: list[str]
-    ) -> list[list[float]]:
+    async def generate_embeddings(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
         for text in texts:
             embeddings.append(_deterministic_vector(text))
@@ -238,9 +229,7 @@ def get_embedding_service(settings: Any) -> EmbeddingService:
 
     if provider == "ollama":
         model = getattr(settings, "embedding_model", "nomic-embed-text")
-        base_url = getattr(
-            settings, "ollama_base_url", "http://localhost:11434"
-        )
+        base_url = getattr(settings, "ollama_base_url", "http://localhost:11434")
         logger.info("Using Ollama embedding service: %s", model)
         return OllamaEmbeddingService(model=model, base_url=base_url)
 
@@ -251,9 +240,7 @@ def get_embedding_service(settings: Any) -> EmbeddingService:
     return OpenAIEmbeddingService(api_key=api_key, model=model)
 
 
-def get_tlp_aware_embedding_service(
-    settings: Any, tlp_level: str = "green"
-) -> EmbeddingService:
+def get_tlp_aware_embedding_service(settings: Any, tlp_level: str = "green") -> EmbeddingService:
     """Return an embedding service that respects TLP classification.
 
     TLP:RED content must never be sent to external APIs, so this always
@@ -263,9 +250,7 @@ def get_tlp_aware_embedding_service(
         if getattr(settings, "mock_connectors", False):
             return MockEmbeddingService()
         model = getattr(settings, "embedding_model", "nomic-embed-text")
-        logger.info(
-            "TLP:RED — forcing local embedding service: ollama/%s", model
-        )
+        logger.info("TLP:RED — forcing local embedding service: ollama/%s", model)
         return OllamaEmbeddingService(model=model)
 
     return get_embedding_service(settings)

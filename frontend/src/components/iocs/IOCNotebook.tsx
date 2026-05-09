@@ -193,16 +193,17 @@ export function IOCNotebook() {
       <button
         className="inline-flex items-center gap-1 text-xs font-medium text-slate-400 hover:text-slate-200 uppercase tracking-wide transition-colors"
         onClick={() => handleSort(field)}
+        data-testid={`ioc-notebook-sort-${field}-button`}
       >
         {children}
         {active ? (
           sort.direction === "asc" ? (
-            <ArrowUp className="w-3 h-3" />
+            <ArrowUp className="w-3 h-3" aria-hidden="true" />
           ) : (
-            <ArrowDown className="w-3 h-3" />
+            <ArrowDown className="w-3 h-3" aria-hidden="true" />
           )
         ) : (
-          <ArrowUpDown className="w-3 h-3 opacity-40" />
+          <ArrowUpDown className="w-3 h-3 opacity-40" aria-hidden="true" />
         )}
       </button>
     );
@@ -212,24 +213,32 @@ export function IOCNotebook() {
     <>
       <Header title="IOC Notebook" />
 
-      <div className="flex-1 overflow-hidden flex flex-col p-6">
+      <div className="flex-1 overflow-hidden flex flex-col p-6" data-testid="ioc-notebook">
         {/* Toolbar */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-3 flex-1 w-full lg:w-auto">
             {/* Search */}
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" aria-hidden="true" />
               <input
                 type="text"
                 placeholder="Search IOCs..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                aria-label="Search IOCs"
+                data-testid="ioc-notebook-search-input"
                 className="w-full bg-slate-900 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-colors"
               />
             </div>
 
-            <Button variant="ghost" size="sm" onClick={handleRefresh}>
-              <RefreshCw className="w-4 h-4" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefresh}
+              aria-label="Refresh IOC list"
+              data-testid="ioc-notebook-refresh-button"
+            >
+              <RefreshCw className="w-4 h-4" aria-hidden="true" />
             </Button>
           </div>
 
@@ -238,23 +247,28 @@ export function IOCNotebook() {
               variant="secondary"
               size="sm"
               onClick={() => setShowImport(true)}
+              data-testid="ioc-notebook-import-button"
             >
-              <Upload className="w-4 h-4" />
+              <Upload className="w-4 h-4" aria-hidden="true" />
               Import IOCs
             </Button>
             <Button
               variant="secondary"
               size="sm"
               onClick={() => setShowExport(true)}
+              data-testid="ioc-notebook-export-button"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4" aria-hidden="true" />
               Export
             </Button>
           </div>
         </div>
 
         {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg">
+        <div
+          className="flex flex-wrap items-center gap-3 mb-4 p-3 bg-slate-900/50 border border-slate-800 rounded-lg"
+          data-testid="ioc-notebook-filters"
+        >
           {/* Type filter */}
           <div className="flex items-center gap-2">
             <label className="text-xs text-slate-500 font-medium">Type</label>
@@ -265,6 +279,8 @@ export function IOCNotebook() {
                   type: (e.target.value as IOCType) || undefined,
                 })
               }
+              aria-label="Filter by IOC type"
+              data-testid="ioc-notebook-type-filter-input"
               className="bg-slate-800 border border-slate-600/50 rounded-md px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             >
               {IOC_TYPE_OPTIONS.map((opt) => (
@@ -287,6 +303,8 @@ export function IOCNotebook() {
               step="5"
               value={confidenceMin * 100}
               onChange={(e) => setConfidenceMin(Number(e.target.value) / 100)}
+              aria-label="Minimum confidence filter"
+              data-testid="ioc-notebook-confidence-filter-input"
               className="w-24 accent-blue-500"
             />
             <span className="text-xs text-slate-400 tabular-nums w-8">
@@ -299,11 +317,18 @@ export function IOCNotebook() {
             <label className="text-xs text-slate-500 font-medium">
               Enrichment
             </label>
-            <div className="flex items-center gap-0.5 bg-slate-800 rounded-md p-0.5">
+            <div
+              className="flex items-center gap-0.5 bg-slate-800 rounded-md p-0.5"
+              role="tablist"
+              aria-label="Filter by enrichment status"
+            >
               {(["all", "enriched", "not_enriched"] as const).map((val) => (
                 <button
                   key={val}
                   onClick={() => setEnrichedFilter(val)}
+                  role="tab"
+                  aria-selected={enrichedFilter === val}
+                  data-testid={`ioc-notebook-enrichment-filter-${val}`}
                   className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
                     enrichedFilter === val
                       ? "bg-blue-600/20 text-blue-400"
@@ -332,6 +357,8 @@ export function IOCNotebook() {
                   investigation_id: e.target.value || undefined,
                 })
               }
+              aria-label="Filter by investigation"
+              data-testid="ioc-notebook-investigation-filter-input"
               className="bg-slate-800 border border-slate-600/50 rounded-md px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 max-w-[200px]"
             >
               <option value="">All Investigations</option>
@@ -346,7 +373,10 @@ export function IOCNotebook() {
 
         {/* Bulk actions bar */}
         {selectedIds.size > 0 && (
-          <div className="flex items-center gap-3 mb-4 p-3 bg-blue-600/10 border border-blue-500/20 rounded-lg">
+          <div
+            className="flex items-center gap-3 mb-4 p-3 bg-blue-600/10 border border-blue-500/20 rounded-lg"
+            data-testid="ioc-notebook-bulk-actions"
+          >
             <span className="text-xs text-blue-400 font-medium">
               {selectedIds.size} selected
             </span>
@@ -355,19 +385,26 @@ export function IOCNotebook() {
               size="sm"
               onClick={handleBulkEnrich}
               isLoading={isEnriching}
+              data-testid="ioc-notebook-bulk-enrich-button"
             >
-              <Zap className="w-3.5 h-3.5" />
+              <Zap className="w-3.5 h-3.5" aria-hidden="true" />
               Bulk Enrich
             </Button>
             <Button
               variant="secondary"
               size="sm"
               onClick={() => setShowExport(true)}
+              data-testid="ioc-notebook-bulk-export-button"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Download className="w-3.5 h-3.5" aria-hidden="true" />
               Export Selected
             </Button>
-            <Button variant="ghost" size="sm" onClick={clearSelection}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearSelection}
+              data-testid="ioc-notebook-bulk-clear-button"
+            >
               Clear
             </Button>
           </div>
@@ -375,25 +412,39 @@ export function IOCNotebook() {
 
         {/* Table */}
         {isLoading && iocs.length === 0 ? (
-          <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 text-slate-500 animate-spin" />
+          <div
+            className="flex items-center justify-center py-20"
+            data-testid="ioc-notebook-loading"
+          >
+            <Loader2
+              className="w-8 h-8 text-slate-500 animate-spin"
+              aria-label="Loading IOCs"
+            />
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <AlertTriangle className="w-10 h-10 text-amber-500 mb-3" />
+          <div
+            className="flex flex-col items-center justify-center py-20 text-slate-400"
+            role="alert"
+            data-testid="ioc-notebook-error"
+          >
+            <AlertTriangle className="w-10 h-10 text-amber-500 mb-3" aria-hidden="true" />
             <p className="text-sm">{error}</p>
             <Button
               variant="ghost"
               size="sm"
               onClick={handleRefresh}
               className="mt-3"
+              data-testid="ioc-notebook-retry-button"
             >
               Retry
             </Button>
           </div>
         ) : iocs.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <Database className="w-10 h-10 text-slate-600 mb-3" />
+          <div
+            className="flex flex-col items-center justify-center py-20 text-slate-400"
+            data-testid="ioc-notebook-empty"
+          >
+            <Database className="w-10 h-10 text-slate-600 mb-3" aria-hidden="true" />
             <p className="text-sm font-medium text-slate-300">
               No IOCs found
             </p>
@@ -406,14 +457,15 @@ export function IOCNotebook() {
               size="sm"
               onClick={() => setShowImport(true)}
               className="mt-4"
+              data-testid="ioc-notebook-empty-import-button"
             >
-              <Upload className="w-4 h-4" />
+              <Upload className="w-4 h-4" aria-hidden="true" />
               Import IOCs
             </Button>
           </div>
         ) : (
           <div className="flex-1 overflow-auto rounded-lg border border-slate-700/50">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm" data-testid="ioc-notebook-table">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-slate-900 border-b border-slate-700/50">
                   <th className="px-3 py-3 text-left w-10">
@@ -427,22 +479,69 @@ export function IOCNotebook() {
                           selectAll();
                         }
                       }}
+                      aria-label={allSelected ? "Deselect all IOCs" : "Select all IOCs"}
+                      data-testid="ioc-notebook-select-all-input"
                       className="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
                     />
                   </th>
-                  <th className="px-3 py-3 text-left">
+                  <th
+                    className="px-3 py-3 text-left"
+                    aria-sort={
+                      sort.field === "type"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
                     <SortHeader field="type">Type</SortHeader>
                   </th>
-                  <th className="px-3 py-3 text-left">
+                  <th
+                    className="px-3 py-3 text-left"
+                    aria-sort={
+                      sort.field === "value"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
                     <SortHeader field="value">Value</SortHeader>
                   </th>
-                  <th className="px-3 py-3 text-left">
+                  <th
+                    className="px-3 py-3 text-left"
+                    aria-sort={
+                      sort.field === "confidence"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
                     <SortHeader field="confidence">Confidence</SortHeader>
                   </th>
-                  <th className="px-3 py-3 text-left">
+                  <th
+                    className="px-3 py-3 text-left"
+                    aria-sort={
+                      sort.field === "source"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
                     <SortHeader field="source">Source</SortHeader>
                   </th>
-                  <th className="px-3 py-3 text-left">
+                  <th
+                    className="px-3 py-3 text-left"
+                    aria-sort={
+                      sort.field === "enrichment_status"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
                     <SortHeader field="enrichment_status">
                       Enriched
                     </SortHeader>
@@ -452,7 +551,16 @@ export function IOCNotebook() {
                       MITRE Tags
                     </span>
                   </th>
-                  <th className="px-3 py-3 text-left">
+                  <th
+                    className="px-3 py-3 text-left"
+                    aria-sort={
+                      sort.field === "first_seen"
+                        ? sort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none"
+                    }
+                  >
                     <SortHeader field="first_seen">First Seen</SortHeader>
                   </th>
                 </tr>
@@ -462,6 +570,7 @@ export function IOCNotebook() {
                   <tr
                     key={ioc.id}
                     onClick={() => selectIOC(ioc.id)}
+                    data-testid={`ioc-notebook-row-${ioc.id}`}
                     className={`border-b border-slate-800/50 cursor-pointer transition-colors ${
                       selectedIOCId === ioc.id
                         ? "bg-blue-600/10 border-blue-500/20"
@@ -478,6 +587,8 @@ export function IOCNotebook() {
                         type="checkbox"
                         checked={selectedIds.has(ioc.id)}
                         onChange={() => toggleSelected(ioc.id)}
+                        aria-label={`Select IOC ${ioc.value}`}
+                        data-testid={`ioc-notebook-row-${ioc.id}-select-input`}
                         className="rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
                       />
                     </td>
@@ -500,11 +611,11 @@ export function IOCNotebook() {
                       </span>
                     </td>
                     <td className="px-3 py-2.5">
-                      <EnrichmentIcon status={ioc.enrichment_status} />
+                      <EnrichmentIcon status={ioc.enrichment_status ?? "pending"} />
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1 flex-wrap max-w-[200px]">
-                        {ioc.mitre_tags.slice(0, 3).map((tag) => (
+                        {(ioc.mitre_tags ?? []).slice(0, 3).map((tag) => (
                           <span
                             key={tag.technique_id}
                             className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-500/15 text-purple-400 border border-purple-500/20"
@@ -513,9 +624,9 @@ export function IOCNotebook() {
                             {tag.technique_id}
                           </span>
                         ))}
-                        {ioc.mitre_tags.length > 3 && (
+                        {(ioc.mitre_tags ?? []).length > 3 && (
                           <span className="text-[10px] text-slate-500">
-                            +{ioc.mitre_tags.length - 3}
+                            +{(ioc.mitre_tags ?? []).length - 3}
                           </span>
                         )}
                       </div>

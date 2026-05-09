@@ -176,10 +176,7 @@ def _format_context_block(chunks: list[dict[str, Any]]) -> str:
         content = chunk.get("chunk_content", "")
         score = chunk.get("relevance_score", 0.0)
 
-        entry = (
-            f"[Source {i}: {title} (relevance: {score:.2f})]\n"
-            f"{content}"
-        )
+        entry = f"[Source {i}: {title} (relevance: {score:.2f})]\n{content}"
 
         if total_chars + len(entry) > _MAX_CONTEXT_CHARS:
             break

@@ -20,9 +20,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.virustotal")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -31,10 +29,7 @@ MOCK_MODE = (
 
 _MOCK_HASH_RESULTS: dict[str, dict[str, Any]] = {
     "default": {
-        "sha256": (
-            "e3b0c44298fc1c149afbf4c8996fb924"
-            "27ae41e4649b934ca495991b7852b855"
-        ),
+        "sha256": ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
         "sha1": "da39a3ee5e6b4b0d3255bfef95601890afd80709",
         "md5": "d41d8cd98f00b204e9800998ecf8427e",
         "file_type": "PE32 executable (GUI) Intel 80386",
@@ -62,7 +57,10 @@ _MOCK_HASH_RESULTS: dict[str, dict[str, Any]] = {
         },
         "malware_families": ["CobaltStrike", "Beacon"],
         "tags": [
-            "peexe", "overlay", "signed", "revoked-cert",
+            "peexe",
+            "overlay",
+            "signed",
+            "revoked-cert",
         ],
         "signature_info": {
             "signer": "Suspicious Software Ltd.",
@@ -101,10 +99,7 @@ _MOCK_IP_RESULTS: dict[str, dict[str, Any]] = {
         ],
         "detected_communicating_files": [
             {
-                "sha256": (
-                    "e3b0c44298fc1c149afbf4c8996fb924"
-                    "27ae41e4649b934ca495991b7852b855"
-                ),
+                "sha256": ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
                 "detection_ratio": "48/74",
                 "file_type": "PE32 executable",
             },
@@ -136,10 +131,7 @@ _MOCK_IP_RESULTS: dict[str, dict[str, Any]] = {
         ],
         "detected_communicating_files": [
             {
-                "sha256": (
-                    "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-                    "e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
-                ),
+                "sha256": ("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"),
                 "detection_ratio": "52/74",
                 "file_type": "PE32+ executable",
             },
@@ -259,8 +251,7 @@ _MOCK_URL_RESULTS: dict[str, dict[str, Any]] = {
             "Sophos": "malicious",
         },
         "last_http_response_content_sha256": (
-            "e3b0c44298fc1c149afbf4c8996fb924"
-            "27ae41e4649b934ca495991b7852b855"
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         ),
         "final_url": "http://suspicious-domain.ru/payload.exe",
         "tags": ["malware-distribution", "trojan"],
@@ -281,9 +272,7 @@ class VirusTotalMCPServer:
     server_id: str = "virustotal"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -374,9 +363,7 @@ class VirusTotalMCPServer:
         }
 
     def _mock_lookup_domain(self, domain: str) -> dict[str, Any]:
-        result = _MOCK_DOMAIN_RESULTS.get(
-            domain, _MOCK_DOMAIN_RESULTS["default"]
-        )
+        result = _MOCK_DOMAIN_RESULTS.get(domain, _MOCK_DOMAIN_RESULTS["default"])
         if result["domain"] == "unknown":
             result = {**result, "domain": domain}
         return {
@@ -398,24 +385,16 @@ class VirusTotalMCPServer:
     # ---- real implementations (placeholders) ----
 
     def _real_lookup_hash(self, hash: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real VirusTotal hash lookup not yet implemented"
-        )
+        raise NotImplementedError("Real VirusTotal hash lookup not yet implemented")
 
     def _real_lookup_ip(self, ip: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real VirusTotal IP lookup not yet implemented"
-        )
+        raise NotImplementedError("Real VirusTotal IP lookup not yet implemented")
 
     def _real_lookup_domain(self, domain: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real VirusTotal domain lookup not yet implemented"
-        )
+        raise NotImplementedError("Real VirusTotal domain lookup not yet implemented")
 
     def _real_lookup_url(self, url: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real VirusTotal URL lookup not yet implemented"
-        )
+        raise NotImplementedError("Real VirusTotal URL lookup not yet implemented")
 
     # ---- LangChain tool registration helpers ----
 
@@ -435,9 +414,7 @@ class VirusTotalMCPServer:
                     "properties": {
                         "hash": {
                             "type": "string",
-                            "description": (
-                                "File hash (MD5, SHA1, or SHA256)"
-                            ),
+                            "description": ("File hash (MD5, SHA1, or SHA256)"),
                         },
                     },
                     "required": ["hash"],

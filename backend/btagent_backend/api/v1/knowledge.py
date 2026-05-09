@@ -26,9 +26,10 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
 class IngestRequest(BaseModel):
-    title: str
-    content: str
-    source_type: str
+    # SEC-P2-003 FIX: Size limits to prevent memory exhaustion
+    title: str = Field(max_length=500)
+    content: str = Field(max_length=1_000_000)  # 1MB limit
+    source_type: str = Field(max_length=50)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

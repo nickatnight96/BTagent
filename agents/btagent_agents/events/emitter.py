@@ -11,10 +11,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from redis.asyncio import Redis
-
 from btagent_shared.types.events import EventEnvelope, EventType
 from btagent_shared.utils.ids import generate_id
+from redis.asyncio import Redis
 
 logger = logging.getLogger("btagent.events.emitter")
 

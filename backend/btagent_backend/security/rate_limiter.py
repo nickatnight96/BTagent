@@ -6,10 +6,10 @@ import logging
 import time
 from dataclasses import dataclass
 
+from btagent_shared.types.enums import UserRole
 from fastapi import Depends, HTTPException, Request, status
 
 from btagent_backend.config import Settings, get_settings
-from btagent_shared.types.enums import UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -99,9 +99,7 @@ class RateLimiter:
 
         return await self._check_rate_limit_redis(key, capacity, refill_rate)
 
-    async def _check_rate_limit_redis(
-        self, key: str, capacity: int, refill_rate: float
-    ) -> bool:
+    async def _check_rate_limit_redis(self, key: str, capacity: int, refill_rate: float) -> bool:
         now = time.time()
         lua = """
         local key = KEYS[1]
@@ -138,9 +136,7 @@ class RateLimiter:
     # Fallback: in-memory buckets (single-process only, for dev/testing)
     _local_buckets: dict[str, TokenBucket] = {}
 
-    async def _check_rate_limit_local(
-        self, key: str, capacity: int, refill_rate: float
-    ) -> bool:
+    async def _check_rate_limit_local(self, key: str, capacity: int, refill_rate: float) -> bool:
         now = time.time()
         bucket = self._local_buckets.get(key)
         if bucket is None:
@@ -162,9 +158,7 @@ class RateLimiter:
 
     # -- Concurrent investigations ------------------------------------------
 
-    async def check_concurrent_investigations(
-        self, user_id: str, role: str
-    ) -> bool:
+    async def check_concurrent_investigations(self, user_id: str, role: str) -> bool:
         """Return True if the user can start another investigation."""
         limit = CONCURRENT_INVESTIGATION_LIMITS.get(role, 3)
         if self._redis is None:
@@ -281,14 +275,10 @@ class RateLimitDependency:
             role = user.role
 
         limiter = get_rate_limiter()
-        allowed = await limiter.check_rate_limit(
-            user_id=user_id, role=role, burst=self.burst
-        )
+        allowed = await limiter.check_rate_limit(user_id=user_id, role=role, burst=self.burst)
 
         if not allowed:
-            logger.warning(
-                "Rate limit exceeded: user=%s role=%s", user_id, role
-            )
+            logger.warning("Rate limit exceeded: user=%s role=%s", user_id, role)
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Rate limit exceeded. Please wait before retrying.",

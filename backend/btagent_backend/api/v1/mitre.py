@@ -5,6 +5,13 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from btagent_shared.types.mitre import (
+    CoverageMap,
+    DetectionGap,
+    MitreGroup,
+    MitreTactic,
+    MitreTechnique,
+)
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -13,14 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.services.mitre_service import MitreService
 from btagent_backend.services.org_profile import get_org_profile
-from btagent_shared.types.mitre import (
-    CoverageMap,
-    DetectionGap,
-    MitreGroup,
-    MitreTactic,
-    MitreTechnique,
-    NavigatorLayer,
-)
 
 logger = logging.getLogger("btagent.api.mitre")
 
@@ -146,9 +145,7 @@ async def list_tactics(
 
 @router.get("/groups", response_model=list[MitreGroup])
 async def list_groups(
-    technique_id: str | None = Query(
-        None, description="Filter groups by technique ID"
-    ),
+    technique_id: str | None = Query(None, description="Filter groups by technique ID"),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -179,9 +176,7 @@ async def get_group(
 
 @router.get("/coverage", response_model=CoverageMap)
 async def get_coverage(
-    investigation_id: str | None = Query(
-        None, description="Scope coverage to an investigation"
-    ),
+    investigation_id: str | None = Query(None, description="Scope coverage to an investigation"),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -232,9 +227,7 @@ async def search_ttps_for_environment(
     user.require_permission("mitre:view")
 
     profile = await get_org_profile(db)
-    return await MitreService.search_ttps_for_environment(
-        db, profile.model_dump(mode="json")
-    )
+    return await MitreService.search_ttps_for_environment(db, profile.model_dump(mode="json"))
 
 
 # ---------------------------------------------------------------------------
@@ -255,9 +248,7 @@ async def export_navigator_layer(
     return JSONResponse(
         content=layer.model_dump(mode="json"),
         media_type="application/json",
-        headers={
-            "Content-Disposition": "attachment; filename=btagent_navigator_layer.json"
-        },
+        headers={"Content-Disposition": "attachment; filename=btagent_navigator_layer.json"},
     )
 
 

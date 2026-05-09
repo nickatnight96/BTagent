@@ -7,12 +7,12 @@ import logging
 from typing import Any
 
 import httpx
+from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.config import Settings
 from btagent_backend.db.models import NotificationRow
-from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger("btagent.services.notifications")
 
@@ -92,20 +92,24 @@ class NotificationService:
                         "text": {"type": "plain_text", "text": "Approve"},
                         "style": "primary",
                         "action_id": "hitl_approve",
-                        "value": json.dumps({
-                            "investigation_id": investigation_id,
-                            "checkpoint_id": checkpoint_id,
-                        }),
+                        "value": json.dumps(
+                            {
+                                "investigation_id": investigation_id,
+                                "checkpoint_id": checkpoint_id,
+                            }
+                        ),
                     },
                     {
                         "type": "button",
                         "text": {"type": "plain_text", "text": "Reject"},
                         "style": "danger",
                         "action_id": "hitl_reject",
-                        "value": json.dumps({
-                            "investigation_id": investigation_id,
-                            "checkpoint_id": checkpoint_id,
-                        }),
+                        "value": json.dumps(
+                            {
+                                "investigation_id": investigation_id,
+                                "checkpoint_id": checkpoint_id,
+                            }
+                        ),
                     },
                 ],
             },
@@ -327,23 +331,23 @@ class NotificationService:
 
         # Push via Redis pub/sub so the WebSocket hub can deliver in real-time
         if self._redis:
-            ws_payload = json.dumps({
-                "id": row.id,
-                "type": row.type,
-                "title": row.title,
-                "message": row.message,
-                "investigation_id": row.investigation_id,
-                "read": False,
-                "created_at": row.created_at.isoformat() if row.created_at else None,
-            })
+            ws_payload = json.dumps(
+                {
+                    "id": row.id,
+                    "type": row.type,
+                    "title": row.title,
+                    "message": row.message,
+                    "investigation_id": row.investigation_id,
+                    "read": False,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+            )
             channel = f"btagent:notifications:{user_id}"
             try:
                 await self._redis.publish(channel, ws_payload)
                 logger.debug("Pushed notification %s to %s", row.id, channel)
             except Exception:
-                logger.warning(
-                    "Failed to push notification %s via Redis (non-fatal)", row.id
-                )
+                logger.warning("Failed to push notification %s via Redis (non-fatal)", row.id)
 
         logger.info(
             "In-app notification %s created for user %s (type=%s)",

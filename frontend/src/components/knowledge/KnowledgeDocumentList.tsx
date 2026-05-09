@@ -70,7 +70,7 @@ export function KnowledgeDocumentList() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="knowledge-list">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-300">
           Documents ({totalDocuments})
@@ -78,19 +78,31 @@ export function KnowledgeDocumentList() {
       </div>
 
       {isLoading && documents.length === 0 ? (
-        <div className="text-center py-8 text-slate-500">Loading documents...</div>
+        <div
+          className="text-center py-8 text-slate-500"
+          data-testid="knowledge-list-loading"
+        >
+          Loading documents...
+        </div>
       ) : documents.length === 0 ? (
-        <div className="text-center py-8 text-slate-500">
+        <div
+          className="text-center py-8 text-slate-500"
+          data-testid="knowledge-list-empty"
+        >
           No documents in the knowledge base yet.
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2" data-testid="knowledge-list-items">
           {documents.map((doc) => (
             <div
               key={doc.id}
               className="flex items-center gap-3 p-3 bg-slate-800 border border-slate-700/50 rounded-lg hover:border-slate-600 transition-colors"
+              data-testid={`knowledge-doc-${doc.id}`}
             >
-              <FileText className="w-5 h-5 text-slate-400 shrink-0" />
+              <FileText
+                className="w-5 h-5 text-slate-400 shrink-0"
+                aria-hidden="true"
+              />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-slate-200 truncate">
@@ -100,7 +112,7 @@ export function KnowledgeDocumentList() {
                 </div>
                 <div className="flex items-center gap-3 mt-1">
                   <span className="text-xs text-slate-500">
-                    {doc.token_count.toLocaleString()} tokens
+                    {(doc.token_count ?? 0).toLocaleString()} tokens
                   </span>
                   {doc.created_at && (
                     <span className="text-xs text-slate-500">
@@ -113,8 +125,10 @@ export function KnowledgeDocumentList() {
                 onClick={() => void handleDelete(doc.id)}
                 className="p-1.5 text-slate-500 hover:text-red-400 rounded transition-colors"
                 title="Delete document"
+                aria-label={`Delete document ${doc.title}`}
+                data-testid={`knowledge-doc-${doc.id}-delete-button`}
               >
-                <Trash2 className="w-4 h-4" />
+                <Trash2 className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
           ))}
@@ -123,7 +137,10 @@ export function KnowledgeDocumentList() {
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between pt-2">
+        <div
+          className="flex items-center justify-between pt-2"
+          data-testid="knowledge-list-pagination"
+        >
           <span className="text-xs text-slate-500">
             Page {documentsPage} of {totalPages}
           </span>
@@ -132,15 +149,19 @@ export function KnowledgeDocumentList() {
               onClick={handlePrev}
               disabled={documentsPage <= 1}
               className="p-1.5 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label="Previous page"
+              data-testid="knowledge-list-prev-button"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-4 h-4" aria-hidden="true" />
             </button>
             <button
               onClick={handleNext}
               disabled={documentsPage >= totalPages}
               className="p-1.5 rounded text-slate-400 hover:text-slate-200 disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label="Next page"
+              data-testid="knowledge-list-next-button"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight className="w-4 h-4" aria-hidden="true" />
             </button>
           </div>
         </div>

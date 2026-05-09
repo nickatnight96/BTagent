@@ -12,14 +12,10 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import yaml
-from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from btagent_backend.db.models_playbook import PlaybookExecutionRow, PlaybookRow
 from btagent_shared.types.playbook import (
     ActionStep,
     DecisionStep,
@@ -27,7 +23,6 @@ from btagent_shared.types.playbook import (
     OnFailure,
     ParallelForkStep,
     PlaybookDefinition,
-    PlaybookExecution,
     PlaybookStatus,
     PlaybookStep,
     StepType,
@@ -35,6 +30,10 @@ from btagent_shared.types.playbook import (
     ValidationResult,
 )
 from btagent_shared.utils.ids import generate_id
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from btagent_backend.db.models_playbook import PlaybookExecutionRow, PlaybookRow
 
 logger = logging.getLogger("btagent.services.playbook")
 
@@ -120,9 +119,7 @@ def _detect_cycles(steps: list[PlaybookStep]) -> list[str]:
     errors: list[str] = []
     if visited < len(step_ids):
         cycle_nodes = {sid for sid, deg in in_degree.items() if deg > 0}
-        errors.append(
-            f"Cycle detected among steps: {sorted(cycle_nodes)}"
-        )
+        errors.append(f"Cycle detected among steps: {sorted(cycle_nodes)}")
 
     return errors
 
@@ -190,7 +187,9 @@ def _parse_step(raw: dict[str, Any]) -> PlaybookStep:
         # join, end, or unknown — use base class
         return PlaybookStep(
             id=raw["id"],
-            type=StepType(step_type) if step_type in StepType.__members__.values() else StepType.END,
+            type=StepType(step_type)
+            if step_type in StepType.__members__.values()
+            else StepType.END,
             name=raw.get("name", ""),
             description=raw.get("description", ""),
             config=raw.get("config", {}),
@@ -352,9 +351,7 @@ class PlaybookService:
         """
         result = self.validate_playbook(yaml_str)
         if not result.valid:
-            raise ValueError(
-                f"Playbook validation failed: {'; '.join(result.errors)}"
-            )
+            raise ValueError(f"Playbook validation failed: {'; '.join(result.errors)}")
 
         raw = yaml.safe_load(yaml_str)
         trigger = TriggerCondition(
@@ -446,9 +443,7 @@ class PlaybookService:
 
         Returns the updated row, or None if not found.
         """
-        result = await db.execute(
-            select(PlaybookRow).where(PlaybookRow.id == playbook_id)
-        )
+        result = await db.execute(select(PlaybookRow).where(PlaybookRow.id == playbook_id))
         row = result.scalar_one_or_none()
         if row is None:
             return None
@@ -460,7 +455,7 @@ class PlaybookService:
         row.description = definition.description
         row.trigger_type = definition.trigger.type.value
         row.trigger_config = definition.trigger.parameters
-        row.updated_at = datetime.now(timezone.utc)
+        row.updated_at = datetime.now(UTC)
 
         await db.flush()
 
@@ -511,7 +506,7 @@ class PlaybookService:
         if pb is None:
             raise ValueError(f"Playbook '{playbook_id}' not found or inactive")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         execution = PlaybookExecutionRow(
             id=generate_id("pbe"),
             playbook_id=playbook_id,
@@ -569,9 +564,7 @@ class PlaybookService:
         playbook_id: str,
     ) -> PlaybookRow | None:
         """Fetch a single playbook by ID."""
-        result = await db.execute(
-            select(PlaybookRow).where(PlaybookRow.id == playbook_id)
-        )
+        result = await db.execute(select(PlaybookRow).where(PlaybookRow.id == playbook_id))
         return result.scalar_one_or_none()
 
     async def deactivate_playbook(
@@ -583,15 +576,13 @@ class PlaybookService:
 
         Returns True if found and deactivated, False otherwise.
         """
-        result = await db.execute(
-            select(PlaybookRow).where(PlaybookRow.id == playbook_id)
-        )
+        result = await db.execute(select(PlaybookRow).where(PlaybookRow.id == playbook_id))
         row = result.scalar_one_or_none()
         if row is None:
             return False
 
         row.is_active = False
-        row.updated_at = datetime.now(timezone.utc)
+        row.updated_at = datetime.now(UTC)
         await db.flush()
 
         logger.info("Deactivated playbook %s", playbook_id)
@@ -631,8 +622,6 @@ class PlaybookService:
     ) -> PlaybookExecutionRow | None:
         """Fetch a single execution by ID."""
         result = await db.execute(
-            select(PlaybookExecutionRow).where(
-                PlaybookExecutionRow.id == execution_id
-            )
+            select(PlaybookExecutionRow).where(PlaybookExecutionRow.id == execution_id)
         )
         return result.scalar_one_or_none()

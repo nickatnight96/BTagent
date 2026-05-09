@@ -1,10 +1,9 @@
 """SQLAlchemy ORM models for the BTagent Knowledge Base (pgvector RAG)."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Column,
     DateTime,
     ForeignKey,
     Index,
@@ -30,13 +29,9 @@ class KnowledgeDocumentRow(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # 'metadata' is reserved in SQLAlchemy declarative; use 'doc_metadata'
     # as the Python attribute name, mapping to the 'metadata' DB column.
-    doc_metadata: Mapped[dict] = mapped_column(
-        "metadata", JSONB, default=dict
-    )
+    doc_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     token_count: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utcnow
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
@@ -85,9 +80,7 @@ class KnowledgeChunkRow(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding = mapped_column(Vector(1536), nullable=True)
     # 'metadata' is reserved in SQLAlchemy declarative; use 'chunk_metadata'
-    chunk_metadata: Mapped[dict] = mapped_column(
-        "metadata", JSONB, default=dict
-    )
+    chunk_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     token_count: Mapped[int] = mapped_column(Integer, default=0)
 
     # Relationships

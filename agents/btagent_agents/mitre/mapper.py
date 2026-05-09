@@ -138,9 +138,7 @@ class MitreMapper:
                         self._path,
                     )
                 else:
-                    logger.warning(
-                        "MITRE keywords file is not a list: %s", self._path
-                    )
+                    logger.warning("MITRE keywords file is not a list: %s", self._path)
             else:
                 logger.warning("MITRE keywords file not found: %s", self._path)
         except Exception:

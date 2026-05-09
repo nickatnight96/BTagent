@@ -1,0 +1,79 @@
+"""Mitigation plugin — customer-facing remediation guidance and detection content."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from btagent_agents.plugins.base import DefensivePlugin, DefensivePluginMetadata
+from btagent_agents.plugins.mitigation.tools.remediation_generator import (
+    generate_detection_content,
+    generate_hardening_recommendations,
+    generate_remediation,
+)
+
+_PLUGIN_DIR = Path(__file__).resolve().parent
+
+
+class MitigationPlugin(DefensivePlugin):
+    """Customer-facing remediation and detection content plugin.
+
+    Provides tools for generating audience-aware remediation checklists,
+    platform-specific SIEM detection rules, and technical hardening
+    recommendations mapped to NIST CSF and CIS Controls.
+    """
+
+    def __init__(self) -> None:
+        self._metadata = self._load_metadata()
+        self._system_prompt = self._load_system_prompt()
+
+    # -- Abstract property implementations --------------------------------- #
+
+    @property
+    def name(self) -> str:
+        return self._metadata.name
+
+    @property
+    def description(self) -> str:
+        return self._metadata.description
+
+    @property
+    def version(self) -> str:
+        return self._metadata.version
+
+    # -- Abstract method implementations ----------------------------------- #
+
+    def get_tools(self) -> list[Any]:
+        """Return LangChain tool instances for mitigation operations."""
+        return [
+            generate_remediation,
+            generate_detection_content,
+            generate_hardening_recommendations,
+        ]
+
+    def get_system_prompt(self) -> str:
+        """Return the mitigation agent system prompt.
+
+        Contains an ``{org_profile}`` placeholder that should be filled in
+        by the orchestrator before injection into the LLM call.
+        """
+        return self._system_prompt
+
+    def get_metadata(self) -> DefensivePluginMetadata:
+        return self._metadata
+
+    # -- Internal helpers -------------------------------------------------- #
+
+    @staticmethod
+    def _load_metadata() -> DefensivePluginMetadata:
+        yaml_path = _PLUGIN_DIR / "module.yaml"
+        with yaml_path.open() as f:
+            data = yaml.safe_load(f)
+        return DefensivePluginMetadata(**data)
+
+    @staticmethod
+    def _load_system_prompt() -> str:
+        prompt_path = _PLUGIN_DIR / "system_prompt.md"
+        return prompt_path.read_text(encoding="utf-8")

@@ -10,9 +10,8 @@ import json
 import os
 import sys
 import types
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import JSON, event
@@ -72,6 +71,16 @@ from btagent_backend.config import get_settings  # noqa: E402
 
 get_settings.cache_clear()
 
+# Force registration of every Base subclass with ``Base.metadata`` BEFORE the
+# JSONB → JSON swap below. Importing ``btagent_backend.db.models`` alone only
+# registers the four core tables; ``models_knowledge``, ``models_mitre``, and
+# ``models_playbook`` define their own tables and only join the metadata
+# registry when their modules are imported. Without these side-effect
+# imports, their JSONB columns survive untouched and SQLite chokes on them
+# at table-creation time (``JSONB cannot render in SQLite``).
+import btagent_backend.db.models_knowledge  # noqa: E402, F401
+import btagent_backend.db.models_mitre  # noqa: E402, F401
+import btagent_backend.db.models_playbook  # noqa: E402, F401
 from btagent_backend.db.models import Base  # noqa: E402
 
 # PostgreSQL JSONB columns are incompatible with SQLite — swap to plain JSON.
@@ -79,6 +88,19 @@ for _table in Base.metadata.tables.values():
     for _col in _table.columns:
         if isinstance(_col.type, JSONB):
             _col.type = JSON()
+    # PG-specific indexes (GIN, HNSW, expression-based to_tsvector, etc.)
+    # cannot be rendered by SQLite. Drop any index that opts into a
+    # postgresql-specific feature; production PG schemas still create them
+    # via Alembic, but the in-memory test schema is built from
+    # ``Base.metadata.create_all`` which can't translate them.
+    _pg_only_indexes = [
+        idx
+        for idx in _table.indexes
+        if any(idx.dialect_options.get("postgresql", {}).get(k) for k in ("using", "with", "ops"))
+    ]
+    for _idx in _pg_only_indexes:
+        _table.indexes.discard(_idx)
+
 
 # Turn on foreign-key enforcement for SQLite (off by default).
 @event.listens_for(_test_engine.sync_engine, "connect")
@@ -94,15 +116,49 @@ def _enable_sqlite_fk(dbapi_conn, connection_record):
 
 # --- Database setup / teardown ---
 
+
 @pytest_asyncio.fixture(scope="session")
 async def _init_db():
-    """Create all tables once for the entire test session."""
+    """Create all tables once for the entire test session.
+
+    Also seeds the default organization row required by the org-scoping FK
+    constraint added in migration ``0006_org_scoping``.
+    """
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Seed the default org so user/investigation/ioc/evidence FK checks pass.
+    from btagent_backend.db.models import DEFAULT_ORG_ID, OrganizationRow
+
+    async with _test_session_factory() as session:
+        existing = await session.get(OrganizationRow, DEFAULT_ORG_ID)
+        if existing is None:
+            session.add(
+                OrganizationRow(
+                    id=DEFAULT_ORG_ID,
+                    name="Default Organization",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await session.commit()
+
     yield
     async with _test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
     await _test_engine.dispose()
+
+
+@pytest_asyncio.fixture()
+async def sample_org(_init_db, db_session: "AsyncSession"):
+    """Return the seeded default organization row.
+
+    Tests that need an explicit org reference can depend on this fixture; the
+    underlying row is created in ``_init_db`` so any fixture / test that
+    inserts an org-scoped row already has a valid FK target.
+    """
+    from btagent_backend.db.models import DEFAULT_ORG_ID, OrganizationRow
+
+    return await db_session.get(OrganizationRow, DEFAULT_ORG_ID)
 
 
 @pytest_asyncio.fixture()
@@ -115,12 +171,14 @@ async def db_session(_init_db):
 
 # --- FastAPI test client ---
 
+
 @pytest_asyncio.fixture()
 async def client(_init_db):
     """``httpx.AsyncClient`` wired to the FastAPI app via ASGI transport."""
     # Patch the health endpoint's direct import of async_session_factory
     # (it uses it to run a quick ``SELECT 1`` DB probe).
     import btagent_backend.api.v1.health as health_mod
+
     health_mod.async_session_factory = _test_session_factory
 
     from btagent_backend.api.deps import get_db
@@ -129,6 +187,20 @@ async def client(_init_db):
     test_app = create_app()
     test_app.dependency_overrides[get_db] = _test_get_session
 
+    # Mock TaskManager on app.state so investigation endpoints don't return 503
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_tm = MagicMock()
+    mock_tm.start_investigation = AsyncMock()
+    mock_tm.send_message = AsyncMock()
+    mock_tm.pause_investigation = AsyncMock()
+    mock_tm.resume_investigation = AsyncMock()
+    mock_tm.stop_investigation = AsyncMock()
+    mock_tm.get_status = MagicMock(
+        return_value={"running": 0, "total_started": 0, "agents_available": True}
+    )
+    test_app.state.task_manager = mock_tm
+
     transport = ASGITransport(app=test_app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
         yield ac
@@ -136,10 +208,11 @@ async def client(_init_db):
 
 # --- Users ---
 
-from btagent_backend.auth.jwt import create_token_pair, hash_password  # noqa: E402
-from btagent_backend.db.models import InvestigationRow, UserRow  # noqa: E402
 from btagent_shared.types.enums import InvestigationStatus, Severity  # noqa: E402
 from btagent_shared.utils.ids import generate_id  # noqa: E402
+
+from btagent_backend.auth.jwt import create_token_pair, hash_password  # noqa: E402
+from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, UserRow  # noqa: E402
 
 _ADMIN_PASSWORD = "Admin-P@ss-123!"
 _ANALYST_PASSWORD = "Analyst-P@ss-456!"
@@ -147,6 +220,7 @@ _ANALYST_PASSWORD = "Analyst-P@ss-456!"
 # Counter to guarantee unique usernames/emails across fixture invocations
 # within the same test session (in-memory SQLite persists data).
 import itertools as _itertools  # noqa: E402
+
 _user_counter = _itertools.count(1)
 
 
@@ -156,11 +230,12 @@ async def sample_user(db_session: AsyncSession):
     n = next(_user_counter)
     user = UserRow(
         id=generate_id("usr"),
+        org_id=DEFAULT_ORG_ID,
         username=f"testanalyst_{n}",
         email=f"analyst_{n}@btagent.test",
         password_hash=hash_password(_ANALYST_PASSWORD),
         role="analyst",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db_session.add(user)
     await db_session.commit()
@@ -173,11 +248,12 @@ async def admin_user(db_session: AsyncSession):
     n = next(_user_counter)
     user = UserRow(
         id=generate_id("usr"),
+        org_id=DEFAULT_ORG_ID,
         username=f"testadmin_{n}",
         email=f"admin_{n}@btagent.test",
         password_hash=hash_password(_ADMIN_PASSWORD),
         role="admin",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
     db_session.add(user)
     await db_session.commit()
@@ -185,6 +261,7 @@ async def admin_user(db_session: AsyncSession):
 
 
 # --- Tokens ---
+
 
 @pytest_asyncio.fixture()
 async def analyst_token(sample_user: UserRow) -> str:
@@ -200,19 +277,21 @@ async def admin_token(admin_user: UserRow) -> str:
 
 # --- Sample investigation ---
 
+
 @pytest_asyncio.fixture()
 async def sample_investigation(db_session: AsyncSession, sample_user: UserRow):
     """Create and return a test investigation in INVESTIGATING status."""
     inv = InvestigationRow(
         id=generate_id("inv"),
+        org_id=DEFAULT_ORG_ID,
         title="Test Phishing Investigation",
         description="Automated test investigation for unit tests",
         status=InvestigationStatus.INVESTIGATING.value,
         severity=Severity.HIGH.value,
         tlp_level="green",
         assigned_to=sample_user.id,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
     db_session.add(inv)
     await db_session.commit()
@@ -222,6 +301,7 @@ async def sample_investigation(db_session: AsyncSession, sample_user: UserRow):
 # ============================================================================
 # Helpers importable by test modules (``from conftest import auth_header``)
 # ============================================================================
+
 
 def auth_header(token: str) -> dict[str, str]:
     """Build an ``Authorization: Bearer <token>`` header dict."""

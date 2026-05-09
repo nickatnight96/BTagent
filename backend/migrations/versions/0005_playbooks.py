@@ -5,16 +5,16 @@ Revises: 0004
 Create Date: 2026-03-26
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "0005"
-down_revision: Union[str, None] = "0004"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0004"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -73,12 +73,8 @@ def upgrade() -> None:
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error", sa.Text, nullable=True),
     )
-    op.create_index(
-        "idx_pbe_playbook_id", "playbook_executions", ["playbook_id"]
-    )
-    op.create_index(
-        "idx_pbe_investigation_id", "playbook_executions", ["investigation_id"]
-    )
+    op.create_index("idx_pbe_playbook_id", "playbook_executions", ["playbook_id"])
+    op.create_index("idx_pbe_investigation_id", "playbook_executions", ["investigation_id"])
     op.create_index("idx_pbe_status", "playbook_executions", ["status"])
     op.create_index("idx_pbe_started_at", "playbook_executions", ["started_at"])
 

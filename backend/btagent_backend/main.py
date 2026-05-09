@@ -40,9 +40,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.task_manager = task_manager
     resumed = await task_manager.auto_resume()
-    logger.info(
-        "TaskManager initialised (auto-resumed %d investigation(s))", resumed
-    )
+    logger.info("TaskManager initialised (auto-resumed %d investigation(s))", resumed)
 
     yield
 
@@ -71,13 +69,24 @@ def create_app() -> FastAPI:
         redoc_url="/api/redoc" if settings.env != "prod" else None,
     )
 
+    # AUTH-C1: cookie auth requires ``allow_credentials=True``, which in turn
+    # requires ``allow_origins`` to be an explicit list — the browser refuses
+    # to send cookies when CORS allows ``*``. Fail loudly at startup if the
+    # config drifts to a wildcard so the misconfiguration is caught in
+    # staging, not in production.
+    if "*" in settings.cors_origins:
+        raise RuntimeError(
+            "BTAGENT_CORS_ORIGINS must be an explicit list (no '*') because "
+            "cookie-based auth requires allow_credentials=True."
+        )
+
     # CORS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
     )
 
     # Request-ID middleware (adds X-Request-ID to every request/response)

@@ -59,11 +59,13 @@ def get_template_summaries() -> list[dict[str, str]]:
     for name in list_templates():
         data = load_template(name)
         if data is not None:
-            summaries.append({
-                "name": data.get("name", name),
-                "description": data.get("description", ""),
-                "severity": data.get("severity", "unknown"),
-            })
+            summaries.append(
+                {
+                    "name": data.get("name", name),
+                    "description": data.get("description", ""),
+                    "severity": data.get("severity", "unknown"),
+                }
+            )
     return summaries
 
 

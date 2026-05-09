@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
-from datetime import datetime, timezone
+import json
+from datetime import UTC, datetime
 from typing import Any
 
 from langchain_core.tools import tool
 
-
 # --------------------------------------------------------------------------- #
 # Mock CTI source responses
 # --------------------------------------------------------------------------- #
+
 
 def _mock_virustotal(ioc_type: str, ioc_value: str) -> dict[str, Any]:
     """Simulated VirusTotal API response."""
@@ -154,12 +154,8 @@ def _compute_initial_confidence(source_results: list[dict[str, Any]]) -> float:
     if not source_results:
         return 0.0
 
-    malicious_count = sum(
-        1 for r in source_results if r.get("verdict") == "malicious"
-    )
-    clean_count = sum(
-        1 for r in source_results if r.get("verdict") == "clean"
-    )
+    malicious_count = sum(1 for r in source_results if r.get("verdict") == "malicious")
+    clean_count = sum(1 for r in source_results if r.get("verdict") == "clean")
     total = len(source_results)
 
     if malicious_count >= 3:
@@ -226,9 +222,7 @@ def enrich_ioc(ioc_type: str, ioc_value: str) -> dict[str, Any]:
 
     # Determine MITRE techniques if any source flagged malicious
     mitre_techniques: list[str] = []
-    malicious_count = sum(
-        1 for r in source_results if r.get("verdict") == "malicious"
-    )
+    malicious_count = sum(1 for r in source_results if r.get("verdict") == "malicious")
     if malicious_count > 0:
         mitre_techniques = _MITRE_BY_IOC_TYPE.get(ioc_type_lower, [])
 
@@ -242,7 +236,7 @@ def enrich_ioc(ioc_type: str, ioc_value: str) -> dict[str, Any]:
         "confidence": confidence,
         "mitre_techniques": mitre_techniques,
         "summary": summary,
-        "enriched_at": datetime.now(timezone.utc).isoformat(),
+        "enriched_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -298,5 +292,5 @@ def bulk_enrich(iocs_json: str) -> dict[str, Any]:
         "total": len(iocs),
         "enriched": len(results),
         "errors": errors,
-        "enriched_at": datetime.now(timezone.utc).isoformat(),
+        "enriched_at": datetime.now(UTC).isoformat(),
     }

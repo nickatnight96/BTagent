@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-
-from langchain_core.messages import AIMessage, HumanMessage
 
 from btagent_shared.types.enums import (
     ContainmentStatus,
@@ -15,6 +13,7 @@ from btagent_shared.types.enums import (
     Severity,
 )
 from btagent_shared.utils.ids import generate_id
+from langchain_core.messages import AIMessage, HumanMessage
 
 from btagent_agents.orchestrator.state import InvestigationState
 
@@ -70,12 +69,36 @@ _TASK_KEYWORDS: dict[str, list[str]] = {
     ],
     "report": [
         "report",
-        "summarize",
-        "summary",
+        "generate report",
+        "write up",
         "executive brief",
         "timeline report",
-        "write up",
-        "generate report",
+        "incident report",
+        "ioc report",
+    ],
+    "coordination": [
+        "summarize",
+        "summary",
+        "agency report",
+        "cisa",
+        "fbi",
+        "ic3",
+        "isac",
+        "coordinate",
+        "synthesize investigations",
+        "cross-investigation",
+    ],
+    "mitigation": [
+        "remediate",
+        "remediation",
+        "mitigation",
+        "mitigate",
+        "hardening",
+        "detection rule",
+        "detection content",
+        "playbook",
+        "customer guidance",
+        "siem rule",
     ],
 }
 
@@ -92,9 +115,7 @@ _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 
 # Simple IOC extraction patterns (phase-1 heuristics; enrichment agent expands).
 _IOC_PATTERNS: dict[str, re.Pattern[str]] = {
-    "ip": re.compile(
-        r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|1?\d\d?)\b"
-    ),
+    "ip": re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|1?\d\d?)\b"),
     "domain": re.compile(
         r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
         r"(?:com|net|org|io|info|biz|xyz|ru|cn|tk|top|cc|pw)\b"
@@ -114,7 +135,7 @@ def _emit_event(event_type: str, investigation_id: str, data: dict[str, Any]) ->
             {
                 "type": event_type,
                 "investigation_id": investigation_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "data": data,
             }
         )
@@ -150,7 +171,7 @@ def _classify_intent_llm(text: str) -> str:
                         "You are a task classifier for a defensive cyber security AI agent. "
                         "Given the analyst's message, respond with EXACTLY one word — the "
                         "task type. Valid types: triage, query, enrich, contain, report, "
-                        "general. No explanation."
+                        "coordination, mitigation, general. No explanation."
                     ),
                 },
                 {"role": "user", "content": text},
@@ -159,7 +180,16 @@ def _classify_intent_llm(text: str) -> str:
             temperature=0.0,
         )
         raw = response.choices[0].message.content.strip().lower()
-        if raw in {"triage", "query", "enrich", "contain", "report", "general"}:
+        if raw in {
+            "triage",
+            "query",
+            "enrich",
+            "contain",
+            "report",
+            "coordination",
+            "mitigation",
+            "general",
+        }:
             return raw
     except Exception:
         # LLM unavailable — fall through to default.
@@ -167,9 +197,7 @@ def _classify_intent_llm(text: str) -> str:
     return "general"
 
 
-def _extract_iocs(
-    text: str, investigation_id: str, existing_iocs: list[dict]
-) -> list[dict]:
+def _extract_iocs(text: str, investigation_id: str, existing_iocs: list[dict]) -> list[dict]:
     """Extract IOCs from text using regex patterns.
 
     De-duplicates against ``existing_iocs`` by (type, value).
@@ -198,12 +226,8 @@ def _extract_iocs(
 
 def _highest_severity(current: str, candidate: str) -> str:
     """Return the more severe of two severity strings."""
-    current_idx = (
-        _SEVERITY_ORDER.index(current) if current in _SEVERITY_ORDER else 2
-    )
-    candidate_idx = (
-        _SEVERITY_ORDER.index(candidate) if candidate in _SEVERITY_ORDER else 2
-    )
+    current_idx = _SEVERITY_ORDER.index(current) if current in _SEVERITY_ORDER else 2
+    candidate_idx = _SEVERITY_ORDER.index(candidate) if candidate in _SEVERITY_ORDER else 2
     return _SEVERITY_ORDER[max(current_idx, candidate_idx)]
 
 
@@ -269,6 +293,8 @@ def route_task(state: InvestigationState) -> dict[str, Any]:
         "enrich": "enrich",
         "contain": "contain",
         "report": "report",
+        "coordination": "coordination",
+        "mitigation": "mitigation",
         "general": "synthesize",
     }
     target_agent = agent_map.get(classified, "synthesize")
@@ -337,8 +363,7 @@ def triage_node(state: InvestigationState) -> dict[str, Any]:
         return {
             "messages": [
                 AIMessage(
-                    content="No alert data received for triage. "
-                    "Please provide alert details."
+                    content="No alert data received for triage. Please provide alert details."
                 )
             ],
             "current_agent": "triage",
@@ -396,7 +421,7 @@ def triage_node(state: InvestigationState) -> dict[str, Any]:
     final_severity = _highest_severity(current_severity, scored_severity)
 
     # --- Build timeline entry ---
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     timeline_entry = {
         "id": generate_id("tl"),
         "investigation_id": investigation_id,
@@ -520,7 +545,7 @@ def _format_mitre_summary(techniques: list[dict]) -> str:
     for t in techniques:
         lines.append(
             f"  - {t['technique_id']} "
-            f"(matched: \"{t['keyword_matched']}\", "
+            f'(matched: "{t["keyword_matched"]}", '
             f"confidence: {t['confidence']:.0%})"
         )
     return "\n".join(lines) + "\n\n"
@@ -577,7 +602,7 @@ def query_node(state: InvestigationState) -> dict[str, Any]:
     # --- Build queries ---
     queries = _generate_queries(query_request, iocs)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     timeline_entry = {
         "id": generate_id("tl"),
         "investigation_id": investigation_id,
@@ -609,9 +634,7 @@ def query_node(state: InvestigationState) -> dict[str, Any]:
     }
 
 
-def _generate_queries(
-    request: str, iocs: list[dict]
-) -> list[dict[str, str]]:
+def _generate_queries(request: str, iocs: list[dict]) -> list[dict[str, str]]:
     """Build template-based SIEM queries incorporating available IOCs.
 
     Returns a list of dicts with keys: platform, language, query, description.
@@ -622,11 +645,7 @@ def _generate_queries(
     # Gather IOC values by type for query building.
     ips = [i["value"] for i in iocs if i.get("type") == "ip"]
     domains = [i["value"] for i in iocs if i.get("type") == "domain"]
-    hashes = [
-        i["value"]
-        for i in iocs
-        if i.get("type") in ("hash_sha256", "hash_md5", "hash_sha1")
-    ]
+    hashes = [i["value"] for i in iocs if i.get("type") in ("hash_sha256", "hash_md5", "hash_sha1")]
 
     # Splunk SPL query
     if any(term in lower for term in ("splunk", "siem", "search", "query", "log", "hunt")):
@@ -636,14 +655,14 @@ def _generate_queries(
             spl_parts.append(f"(src_ip IN ({ip_list}) OR dest_ip IN ({ip_list}))")
         if domains:
             domain_list = " OR ".join(f'"{d}"' for d in domains)
-            spl_parts.append(f'(query IN ({domain_list}) OR url_domain IN ({domain_list}))')
+            spl_parts.append(f"(query IN ({domain_list}) OR url_domain IN ({domain_list}))")
         if hashes:
             hash_list = " OR ".join(f'"{h}"' for h in hashes)
-            spl_parts.append(f'(file_hash IN ({hash_list}))')
+            spl_parts.append(f"(file_hash IN ({hash_list}))")
 
         if spl_parts:
             spl_filter = " OR ".join(spl_parts)
-            spl = f'index=* earliest=-24h ({spl_filter}) | stats count by src_ip, dest_ip, action'
+            spl = f"index=* earliest=-24h ({spl_filter}) | stats count by src_ip, dest_ip, action"
         else:
             # Generic search based on request text.
             search_terms = _TAG_STRIP_RE.sub("", request).strip()
@@ -665,19 +684,12 @@ def _generate_queries(
     if any(term in lower for term in ("elastic", "kql", "kibana", "siem", "search", "query")):
         kql_parts = []
         if ips:
-            ip_clauses = " OR ".join(
-                f'source.ip: "{ip}" OR destination.ip: "{ip}"'
-                for ip in ips
-            )
+            ip_clauses = " OR ".join(f'source.ip: "{ip}" OR destination.ip: "{ip}"' for ip in ips)
             kql_parts.append(f"({ip_clauses})")
         if domains:
-            kql_parts.append(
-                "(" + " OR ".join(f'dns.question.name: "{d}"' for d in domains) + ")"
-            )
+            kql_parts.append("(" + " OR ".join(f'dns.question.name: "{d}"' for d in domains) + ")")
         if hashes:
-            kql_parts.append(
-                "(" + " OR ".join(f'file.hash.sha256: "{h}"' for h in hashes) + ")"
-            )
+            kql_parts.append("(" + " OR ".join(f'file.hash.sha256: "{h}"' for h in hashes) + ")")
 
         if kql_parts:
             kql = " OR ".join(kql_parts)
@@ -743,9 +755,7 @@ def synthesize_node(state: InvestigationState) -> dict[str, Any]:
 
     # Determine if there are pending containment actions requiring approval.
     pending_containment = [
-        a
-        for a in containment_actions
-        if a.get("status") == ContainmentStatus.PROPOSED
+        a for a in containment_actions if a.get("status") == ContainmentStatus.PROPOSED
     ]
 
     # Decide on next status.
@@ -770,9 +780,7 @@ def synthesize_node(state: InvestigationState) -> dict[str, Any]:
         )
         new_status = InvestigationStatus.PAUSED_HITL
     elif needs_more_work:
-        summary_parts.append(
-            "\nHigh/critical severity with IOCs — enrichment recommended."
-        )
+        summary_parts.append("\nHigh/critical severity with IOCs — enrichment recommended.")
         new_status = InvestigationStatus.INVESTIGATING
     else:
         summary_parts.append("\nInvestigation step complete.")
@@ -816,9 +824,7 @@ def hitl_checkpoint_node(state: InvestigationState) -> dict[str, Any]:
     human_response = ""
     for msg in reversed(messages):
         if isinstance(msg, HumanMessage):
-            human_response = (
-                msg.content if isinstance(msg.content, str) else str(msg.content)
-            )
+            human_response = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
 
     approved = _parse_hitl_response(human_response)
@@ -860,9 +866,7 @@ def hitl_checkpoint_node(state: InvestigationState) -> dict[str, Any]:
         "messages": [AIMessage(content=response_text)],
         "containment_actions": updated_actions,
         "status": (
-            InvestigationStatus.INVESTIGATING
-            if approved
-            else InvestigationStatus.INVESTIGATING
+            InvestigationStatus.INVESTIGATING if approved else InvestigationStatus.INVESTIGATING
         ),
         "current_agent": "hitl_checkpoint",
     }
@@ -888,3 +892,203 @@ def _parse_hitl_response(text: str) -> bool:
         "accept",
     ]
     return any(pattern in lower for pattern in approval_patterns)
+
+
+# ---------------------------------------------------------------------------
+# Node: report_node (delegates to ReportAgent subgraph)
+# ---------------------------------------------------------------------------
+
+
+def report_node(state: InvestigationState) -> dict[str, Any]:
+    """Generate an investigation report using the Report plugin.
+
+    Delegates to the report plugin's generate_report tool to produce
+    a structured report from the investigation data.
+    """
+    investigation_id = state.get("investigation_id", "")
+    existing_timeline: list[dict] = list(state.get("timeline", []))
+
+    try:
+        from btagent_agents.plugins.report.tools.report_generator import (
+            generate_report,
+        )
+
+        result = generate_report.invoke(
+            {
+                "investigation_id": investigation_id,
+                "template": "incident_report",
+            }
+        )
+
+        if result.get("status") == "success":
+            sections = result.get("sections", {})
+            section_names = list(sections.keys())
+            content = (
+                f"**Investigation Report Generated**\n"
+                f"Template: {result.get('template', 'incident_report')}\n"
+                f"Sections: {', '.join(section_names)}\n\n"
+            )
+            # Include executive summary if present
+            exec_summary = sections.get("executive_summary", "")
+            if exec_summary:
+                content += f"**Executive Summary:**\n{exec_summary}\n"
+        else:
+            content = (
+                f"**Report Generation** — could not generate report: "
+                f"{result.get('error', 'unknown error')}"
+            )
+    except Exception as exc:
+        content = (
+            f"**Report Generation** — error: {exc}\nFalling back to basic investigation summary."
+        )
+
+    now_iso = datetime.now(UTC).isoformat()
+    timeline_entry = {
+        "id": generate_id("tl"),
+        "investigation_id": investigation_id,
+        "timestamp": now_iso,
+        "description": "Report generated for investigation.",
+        "actor": "report_agent",
+        "event_type": "report_generated",
+    }
+
+    _emit_event(
+        "agent_status",
+        investigation_id,
+        {"agent": "report", "action": "report_generated"},
+    )
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "timeline": existing_timeline + [timeline_entry],
+        "current_agent": "report",
+        "status": InvestigationStatus.INVESTIGATING,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node: coordination_node (delegates to CoordinationAgent subgraph)
+# ---------------------------------------------------------------------------
+
+
+def coordination_node(state: InvestigationState) -> dict[str, Any]:
+    """Synthesize investigation data into agency-ready summaries.
+
+    Delegates to the coordination plugin's summarization tools.
+    """
+    investigation_id = state.get("investigation_id", "")
+    existing_timeline: list[dict] = list(state.get("timeline", []))
+
+    try:
+        from btagent_agents.plugins.coordination.tools.summarizer import (
+            summarize_investigation,
+        )
+
+        result = summarize_investigation.invoke(
+            {
+                "investigation_id": investigation_id,
+            }
+        )
+
+        if result.get("status") == "success":
+            content = (
+                f"**Coordination Summary**\n\n"
+                f"{result.get('executive_summary', 'No summary available.')}\n\n"
+                f"IOCs: {result.get('ioc_count', 0)}\n"
+                f"MITRE Techniques: {', '.join(result.get('mitre_techniques', []))}\n"
+                f"Recommendations: {len(result.get('recommendations', []))}"
+            )
+        else:
+            content = (
+                f"**Coordination** — summarization failed: {result.get('error', 'unknown error')}"
+            )
+    except Exception as exc:
+        content = f"**Coordination** — error: {exc}"
+
+    now_iso = datetime.now(UTC).isoformat()
+    timeline_entry = {
+        "id": generate_id("tl"),
+        "investigation_id": investigation_id,
+        "timestamp": now_iso,
+        "description": "Coordination summary generated.",
+        "actor": "coordination_agent",
+        "event_type": "coordination_summary",
+    }
+
+    _emit_event(
+        "agent_status",
+        investigation_id,
+        {"agent": "coordination", "action": "summary_generated"},
+    )
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "timeline": existing_timeline + [timeline_entry],
+        "current_agent": "coordination",
+        "status": InvestigationStatus.INVESTIGATING,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Node: mitigation_node (delegates to MitigationAgent subgraph)
+# ---------------------------------------------------------------------------
+
+
+def mitigation_node(state: InvestigationState) -> dict[str, Any]:
+    """Generate remediation guidance and detection content.
+
+    Delegates to the mitigation plugin's remediation tools.
+    """
+    investigation_id = state.get("investigation_id", "")
+    existing_timeline: list[dict] = list(state.get("timeline", []))
+
+    try:
+        from btagent_agents.plugins.mitigation.tools.remediation_generator import (
+            generate_remediation,
+        )
+
+        result = generate_remediation.invoke(
+            {
+                "investigation_id": investigation_id,
+                "audience": "technical",
+            }
+        )
+
+        if result.get("status") == "success":
+            actions = result.get("actions", [])
+            content = (
+                f"**Mitigation Guidance** ({result.get('audience', 'technical')})\n\n"
+                f"Title: {result.get('title', 'Remediation')}\n"
+                f"Actions: {len(actions)} remediation items generated\n\n"
+            )
+            for action in actions[:5]:
+                content += f"- [{action.get('priority', '?')}] {action.get('action', '?')}\n"
+            if len(actions) > 5:
+                content += f"... and {len(actions) - 5} more\n"
+        else:
+            content = f"**Mitigation** — generation failed: {result.get('error', 'unknown error')}"
+    except Exception as exc:
+        content = f"**Mitigation** — error: {exc}"
+
+    now_iso = datetime.now(UTC).isoformat()
+    timeline_entry = {
+        "id": generate_id("tl"),
+        "investigation_id": investigation_id,
+        "timestamp": now_iso,
+        "description": "Mitigation guidance generated.",
+        "actor": "mitigation_agent",
+        "event_type": "mitigation_generated",
+    }
+
+    _emit_event(
+        "agent_status",
+        investigation_id,
+        {"agent": "mitigation", "action": "remediation_generated"},
+    )
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "timeline": existing_timeline + [timeline_entry],
+        "current_agent": "mitigation",
+        "status": InvestigationStatus.INVESTIGATING,
+    }

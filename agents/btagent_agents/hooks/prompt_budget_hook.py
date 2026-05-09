@@ -10,14 +10,14 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from btagent_shared.types.events import EventType
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 from langchain_core.outputs import LLMResult
 
 from btagent_agents.context.budget import estimate_tokens
 from btagent_agents.events.emitter import RedisEmitter
 from btagent_agents.hooks.base import HookProvider
-from btagent_agents.llm.cost_calculator import CostAccumulator, calculate_cost
-from btagent_shared.types.events import EventType
+from btagent_agents.llm.cost_calculator import CostAccumulator
 
 logger = logging.getLogger("btagent.hooks.prompt_budget")
 
@@ -55,9 +55,7 @@ class PromptBudgetExceeded(Exception):
     def __init__(self, used: int, limit: int) -> None:
         self.used = used
         self.limit = limit
-        super().__init__(
-            f"Token budget exceeded: {used:,} tokens used, limit is {limit:,}"
-        )
+        super().__init__(f"Token budget exceeded: {used:,} tokens used, limit is {limit:,}")
 
 
 class PromptBudgetCallback(AsyncCallbackHandler):
@@ -167,10 +165,7 @@ class PromptBudgetCallback(AsyncCallbackHandler):
         )
 
         # Check warning threshold
-        total_tokens = (
-            self._accumulator.total_input_tokens
-            + self._accumulator.total_output_tokens
-        )
+        total_tokens = self._accumulator.total_input_tokens + self._accumulator.total_output_tokens
         threshold = int(self._max_tokens * WARN_THRESHOLD)
 
         if total_tokens >= threshold and not self._warned:
@@ -178,7 +173,9 @@ class PromptBudgetCallback(AsyncCallbackHandler):
             pct = round(total_tokens / self._max_tokens * 100, 1)
             logger.warning(
                 "Token budget at %s%% (%s / %s tokens)",
-                pct, f"{total_tokens:,}", f"{self._max_tokens:,}",
+                pct,
+                f"{total_tokens:,}",
+                f"{self._max_tokens:,}",
             )
             await self._emitter.emit(
                 EventType.NOTIFICATION,

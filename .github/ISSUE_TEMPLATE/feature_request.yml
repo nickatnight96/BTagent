@@ -1,0 +1,107 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for BTagent
+title: "[Feature]: "
+labels: ["enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting an improvement to BTagent. Please provide as much detail as possible so we can evaluate and prioritize your request.
+
+        Before submitting, please check the [public roadmap](../../docs/ROADMAP.md) to see if your idea is already planned.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: Provide a clear and concise description of the feature you would like to see.
+      placeholder: |
+        A way to export investigation reports as PDF files with configurable templates,
+        including executive summary, timeline, IOC table, and MITRE mapping sections.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Case
+      description: |
+        Describe the problem this feature would solve or the workflow it would improve.
+        Who would benefit from this feature? What are you trying to accomplish?
+      placeholder: |
+        As a senior analyst, I need to share investigation findings with management
+        who do not have access to BTagent. Currently I have to manually copy-paste
+        from the UI into a Word document, which is time-consuming and error-prone.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution
+      description: If you have a specific idea for how this feature should work, describe it here.
+      placeholder: |
+        Add a "Export PDF" button on the investigation workspace that:
+        1. Opens a dialog to select which sections to include
+        2. Lets the user choose a report template
+        3. Generates a PDF using a backend endpoint
+        4. Downloads the file to the browser
+
+        API: POST /api/v1/investigations/{id}/report/export?format=pdf
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative approaches? What are the trade-offs?
+      placeholder: |
+        1. Browser print-to-PDF: Works but loses formatting and does not include
+           all investigation data.
+        2. Markdown export + Pandoc: More flexible but requires external tooling
+           and is not user-friendly for non-technical stakeholders.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of BTagent does this feature relate to?
+      options:
+        - Frontend (React dashboard)
+        - Backend (FastAPI API)
+        - Agent Engine (LangGraph orchestrator)
+        - Plugins (agent capabilities)
+        - MCP Connectors (SIEM/EDR/CTI integrations)
+        - Infrastructure (Docker, Helm, Terraform)
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: |
+        Add any other context, mockups, diagrams, or references that would help
+        illustrate the feature. You can drag-and-drop images here.
+      placeholder: |
+        Reference implementation: https://example.com/similar-feature
+        Related discussion: #42
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and the roadmap to verify this is not a duplicate
+          required: true
+        - label: I have described a clear use case for this feature
+          required: true

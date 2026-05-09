@@ -3,12 +3,14 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { Wrench } from "lucide-react";
 import type { ActionNodeData } from "@/types/playbook";
 
-function ActionNodeComponent({ data, selected }: NodeProps) {
+function ActionNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as ActionNodeData;
   const argCount = nodeData.arguments ? Object.keys(nodeData.arguments).length : 0;
 
   return (
     <div
+      data-testid={`playbook-builder-node-${id}`}
+      data-node-type="action"
       className={`
         relative min-w-[220px] rounded-lg border-l-4 border-blue-500
         bg-slate-800 shadow-lg transition-all duration-150

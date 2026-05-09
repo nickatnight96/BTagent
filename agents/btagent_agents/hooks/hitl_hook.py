@@ -11,12 +11,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from btagent_shared.types.config import AutonomyLevel, IntegrationAutonomy
+from btagent_shared.types.events import EventType
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 
 from btagent_agents.events.emitter import RedisEmitter
 from btagent_agents.hooks.base import HookProvider
-from btagent_shared.types.config import AutonomyLevel, IntegrationAutonomy
-from btagent_shared.types.events import EventType
 
 logger = logging.getLogger("btagent.hooks.hitl")
 
@@ -50,10 +50,16 @@ _TOOL_AUTONOMY_MAP: dict[str, str] = {
 
 
 class HITLInterrupt(Exception):
-    """Raised to signal that a tool call requires human approval.
+    """Callback-level signal that a tool call requires human approval.
 
-    LangGraph nodes should catch this and enter an interrupt state, persisting
-    the checkpoint so the graph can resume after approval.
+    Note on production wiring: the BTagent orchestrator pauses for HITL via
+    LangGraph's declarative ``interrupt_before=["hitl_checkpoint"]`` config
+    (see ``orchestrator/graph.py``). It does **not** catch this exception.
+
+    This class is preserved as an extension point for non-LangGraph consumers
+    that wire ``HITLCallback`` directly into a tool runtime and want to
+    surface "approval required" as a typed exception. The contract is
+    enforced by ``tests/test_hitl_integration.py``.
     """
 
     def __init__(
@@ -67,9 +73,7 @@ class HITLInterrupt(Exception):
         self.tool_input = tool_input
         self.required_level = required_level
         self.checkpoint_id = checkpoint_id
-        super().__init__(
-            f"Tool {tool_name!r} requires approval (autonomy level: {required_level})"
-        )
+        super().__init__(f"Tool {tool_name!r} requires approval (autonomy level: {required_level})")
 
 
 def _resolve_tool_autonomy(
@@ -148,9 +152,7 @@ class HITLCallback(AsyncCallbackHandler):
     ) -> None:
         tool_name = serialized.get("name", "unknown_tool")
 
-        if not requires_approval(
-            tool_name, self._agent_autonomy, self._integration_autonomy
-        ):
+        if not requires_approval(tool_name, self._agent_autonomy, self._integration_autonomy):
             return
 
         # Emit HITL_CHECKPOINT event for the frontend
@@ -163,9 +165,7 @@ class HITLCallback(AsyncCallbackHandler):
             checkpoint_id=checkpoint_id,
             tool_name=tool_name,
             tool_input=input_str[:5000],  # Truncate large inputs
-            required_autonomy=_resolve_tool_autonomy(
-                tool_name, self._integration_autonomy
-            ).value,
+            required_autonomy=_resolve_tool_autonomy(tool_name, self._integration_autonomy).value,
             agent_autonomy=self._agent_autonomy.value,
             message=f"Tool '{tool_name}' requires human approval before execution.",
         )
@@ -182,9 +182,7 @@ class HITLCallback(AsyncCallbackHandler):
         raise HITLInterrupt(
             tool_name=tool_name,
             tool_input=input_str,
-            required_level=_resolve_tool_autonomy(
-                tool_name, self._integration_autonomy
-            ),
+            required_level=_resolve_tool_autonomy(tool_name, self._integration_autonomy),
             checkpoint_id=checkpoint_id,
         )
 

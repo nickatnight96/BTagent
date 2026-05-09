@@ -20,9 +20,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.misp")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -46,8 +44,8 @@ _MOCK_EVENTS: dict[str, dict[str, Any]] = {
         "timestamp": "2026-03-24T14:00:00Z",
         "tags": [
             {"name": "tlp:amber", "colour": "#FFC000"},
-            {"name": "misp-galaxy:threat-actor=\"APT-Phantom\""},
-            {"name": "misp-galaxy:mitre-attack-pattern=\"T1059.001\""},
+            {"name": 'misp-galaxy:threat-actor="APT-Phantom"'},
+            {"name": 'misp-galaxy:mitre-attack-pattern="T1059.001"'},
             {"name": "type:OSINT"},
             {"name": "cobalt-strike"},
         ],
@@ -77,15 +75,13 @@ _MOCK_EVENTS: dict[str, dict[str, Any]] = {
                     {
                         "value": "T1059.001 - PowerShell",
                         "description": (
-                            "Adversaries may abuse PowerShell "
-                            "commands and scripts for execution."
+                            "Adversaries may abuse PowerShell commands and scripts for execution."
                         ),
                     },
                     {
                         "value": "T1071.001 - Web Protocols",
                         "description": (
-                            "Adversaries may communicate using "
-                            "application layer protocols."
+                            "Adversaries may communicate using application layer protocols."
                         ),
                     },
                 ],
@@ -132,10 +128,7 @@ _MOCK_EVENTS: dict[str, dict[str, Any]] = {
                 "id": "attr-100425",
                 "type": "sha256",
                 "category": "Payload delivery",
-                "value": (
-                    "e3b0c44298fc1c149afbf4c8996fb924"
-                    "27ae41e4649b934ca495991b7852b855"
-                ),
+                "value": ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
                 "to_ids": True,
                 "comment": "CobaltStrike beacon payload",
                 "timestamp": "2026-03-20T10:00:00Z",
@@ -170,7 +163,7 @@ _MOCK_EVENTS: dict[str, dict[str, Any]] = {
             {"name": "tlp:green", "colour": "#33FF00"},
             {"name": "type:OSINT"},
             {"name": "brute-force"},
-            {"name": "misp-galaxy:mitre-attack-pattern=\"T1110.001\""},
+            {"name": 'misp-galaxy:mitre-attack-pattern="T1110.001"'},
         ],
         "galaxies": [
             {
@@ -226,9 +219,7 @@ class MISPMCPServer:
     server_id: str = "misp"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -285,22 +276,22 @@ class MISPMCPServer:
 
     # ---- mock implementations ----
 
-    def _mock_search_attributes(
-        self, value: str, type: str
-    ) -> dict[str, Any]:
+    def _mock_search_attributes(self, value: str, type: str) -> dict[str, Any]:
         matches = []
         for evt in _MOCK_EVENTS.values():
             for attr in evt["attributes"]:
                 if value in attr["value"]:
                     if type and attr["type"] != type:
                         continue
-                    matches.append({
-                        "attribute": attr,
-                        "event_id": evt["event_id"],
-                        "event_info": evt["info"],
-                        "threat_level": evt["threat_level"],
-                        "tags": [t["name"] for t in evt["tags"]],
-                    })
+                    matches.append(
+                        {
+                            "attribute": attr,
+                            "event_id": evt["event_id"],
+                            "event_info": evt["info"],
+                            "threat_level": evt["threat_level"],
+                            "tags": [t["name"] for t in evt["tags"]],
+                        }
+                    )
         return {
             "status": "success",
             "value_queried": value,
@@ -330,23 +321,21 @@ class MISPMCPServer:
         for evt in _MOCK_EVENTS.values():
             for attr in evt["attributes"]:
                 if ioc_value == attr["value"]:
-                    matches.append({
-                        "attribute_id": attr["id"],
-                        "attribute_type": attr["type"],
-                        "attribute_value": attr["value"],
-                        "category": attr["category"],
-                        "comment": attr["comment"],
-                        "to_ids": attr["to_ids"],
-                        "event_id": evt["event_id"],
-                        "event_info": evt["info"],
-                        "threat_level": evt["threat_level"],
-                        "event_tags": [
-                            t["name"] for t in evt["tags"]
-                        ],
-                        "galaxies": [
-                            g["name"] for g in evt.get("galaxies", [])
-                        ],
-                    })
+                    matches.append(
+                        {
+                            "attribute_id": attr["id"],
+                            "attribute_type": attr["type"],
+                            "attribute_value": attr["value"],
+                            "category": attr["category"],
+                            "comment": attr["comment"],
+                            "to_ids": attr["to_ids"],
+                            "event_id": evt["event_id"],
+                            "event_info": evt["info"],
+                            "threat_level": evt["threat_level"],
+                            "event_tags": [t["name"] for t in evt["tags"]],
+                            "galaxies": [g["name"] for g in evt.get("galaxies", [])],
+                        }
+                    )
         return {
             "status": "success",
             "ioc_queried": ioc_value,
@@ -357,22 +346,14 @@ class MISPMCPServer:
 
     # ---- real implementations (placeholders) ----
 
-    def _real_search_attributes(
-        self, value: str, type: str
-    ) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real MISP attribute search not yet implemented"
-        )
+    def _real_search_attributes(self, value: str, type: str) -> dict[str, Any]:
+        raise NotImplementedError("Real MISP attribute search not yet implemented")
 
     def _real_get_event(self, event_id: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real MISP get event not yet implemented"
-        )
+        raise NotImplementedError("Real MISP get event not yet implemented")
 
     def _real_search_iocs(self, ioc_value: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real MISP IOC search not yet implemented"
-        )
+        raise NotImplementedError("Real MISP IOC search not yet implemented")
 
     # ---- LangChain tool registration helpers ----
 
@@ -392,15 +373,12 @@ class MISPMCPServer:
                     "properties": {
                         "value": {
                             "type": "string",
-                            "description": (
-                                "Attribute value to search for"
-                            ),
+                            "description": ("Attribute value to search for"),
                         },
                         "type": {
                             "type": "string",
                             "description": (
-                                "MISP attribute type filter "
-                                "(ip-src, ip-dst, domain, sha256)"
+                                "MISP attribute type filter (ip-src, ip-dst, domain, sha256)"
                             ),
                             "default": "",
                         },
@@ -439,9 +417,7 @@ class MISPMCPServer:
                     "properties": {
                         "ioc_value": {
                             "type": "string",
-                            "description": (
-                                "IOC to search (IP, hash, domain)"
-                            ),
+                            "description": ("IOC to search (IP, hash, domain)"),
                         },
                     },
                     "required": ["ioc_value"],

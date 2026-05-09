@@ -6,8 +6,8 @@ Public API:
     mcp_router_tool        -- single LangChain tool that dispatches to MCP servers
 """
 
-from btagent_agents.mcp.registry import MCPConnectionRegistry
 from btagent_agents.mcp.discovery import discover_tools, mcp_router_tool
+from btagent_agents.mcp.registry import MCPConnectionRegistry
 
 __all__ = [
     "MCPConnectionRegistry",

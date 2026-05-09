@@ -1,0 +1,27 @@
+title: Regulatory Breach Notification
+description: >
+  Breach notification template for GDPR, HIPAA, and other regulatory requirements.
+  Covers incident description, data affected, remediation steps taken, notification
+  timeline, and contact information for the supervisory authority.
+version: "1.0"
+sections:
+  - name: executive_summary
+    title: Nature of the Breach
+    required: true
+    description: Description of the incident and how it was discovered
+  - name: data_affected
+    title: Data Affected
+    required: true
+    description: Categories and volume of personal data affected
+  - name: containment
+    title: Remediation Steps
+    required: true
+    description: Actions taken to address the breach and mitigate impact
+  - name: timeline
+    title: Notification Timeline
+    required: true
+    description: When the breach was detected and notification milestones
+  - name: recommendations
+    title: Steps for Affected Individuals
+    required: true
+    description: Guidance for individuals whose data may have been compromised

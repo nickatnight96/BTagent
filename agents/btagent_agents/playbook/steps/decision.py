@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import operator
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from btagent_shared.types.playbook import DecisionStep
@@ -31,9 +31,7 @@ _OPERATORS: dict[str, Any] = {
     "!=": operator.ne,
 }
 
-_CONDITION_RE = re.compile(
-    r"^(?P<key>[\w.]+)\s*(?P<op>[><!]=?|==|!=)\s*(?P<value>.+)$"
-)
+_CONDITION_RE = re.compile(r"^(?P<key>[\w.]+)\s*(?P<op>[><!]=?|==|!=)\s*(?P<value>.+)$")
 
 
 def _resolve_key(data: dict[str, Any], key_path: str) -> Any:
@@ -152,7 +150,7 @@ async def execute_decision_step(
     dict
         Step result with 'next_step' indicating which branch was chosen.
     """
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
 
     result = evaluate_condition(step.condition, context)
     chosen_branch = step.true_branch if result else step.false_branch
@@ -175,5 +173,5 @@ async def execute_decision_step(
         },
         "next_step": chosen_branch,
         "started_at": started_at,
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
     }
