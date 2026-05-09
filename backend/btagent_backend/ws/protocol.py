@@ -5,9 +5,8 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from btagent_shared.types.events import EventEnvelope, EventType
+from pydantic import BaseModel, Field
 
 # ---------------------------------------------------------------------------
 # Channel naming
@@ -113,6 +112,11 @@ CRITICAL_EVENT_TYPES: frozenset[EventType] = frozenset(
 # Maximum number of pending events per client before non-critical events
 # are dropped.
 BACKPRESSURE_QUEUE_LIMIT = 256
+
+# Wave-2 Medium #15: cap inbound WebSocket message size so a malicious client
+# cannot exhaust server memory by streaming a single huge frame. Anything
+# larger than this triggers a 1009 ("message too big") close.
+MAX_WS_MESSAGE_BYTES = 65536  # 64 KiB — well above any legitimate client frame
 
 
 def is_critical(envelope: EventEnvelope) -> bool:

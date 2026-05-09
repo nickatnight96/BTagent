@@ -8,12 +8,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _config_logger = logging.getLogger("btagent.config")
 
-_INSECURE_JWT_DEFAULTS = frozenset({
-    "CHANGE-ME-IN-PRODUCTION",
-    "change-me-in-production-use-openssl-rand-hex-32",
-    "secret",
-    "changeme",
-})
+_INSECURE_JWT_DEFAULTS = frozenset(
+    {
+        "CHANGE-ME-IN-PRODUCTION",
+        "change-me-in-production-use-openssl-rand-hex-32",
+        "secret",
+        "changeme",
+    }
+)
 
 
 class Settings(BaseSettings):
@@ -67,13 +69,34 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_s3_credentials(self) -> "Settings":
+        """SEC-P2-002 FIX: Reject default S3 credentials in non-dev environments."""
+        if self.env not in ("dev", "test") and self.s3_access_key == "minioadmin":
+            raise ValueError(
+                "CRITICAL: BTAGENT_S3_ACCESS_KEY is set to 'minioadmin'. "
+                "Configure real S3/MinIO credentials for non-dev environments."
+            )
+        return self
+
     # CORS
-    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://localhost:8080",
+    ]
 
     # Agent defaults
     default_model_provider: str = "anthropic"
     default_model_id: str = "claude-sonnet-4-20250514"
     mock_connectors: bool = False
+
+    # Embedding / Knowledge Base
+    embedding_provider: str = "openai"  # openai | ollama
+    embedding_model: str = "text-embedding-3-small"
+    openai_api_key: str = ""
+    ollama_base_url: str = "http://localhost:11434"
 
     # Rate limiting
     rate_limit_enabled: bool = True

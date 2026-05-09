@@ -32,7 +32,7 @@ export const useInvestigationStore = create<InvestigationState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const response = await listInvestigations(params);
-      set({ investigations: response.items, isLoading: false });
+      set({ investigations: response?.items ?? [], isLoading: false });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to fetch investigations";

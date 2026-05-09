@@ -1,0 +1,17 @@
+name: enrichment
+description: IOC enrichment, confidence scoring, and CTI source correlation
+version: "1.0.0"
+author: BTagent Team
+capabilities:
+  - ioc_enrichment
+  - confidence_scoring
+  - deduplication
+  - mitre_tagging
+supported_data_sources:
+  - virustotal
+  - shodan
+  - greynoise
+  - abuseipdb
+  - urlhaus
+  - otx
+  - misp

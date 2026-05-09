@@ -1,4 +1,4 @@
-import { useState, useCallback, type FormEvent, type KeyboardEvent } from "react";
+import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { Shield, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
@@ -12,6 +12,12 @@ export function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+
+  // Clear any stale errors and auth state on mount
+  useEffect(() => {
+    clearError();
+    useAuthStore.getState().logout();
+  }, [clearError]);
 
   const handleSubmit = useCallback(
     async (e: FormEvent) => {
@@ -43,7 +49,7 @@ export function LoginPage() {
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
       </div>
 
-      <div className="relative w-full max-w-md">
+      <div className="relative w-full max-w-md" data-testid="login">
         {/* Logo and branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30 mb-4">
@@ -59,7 +65,11 @@ export function LoginPage() {
 
         {/* Login form */}
         <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-6 shadow-2xl shadow-black/40">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-5"
+            data-testid="login-form"
+          >
             <Input
               label="Username"
               type="text"
@@ -72,6 +82,7 @@ export function LoginPage() {
               onKeyDown={handleKeyDown}
               autoComplete="username"
               autoFocus
+              data-testid="login-username-input"
             />
 
             <div className="relative">
@@ -86,12 +97,15 @@ export function LoginPage() {
                 }}
                 onKeyDown={handleKeyDown}
                 autoComplete="current-password"
+                data-testid="login-password-input"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-[34px] text-slate-400 hover:text-slate-200 transition-colors"
                 tabIndex={-1}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                data-testid="login-password-toggle"
               >
                 {showPassword ? (
                   <EyeOff className="h-4 w-4" />
@@ -102,7 +116,11 @@ export function LoginPage() {
             </div>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-md p-3 text-sm text-red-400">
+              <div
+                className="bg-red-500/10 border border-red-500/30 rounded-md p-3 text-sm text-red-400"
+                role="alert"
+                data-testid="login-error"
+              >
                 {error}
               </div>
             )}
@@ -113,6 +131,7 @@ export function LoginPage() {
               size="lg"
               isLoading={isLoading}
               disabled={!username.trim() || !password.trim()}
+              data-testid="login-submit-button"
             >
               Sign In
             </Button>

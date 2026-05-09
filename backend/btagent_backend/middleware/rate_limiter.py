@@ -14,7 +14,7 @@ Rate limits vary by role:
 
 import time
 from collections import defaultdict
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -76,8 +76,8 @@ def _extract_role(request: Request) -> str:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         try:
-            import json
             import base64
+            import json
 
             token = auth.split(" ", 1)[1]
             payload_b64 = token.split(".")[1]

@@ -1,0 +1,15 @@
+name: knowledge
+description: RAG-powered knowledge base search, retrieval, and citation
+version: "1.0.0"
+author: BTagent Team
+capabilities:
+  - knowledge_search
+  - investigation_context
+  - citation_generation
+  - hybrid_retrieval
+supported_data_sources:
+  - pgvector
+  - investigation_reports
+  - runbooks
+  - threat_profiles
+  - enrichment_data

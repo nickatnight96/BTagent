@@ -7,10 +7,10 @@ Available servers:
     ElasticMCPServer     -- Elastic Security SIEM
 """
 
-from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
 from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
-from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
 from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
+from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
+from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
 
 __all__ = [
     "SplunkMCPServer",

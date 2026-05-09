@@ -15,18 +15,17 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+from btagent_shared.types.enums import InvestigationStatus
+from btagent_shared.types.events import EventType
 from redis.asyncio import Redis
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.config import get_settings
 from btagent_backend.db.engine import async_session_factory
 from btagent_backend.db.models import InvestigationRow
-from btagent_shared.types.enums import InvestigationStatus
-from btagent_shared.types.events import EventType
 
 logger = logging.getLogger("btagent.task_manager")
 
@@ -41,16 +40,16 @@ _agents_import_error: str | None = None
 try:
     from btagent_agents.events.emitter import RedisEmitter
     from btagent_agents.hooks.base import HookRegistry
-    from btagent_agents.hooks.event_emitter_hook import EventEmitterHook
-    from btagent_agents.hooks.prompt_budget_hook import PromptBudgetHook
-    from btagent_agents.hooks.hitl_hook import HITLHook
-    from btagent_agents.hooks.evidence_chain_hook import EvidenceChainHook
-    from btagent_agents.hooks.scope_enforcement_hook import ScopeEnforcementHook
     from btagent_agents.hooks.classification_hook import ClassificationHook
+    from btagent_agents.hooks.event_emitter_hook import EventEmitterHook
+    from btagent_agents.hooks.evidence_chain_hook import EvidenceChainHook
+    from btagent_agents.hooks.hitl_hook import HITLHook
+    from btagent_agents.hooks.prompt_budget_hook import PromptBudgetHook
+    from btagent_agents.hooks.scope_enforcement_hook import ScopeEnforcementHook
     from btagent_agents.llm.cost_calculator import CostAccumulator
     from btagent_agents.orchestrator.graph import create_investigation_graph
     from btagent_agents.orchestrator.state import InvestigationState
-    from btagent_shared.types.config import AgentConfig, AutonomyLevel, TLP
+    from btagent_shared.types.config import TLP, AgentConfig, AutonomyLevel
 
     _AGENTS_AVAILABLE = True
 except ImportError as exc:
@@ -146,9 +145,7 @@ class TaskManager:
             graph = create_investigation_graph(config)
             initial_state = self._build_initial_state(investigation_id, agent_config, config)
         except Exception:
-            logger.exception(
-                "Failed to build graph / state for investigation %s", investigation_id
-            )
+            logger.exception("Failed to build graph / state for investigation %s", investigation_id)
             await self._set_investigation_status(
                 investigation_id,
                 InvestigationStatus.FAILED.value,
@@ -186,7 +183,7 @@ class TaskManager:
             "type": "chat",
             "message": message,
             "user_id": user_id,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         redis: Redis | None = None
@@ -216,9 +213,7 @@ class TaskManager:
         """
         task = self._tasks.pop(investigation_id, None)
         if task is None:
-            logger.warning(
-                "pause_investigation: no running task for %s", investigation_id
-            )
+            logger.warning("pause_investigation: no running task for %s", investigation_id)
             return
 
         task.cancel()
@@ -227,12 +222,8 @@ class TaskManager:
         except asyncio.CancelledError:
             pass
 
-        await self._set_investigation_status(
-            investigation_id, InvestigationStatus.PAUSED.value
-        )
-        await self._emit_lifecycle_event(
-            investigation_id, EventType.INVESTIGATION_PAUSED
-        )
+        await self._set_investigation_status(investigation_id, InvestigationStatus.PAUSED.value)
+        await self._emit_lifecycle_event(investigation_id, EventType.INVESTIGATION_PAUSED)
         logger.info("Paused investigation %s", investigation_id)
 
     async def resume_investigation(self, investigation_id: str) -> None:
@@ -263,9 +254,7 @@ class TaskManager:
         try:
             agent_config = self._build_agent_config(investigation_id, inv_config)
             graph = create_investigation_graph(inv_config)
-            initial_state = self._build_initial_state(
-                investigation_id, agent_config, inv_config
-            )
+            initial_state = self._build_initial_state(investigation_id, agent_config, inv_config)
         except Exception:
             logger.exception(
                 "Failed to rebuild graph for investigation %s resume",
@@ -288,9 +277,7 @@ class TaskManager:
         await self._set_investigation_status(
             investigation_id, InvestigationStatus.INVESTIGATING.value
         )
-        await self._emit_lifecycle_event(
-            investigation_id, EventType.INVESTIGATION_RESUMED
-        )
+        await self._emit_lifecycle_event(investigation_id, EventType.INVESTIGATION_RESUMED)
         logger.info("Resumed investigation %s", investigation_id)
 
     async def stop_investigation(self, investigation_id: str) -> None:
@@ -333,9 +320,7 @@ class TaskManager:
         try:
             async with async_session_factory() as session:
                 result = await session.execute(
-                    select(InvestigationRow).where(
-                        InvestigationRow.status.in_(_ACTIVE_STATUSES)
-                    )
+                    select(InvestigationRow).where(InvestigationRow.status.in_(_ACTIVE_STATUSES))
                 )
                 rows = result.scalars().all()
 
@@ -348,9 +333,7 @@ class TaskManager:
                     await self.resume_investigation(row.id)
                     count += 1
                 except Exception:
-                    logger.exception(
-                        "Failed to auto-resume investigation %s", row.id
-                    )
+                    logger.exception("Failed to auto-resume investigation %s", row.id)
         except Exception:
             logger.exception("auto_resume: DB query failed")
 
@@ -373,14 +356,10 @@ class TaskManager:
             task.cancel()
 
         # Wait for all tasks to finish cancellation.
-        results = await asyncio.gather(
-            *self._tasks.values(), return_exceptions=True
-        )
+        results = await asyncio.gather(*self._tasks.values(), return_exceptions=True)
 
         for investigation_id, result in zip(list(self._tasks.keys()), results):
-            if isinstance(result, Exception) and not isinstance(
-                result, asyncio.CancelledError
-            ):
+            if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
                 logger.error(
                     "shutdown: task for %s raised %s: %s",
                     investigation_id,
@@ -463,9 +442,7 @@ class TaskManager:
             if isinstance(final_status, InvestigationStatus):
                 final_status = final_status.value
 
-            await self._set_investigation_status(
-                investigation_id, final_status, close=True
-            )
+            await self._set_investigation_status(investigation_id, final_status, close=True)
             await emitter.emit(
                 EventType.INVESTIGATION_COMPLETE,
                 investigation_id=investigation_id,
@@ -476,6 +453,9 @@ class TaskManager:
                 investigation_id,
                 final_status,
             )
+
+            # 7. Auto-index investigation into knowledge base.
+            await self._on_investigation_complete(investigation_id)
 
         except asyncio.CancelledError:
             # Task was cancelled (pause / stop / shutdown).  LangGraph
@@ -489,9 +469,7 @@ class TaskManager:
         except Exception as exc:
             # Unexpected error -- mark investigation as failed.
             error_msg = f"{type(exc).__name__}: {exc}"
-            logger.exception(
-                "Investigation %s failed: %s", investigation_id, error_msg
-            )
+            logger.exception("Investigation %s failed: %s", investigation_id, error_msg)
             await self._set_investigation_status(
                 investigation_id,
                 InvestigationStatus.FAILED.value,
@@ -518,6 +496,59 @@ class TaskManager:
                 except Exception:
                     pass
             self._tasks.pop(investigation_id, None)
+
+    # ------------------------------------------------------------------
+    # Internal: knowledge auto-indexing on completion
+    # ------------------------------------------------------------------
+
+    async def _on_investigation_complete(self, investigation_id: str) -> None:
+        """Index investigation findings and enrichment data into the
+        knowledge base when an investigation completes.
+
+        This enables future investigations to benefit from prior findings
+        via the RAG knowledge retrieval pipeline.  Failures are logged but
+        never propagated -- indexing is best-effort.
+        """
+        try:
+            from btagent_backend.services.embedding_service import (
+                MockEmbeddingService,
+            )
+            from btagent_backend.services.knowledge_service import KnowledgeService
+
+            async with async_session_factory() as session:
+                # Use MockEmbeddingService for auto-indexing to avoid
+                # requiring external API keys during background tasks.
+                knowledge_svc = KnowledgeService(embedding_service=MockEmbeddingService())
+
+                # Index investigation report
+                inv_doc = await knowledge_svc.auto_index_investigation(session, investigation_id)
+                if inv_doc:
+                    logger.info(
+                        "Auto-indexed investigation %s as knowledge doc %s",
+                        investigation_id,
+                        inv_doc.id,
+                    )
+
+                # Index enrichment results
+                enrich_doc = await knowledge_svc.auto_index_enrichment(session, investigation_id)
+                if enrich_doc:
+                    logger.info(
+                        "Auto-indexed enrichment for %s as knowledge doc %s",
+                        investigation_id,
+                        enrich_doc.id,
+                    )
+
+                await session.commit()
+        except ImportError:
+            logger.debug(
+                "Knowledge service not available for auto-indexing investigation %s",
+                investigation_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to auto-index investigation %s into knowledge base",
+                investigation_id,
+            )
 
     # ------------------------------------------------------------------
     # Internal: hook construction
@@ -654,6 +685,7 @@ class TaskManager:
             "template_config": config.get("template_config", {}),
             "token_usage": {},
             "cost_usd": 0.0,
+            "knowledge_context": "",
         }
 
     # ------------------------------------------------------------------
@@ -677,10 +709,10 @@ class TaskManager:
             async with async_session_factory() as session:
                 values: dict[str, Any] = {
                     "status": status,
-                    "updated_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(UTC),
                 }
                 if close:
-                    values["closed_at"] = datetime.now(timezone.utc)
+                    values["closed_at"] = datetime.now(UTC)
                 if error:
                     # Store the error in the config JSONB column for inspection.
                     result = await session.execute(
@@ -714,9 +746,7 @@ class TaskManager:
         try:
             async with async_session_factory() as session:
                 result = await session.execute(
-                    select(InvestigationRow).where(
-                        InvestigationRow.id == investigation_id
-                    )
+                    select(InvestigationRow).where(InvestigationRow.id == investigation_id)
                 )
                 row = result.scalar_one_or_none()
                 if row is None:
@@ -727,9 +757,7 @@ class TaskManager:
                 config.setdefault("template", row.template)
                 return config
         except Exception:
-            logger.exception(
-                "Failed to load config for investigation %s", investigation_id
-            )
+            logger.exception("Failed to load config for investigation %s", investigation_id)
             return None
 
     async def _emit_lifecycle_event(

@@ -1,0 +1,113 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in BTagent
+title: "[Bug]: "
+labels: ["bug"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please fill out the form below to help us investigate.
+
+        **Security vulnerabilities:** Do NOT report security issues here. Email **security@btagent.dev** instead. See our [Security Policy](../../SECURITY.md).
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is this bug?
+      options:
+        - Critical (data loss, security issue, complete feature failure)
+        - High (major feature broken, no workaround)
+        - Medium (feature partially broken, workaround exists)
+        - Low (minor issue, cosmetic, or edge case)
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Provide details about your environment.
+      value: |
+        - **OS:** (e.g., Ubuntu 22.04, macOS 14.2, Windows 11)
+        - **Python version:** (e.g., 3.12.3)
+        - **Node.js version:** (e.g., 20.11.0)
+        - **Docker version:** (e.g., 24.0.7)
+        - **Docker Compose version:** (e.g., 2.23.3)
+        - **BTagent version/commit:** (e.g., v0.3.0 or commit SHA)
+        - **Deployment method:** (Docker Compose / Helm / Local dev)
+        - **Browser (if frontend issue):** (e.g., Chrome 122, Firefox 123)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Provide a clear, step-by-step description of how to reproduce the bug.
+      placeholder: |
+        1. Start the dev stack with `make dev`
+        2. Log in as analyst1
+        3. Create a new investigation with template "phishing"
+        4. Send a chat message: "Search for connections to 198.51.100.23"
+        5. Observe the error in the event stream
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: The agent should have generated a Splunk SPL query and returned results.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: The agent returned an error event with message "MCP connection failed" and the investigation status changed to "error".
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs-screenshots
+    attributes:
+      label: Logs and Screenshots
+      description: |
+        Attach relevant logs, error messages, or screenshots. For backend logs, check the Docker container output:
+        ```bash
+        docker compose -f infra/docker-compose.yml logs backend --tail=100
+        ```
+        For frontend errors, check the browser developer console.
+
+        **Important:** Redact any sensitive information (API keys, tokens, passwords, internal hostnames) before pasting.
+      placeholder: |
+        Paste logs here or drag-and-drop screenshots.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other context that might help us investigate (related issues, recent changes, configuration details).
+      placeholder: This started happening after upgrading from v0.2.x to v0.3.0.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues to verify this is not a duplicate
+          required: true
+        - label: I have redacted all sensitive information from logs and screenshots
+          required: true
+        - label: This is NOT a security vulnerability (those should be emailed to security@btagent.dev)
+          required: true

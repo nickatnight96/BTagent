@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import (
     ContainmentStatus,
-    IOCType,
     InvestigationStatus,
+    IOCType,
     Severity,
 )
 

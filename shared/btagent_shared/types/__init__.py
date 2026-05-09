@@ -1,30 +1,55 @@
 """BTagent shared types — re-export commonly used models."""
 
 from btagent_shared.types.config import (
+    TLP,
     AgentConfig,
     AutonomyLevel,
     IntegrationAutonomy,
     MCPConnection,
     ModelProvider,
     ModelTier,
-    TLP,
 )
 from btagent_shared.types.enums import (
     AuditCategory,
     AuditOutcome,
     ContainmentStatus,
-    IOCType,
     InvestigationStatus,
+    IOCType,
     Severity,
     UserRole,
 )
 from btagent_shared.types.events import EventEnvelope, EventType
 from btagent_shared.types.investigation import (
+    IOC,
     ContainmentAction,
     Evidence,
     Investigation,
-    IOC,
     TimelineEntry,
+)
+from btagent_shared.types.knowledge import (
+    IngestRequest,
+    KnowledgeChunk,
+    KnowledgeDocument,
+    KnowledgeSourceType,
+    QueryRequest,
+    QueryResponse,
+    SearchResult,
+)
+from btagent_shared.types.playbook import (
+    ActionStep,
+    DecisionStep,
+    HITLGateStep,
+    OnFailure,
+    ParallelForkStep,
+    PlaybookDefinition,
+    PlaybookExecution,
+    PlaybookStatus,
+    PlaybookStep,
+    StepResult,
+    StepType,
+    TriggerCondition,
+    TriggerType,
+    ValidationResult,
 )
 
 __all__ = [
@@ -39,14 +64,36 @@ __all__ = [
     "Evidence",
     "IOC",
     "IOCType",
+    "IngestRequest",
     "IntegrationAutonomy",
     "Investigation",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
+    "KnowledgeSourceType",
     "InvestigationStatus",
     "MCPConnection",
     "ModelProvider",
     "ModelTier",
+    "QueryRequest",
+    "QueryResponse",
+    "SearchResult",
     "Severity",
     "TLP",
     "TimelineEntry",
     "UserRole",
+    # Playbook types
+    "ActionStep",
+    "DecisionStep",
+    "HITLGateStep",
+    "OnFailure",
+    "ParallelForkStep",
+    "PlaybookDefinition",
+    "PlaybookExecution",
+    "PlaybookStatus",
+    "PlaybookStep",
+    "StepResult",
+    "StepType",
+    "TriggerCondition",
+    "TriggerType",
+    "ValidationResult",
 ]

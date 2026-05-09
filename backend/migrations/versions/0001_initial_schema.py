@@ -4,16 +4,17 @@ Revision ID: 0001
 Revises:
 Create Date: 2026-03-26
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "0001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -114,9 +115,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text, nullable=False),
         sa.Column("actor", sa.String(200), server_default=""),
         sa.Column("event_type", sa.String(100), server_default=""),
-        sa.Column(
-            "evidence_id", sa.String(64), sa.ForeignKey("evidence.id"), nullable=True
-        ),
+        sa.Column("evidence_id", sa.String(64), sa.ForeignKey("evidence.id"), nullable=True),
         sa.Column("technique_id", sa.String(20), nullable=True),
     )
     op.create_index(
@@ -159,9 +158,7 @@ def upgrade() -> None:
         sa.Column("parent_id", sa.String(64), nullable=True),
         sa.Column("timestamp", sa.DateTime(timezone=True), server_default=sa.func.now()),
     )
-    op.create_index(
-        "idx_events_investigation_ts", "events", ["investigation_id", "timestamp"]
-    )
+    op.create_index("idx_events_investigation_ts", "events", ["investigation_id", "timestamp"])
     op.create_index("idx_events_type", "events", ["type"])
 
     # Audit logs (SHA256 chain)

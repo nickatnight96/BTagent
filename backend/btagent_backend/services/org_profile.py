@@ -8,7 +8,7 @@ industry, compliance requirements, tech stack, and IR team structure.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -92,9 +92,7 @@ async def get_org_profile(db: AsyncSession) -> OrgProfile:
 
     Returns the default (empty) profile if nothing has been saved yet.
     """
-    result = await db.execute(
-        select(OrgConfigRow).where(OrgConfigRow.key == _ORG_PROFILE_KEY)
-    )
+    result = await db.execute(select(OrgConfigRow).where(OrgConfigRow.key == _ORG_PROFILE_KEY))
     row = result.scalar_one_or_none()
 
     if row is None or row.value is None:
@@ -130,11 +128,9 @@ async def save_org_profile(
         The saved profile (round-tripped through serialisation).
     """
     value = profile.model_dump(mode="json")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
-    result = await db.execute(
-        select(OrgConfigRow).where(OrgConfigRow.key == _ORG_PROFILE_KEY)
-    )
+    result = await db.execute(select(OrgConfigRow).where(OrgConfigRow.key == _ORG_PROFILE_KEY))
     existing = result.scalar_one_or_none()
 
     if existing:

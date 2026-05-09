@@ -38,6 +38,34 @@ PERMISSIONS: dict[str, UserRole] = {
     "user:delete": UserRole.ADMIN,
     # Webhooks
     "webhook:manage": UserRole.ADMIN,
+    # MITRE ATT&CK
+    "mitre:view": UserRole.ANALYST,
+    "mitre:tag": UserRole.SENIOR_ANALYST,
+    "mitre:seed": UserRole.ADMIN,
+    # IOCs
+    "ioc:view": UserRole.ANALYST,
+    "ioc:create": UserRole.ANALYST,
+    "ioc:edit": UserRole.ANALYST,
+    "ioc:delete": UserRole.SENIOR_ANALYST,
+    "ioc:enrich": UserRole.ANALYST,
+    "ioc:export": UserRole.ANALYST,
+    # Knowledge base
+    "knowledge:query": UserRole.ANALYST,
+    "knowledge:ingest": UserRole.SENIOR_ANALYST,
+    "knowledge:delete": UserRole.ADMIN,
+    # Playbooks
+    "playbook:view": UserRole.ANALYST,
+    "playbook:create": UserRole.SENIOR_ANALYST,
+    "playbook:edit": UserRole.SENIOR_ANALYST,
+    "playbook:delete": UserRole.ADMIN,
+    "playbook:execute": UserRole.SENIOR_ANALYST,
+    "playbook:execute_containment": UserRole.INCIDENT_COMMANDER,
+    # Reports
+    "report:view": UserRole.ANALYST,
+    "report:generate": UserRole.ANALYST,
+    "report:summarize": UserRole.SENIOR_ANALYST,
+    # Remediation
+    "remediation:generate": UserRole.ANALYST,
 }
 
 

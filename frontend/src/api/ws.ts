@@ -16,10 +16,23 @@ interface WebSocketClientOptions {
   initialReconnectDelayMs?: number;
 }
 
+/**
+ * WebSocket client — Phase C2 (httpOnly cookie auth).
+ *
+ * Authentication travels on the WebSocket upgrade as cookies, the same way
+ * `credentials: "include"` works for fetch. Browsers attach same-origin
+ * cookies on the upgrade handshake automatically — there is no API to set
+ * `credentials` on `new WebSocket()`, but for same-origin WS (and for the
+ * dev-mode Vite proxy at /ws, which preserves cookies on upgrade) the
+ * cookie travels on the handshake.
+ *
+ * As a result we no longer pass `?token=...` in the URL — that would leak
+ * the bearer token into server access logs and proxy buffers, which is
+ * exactly the class of bug Phase C is trying to close out.
+ */
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
-  private token: string | null = null;
   private reconnectDelay: number;
   private maxReconnectDelay: number;
   private initialReconnectDelay: number;
@@ -46,8 +59,11 @@ export class WebSocketClient {
     this.reconnectDelay = this.initialReconnectDelay;
   }
 
-  connect(token: string): void {
-    this.token = token;
+  /**
+   * Open the WebSocket. No auth argument: the browser sends the
+   * httpOnly auth cookies on the upgrade handshake automatically.
+   */
+  connect(): void {
     this.intentionalClose = false;
     this.doConnect();
   }
@@ -58,10 +74,8 @@ export class WebSocketClient {
       this.ws = null;
     }
 
-    const separator = this.url.includes("?") ? "&" : "?";
-    const fullUrl = `${this.url}${separator}token=${encodeURIComponent(this.token ?? "")}`;
-
-    this.ws = new WebSocket(fullUrl);
+    // No `?token=` — cookies authenticate the upgrade.
+    this.ws = new WebSocket(this.url);
 
     this.ws.onopen = () => {
       this.reconnectDelay = this.initialReconnectDelay;

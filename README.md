@@ -1,55 +1,170 @@
-# BTagent
+<p align="center">
+  <h1 align="center">BTagent</h1>
+  <p align="center">AI-powered defensive cybersecurity agent for Incident Response and Proactive Threat Hunting.</p>
+</p>
 
-Purpose-built AI agent for **Defensive Cyber Security** — Incident Response and Proactive Threat Hunting.
+<p align="center">
+  <a href="https://github.com/nickatnight96/BTagent/actions/workflows/ci.yml"><img src="https://github.com/nickatnight96/BTagent/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/python-3.12+-3776AB.svg" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/node-20+-339933.svg" alt="Node 20+">
+  <a href="https://github.com/nickatnight96/BTagent/stargazers"><img src="https://img.shields.io/github/stars/nickatnight96/BTagent?style=social" alt="GitHub Stars"></a>
+</p>
+
+---
+
+BTagent combines a **LangGraph multi-agent orchestrator**, **9 MCP connectors** for SIEM/EDR/CTI platforms, and a **React analyst dashboard** into a single platform that automates alert triage, IOC enrichment, SIEM query generation, SOAR playbook execution, and incident reporting -- with full human-in-the-loop controls at every stage.
 
 ## Features
 
-- **PunchList Dashboard** — Single-pane analyst starting point with live investigation status
-- **AI-Powered Triage** — Automated alert classification and severity scoring
-- **Query Generator** — Natural language to SIEM/EDR queries (Splunk SPL, Elastic KQL, Sentinel KQL, CrowdStrike)
-- **Human-in-the-Loop** — Autonomy levels L0-L4 with approval workflows for containment actions
-- **MCP Tool Integration** — SIEM/EDR/CTI connectors as Model Context Protocol servers
-- **Multi-LLM Routing** — TLP-aware routing across 6 providers (Anthropic, OpenAI, Google, Azure, Bedrock, Ollama)
-- **Full Cost Control** — Token budgets, prompt caching, model tiering, per-investigation cost tracking
-- **Production-Grade** — JWT auth, RBAC, audit trail, SSL, structured logging, observability
+| Category | Feature | Description |
+|----------|---------|-------------|
+| **Core** | PunchList Dashboard | Single-pane analyst workspace with live investigation status |
+| **Core** | AI-Powered Triage | Automated alert classification, severity scoring, MITRE ATT&CK mapping |
+| **Core** | Query Generator | Natural language to SIEM/EDR queries (Splunk SPL, Elastic KQL, Sentinel KQL, CrowdStrike) |
+| **Core** | Human-in-the-Loop | Autonomy levels L0--L4 with approval workflows for containment actions |
+| **Intelligence** | IOC Enrichment | 5-stage pipeline with multi-source confidence scoring and deduplication |
+| **Intelligence** | Knowledge Base (RAG) | Hybrid search with pgvector, auto-indexing of investigation findings |
+| **Automation** | SOAR Playbooks | Visual builder, YAML-defined playbooks compiled to LangGraph subgraphs |
+| **Reporting** | Document Assistance | 4 report templates, audience-aware remediation, detection content generation |
 
-## Quick Start
-
-```bash
-# Prerequisites: Docker, Python 3.12, Node 20, uv
-git clone https://github.com/nickatnight96/BTagent.git
-cd BTagent
-cp infra/.env.example infra/.env  # Edit with your API keys
-make dev                           # Start everything
-```
+**Security controls:** TLP-aware LLM routing, SHA-256 chained audit trail, scope enforcement, prompt injection defenses, JWT + RBAC (4 roles).
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│  Frontend (React 18 / TypeScript / Zustand)      │
-└──────────────────┬──────────────────────────────┘
-                   │ WebSocket + REST
-┌──────────────────▼──────────────────────────────┐
-│  Backend (FastAPI / PostgreSQL / Redis / MinIO)   │
-└──────────────────┬──────────────────────────────┘
-                   │ In-process async
-┌──────────────────▼──────────────────────────────┐
-│  Agent Engine (LangGraph / LiteLLM / MCP)        │
-│  Orchestrator → Triage | Query | ... workers     │
-└─────────────────────────────────────────────────┘
+ Analyst Browser                           External Systems
+ +-----------+                             +-----------+
+ | React SPA | <--- WebSocket (events) --- | SIEM/EDR  |
+ | Zustand   | --- REST (CRUD, auth) ----> | Webhooks  |
+ +-----------+                             +-----------+
+       |                                        |
+       v                                        v
+ +-----------------------------------------------------+
+ |                   FastAPI Backend                     |
+ |  /api/v1/*   /ws   /webhooks/*   /health   /metrics  |
+ |  Auth(JWT)   RBAC   Rate Limiter   RequestID         |
+ +-----------------------------------------------------+
+       |               |               |
+       v               v               v
+ +----------+   +-----------+   +-----------+
+ | Postgres |   |   Redis   |   |   MinIO   |
+ | pgvector |   | pub/sub   |   | evidence  |
+ +----------+   +-----------+   +-----------+
+                      ^
+                      |
+ +-----------------------------------------------------+
+ |             LangGraph Agent Engine                   |
+ |  Orchestrator -> Worker Subgraphs                    |
+ |  Triage | Query | Enrich | Knowledge | Playbook      |
+ |  7 Hooks | 7 Plugins | 4-layer context cascade       |
+ +-----------------------------------------------------+
+       |                               |
+       v                               v
+ +-----------+                   +-------------+
+ | LiteLLM   |                   | MCP Servers |
+ | 6 providers|                  | Splunk      | CrowdStrike
+ | TLP-aware  |                  | Sentinel    | Elastic
+ | routing    |                  | VirusTotal  | Shodan
+ +-----------+                   | GreyNoise   | AbuseIPDB
+                                 | MISP        |
+                                 +-------------+
 ```
 
-## Development
+## Quick Start
+
+### Docker Compose (5 minutes)
 
 ```bash
-make dev          # Start dev stack
-make test         # Run all tests
-make uat          # Run acceptance tests
-make lint         # Lint Python + TypeScript
-make help         # Show all commands
+git clone https://github.com/nickatnight96/BTagent.git
+cd BTagent
+cp infra/.env.example infra/.env   # Edit with your API keys
+make up                             # Start full stack
 ```
+
+Open `http://localhost:8080` in your browser. Default dev credentials are printed by the seed script.
+
+### Development Setup (30 minutes)
+
+```bash
+# 1. Start infrastructure
+make dev
+
+# 2. Install dependencies
+cd shared && uv sync && cd ..
+cd backend && uv sync && cd ..
+cd agents && uv sync && cd ..
+cd frontend && npm install && cd ..
+
+# 3. Database setup
+make db-migrate
+make db-seed
+
+# 4. Start services (in separate terminals)
+cd backend && uvicorn btagent_backend.main:app --reload --port 8000
+cd frontend && npm run dev
+```
+
+Backend: `http://localhost:8000` | Frontend: `http://localhost:5173` | API docs: `http://localhost:8000/api/docs`
+
+> **Note:** See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the full step-by-step guide with environment variable walkthrough.
+
+## Screenshots
+
+| Dashboard | Investigation | Playbook Builder |
+|-----------|---------------|------------------|
+| ![PunchList Dashboard](docs/images/dashboard-dark.png) | ![Agent Chat](docs/images/investigation-dark.png) | ![SOAR Builder](docs/images/playbook-builder-dark.png) |
+
+## Technology Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, TypeScript, Vite, Zustand, TailwindCSS, React Flow |
+| Backend | FastAPI, Python 3.12, SQLAlchemy (async), Alembic, Pydantic v2 |
+| Agent Engine | LangGraph, LangChain, LiteLLM (6 LLM providers) |
+| Tool Protocol | Model Context Protocol (MCP) -- 9 connectors |
+| Database | PostgreSQL 16 + pgvector |
+| Cache/Pubsub | Redis 7 |
+| Object Storage | MinIO (S3-compatible) |
+| Local LLM | Ollama |
+| Observability | OpenTelemetry, Prometheus, Grafana, LangFuse |
+| Infrastructure | Docker Compose, Helm (Kubernetes), Terraform (AWS) |
+| CI/CD | GitHub Actions |
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Getting Started](docs/GETTING_STARTED.md) | Full setup guide with environment walkthrough |
+| [Architecture](docs/ARCHITECTURE.md) | System design, data flows, agent topology |
+| [API Reference](docs/API.md) | REST, WebSocket, and webhook endpoint reference |
+| [Deployment](docs/DEPLOYMENT.md) | Docker Compose, Kubernetes, and AWS deployment |
+| [SIEM Setup](docs/SIEM_SETUP.md) | Splunk, CrowdStrike, Sentinel, and Elastic connector guides |
+| [Playbook Schema](docs/PLAYBOOK_SCHEMA.md) | SOAR playbook YAML reference |
+| [Knowledge Base](docs/KNOWLEDGE_BASE.md) | RAG pipeline architecture and configuration |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
+| [Security Audit](docs/SECURITY_AUDIT.md) | Phase 1 security findings and remediations |
+| [Security Audit (Phase 2)](docs/SECURITY_AUDIT_PHASE2.md) | Phase 2 security findings |
+| [Contributing](docs/CONTRIBUTING.md) | Development setup, plugin guide, PR process |
+| [Changelog](CHANGELOG.md) | Version history |
+
+## Contributing
+
+We welcome contributions. Please read [CONTRIBUTING.md](docs/CONTRIBUTING.md) for:
+
+- Development environment setup
+- How to add new plugins, MCP connectors, and hooks
+- Code style guidelines (ruff, ESLint, mypy strict)
+- PR process and CI pipeline
+
+## Security
+
+If you discover a security vulnerability, please report it responsibly. See [SECURITY.md](SECURITY.md) for our disclosure policy.
+
+For the latest audit results, see:
+- [Phase 1 Security Audit](docs/SECURITY_AUDIT.md) -- 21 findings, 8 critical/high fixed
+- [Phase 2 Security Audit](docs/SECURITY_AUDIT_PHASE2.md) -- 18 findings, 4 critical fixed
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.

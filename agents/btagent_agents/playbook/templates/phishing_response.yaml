@@ -1,0 +1,51 @@
+name: Phishing Response
+version: "1.0"
+description: Automated phishing email investigation and containment
+trigger:
+  type: alert_severity
+  parameters:
+    min_severity: medium
+    category: phishing
+steps:
+  - id: extract_iocs
+    type: action
+    name: Extract IOCs from email
+    tool_name: alert_classifier
+    arguments: {source: email_gateway}
+    next_step: enrich_urls
+  - id: enrich_urls
+    type: action
+    name: Enrich extracted URLs and domains
+    tool_name: enrich_ioc
+    arguments: {ioc_types: [url, domain]}
+    next_step: check_malicious
+  - id: check_malicious
+    type: decision
+    name: Are IOCs malicious?
+    condition: "enrichment.max_confidence > 0.7"
+    true_branch: block_sender
+    false_branch: log_and_close
+  - id: block_sender
+    type: hitl_gate
+    name: Approve sender domain block
+    prompt: "Block sender domain and quarantine matching emails?"
+    required_role: senior_analyst
+    next_step: execute_block
+  - id: execute_block
+    type: action
+    name: Block sender domain
+    tool_name: splunk_search
+    arguments: {action: block_domain}
+    next_step: generate_report
+  - id: generate_report
+    type: action
+    name: Generate investigation report
+    tool_name: query_generator
+    next_step: end
+  - id: log_and_close
+    type: action
+    name: Log as false positive
+    next_step: end
+  - id: end
+    type: end
+    name: Playbook complete

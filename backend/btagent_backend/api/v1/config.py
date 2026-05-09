@@ -116,8 +116,7 @@ async def run_retention_cleanup(
     audit_result = await svc.verify_audit_retention(db)
 
     logger.info(
-        "Retention cleanup triggered by user %s: %d events deleted, "
-        "%d investigations archived",
+        "Retention cleanup triggered by user %s: %d events deleted, %d investigations archived",
         user.id,
         events_result["deleted_count"],
         inv_result["archived_count"],

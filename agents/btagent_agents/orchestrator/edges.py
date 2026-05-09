@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-from langgraph.graph import END
-
 from btagent_shared.types.enums import ContainmentStatus, InvestigationStatus
+from langgraph.graph import END
 
 from btagent_agents.orchestrator.state import InvestigationState
 
 # Valid agent node names in the graph.
-_AGENT_NODES = frozenset({"triage", "query", "enrich", "contain", "report", "synthesize"})
+_AGENT_NODES = frozenset(
+    {
+        "triage",
+        "query",
+        "enrich",
+        "contain",
+        "report",
+        "coordination",
+        "mitigation",
+        "synthesize",
+    }
+)
 
 
 def route_to_agent(state: InvestigationState) -> str:
@@ -23,7 +33,7 @@ def route_to_agent(state: InvestigationState) -> str:
     -------
     str
         Node name: ``"triage"``, ``"query"``, ``"enrich"``, ``"contain"``,
-        ``"report"``, or ``"synthesize"``.
+        ``"report"``, ``"coordination"``, ``"mitigation"``, or ``"synthesize"``.
     """
     task_type = state.get("task_type", "general")
 
@@ -33,6 +43,8 @@ def route_to_agent(state: InvestigationState) -> str:
         "enrich": "enrich",
         "contain": "contain",
         "report": "report",
+        "coordination": "coordination",
+        "mitigation": "mitigation",
         "general": "synthesize",
     }
 
@@ -63,11 +75,7 @@ def should_continue(state: InvestigationState) -> str:
         return "hitl"
 
     # Check for any pending containment actions that need approval.
-    pending = [
-        a
-        for a in containment_actions
-        if a.get("status") == ContainmentStatus.PROPOSED
-    ]
+    pending = [a for a in containment_actions if a.get("status") == ContainmentStatus.PROPOSED]
     if pending:
         return "hitl"
 
@@ -96,6 +104,13 @@ def should_continue(state: InvestigationState) -> str:
     ):
         return "continue"
 
+    # After enrichment, if knowledge base has content (indicated by
+    # knowledge_context field), route to knowledge retrieval for
+    # additional context before closing.
+    knowledge_context = state.get("knowledge_context", "")
+    if status == InvestigationStatus.INVESTIGATING and task_type == "enrich" and knowledge_context:
+        return "knowledge"
+
     # Default: end the current graph run.  The analyst can send another message
     # to resume the investigation (new graph invocation).
     return END
@@ -113,9 +128,7 @@ def after_hitl(state: InvestigationState) -> str:
     containment_actions: list[dict] = state.get("containment_actions", [])
 
     # Check if any actions were approved (HITL checkpoint node updates status).
-    has_approved = any(
-        a.get("status") == ContainmentStatus.APPROVED for a in containment_actions
-    )
+    has_approved = any(a.get("status") == ContainmentStatus.APPROVED for a in containment_actions)
 
     if has_approved:
         return "execute"

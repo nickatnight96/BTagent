@@ -3,19 +3,24 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from btagent_shared.types.config import TLP
+from btagent_shared.types.enums import InvestigationStatus, Severity
+from btagent_shared.utils.ids import generate_id
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.auth.scoping import assert_can_access_investigation
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services.task_manager import TaskManager
-from btagent_shared.types.enums import InvestigationStatus, Severity
-from btagent_shared.types.config import TLP
-from btagent_shared.utils.ids import generate_id
+
+# AUTH-B1: roles allowed to see every investigation in their org. Plain
+# analysts only see investigations they own (assigned_to == user.id).
+_ORG_WIDE_ROLES = frozenset({"admin", "incident_commander", "senior_analyst"})
 
 logger = logging.getLogger("btagent.api.investigations")
 
@@ -97,6 +102,9 @@ async def create_investigation(
         "template": body.template,
     }
 
+    # AUTH-B1: org_id is *always* taken from the authenticated user, never
+    # from the request body. Defends against mass-assignment cross-tenant
+    # writes if the request schema is later extended.
     inv = InvestigationRow(
         id=generate_id("inv"),
         title=body.title,
@@ -105,6 +113,7 @@ async def create_investigation(
         tlp_level=body.tlp_level.value,
         template=body.template,
         assigned_to=user.id,
+        org_id=user.org_id,
         status=InvestigationStatus.PENDING.value,
         config=config,
     )
@@ -134,8 +143,22 @@ async def list_investigations(
     """List investigations with pagination and optional status filter."""
     user.require_permission("investigation:view")
 
-    query = select(InvestigationRow).order_by(InvestigationRow.created_at.desc())
-    count_query = select(func.count(InvestigationRow.id))
+    # AUTH-B1: tenant scoping. Every analyst — regardless of role — only sees
+    # investigations in their own org. Plain ``analyst`` is further restricted
+    # to investigations they own (assigned_to == user.id) to match the audit
+    # finding's scoping rule.
+    query = (
+        select(InvestigationRow)
+        .where(InvestigationRow.org_id == user.org_id)
+        .order_by(InvestigationRow.created_at.desc())
+    )
+    count_query = select(func.count(InvestigationRow.id)).where(
+        InvestigationRow.org_id == user.org_id
+    )
+
+    if user.role not in _ORG_WIDE_ROLES:
+        query = query.where(InvestigationRow.assigned_to == user.id)
+        count_query = count_query.where(InvestigationRow.assigned_to == user.id)
 
     if status_filter:
         query = query.where(InvestigationRow.status == status_filter)
@@ -172,6 +195,10 @@ async def get_investigation(
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
 
+    # AUTH-B1: cross-tenant + non-owner access raises 404 (not 403) to avoid
+    # leaking that the ID exists.
+    assert_can_access_investigation(user, inv)
+
     return _to_response(inv)
 
 
@@ -192,9 +219,12 @@ async def pause_investigation(
     inv = result.scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    assert_can_access_investigation(user, inv, write=True)
 
     if inv.status not in (InvestigationStatus.INVESTIGATING, InvestigationStatus.TRIAGING):
-        raise HTTPException(status_code=400, detail=f"Cannot pause investigation in status: {inv.status}")
+        raise HTTPException(
+            status_code=400, detail=f"Cannot pause investigation in status: {inv.status}"
+        )
 
     inv.status = InvestigationStatus.PAUSED.value
     await task_manager.pause_investigation(investigation_id)
@@ -220,9 +250,12 @@ async def resume_investigation(
     inv = result.scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    assert_can_access_investigation(user, inv, write=True)
 
     if inv.status not in (InvestigationStatus.PAUSED, InvestigationStatus.PAUSED_HITL):
-        raise HTTPException(status_code=400, detail=f"Cannot resume investigation in status: {inv.status}")
+        raise HTTPException(
+            status_code=400, detail=f"Cannot resume investigation in status: {inv.status}"
+        )
 
     inv.status = InvestigationStatus.INVESTIGATING.value
     await task_manager.resume_investigation(investigation_id)
@@ -248,9 +281,10 @@ async def stop_investigation(
     inv = result.scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    assert_can_access_investigation(user, inv, write=True)
 
     inv.status = InvestigationStatus.CANCELLED.value
-    inv.closed_at = datetime.now(timezone.utc)
+    inv.closed_at = datetime.now(UTC)
     await task_manager.stop_investigation(investigation_id)
     logger.info("Investigation %s stopped by user %s", investigation_id, user.id)
 
@@ -279,6 +313,7 @@ async def chat(
     inv = result.scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    assert_can_access_investigation(user, inv, write=True)
 
     await task_manager.send_message(investigation_id, body.message, user.id)
     logger.info(

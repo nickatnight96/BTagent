@@ -6,6 +6,8 @@ import hmac
 import logging
 from typing import Any
 
+from btagent_shared.types.enums import InvestigationStatus, Severity
+from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.api.deps import get_db
 from btagent_backend.config import Settings, get_settings
 from btagent_backend.db.models import InvestigationRow
-from btagent_shared.types.enums import InvestigationStatus, Severity
-from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger(__name__)
 
@@ -202,11 +202,7 @@ async def ingest_crowdstrike(
     _verify_secret(x_webhook_secret, settings, "crowdstrike")
 
     severity = _normalize_severity(body.max_severity_displayname)
-    title = (
-        f"[CrowdStrike] {body.display_name}"
-        if body.display_name
-        else "[CrowdStrike] Detection"
-    )
+    title = f"[CrowdStrike] {body.display_name}" if body.display_name else "[CrowdStrike] Detection"
     description_parts = [
         f"Detection: {body.detection_id}",
         f"Host: {body.hostname}",

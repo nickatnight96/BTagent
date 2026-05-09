@@ -5,15 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
+from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import AuditLogRow
-from btagent_shared.types.enums import AuditCategory, AuditOutcome
-from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger(__name__)
 
@@ -33,18 +33,20 @@ def _compute_hash(
     details: str,
     prev_hash: str,
 ) -> str:
-    payload = "|".join([
-        id,
-        str(seq),
-        timestamp,
-        actor,
-        category,
-        action,
-        resource,
-        outcome,
-        details,
-        prev_hash,
-    ])
+    payload = "|".join(
+        [
+            id,
+            str(seq),
+            timestamp,
+            actor,
+            category,
+            action,
+            resource,
+            outcome,
+            details,
+            prev_hash,
+        ]
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -74,14 +76,12 @@ class AuditTrail:
         """
         details = details or {}
         entry_id = generate_id("aud")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         ts_iso = now.isoformat()
 
         # Fetch the latest entry to get prev_hash and next seq
         result = await self._db.execute(
-            select(AuditLogRow)
-            .order_by(AuditLogRow.seq.desc())
-            .limit(1)
+            select(AuditLogRow).order_by(AuditLogRow.seq.desc()).limit(1)
         )
         prev_entry = result.scalar_one_or_none()
 
@@ -141,9 +141,7 @@ class AuditTrail:
         """
         errors: list[str] = []
 
-        result = await self._db.execute(
-            select(AuditLogRow).order_by(AuditLogRow.seq.asc())
-        )
+        result = await self._db.execute(select(AuditLogRow).order_by(AuditLogRow.seq.asc()))
         rows = result.scalars().all()
 
         if not rows:
@@ -193,13 +191,9 @@ class AuditTrail:
 
         valid = len(errors) == 0
         if not valid:
-            logger.warning(
-                "Audit chain verification failed with %d error(s)", len(errors)
-            )
+            logger.warning("Audit chain verification failed with %d error(s)", len(errors))
         else:
-            logger.info(
-                "Audit chain verified: %d entries, all OK", len(rows)
-            )
+            logger.info("Audit chain verified: %d entries, all OK", len(rows))
 
         return valid, errors
 

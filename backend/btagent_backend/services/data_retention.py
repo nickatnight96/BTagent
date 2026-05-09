@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import delete, func, select
@@ -36,7 +36,7 @@ class DataRetentionService:
         Returns a summary dict with the count of deleted rows and cutoff date.
         """
         retention_days = days if days is not None else self.event_retention_days
-        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
         # Count before deleting so we can report
         count_result = await db.execute(
@@ -45,9 +45,7 @@ class DataRetentionService:
         count = count_result.scalar() or 0
 
         if count > 0:
-            await db.execute(
-                delete(EventRow).where(EventRow.timestamp < cutoff)
-            )
+            await db.execute(delete(EventRow).where(EventRow.timestamp < cutoff))
             logger.info(
                 "Deleted %d events older than %d days (cutoff=%s)",
                 count,
@@ -79,7 +77,7 @@ class DataRetentionService:
         the investigation no longer appears in default queries.
         """
         retention_days = days if days is not None else self.event_retention_days
-        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
         _CLOSED_STATUSES = ("closed", "cancelled", "remediated")
 
@@ -133,27 +131,19 @@ class DataRetentionService:
         retention_years = years if years is not None else self.audit_retention_years
 
         # Total audit entries
-        total_result = await db.execute(
-            select(func.count(AuditLogRow.id))
-        )
+        total_result = await db.execute(select(func.count(AuditLogRow.id)))
         total_count = total_result.scalar() or 0
 
         # Earliest audit entry
-        earliest_result = await db.execute(
-            select(func.min(AuditLogRow.timestamp))
-        )
+        earliest_result = await db.execute(select(func.min(AuditLogRow.timestamp)))
         earliest_ts = earliest_result.scalar()
 
         # Latest audit entry
-        latest_result = await db.execute(
-            select(func.max(AuditLogRow.timestamp))
-        )
+        latest_result = await db.execute(select(func.max(AuditLogRow.timestamp)))
         latest_ts = latest_result.scalar()
 
         # Calculate compliance boundary
-        compliance_boundary = datetime.now(timezone.utc) - timedelta(
-            days=retention_years * 365
-        )
+        compliance_boundary = datetime.now(UTC) - timedelta(days=retention_years * 365)
 
         # Check if we have any gaps (chain integrity is verified separately by
         # AuditTrail.verify_chain, but we check retention coverage here)
@@ -192,13 +182,11 @@ class DataRetentionService:
         db: AsyncSession,
     ) -> dict[str, Any]:
         """Return retention statistics for the admin dashboard."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         event_cutoff = now - timedelta(days=self.event_retention_days)
 
         # Total events
-        total_events_result = await db.execute(
-            select(func.count(EventRow.id))
-        )
+        total_events_result = await db.execute(select(func.count(EventRow.id)))
         total_events = total_events_result.scalar() or 0
 
         # Events eligible for cleanup
@@ -208,15 +196,11 @@ class DataRetentionService:
         stale_events = stale_events_result.scalar() or 0
 
         # Total audit logs
-        audit_count_result = await db.execute(
-            select(func.count(AuditLogRow.id))
-        )
+        audit_count_result = await db.execute(select(func.count(AuditLogRow.id)))
         audit_count = audit_count_result.scalar() or 0
 
         # Total investigations
-        total_inv_result = await db.execute(
-            select(func.count(InvestigationRow.id))
-        )
+        total_inv_result = await db.execute(select(func.count(InvestigationRow.id)))
         total_investigations = total_inv_result.scalar() or 0
 
         # Closed investigations eligible for archival

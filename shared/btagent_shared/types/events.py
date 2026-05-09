@@ -1,6 +1,6 @@
 """Event types and envelope for BTagent agent communication."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -41,6 +41,8 @@ class EventType(StrEnum):
     IOC_DISCOVERED = "ioc_discovered"
     IOC_ENRICHED = "ioc_enriched"
     IOC_CROSS_MATCH = "ioc_cross_match"
+    IOC_ENRICHMENT_STARTED = "ioc_enrichment_started"
+    IOC_ENRICHMENT_COMPLETE = "ioc_enrichment_complete"
     ALERT_CLASSIFIED = "alert_classified"
     CONTAINMENT_PROPOSED = "containment_proposed"
     CONTAINMENT_APPROVED = "containment_approved"
@@ -50,6 +52,20 @@ class EventType(StrEnum):
     QUERY_GENERATED = "query_generated"
     QUERY_RESULTS = "query_results"
     THREAT_ASSESSMENT_UPDATE = "threat_assessment_update"
+    KNOWLEDGE_INDEXED = "knowledge_indexed"
+    KNOWLEDGE_QUERIED = "knowledge_queried"
+
+    # Report / Remediation lifecycle
+    REPORT_GENERATION_STARTED = "report_generation_started"
+    REPORT_GENERATION_COMPLETE = "report_generation_complete"
+    REMEDIATION_GENERATED = "remediation_generated"
+
+    # Playbook lifecycle
+    PLAYBOOK_STARTED = "playbook_started"
+    PLAYBOOK_STEP_COMPLETE = "playbook_step_complete"
+    PLAYBOOK_COMPLETE = "playbook_complete"
+    PLAYBOOK_FAILED = "playbook_failed"
+    PLAYBOOK_HITL_GATE = "playbook_hitl_gate"
 
     # Cost & metrics
     METRICS_UPDATE = "metrics_update"
@@ -73,7 +89,5 @@ class EventEnvelope(BaseModel):
     investigation_id: str
     parent_id: str | None = None
     trace_id: str | None = None
-    timestamp: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     data: dict[str, Any] = Field(default_factory=dict)

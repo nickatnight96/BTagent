@@ -9,14 +9,14 @@ altered after the fact, the chain breaks.
 import hashlib
 import itertools
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
+from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import AuditLogRow
-from btagent_shared.utils.ids import generate_id
 
 # Global counter so every test gets unique seq values (audit_logs.seq is UNIQUE).
 _seq_counter = itertools.count(1)
@@ -25,6 +25,7 @@ _seq_counter = itertools.count(1)
 # ---------------------------------------------------------------------------
 # Helpers -- reproducing the canonical hash computation
 # ---------------------------------------------------------------------------
+
 
 def _stable_ts(dt: datetime) -> str:
     """Return a timezone-naive ISO string so hashes survive SQLite round-trips.
@@ -59,9 +60,7 @@ def _compute_hash(entry: AuditLogRow, prev_hash: str) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-async def _create_chained_entries(
-    db: AsyncSession, count: int
-) -> list[AuditLogRow]:
+async def _create_chained_entries(db: AsyncSession, count: int) -> list[AuditLogRow]:
     """Insert ``count`` audit entries with a valid SHA-256 chain."""
     entries: list[AuditLogRow] = []
     prev_hash = ""
@@ -71,7 +70,7 @@ async def _create_chained_entries(
         entry = AuditLogRow(
             id=generate_id("aud"),
             seq=seq_val,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             actor=f"usr_test_{i}",
             category="investigation",
             action=f"test_action_{i}",
@@ -107,6 +106,7 @@ def _verify_chain(entries: list[AuditLogRow]) -> bool:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_chain_integrity_five_entries(db_session: AsyncSession):
@@ -195,9 +195,7 @@ async def test_chain_entries_persist_in_db(db_session: AsyncSession):
     # Flush the session identity map and re-query.
     db_session.expire_all()
     result = await db_session.execute(
-        select(AuditLogRow)
-        .where(AuditLogRow.id.in_(entry_ids))
-        .order_by(AuditLogRow.seq)
+        select(AuditLogRow).where(AuditLogRow.id.in_(entry_ids)).order_by(AuditLogRow.seq)
     )
     reloaded = list(result.scalars().all())
     assert len(reloaded) == 4

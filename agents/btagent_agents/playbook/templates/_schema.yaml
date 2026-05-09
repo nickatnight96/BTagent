@@ -1,0 +1,155 @@
+$schema: "http://json-schema.org/draft-07/schema#"
+title: BTagent Playbook Definition
+description: JSON Schema for validating BTagent SOAR playbook YAML files
+type: object
+required:
+  - name
+  - trigger
+  - steps
+properties:
+  name:
+    type: string
+    description: Display name of the playbook
+    minLength: 1
+    maxLength: 300
+  version:
+    type: string
+    description: Semantic version string
+    default: "1.0"
+  description:
+    type: string
+    description: Human-readable description of what this playbook does
+  trigger:
+    type: object
+    required:
+      - type
+    properties:
+      type:
+        type: string
+        enum:
+          - alert_severity
+          - ioc_type
+          - manual
+          - webhook
+          - schedule
+      parameters:
+        type: object
+        additionalProperties: true
+  steps:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required:
+        - id
+        - type
+        - name
+      properties:
+        id:
+          type: string
+          description: Unique step identifier within this playbook
+          pattern: "^[a-z][a-z0-9_]*$"
+        type:
+          type: string
+          enum:
+            - action
+            - decision
+            - hitl_gate
+            - parallel_fork
+            - join
+            - end
+        name:
+          type: string
+          description: Human-readable step name
+        description:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        next_step:
+          type: string
+          description: ID of the next step to execute
+        on_failure:
+          type: string
+          enum:
+            - skip
+            - abort
+            - retry
+          default: abort
+        # Action-specific fields
+        tool_name:
+          type: string
+          description: Name of the tool to invoke (action steps only)
+        arguments:
+          type: object
+          description: Arguments passed to the tool (action steps only)
+          additionalProperties: true
+        timeout_seconds:
+          type: integer
+          description: Timeout in seconds (action and hitl_gate steps)
+          minimum: 1
+          maximum: 86400
+        # Decision-specific fields
+        condition:
+          type: string
+          description: >-
+            Condition expression using key.path OP value syntax.
+            Supported operators: >, <, >=, <=, ==, !=
+            Example: "enrichment.max_confidence > 0.7"
+        true_branch:
+          type: string
+          description: Step ID to execute when condition is true
+        false_branch:
+          type: string
+          description: Step ID to execute when condition is false
+        # HITL gate-specific fields
+        prompt:
+          type: string
+          description: Message shown to the analyst for approval
+        required_role:
+          type: string
+          description: Minimum role required to approve this gate
+          enum:
+            - analyst
+            - senior_analyst
+            - incident_commander
+            - admin
+        # Parallel fork-specific fields
+        branches:
+          type: array
+          description: List of branch paths (each branch is a list of step IDs)
+          items:
+            type: array
+            items:
+              type: string
+      allOf:
+        - if:
+            properties:
+              type:
+                const: action
+          then:
+            required:
+              - tool_name
+        - if:
+            properties:
+              type:
+                const: decision
+          then:
+            required:
+              - condition
+              - true_branch
+              - false_branch
+        - if:
+            properties:
+              type:
+                const: hitl_gate
+          then:
+            required:
+              - prompt
+        - if:
+            properties:
+              type:
+                const: parallel_fork
+          then:
+            required:
+              - branches

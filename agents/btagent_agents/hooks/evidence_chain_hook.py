@@ -13,11 +13,11 @@ import re
 from typing import Any
 from uuid import UUID
 
+from btagent_shared.types.events import EventType
 from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 
 from btagent_agents.events.emitter import RedisEmitter
 from btagent_agents.hooks.base import HookProvider
-from btagent_shared.types.events import EventType
 
 logger = logging.getLogger("btagent.hooks.evidence_chain")
 
@@ -122,10 +122,12 @@ class EvidenceChainCallback(AsyncCallbackHandler):
         # Hash individual file references as well
         ref_hashes: list[dict[str, str]] = []
         for ref in file_refs:
-            ref_hashes.append({
-                "reference": ref,
-                "ref_hash": _compute_sha256(ref),
-            })
+            ref_hashes.append(
+                {
+                    "reference": ref,
+                    "ref_hash": _compute_sha256(ref),
+                }
+            )
 
         await self._emitter.emit(
             EventType.EVIDENCE_COLLECTED,

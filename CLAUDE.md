@@ -44,15 +44,32 @@ make fmt        # ruff format
 
 ## Testing
 - Unit: pytest (backend, agents) + vitest (frontend)
-- UAT: 22 automated acceptance tests (pytest + httpx + websockets)
+- UAT: 52+ automated acceptance tests across Phase 1 (22) and Phase 2 (30+)
+- Security UAT: 15 dedicated security tests (prompt injection, RBAC, audit, TLP, JWT)
 - E2E: Playwright browser tests
 - Agent eval: DeepEval with golden datasets (runs in CI on every PR)
 - Load: k6
 
 ## Agent Architecture
-- Orchestrator routes tasks to worker subgraphs (TriageAgent, QueryAgent in Phase 1)
-- Plugins: DefensivePlugin ABC with get_tools(), get_system_prompt()
+- Orchestrator routes tasks to worker subgraphs (Triage, Query, Enrich, Knowledge)
+- Plugins: 4 registered plugins (triage, query, enrichment, knowledge)
 - Hooks: HITL, EventEmitter, PromptBudget, EvidenceChain, ScopeEnforcement, Classification
-- MCP: SIEM/EDR connectors as MCP servers with circuit breaker + connection pooling
+- MCP: 9 SIEM/EDR/CTI connectors as MCP servers with circuit breaker + connection pooling
 - LLM: Task-appropriate model routing (Haiku→triage, Sonnet→query, Opus→analysis)
 - Context: 4-layer cascade (externalize → compress → prune → summarize)
+
+## Phase 2 Features
+- **IOC Enrichment Pipeline**: 5-stage LangGraph subgraph (select, enrich, score, dedup, store)
+- **Knowledge Agent (RAG)**: Hybrid search (pgvector + keyword + RRF), auto-indexing, knowledge injection
+- **SOAR Playbooks**: YAML-defined playbooks compiled to LangGraph subgraphs (action, decision, HITL gate, parallel)
+- **MITRE ATT&CK**: Keyword mapper (80+ techniques), coverage analysis, Navigator export
+- **STIX 2.1**: Bidirectional IOC import/export with TLP enforcement (TLP:RED blocked)
+
+## Phase 2 Stores
+- `knowledge_documents` / `knowledge_chunks` — pgvector RAG knowledge base
+- `playbooks` / `playbook_executions` — SOAR playbook definitions and execution history
+- `mitre_tactics` / `mitre_techniques` / `mitre_groups` — ATT&CK matrix data
+
+## Phase 2 MCP Servers (9 total)
+- Splunk, CrowdStrike, Sentinel, Elastic (Phase 1)
+- VirusTotal, Shodan, GreyNoise, AbuseIPDB, MISP (Phase 2)

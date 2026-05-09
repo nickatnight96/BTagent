@@ -1,0 +1,23 @@
+title: IOC Analysis Report
+description: >
+  Focused report on indicators of compromise identified during the investigation.
+  Includes indicator details, enrichment results, MITRE ATT&CK mapping, and
+  guidance for sharing with partner organizations and threat intelligence platforms.
+version: "1.0"
+sections:
+  - name: executive_summary
+    title: Executive Summary
+    required: true
+    description: Brief overview of identified indicators and their significance
+  - name: iocs
+    title: Indicators of Compromise
+    required: true
+    description: Comprehensive IOC list categorized by type with enrichment data
+  - name: findings
+    title: Enrichment Analysis
+    required: true
+    description: CTI enrichment results and threat actor correlation
+  - name: sharing_guidance
+    title: Sharing Guidance
+    required: true
+    description: TLP markings and sharing recommendations for ISACs and partners

@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for BTagent."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     DateTime,
@@ -10,7 +10,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -23,13 +22,36 @@ class Base(DeclarativeBase):
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
+
+
+# Default organization id used to seed existing rows during the org-scoping
+# migration and as a fallback in tests / single-tenant deployments.
+DEFAULT_ORG_ID = "org_default"
+
+
+class OrganizationRow(Base):
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class UserRow(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Phase A1 (schema): org_id is required.  Until Phase B1 wires routes to
+    # set org_id from the authenticated user, we default to the seeded
+    # ``org_default`` row so existing call sites continue to function.
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -37,11 +59,20 @@ class UserRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    __table_args__ = (Index("idx_users_org_id", "org_id", "id"),)
+
 
 class InvestigationRow(Base):
     __tablename__ = "investigations"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
     case_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
@@ -49,7 +80,7 @@ class InvestigationRow(Base):
     severity: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
     tlp_level: Mapped[str] = mapped_column(String(20), nullable=False, default="green")
     assigned_to: Mapped[str | None] = mapped_column(
-        String(64), ForeignKey("users.id"), nullable=True
+        String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     template: Mapped[str | None] = mapped_column(String(100), nullable=True)
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -76,6 +107,7 @@ class InvestigationRow(Base):
         Index("idx_investigations_status", "status"),
         Index("idx_investigations_created", "created_at"),
         Index("idx_investigations_severity", "severity"),
+        Index("idx_investigations_org_id", "org_id", "id"),
     )
 
 
@@ -83,6 +115,13 @@ class IOCRow(Base):
     __tablename__ = "iocs"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
     investigation_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False
     )
@@ -102,6 +141,7 @@ class IOCRow(Base):
         Index("idx_iocs_value", "value"),
         Index("idx_iocs_investigation", "investigation_id"),
         Index("idx_iocs_type", "type"),
+        Index("idx_iocs_org_id", "org_id", "id"),
     )
 
 
@@ -123,9 +163,7 @@ class TimelineEntryRow(Base):
 
     investigation: Mapped["InvestigationRow"] = relationship(back_populates="timeline_entries")
 
-    __table_args__ = (
-        Index("idx_timeline_investigation_ts", "investigation_id", "timestamp"),
-    )
+    __table_args__ = (Index("idx_timeline_investigation_ts", "investigation_id", "timestamp"),)
 
 
 class ContainmentActionRow(Base):
@@ -143,15 +181,20 @@ class ContainmentActionRow(Base):
     initiated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    investigation: Mapped["InvestigationRow"] = relationship(
-        back_populates="containment_actions"
-    )
+    investigation: Mapped["InvestigationRow"] = relationship(back_populates="containment_actions")
 
 
 class EvidenceRow(Base):
     __tablename__ = "evidence"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
     investigation_id: Mapped[str] = mapped_column(
         String(64), ForeignKey("investigations.id", ondelete="CASCADE"), nullable=False
     )
@@ -163,6 +206,8 @@ class EvidenceRow(Base):
     collected_by: Mapped[str] = mapped_column(String(200), default="")
 
     investigation: Mapped["InvestigationRow"] = relationship(back_populates="evidence")
+
+    __table_args__ = (Index("idx_evidence_org_id", "org_id", "id"),)
 
 
 class EventRow(Base):
@@ -262,6 +307,4 @@ class OrgConfigRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    __table_args__ = (
-        Index("idx_org_config_key", "key", unique=True),
-    )
+    __table_args__ = (Index("idx_org_config_key", "key", unique=True),)

@@ -7,42 +7,99 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-
 # --------------------------------------------------------------------------- #
 # Scoring weights and keywords
 # --------------------------------------------------------------------------- #
 
 # Keywords that signal high asset criticality
 _CRITICAL_ASSETS = [
-    "domain controller", "active directory", "dc01", "exchange server",
-    "vpn gateway", "firewall", "pam ", "privileged access", "jump server",
-    "bastion", "certificate authority", "root ca", "hsm", "key vault",
-    "production database", "prod db", "crown jewel", "scada", "ics ",
-    "payment system", "pci", "pii database", "customer data",
+    "domain controller",
+    "active directory",
+    "dc01",
+    "exchange server",
+    "vpn gateway",
+    "firewall",
+    "pam ",
+    "privileged access",
+    "jump server",
+    "bastion",
+    "certificate authority",
+    "root ca",
+    "hsm",
+    "key vault",
+    "production database",
+    "prod db",
+    "crown jewel",
+    "scada",
+    "ics ",
+    "payment system",
+    "pci",
+    "pii database",
+    "customer data",
 ]
 
 # Keywords that signal sophisticated threat actors
 _SOPHISTICATION_INDICATORS = [
-    "apt", "advanced persistent", "zero-day", "0-day", "living off the land",
-    "lotl", "fileless", "memory-only", "supply chain", "signed binary",
-    "dll sideload", "cobalt strike", "covenant", "sliver", "brute ratel",
-    "havoc", "mythic", "custom implant", "rootkit", "firmware",
-    "uefi", "bootkit", "anti-forensic",
+    "apt",
+    "advanced persistent",
+    "zero-day",
+    "0-day",
+    "living off the land",
+    "lotl",
+    "fileless",
+    "memory-only",
+    "supply chain",
+    "signed binary",
+    "dll sideload",
+    "cobalt strike",
+    "covenant",
+    "sliver",
+    "brute ratel",
+    "havoc",
+    "mythic",
+    "custom implant",
+    "rootkit",
+    "firmware",
+    "uefi",
+    "bootkit",
+    "anti-forensic",
 ]
 
 # Keywords that indicate wide blast radius
 _BLAST_RADIUS_INDICATORS = [
-    "all users", "entire domain", "organization-wide", "multiple hosts",
-    "subnet", "broadcast", "mass email", "company-wide", "global policy",
-    "gpo ", "group policy", "all endpoints", "entire fleet",
-    "widespread", "multiple departments",
+    "all users",
+    "entire domain",
+    "organization-wide",
+    "multiple hosts",
+    "subnet",
+    "broadcast",
+    "mass email",
+    "company-wide",
+    "global policy",
+    "gpo ",
+    "group policy",
+    "all endpoints",
+    "entire fleet",
+    "widespread",
+    "multiple departments",
 ]
 
 # Keywords that indicate time urgency
 _TIME_URGENCY_INDICATORS = [
-    "active", "in progress", "ongoing", "real-time", "currently executing",
-    "encrypting", "spreading", "propagating", "countdown", "deadline",
-    "ransom note", "exfiltrating now", "live session", "interactive",
+    "active",
+    "in progress",
+    "ongoing",
+    "real-time",
+    "currently executing",
+    "encrypting",
+    "spreading",
+    "propagating",
+    "countdown",
+    "deadline",
+    "ransom note",
+    "exfiltrating now",
+    "live session",
+    "interactive",
 ]
 
 
@@ -70,9 +127,7 @@ def _compute_overall_severity(scores: dict[str, float]) -> str:
         "blast_radius": 0.20,
         "time_sensitivity": 0.30,
     }
-    weighted_score = sum(
-        scores[dim] * weights[dim] for dim in weights
-    )
+    weighted_score = sum(scores[dim] * weights[dim] for dim in weights)
 
     if weighted_score >= 0.75:
         return "critical"
@@ -109,9 +164,7 @@ def _build_justification(
     for dim, score in scores.items():
         for (lo, hi), label in level_labels.items():
             if lo <= score < hi:
-                justifications.append(
-                    f"{labels[dim]}: {label} ({score:.2f})"
-                )
+                justifications.append(f"{labels[dim]}: {label} ({score:.2f})")
                 break
 
     return justifications
@@ -136,9 +189,7 @@ def severity_scorer(alert_details: str, org_context: str = "") -> dict[str, Any]
 
     scores: dict[str, float] = {
         "asset_criticality": _score_dimension(combined_text, _CRITICAL_ASSETS),
-        "threat_sophistication": _score_dimension(
-            combined_text, _SOPHISTICATION_INDICATORS
-        ),
+        "threat_sophistication": _score_dimension(combined_text, _SOPHISTICATION_INDICATORS),
         "blast_radius": _score_dimension(combined_text, _BLAST_RADIUS_INDICATORS),
         "time_sensitivity": _score_dimension(combined_text, _TIME_URGENCY_INDICATORS),
     }
@@ -186,8 +237,7 @@ def _severity_recommendation(severity: str) -> str:
             "Consider as tuning candidate if pattern is recurring."
         ),
         "info": (
-            "Log for awareness. No immediate action required. "
-            "Review during weekly tuning sessions."
+            "Log for awareness. No immediate action required. Review during weekly tuning sessions."
         ),
     }
     return recommendations.get(severity, "Investigate further.")

@@ -1,12 +1,12 @@
 """Tests for authentication and authorization endpoints."""
 
 import itertools
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from helpers import auth_header
 from httpx import AsyncClient
 from jose import jwt as jose_jwt
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.auth.jwt import (
     create_access_token,
@@ -17,15 +17,13 @@ from btagent_backend.auth.jwt import (
 )
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import UserRow
-from btagent_shared.utils.ids import generate_id
-
-from helpers import auth_header
 
 # Counter for unique usernames/emails in register tests.
 _reg_counter = itertools.count(1)
 
 
 # ---- Password hashing / verification ----
+
 
 @pytest.mark.asyncio
 async def test_password_hash_and_verify():
@@ -53,6 +51,7 @@ async def test_password_hash_is_unique():
 
 # ---- Token creation / decoding ----
 
+
 @pytest.mark.asyncio
 async def test_create_token_pair_returns_both_tokens():
     """create_token_pair returns access and refresh tokens."""
@@ -66,12 +65,15 @@ async def test_create_token_pair_returns_both_tokens():
 @pytest.mark.asyncio
 async def test_decode_access_token():
     """decode_token on a fresh access token returns correct payload."""
-    token = create_access_token("usr_123", "bob", "admin")
+    token, jti = create_access_token("usr_123", "bob", "admin")
     payload = decode_token(token)
     assert payload.sub == "usr_123"
     assert payload.username == "bob"
     assert payload.role == "admin"
     assert payload.type == "access"
+    # AUTH-A2: access tokens now carry a jti for revocation.
+    assert payload.jti == jti
+    assert payload.jti is not None
 
 
 @pytest.mark.asyncio
@@ -82,17 +84,16 @@ async def test_expired_token_rejected():
         "sub": "usr_old",
         "username": "expired_user",
         "role": "analyst",
-        "exp": datetime.now(timezone.utc) - timedelta(hours=1),
+        "exp": datetime.now(UTC) - timedelta(hours=1),
         "type": "access",
     }
-    token = jose_jwt.encode(
-        expired_payload, settings.jwt_secret, algorithm=settings.jwt_algorithm
-    )
+    token = jose_jwt.encode(expired_payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     with pytest.raises(Exception):
         decode_token(token)
 
 
 # ---- POST /api/v1/auth/login ----
+
 
 @pytest.mark.asyncio
 async def test_login_valid_credentials(client: AsyncClient, sample_user: UserRow):
@@ -131,10 +132,9 @@ async def test_login_nonexistent_user(client: AsyncClient):
 
 # ---- GET /api/v1/auth/me ----
 
+
 @pytest.mark.asyncio
-async def test_me_with_valid_token(
-    client: AsyncClient, analyst_token: str, sample_user: UserRow
-):
+async def test_me_with_valid_token(client: AsyncClient, analyst_token: str, sample_user: UserRow):
     """GET /me with a valid bearer token returns user info."""
     resp = await client.get("/api/v1/auth/me", headers=auth_header(analyst_token))
     assert resp.status_code == 200
@@ -160,7 +160,7 @@ async def test_me_with_expired_token(client: AsyncClient):
             "sub": "usr_gone",
             "username": "ghost",
             "role": "analyst",
-            "exp": datetime.now(timezone.utc) - timedelta(seconds=10),
+            "exp": datetime.now(UTC) - timedelta(seconds=10),
             "type": "access",
         },
         settings.jwt_secret,
@@ -171,6 +171,7 @@ async def test_me_with_expired_token(client: AsyncClient):
 
 
 # ---- POST /api/v1/auth/refresh ----
+
 
 @pytest.mark.asyncio
 async def test_refresh_token_works(client: AsyncClient, sample_user: UserRow):
@@ -207,6 +208,7 @@ async def test_refresh_with_invalid_token_rejected(client: AsyncClient):
 
 
 # ---- POST /api/v1/auth/register ----
+
 
 @pytest.mark.asyncio
 async def test_admin_can_register_user(client: AsyncClient, admin_token: str):

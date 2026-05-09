@@ -24,187 +24,165 @@ SUPPORTED_PLATFORMS = {
 
 _SPL_TEMPLATES: dict[str, str] = {
     "ip_search": (
-        'index=* earliest=-24h latest=now '
+        "index=* earliest=-24h latest=now "
         '(src_ip="{value}" OR dest_ip="{value}") '
-        '| stats count by index, sourcetype, src_ip, dest_ip, action '
-        '| sort -count'
+        "| stats count by index, sourcetype, src_ip, dest_ip, action "
+        "| sort -count"
     ),
     "domain_search": (
-        'index=dns OR index=proxy OR index=web earliest=-24h latest=now '
+        "index=dns OR index=proxy OR index=web earliest=-24h latest=now "
         '(query="{value}" OR url="*{value}*") '
-        '| stats count by src_ip, query, answer, action '
-        '| sort -count'
+        "| stats count by src_ip, query, answer, action "
+        "| sort -count"
     ),
     "hash_search": (
-        'index=endpoint earliest=-7d latest=now '
+        "index=endpoint earliest=-7d latest=now "
         '(file_hash="{value}" OR sha256="{value}" OR md5="{value}") '
-        '| stats count by host, file_name, file_path, process_name '
-        '| sort -count'
+        "| stats count by host, file_name, file_path, process_name "
+        "| sort -count"
     ),
     "email_search": (
-        'index=email earliest=-24h latest=now '
+        "index=email earliest=-24h latest=now "
         '(sender="{value}" OR recipient="{value}") '
-        '| stats count by sender, recipient, subject, action '
-        '| sort -count'
+        "| stats count by sender, recipient, subject, action "
+        "| sort -count"
     ),
     "process_search": (
-        'index=endpoint earliest=-24h latest=now '
+        "index=endpoint earliest=-24h latest=now "
         'process_name="{value}" '
-        '| stats count by host, process_name, parent_process_name, user, cmdline '
-        '| sort -count'
+        "| stats count by host, process_name, parent_process_name, user, cmdline "
+        "| sort -count"
     ),
     "auth_failure": (
-        'index=auth earliest=-24h latest=now action=failure '
-        '| stats count by src_ip, user, dest, app '
-        '| where count > 5 '
-        '| sort -count'
+        "index=auth earliest=-24h latest=now action=failure "
+        "| stats count by src_ip, user, dest, app "
+        "| where count > 5 "
+        "| sort -count"
     ),
     "lateral_movement": (
-        'index=endpoint OR index=auth earliest=-24h latest=now '
-        '(EventCode=4624 Logon_Type=3 OR EventCode=4648 OR process_name IN '
+        "index=endpoint OR index=auth earliest=-24h latest=now "
+        "(EventCode=4624 Logon_Type=3 OR EventCode=4648 OR process_name IN "
         '("psexec.exe","wmic.exe","winrm.cmd","powershell.exe")) '
-        '| stats count by src_ip, dest, user, process_name '
-        '| sort -count'
+        "| stats count by src_ip, dest, user, process_name "
+        "| sort -count"
     ),
     "data_transfer": (
-        'index=proxy OR index=firewall earliest=-24h latest=now '
-        '| stats sum(bytes_out) as total_bytes by src_ip, dest_ip, dest_port '
-        '| where total_bytes > 104857600 '
-        '| sort -total_bytes '
-        '| eval total_mb=round(total_bytes/1048576,2)'
+        "index=proxy OR index=firewall earliest=-24h latest=now "
+        "| stats sum(bytes_out) as total_bytes by src_ip, dest_ip, dest_port "
+        "| where total_bytes > 104857600 "
+        "| sort -total_bytes "
+        "| eval total_mb=round(total_bytes/1048576,2)"
     ),
     "generic": (
         'index=* earliest=-24h latest=now "{value}" '
-        '| stats count by index, sourcetype, host '
-        '| sort -count'
+        "| stats count by index, sourcetype, host "
+        "| sort -count"
     ),
 }
 
 _KQL_TEMPLATES: dict[str, str] = {
     "ip_search": (
         "union * \n"
-        '| where TimeGenerated > ago(24h) \n'
+        "| where TimeGenerated > ago(24h) \n"
         '| where SourceIP == "{value}" or DestinationIP == "{value}" \n'
-        '| summarize Count=count() by Type, SourceIP, DestinationIP, Action \n'
-        '| order by Count desc'
+        "| summarize Count=count() by Type, SourceIP, DestinationIP, Action \n"
+        "| order by Count desc"
     ),
     "domain_search": (
         "DnsEvents \n"
-        '| where TimeGenerated > ago(24h) \n'
+        "| where TimeGenerated > ago(24h) \n"
         '| where Name contains "{value}" \n'
-        '| summarize Count=count() by ClientIP, Name, QueryType, IPAddresses \n'
-        '| order by Count desc'
+        "| summarize Count=count() by ClientIP, Name, QueryType, IPAddresses \n"
+        "| order by Count desc"
     ),
     "hash_search": (
         "DeviceFileEvents \n"
-        '| where TimeGenerated > ago(7d) \n'
+        "| where TimeGenerated > ago(7d) \n"
         '| where SHA256 == "{value}" or MD5 == "{value}" \n'
-        '| summarize Count=count() by DeviceName, FileName, FolderPath, '
-        'InitiatingProcessFileName \n'
-        '| order by Count desc'
+        "| summarize Count=count() by DeviceName, FileName, FolderPath, "
+        "InitiatingProcessFileName \n"
+        "| order by Count desc"
     ),
     "email_search": (
         "EmailEvents \n"
-        '| where TimeGenerated > ago(24h) \n'
+        "| where TimeGenerated > ago(24h) \n"
         '| where SenderFromAddress == "{value}" '
         'or RecipientEmailAddress == "{value}" \n'
-        '| summarize Count=count() by SenderFromAddress, '
-        'RecipientEmailAddress, Subject, DeliveryAction \n'
-        '| order by Count desc'
+        "| summarize Count=count() by SenderFromAddress, "
+        "RecipientEmailAddress, Subject, DeliveryAction \n"
+        "| order by Count desc"
     ),
     "process_search": (
         "DeviceProcessEvents \n"
-        '| where TimeGenerated > ago(24h) \n'
+        "| where TimeGenerated > ago(24h) \n"
         '| where FileName == "{value}" \n'
-        '| summarize Count=count() by DeviceName, FileName, '
-        'InitiatingProcessFileName, AccountName, ProcessCommandLine \n'
-        '| order by Count desc'
+        "| summarize Count=count() by DeviceName, FileName, "
+        "InitiatingProcessFileName, AccountName, ProcessCommandLine \n"
+        "| order by Count desc"
     ),
     "auth_failure": (
         "SigninLogs \n"
-        '| where TimeGenerated > ago(24h) \n'
+        "| where TimeGenerated > ago(24h) \n"
         '| where ResultType != "0" \n'
-        '| summarize FailureCount=count() by IPAddress, '
-        'UserPrincipalName, AppDisplayName, ResultDescription \n'
-        '| where FailureCount > 5 \n'
-        '| order by FailureCount desc'
+        "| summarize FailureCount=count() by IPAddress, "
+        "UserPrincipalName, AppDisplayName, ResultDescription \n"
+        "| where FailureCount > 5 \n"
+        "| order by FailureCount desc"
     ),
     "lateral_movement": (
         "DeviceLogonEvents \n"
-        '| where TimeGenerated > ago(24h) \n'
+        "| where TimeGenerated > ago(24h) \n"
         '| where LogonType in ("RemoteInteractive", "Network", "NewCredentials") \n'
-        '| summarize Count=count() by RemoteIP, DeviceName, '
-        'AccountName, LogonType \n'
-        '| order by Count desc'
+        "| summarize Count=count() by RemoteIP, DeviceName, "
+        "AccountName, LogonType \n"
+        "| order by Count desc"
     ),
     "data_transfer": (
         "CommonSecurityLog \n"
-        '| where TimeGenerated > ago(24h) \n'
-        '| summarize TotalBytes=sum(SentBytes) by SourceIP, '
-        'DestinationIP, DestinationPort \n'
-        '| where TotalBytes > 104857600 \n'
-        '| extend TotalMB = round(TotalBytes / 1048576.0, 2) \n'
-        '| order by TotalBytes desc'
+        "| where TimeGenerated > ago(24h) \n"
+        "| summarize TotalBytes=sum(SentBytes) by SourceIP, "
+        "DestinationIP, DestinationPort \n"
+        "| where TotalBytes > 104857600 \n"
+        "| extend TotalMB = round(TotalBytes / 1048576.0, 2) \n"
+        "| order by TotalBytes desc"
     ),
     "generic": (
         "union * \n"
-        '| where TimeGenerated > ago(24h) \n'
+        "| where TimeGenerated > ago(24h) \n"
         '| where * contains "{value}" \n'
-        '| summarize Count=count() by Type \n'
-        '| order by Count desc'
+        "| summarize Count=count() by Type \n"
+        "| order by Count desc"
     ),
 }
 
 _EQL_TEMPLATES: dict[str, str] = {
-    "ip_search": (
-        'any where source.ip == "{value}" or destination.ip == "{value}"'
-    ),
-    "domain_search": (
-        'dns where dns.question.name == "{value}"'
-    ),
-    "hash_search": (
-        'file where file.hash.sha256 == "{value}" or file.hash.md5 == "{value}"'
-    ),
-    "process_search": (
-        'process where process.name == "{value}"'
-    ),
-    "auth_failure": (
-        'authentication where event.outcome == "failure"'
-    ),
+    "ip_search": ('any where source.ip == "{value}" or destination.ip == "{value}"'),
+    "domain_search": ('dns where dns.question.name == "{value}"'),
+    "hash_search": ('file where file.hash.sha256 == "{value}" or file.hash.md5 == "{value}"'),
+    "process_search": ('process where process.name == "{value}"'),
+    "auth_failure": ('authentication where event.outcome == "failure"'),
     "lateral_movement": (
-        'sequence by host.name with maxspan=5m\n'
+        "sequence by host.name with maxspan=5m\n"
         '  [authentication where event.outcome == "success" '
         'and source.ip != "127.0.0.1"]\n'
-        '  [process where process.name in '
+        "  [process where process.name in "
         '("cmd.exe", "powershell.exe", "wmic.exe")]'
     ),
-    "generic": (
-        'any where message : "*{value}*"'
-    ),
+    "generic": ('any where message : "*{value}*"'),
 }
 
 _CS_TEMPLATES: dict[str, str] = {
     "ip_search": (
-        'event_simpleName IN (NetworkConnectIP4, DnsRequest) '
+        "event_simpleName IN (NetworkConnectIP4, DnsRequest) "
         'AND (RemoteAddressIP4="{value}" OR aip="{value}")'
     ),
-    "domain_search": (
-        'event_simpleName=DnsRequest AND DomainName="{value}"'
-    ),
+    "domain_search": ('event_simpleName=DnsRequest AND DomainName="{value}"'),
     "hash_search": (
-        'event_simpleName IN (PeFileWritten, NewExecutableRenamed) '
-        'AND SHA256HashData="{value}"'
+        'event_simpleName IN (PeFileWritten, NewExecutableRenamed) AND SHA256HashData="{value}"'
     ),
-    "process_search": (
-        'event_simpleName=ProcessRollup2 '
-        'AND FileName="{value}"'
-    ),
-    "auth_failure": (
-        'event_simpleName=UserLogonFailed2'
-    ),
-    "generic": (
-        '"{value}"'
-    ),
+    "process_search": ('event_simpleName=ProcessRollup2 AND FileName="{value}"'),
+    "auth_failure": ("event_simpleName=UserLogonFailed2"),
+    "generic": ('"{value}"'),
 }
 
 _PLATFORM_TEMPLATES: dict[str, dict[str, str]] = {
@@ -219,37 +197,70 @@ _PLATFORM_TEMPLATES: dict[str, dict[str, str]] = {
 # --------------------------------------------------------------------------- #
 
 _INTENT_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("ip_search", re.compile(
-        r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
-        r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
-    )),
+    (
+        "ip_search",
+        re.compile(
+            r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}"
+            r"(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b"
+        ),
+    ),
     ("hash_search", re.compile(r"\b[a-fA-F0-9]{32,64}\b")),
-    ("email_search", re.compile(
-        r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
-    )),
-    ("domain_search", re.compile(
-        r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
-        r"(?:com|net|org|io|ru|cn|xyz|top|info|co|uk|de|gov|edu|onion)\b",
-        re.IGNORECASE,
-    )),
+    ("email_search", re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b")),
+    (
+        "domain_search",
+        re.compile(
+            r"\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+            r"(?:com|net|org|io|ru|cn|xyz|top|info|co|uk|de|gov|edu|onion)\b",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 _KEYWORD_INTENTS: list[tuple[str, list[str]]] = [
-    ("auth_failure", [
-        "brute force", "failed login", "authentication failure",
-        "password spray", "credential stuff", "logon failure",
-    ]),
-    ("lateral_movement", [
-        "lateral movement", "pivot", "psexec", "remote exec",
-        "pass the hash", "pass-the-hash", "wmi ", "winrm",
-    ]),
-    ("data_transfer", [
-        "exfiltration", "data transfer", "large upload",
-        "bytes transferred", "data leak",
-    ]),
-    ("process_search", [
-        "process", "execution", "running", "spawned", "parent process",
-    ]),
+    (
+        "auth_failure",
+        [
+            "brute force",
+            "failed login",
+            "authentication failure",
+            "password spray",
+            "credential stuff",
+            "logon failure",
+        ],
+    ),
+    (
+        "lateral_movement",
+        [
+            "lateral movement",
+            "pivot",
+            "psexec",
+            "remote exec",
+            "pass the hash",
+            "pass-the-hash",
+            "wmi ",
+            "winrm",
+        ],
+    ),
+    (
+        "data_transfer",
+        [
+            "exfiltration",
+            "data transfer",
+            "large upload",
+            "bytes transferred",
+            "data leak",
+        ],
+    ),
+    (
+        "process_search",
+        [
+            "process",
+            "execution",
+            "running",
+            "spawned",
+            "parent process",
+        ],
+    ),
 ]
 
 # --------------------------------------------------------------------------- #

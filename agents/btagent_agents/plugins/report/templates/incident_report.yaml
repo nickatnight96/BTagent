@@ -1,0 +1,39 @@
+title: Incident Response Report
+description: >
+  Full incident response report covering executive summary, scope and methodology,
+  detailed findings, indicators of compromise, chronological timeline, containment
+  actions, remediation recommendations, and supporting appendices.
+version: "1.0"
+sections:
+  - name: executive_summary
+    title: Executive Summary
+    required: true
+    description: Non-technical overview of the incident for leadership
+  - name: scope
+    title: Scope and Methodology
+    required: true
+    description: Investigation scope, data sources, and analytical methodology
+  - name: findings
+    title: Findings
+    required: true
+    description: Detailed technical findings organized by attack phase
+  - name: iocs
+    title: Indicators of Compromise
+    required: true
+    description: Structured IOC list with type, value, and enrichment context
+  - name: timeline
+    title: Timeline
+    required: true
+    description: Chronological event timeline with evidence references
+  - name: containment
+    title: Containment Actions
+    required: true
+    description: Containment and eradication actions taken
+  - name: recommendations
+    title: Recommendations
+    required: true
+    description: Prioritized remediation and hardening recommendations
+  - name: appendices
+    title: Appendices
+    required: false
+    description: Supporting data, raw queries, and MITRE ATT&CK mapping
