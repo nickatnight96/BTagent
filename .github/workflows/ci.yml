@@ -21,7 +21,7 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
-  # ── Lint ────────────────────────────────────────────────────
+  # ── Lint ────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -45,7 +45,7 @@ jobs:
       - name: Ruff format check
         run: ruff format --check backend/ agents/ shared/ engine/
 
-  # ── Secret scanning ─────────────────────────────────────────
+  # ── Secret scanning ───────────────────────────────
   # Fails the pipeline if any secret-shaped string is committed -- including
   # keys accidentally added to test fixtures or copied into a workflow env.
   secret-scan:
@@ -73,7 +73,7 @@ jobs:
         # that the audit confirmed as known-public-by-design.
         run: gitleaks detect --config=.gitleaks.toml --no-banner --redact
 
-  # ── Dependency vulnerability audit ──────────────────────────
+  # ── Dependency vulnerability audit ──────────────────────
   # Surfaces CVEs in Python + Node dependency trees on every PR. Findings are
   # advisory in the short term (``continue-on-error``) so a brand-new CVE in
   # a transitive dep doesn't immediately block merges -- promote to required
@@ -126,7 +126,7 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
-  # ── Backend + Agent Unit Tests ──────────────────────────────
+  # ── Backend + Agent Unit Tests ──────────────────────────
   backend-tests:
     name: Backend & Agent Tests
     runs-on: ubuntu-latest
@@ -205,7 +205,7 @@ jobs:
           path: coverage-*.xml
           retention-days: 7
 
-  # ── Agent Evaluation ────────────────────────────────────────
+  # ── Agent Evaluation ─────────────────────────────────
   agent-eval:
     name: Agent Evaluation
     runs-on: ubuntu-latest
@@ -246,7 +246,7 @@ jobs:
       - name: Run agent evaluation suite
         run: pytest tests/agent_eval/ -v || echo "No agent eval tests configured yet"
 
-  # ── E2E (Playwright Browser Tests) ───────────────────────────
+  # ── E2E (Playwright Browser Tests) ────────────────────────
   # Real browser-driven UAT — covers what the API-level UAT below
   # cannot: login form, cookie auth, click flows, live WS events,
   # protected-route guards, XSS sanitisation, etc.
@@ -327,10 +327,15 @@ jobs:
         working-directory: frontend
         run: |
           npm install --no-audit --no-fund
-          # Vite ``preview`` serves the prod bundle. ``build`` failures
-          # don't block the job here — the type errors are tracked in
-          # the Frontend job. We need *some* artifact to preview.
-          npm run build || echo "build had non-fatal errors"
+          # ``npm run build`` is now ``vite build`` only (the previous
+          # ``tsc -b && vite build`` chain swallowed the tsc failure
+          # via the ``|| echo`` below, then vite build was *skipped*
+          # entirely because of the ``&&``, leaving an empty ``dist/``
+          # — vite preview would launch but serve 404 on ``/``, and
+          # the curl probe in the next step timed out for 30 s).
+          # ``npm run typecheck`` still runs ``tsc -b`` and the
+          # ``Frontend`` job tracks the remaining 21 type errors.
+          npm run build
 
       - name: Install Playwright + Chromium
         working-directory: tests/e2e
@@ -407,7 +412,7 @@ jobs:
           path: /tmp/backend.log
           retention-days: 7
 
-  # ── UAT (User Acceptance Tests) ─────────────────────────────
+  # ── UAT (User Acceptance Tests) ─────────────────────────
   uat:
     name: UAT
     runs-on: ubuntu-latest
@@ -488,7 +493,7 @@ jobs:
 
       # Services auto-cleanup when job ends
 
-  # ── Frontend ────────────────────────────────────────────────
+  # ── Frontend ───────────────────────────────────────
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
@@ -521,9 +526,9 @@ jobs:
         # fails on the same 21 errors. Promote to required once the
         # cleanup pass lands.
         continue-on-error: true
-        run: npm run build
+        run: npm run build:strict
 
-  # ── Build & Push Docker Images ──────────────────────────────
+  # ── Build & Push Docker Images ───────────────────────────
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
