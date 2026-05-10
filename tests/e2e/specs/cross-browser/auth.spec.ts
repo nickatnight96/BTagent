@@ -41,7 +41,7 @@ test("logout clears cookies on this browser @cross-browser", async ({
     TEST_CREDENTIALS.analyst.password,
   );
   await page.getByTestId("header-logout-button").click();
-  await page.waitForURL("**/login");
+  await page.waitForURL(/\/login(\?|\#|$)/);
   const cookies = await page.context().cookies();
   expect(
     cookies.find((c) => c.name === "btagent_access"),

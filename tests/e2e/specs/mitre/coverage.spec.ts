@@ -34,7 +34,7 @@ test.describe("MITRE coverage", () => {
     const initial = (await matrix.coverageScore.textContent()) ?? "";
 
     await matrix.viewToggleInvestigation.click();
-    await matrix.investigationFilterInput.fill(inv.id);
+    await matrix.investigationFilterInput.selectOption(inv.id);
 
     // Allow the matrix to refetch; coverage panel stays mounted.
     await expect(matrix.coverage).toBeVisible();

@@ -327,8 +327,14 @@ async def test_oversized_message_closes_with_1009(ws_app):
                 pass
             with pytest.raises(WebSocketDisconnect) as exc_info:
                 ws.send_text(big)
-                # Server may close on next read — drive the socket once more.
-                ws.receive_text()
+                # Server may close on next read — drive the socket a
+                # couple of times. Some run orderings make the close
+                # propagate on the second receive (the first receives
+                # an in-flight ack frame the server queued before
+                # detecting the oversize), so reading twice avoids a
+                # benign "DID NOT RAISE" flake.
+                for _ in range(3):
+                    ws.receive_text()
             assert exc_info.value.code == 1009
 
 

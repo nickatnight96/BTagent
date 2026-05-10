@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Shield, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/Button";
@@ -7,16 +7,25 @@ import { Input } from "@/components/ui/Input";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, isLoading, error, clearError } = useAuthStore();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  // Clear any stale errors and auth state on mount
+  // Clear any stale errors on mount. We deliberately do NOT call the
+  // network ``logout()`` here — that would POST to ``/auth/logout``,
+  // which revokes the access-token jti server-side. In a multi-tab /
+  // multi-context environment (and in parallel test runs that share
+  // an .auth storage state across workers) that revocation cascades
+  // into spurious "session expired" redirects on the OTHER context's
+  // next protected request. The login flow itself rotates tokens,
+  // and an explicit Sign-Out button still calls ``logout()``; mounting
+  // the login screen to type credentials should not destroy any
+  // existing session.
   useEffect(() => {
     clearError();
-    useAuthStore.getState().logout();
   }, [clearError]);
 
   const handleSubmit = useCallback(
@@ -26,10 +35,17 @@ export function LoginPage() {
 
       const success = await login(username.trim(), password);
       if (success) {
-        navigate("/", { replace: true });
+        // Honour the ``?redirect=`` query param set by the
+        // ProtectedRoute when an anonymous request was bounced.
+        // Restrict to same-origin paths to avoid open-redirect.
+        const next = searchParams.get("redirect");
+        const target = next && next.startsWith("/") && !next.startsWith("//")
+          ? next
+          : "/";
+        navigate(target, { replace: true });
       }
     },
-    [username, password, login, navigate],
+    [username, password, login, navigate, searchParams],
   );
 
   const handleKeyDown = useCallback(

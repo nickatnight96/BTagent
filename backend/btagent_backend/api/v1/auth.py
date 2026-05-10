@@ -130,13 +130,24 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenPair)
-async def refresh(request: Request, response: Response, body: RefreshRequest | None = None):
+async def refresh(
+    request: Request,
+    response: Response,
+    body: RefreshRequest | None = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_logout_bearer),
+):
     """Exchange a refresh token for a new token pair.
 
     AUTH-A2: implements *refresh-token rotation*. The supplied refresh token's
     ``jti`` is checked against the revocation list and then immediately revoked,
     so the token can only be redeemed once. A second attempt with the same
     refresh token returns 401.
+
+    The OLD access-token's ``jti`` is **also** revoked on every successful
+    rotation — otherwise a leaked access token would stay valid until its
+    short TTL elapses even though the rotation contract has minted a new
+    pair. The old token is resolved from the ``Authorization`` header first,
+    then the ``btagent_access`` cookie (browser path).
 
     Phase C1: when the JSON body has no ``refresh_token``, fall back to the
     ``btagent_refresh`` httpOnly cookie. On success, the new pair is *also*
@@ -168,6 +179,27 @@ async def refresh(request: Request, response: Response, body: RefreshRequest | N
     # Rotate: revoke the old refresh token's jti before issuing the new pair.
     if payload.jti:
         await revoke(payload.jti, _remaining_ttl(payload.exp))
+
+    # AUTH-A2: also revoke the OLD access-token jti on rotation so the
+    # outgoing token stops working immediately, not after its TTL.
+    # ``decode_token`` errors fall through silently — refresh must still
+    # succeed when the caller's access token is already expired/missing
+    # (the refresh flow's whole purpose is recovering from that state).
+    old_access_token: str | None = None
+    if credentials is not None and credentials.credentials:
+        old_access_token = credentials.credentials
+    if not old_access_token:
+        old_access_token = request.cookies.get(ACCESS_COOKIE_NAME)
+    if old_access_token:
+        try:
+            old_access_payload = decode_token(old_access_token)
+        except JWTError:
+            old_access_payload = None
+        if old_access_payload is not None and old_access_payload.jti:
+            await revoke(
+                old_access_payload.jti,
+                _remaining_ttl(old_access_payload.exp),
+            )
 
     settings = get_settings()
     # AUTH-B1: keep the same org_id on rotation so the new pair stays bound

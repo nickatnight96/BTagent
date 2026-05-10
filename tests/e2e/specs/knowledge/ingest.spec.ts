@@ -35,7 +35,10 @@ async function stubIngestEndpoints(
     route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ documents: [], total: 0 }),
+      // Backend's DocumentListResponse uses ``items`` not ``documents``;
+      // returning the wrong key sets the store's ``documents`` to
+      // undefined and the page crashes on ``documents.length``.
+      body: JSON.stringify({ items: [], total: 0, page: 1, page_size: 20 }),
     }),
   );
 }
@@ -58,13 +61,13 @@ test.describe("Knowledge ingest modal", () => {
     const knowledge = new KnowledgePage(analystPage);
     await knowledge.goto();
     await knowledge.ingestOpenButton.click();
-    await knowledge.ingest.submit();
-    // Either the submit is blocked client-side (button disabled / form
-    // validation) or the server rejects with an error banner. Both
-    // count — no doc gets created.
-    await expect(
-      knowledge.ingest.error.or(knowledge.ingest.submitButton),
-    ).toBeVisible();
+    await expect(knowledge.ingest.dialog).toBeVisible();
+    // Empty title + content → submit is disabled client-side (the
+    // contract says either disable or server-reject; the modal
+    // disables, so we assert the disabled state directly. Calling
+    // ``.click()`` on a disabled button just times out — Playwright
+    // waits for the disabled attribute to clear, which never does).
+    await expect(knowledge.ingest.submitButton).toBeDisabled();
   });
 
   test("filling all required fields submits successfully", async ({

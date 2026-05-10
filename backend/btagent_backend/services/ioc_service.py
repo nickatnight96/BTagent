@@ -163,6 +163,7 @@ async def list_iocs(
     ioc_type: str | None = None,
     confidence_min: float | None = None,
     enriched: bool | None = None,
+    search: str | None = None,
     page: int = 1,
     page_size: int = 50,
     investigation_id_in: list[str] | None = None,
@@ -209,6 +210,15 @@ async def list_iocs(
         else:
             query = query.where(IOCRow.enrichment == {})
             count_query = count_query.where(IOCRow.enrichment == {})
+
+    if search:
+        # Substring match against the IOC value (case-insensitive). The
+        # notebook search bar passes through this; the dedicated
+        # ``/iocs/search`` endpoint is the alternative for value-only
+        # full-text search.
+        pattern = f"%{search}%"
+        query = query.where(IOCRow.value.ilike(pattern))
+        count_query = count_query.where(IOCRow.value.ilike(pattern))
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0

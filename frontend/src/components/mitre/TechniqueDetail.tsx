@@ -96,8 +96,11 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
   });
 
   const handleExport = useCallback(() => {
-    void exportNavigator(investigationFilter ?? undefined);
-  }, [exportNavigator, investigationFilter]);
+    // Include the technique id (root, no sub-technique suffix) in the
+    // filename so per-technique exports are identifiable on disk.
+    const rootId = technique.id.split(".")[0] ?? technique.id;
+    void exportNavigator(investigationFilter ?? undefined, rootId);
+  }, [exportNavigator, investigationFilter, technique.id]);
 
   const mitreUrl = technique.url ?? `https://attack.mitre.org/techniques/${technique.id.replace(".", "/")}/`;
 

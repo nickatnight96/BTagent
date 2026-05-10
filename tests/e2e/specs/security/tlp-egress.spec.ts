@@ -25,15 +25,24 @@ test("STIX export from a TLP:RED IOC notebook is blocked in the UI", async ({
   expect(refetched.tlp_level).toBe("red");
 
   const ioc = new IOCNotebookPage(analystPage);
+  // Hydrate the investigation store via the dashboard so the export
+  // dialog's ``investigationInput`` (a native ``<select>``) has the
+  // seeded RED case as a selectable option.
+  await analystPage.goto("/");
+  await analystPage.getByTestId("investigation-list").waitFor({
+    state: "visible",
+    timeout: 10_000,
+  });
   await ioc.goto();
   // Open the export dialog. Pre-fill with the RED investigation id.
   await ioc.exportButton.click();
   const dialog = ioc.exportDialog;
   await dialog.root.waitFor({ state: "visible" });
-  await dialog.investigationInput.fill(investigation.id);
+  // ``investigationInput`` is a ``<select>`` — selectOption, not fill.
+  await dialog.investigationInput.selectOption(investigation.id);
 
-  // Pick STIX format.
-  await dialog.formatRadio("stix").click();
+  // Pick STIX format. ``stix_2.1`` is the canonical option value.
+  await dialog.formatRadio("stix_2.1").click();
   // The TLP-warning surface from Sprint A export instrumentation
   // should pop once the export targets a RED case.
   await dialog.tlpWarning
@@ -45,11 +54,11 @@ test("STIX export from a TLP:RED IOC notebook is blocked in the UI", async ({
 
   // Try to submit — backend must 403 the call.
   await dialog.submitButton.click();
-  const apiResp = await analystApi.ctx.post(
-    "/api/v1/iocs/export?format=stix",
-    {
-      data: { investigation_id: investigation.id },
-    },
+  // The export endpoint is a GET (``/iocs/export?investigation_id=...&tlp_level=red``)
+  // not a POST; the TLP:RED guard at iocs.py lives in the query-param
+  // path and returns 403 with a "Cannot export TLP:RED IOCs" detail.
+  const apiResp = await analystApi.ctx.get(
+    `/api/v1/iocs/export?investigation_id=${investigation.id}&tlp_level=red`,
   );
   expect([400, 403]).toContain(apiResp.status());
 });

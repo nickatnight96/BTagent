@@ -44,7 +44,7 @@ test.describe("MITRE Navigator export", () => {
   }) => {
     // Stub the Navigator export so the test doesn't depend on the
     // (possibly-empty) live coverage in the CI seed.
-    await analystPage.route("**/api/v1/mitre/navigator-export*", (route) =>
+    await analystPage.route("**/api/v1/mitre/export/navigator*", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -71,7 +71,7 @@ test.describe("MITRE Navigator export", () => {
   test("per-technique export from the detail modal triggers a download", async ({
     analystPage,
   }) => {
-    await analystPage.route("**/api/v1/mitre/navigator-export*", (route) =>
+    await analystPage.route("**/api/v1/mitre/export/navigator*", (route) =>
       route.fulfill({
         status: 200,
         contentType: "application/json",

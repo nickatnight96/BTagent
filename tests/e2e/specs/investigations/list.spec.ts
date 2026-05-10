@@ -79,7 +79,7 @@ test("creating an investigation via the modal lands a new card", async ({
     title,
     description: "Created by the investigation-list E2E test.",
     severity: "medium",
-    tlpLevel: "green",
+    tlpLevel: "GREEN",
   });
   await modal.submit();
 

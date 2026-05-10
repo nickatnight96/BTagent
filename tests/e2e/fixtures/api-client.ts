@@ -31,7 +31,15 @@ export interface SeededInvestigation {
 export interface SeededIOC {
   id: string;
   investigation_id: string;
-  type: "ip" | "domain" | "url" | "hash" | "email" | "cve";
+  type:
+    | "ip"
+    | "domain"
+    | "url"
+    | "hash_md5"
+    | "hash_sha1"
+    | "hash_sha256"
+    | "email"
+    | "cve";
   value: string;
   confidence?: number;
   tlp_level: "white" | "green" | "amber" | "red";
@@ -58,6 +66,7 @@ export class BTAgentApiClient {
   private constructor(
     public readonly ctx: APIRequestContext,
     public readonly accessToken: string | null,
+    public readonly refreshToken: string | null = null,
   ) {}
 
   /** Build a fresh client — no auth yet. Use ``login()`` next. */
@@ -116,7 +125,14 @@ export class BTAgentApiClient {
         `Login failed for ${creds.username}: ${res.status()} ${await res.text()}`,
       );
     }
-    const body = (await res.json()) as { access_token: string };
+    // Login response carries both tokens. The refresh token is only
+    // needed by tests that exercise the rotation path (which can't
+    // rely on the cookie-bound refresh because the header client
+    // doesn't carry cookies).
+    const body = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+    };
     await tmp.dispose();
 
     const ctx = await request.newContext({
@@ -126,7 +142,7 @@ export class BTAgentApiClient {
         Authorization: `Bearer ${body.access_token}`,
       },
     });
-    return new BTAgentApiClient(ctx, body.access_token);
+    return new BTAgentApiClient(ctx, body.access_token, body.refresh_token ?? null);
   }
 
   /** Log out — invalidates the access-token jti server-side. */
@@ -213,15 +229,20 @@ export class BTAgentApiClient {
   }
 
   async listIOCs(investigationId: string): Promise<SeededIOC[]> {
-    const res = await this.ctx.get(
-      `/api/v1/investigations/${investigationId}/iocs`,
-    );
+    // The list endpoint lives at ``/api/v1/iocs?investigation_id=...``;
+    // there is no nested ``/investigations/{id}/iocs`` route. Response
+    // shape is the paginated ``IOCListResponse`` ({ items, total, page,
+    // page_size }) — strip down to the items array for callers.
+    const res = await this.ctx.get(`/api/v1/iocs`, {
+      params: { investigation_id: investigationId, page_size: 200 },
+    });
     if (!res.ok()) {
       throw new Error(
         `List IOCs failed: ${res.status()} ${await res.text()}`,
       );
     }
-    return (await res.json()) as SeededIOC[];
+    const body = (await res.json()) as { items: SeededIOC[] };
+    return body.items;
   }
 
   // ------------------------------------------------------------------

@@ -133,11 +133,14 @@ test.describe("Playbook execution", () => {
     await expect(exec.stepDetailStatus).toBeVisible({ timeout: 10_000 });
     // Started timestamp is mounted as soon as the step is dispatched;
     // completed/output may be delayed until the run finishes. Either
-    // is acceptable — at minimum, started must surface.
+    // is acceptable — at minimum, started must surface. Use ``first``
+    // so a fully-completed step (which renders all three) doesn't
+    // trip Playwright's strict-mode "resolved to N elements" check.
     await expect(
       exec.stepDetailStarted
         .or(exec.stepDetailCompleted)
-        .or(exec.stepDetailOutput),
+        .or(exec.stepDetailOutput)
+        .first(),
     ).toBeVisible({ timeout: 20_000 });
   });
 

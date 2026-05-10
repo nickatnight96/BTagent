@@ -12,12 +12,17 @@ describe("api client — Phase C2 cookie auth", () => {
   // through unknown so we can both record calls and satisfy the signatures.
   type Spy = (() => void) & { mock: { calls: unknown[][] } };
   let logoutSpy: Spy;
+  let clearLocalUserSpy: Spy;
   let unauthSpy: Spy;
 
   beforeEach(() => {
     logoutSpy = vi.fn() as unknown as Spy;
+    clearLocalUserSpy = vi.fn() as unknown as Spy;
     unauthSpy = vi.fn() as unknown as Spy;
-    setAuthStoreAccessor(() => ({ logout: logoutSpy }));
+    setAuthStoreAccessor(() => ({
+      logout: logoutSpy,
+      clearLocalUser: clearLocalUserSpy,
+    }));
     setUnauthenticatedHandler(unauthSpy);
   });
 
@@ -66,7 +71,12 @@ describe("api client — Phase C2 cookie auth", () => {
     await expect(api.get("/v1/anything")).rejects.toMatchObject({
       status: 401,
     });
-    expect(logoutSpy).toHaveBeenCalledTimes(1);
+    // The 401 handler clears the LOCAL user only — calling
+    // ``logout()`` here would round-trip /auth/logout and revoke
+    // the cookie's jti, cascading into other tabs sharing the
+    // session. See ``api/client.ts:request`` for the rationale.
+    expect(clearLocalUserSpy).toHaveBeenCalledTimes(1);
+    expect(logoutSpy).not.toHaveBeenCalled();
     expect(unauthSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -79,6 +89,7 @@ describe("api client — Phase C2 cookie auth", () => {
       api.get("/v1/login-probe", { skipAuth: true }),
     ).rejects.toBeInstanceOf(ApiError);
     expect(logoutSpy).not.toHaveBeenCalled();
+    expect(clearLocalUserSpy).not.toHaveBeenCalled();
     expect(unauthSpy).not.toHaveBeenCalled();
   });
 });

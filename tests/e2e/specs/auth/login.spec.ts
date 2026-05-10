@@ -123,19 +123,19 @@ test.describe("Protected route guard", () => {
     page,
   }) => {
     await page.goto("/");
-    await page.waitForURL("**/login", { timeout: 5_000 });
+    await page.waitForURL(/\/login(\?|\#|$)/, { timeout: 5_000 });
     expect(page.url()).toContain("/login");
   });
 
   test("anonymous user is redirected from /iocs", async ({ page }) => {
     await page.goto("/iocs");
-    await page.waitForURL("**/login", { timeout: 5_000 });
+    await page.waitForURL(/\/login(\?|\#|$)/, { timeout: 5_000 });
   });
 
   test("anonymous user is redirected from /investigations/:id", async ({
     page,
   }) => {
     await page.goto("/investigations/inv_does_not_matter");
-    await page.waitForURL("**/login", { timeout: 5_000 });
+    await page.waitForURL(/\/login(\?|\#|$)/, { timeout: 5_000 });
   });
 });

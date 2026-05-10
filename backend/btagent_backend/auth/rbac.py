@@ -57,7 +57,10 @@ PERMISSIONS: dict[str, UserRole] = {
     "playbook:view": UserRole.ANALYST,
     "playbook:create": UserRole.SENIOR_ANALYST,
     "playbook:edit": UserRole.SENIOR_ANALYST,
-    "playbook:delete": UserRole.ADMIN,
+    # Symmetric with ``playbook:create`` / ``playbook:edit``: SOAR authors are
+    # senior analysts who own the playbook lifecycle (the delete is soft-delete,
+    # i.e. ``active=false``; full removal still requires admin via the DB).
+    "playbook:delete": UserRole.SENIOR_ANALYST,
     "playbook:execute": UserRole.SENIOR_ANALYST,
     "playbook:execute_containment": UserRole.INCIDENT_COMMANDER,
     # Reports

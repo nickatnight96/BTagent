@@ -22,6 +22,13 @@ interface AuthState {
 
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
+  // Local-only sibling of ``logout``: clears the in-memory user
+  // state without round-tripping ``/auth/logout``. Use when the
+  // server has already invalidated the session (e.g. a 401 came
+  // back) so calling the network logout would just put the cookie's
+  // jti on the revocation list and propagate the revocation to
+  // other tabs / parallel test workers sharing the access token.
+  clearLocalUser: () => void;
   fetchMe: () => Promise<boolean>;
   setUser: (user: User | null) => void;
   clearError: () => void;
@@ -91,6 +98,13 @@ export const useAuthStore = create<AuthState>()(
         } catch {
           // Best-effort: cookies will still expire server-side.
         }
+      },
+
+      clearLocalUser: (): void => {
+        // Local-only cleanup. Used by the 401 handler in api/client
+        // — see ``AuthStoreSlice.clearLocalUser`` for why we don't
+        // round-trip ``/auth/logout`` from the API client.
+        set({ user: null, error: null });
       },
 
       fetchMe: async (): Promise<boolean> => {

@@ -52,7 +52,12 @@ export async function seedInvestigationWithIOCs(
     { type: "ip" as const, value: "203.0.113.42" },
     { type: "domain" as const, value: "phish.example.invalid" },
     {
-      type: "hash" as const,
+      // The shared IOCType enum has ``hash_md5`` / ``hash_sha1`` /
+      // ``hash_sha256`` — there's no plain ``hash``. Seeding ``type:
+      // "hash"`` fails Pydantic validation, then ``addIOC`` throws and
+      // every spec calling ``seedInvestigationWithIOCs(...)`` (default
+      // IOCs) breaks before its assertions run.
+      type: "hash_md5" as const,
       value: "44d88612fea8a8f36de82e1278abb02f",
     },
   ];

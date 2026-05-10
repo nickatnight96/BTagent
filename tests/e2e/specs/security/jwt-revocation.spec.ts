@@ -91,8 +91,12 @@ test("after refresh, the OLD access token's jti is revoked", async () => {
   const oldToken = api.accessToken;
   expect(oldToken).toBeTruthy();
 
-  // Rotate.
-  const refresh = await api.ctx.post("/api/v1/auth/refresh", { data: {} });
+  // Rotate. Header-token clients don't carry the refresh cookie, so
+  // pass the refresh token explicitly in the body — the endpoint
+  // accepts either path after Phase C1.
+  const refresh = await api.ctx.post("/api/v1/auth/refresh", {
+    data: { refresh_token: api.refreshToken },
+  });
   expect(refresh.status()).toBe(200);
 
   // Replay the OLD access token via a fresh context bound only to it.

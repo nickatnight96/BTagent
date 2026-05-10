@@ -21,7 +21,7 @@ env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
-  # ── Lint ────────────────────────────────────────────────────
+  # ── Lint ────────────────────────────────────────
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -45,7 +45,7 @@ jobs:
       - name: Ruff format check
         run: ruff format --check backend/ agents/ shared/ engine/
 
-  # ── Secret scanning ─────────────────────────────────────────
+  # ── Secret scanning ───────────────────────────────
   # Fails the pipeline if any secret-shaped string is committed -- including
   # keys accidentally added to test fixtures or copied into a workflow env.
   secret-scan:
@@ -73,7 +73,7 @@ jobs:
         # that the audit confirmed as known-public-by-design.
         run: gitleaks detect --config=.gitleaks.toml --no-banner --redact
 
-  # ── Dependency vulnerability audit ──────────────────────────
+  # ── Dependency vulnerability audit ──────────────────────
   # Surfaces CVEs in Python + Node dependency trees on every PR. Findings are
   # advisory in the short term (``continue-on-error``) so a brand-new CVE in
   # a transitive dep doesn't immediately block merges -- promote to required
@@ -126,7 +126,7 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
-  # ── Backend + Agent Unit Tests ──────────────────────────────
+  # ── Backend + Agent Unit Tests ──────────────────────────
   backend-tests:
     name: Backend & Agent Tests
     runs-on: ubuntu-latest
@@ -205,7 +205,7 @@ jobs:
           path: coverage-*.xml
           retention-days: 7
 
-  # ── Agent Evaluation ────────────────────────────────────────
+  # ── Agent Evaluation ─────────────────────────────────
   agent-eval:
     name: Agent Evaluation
     runs-on: ubuntu-latest
@@ -246,7 +246,7 @@ jobs:
       - name: Run agent evaluation suite
         run: pytest tests/agent_eval/ -v || echo "No agent eval tests configured yet"
 
-  # ── E2E (Playwright Browser Tests) ───────────────────────────
+  # ── E2E (Playwright Browser Tests) ────────────────────────
   # Real browser-driven UAT — covers what the API-level UAT below
   # cannot: login form, cookie auth, click flows, live WS events,
   # protected-route guards, XSS sanitisation, etc.
@@ -259,6 +259,12 @@ jobs:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
     needs: [backend-tests]
+    permissions:
+      # ``contents: read`` is inherited; ``pull-requests: write`` is
+      # needed for the on-failure diagnostic step that posts the
+      # failed test list as a PR comment.
+      contents: read
+      pull-requests: write
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -327,10 +333,15 @@ jobs:
         working-directory: frontend
         run: |
           npm install --no-audit --no-fund
-          # Vite ``preview`` serves the prod bundle. ``build`` failures
-          # don't block the job here — the type errors are tracked in
-          # the Frontend job. We need *some* artifact to preview.
-          npm run build || echo "build had non-fatal errors"
+          # ``npm run build`` is now ``vite build`` only (the previous
+          # ``tsc -b && vite build`` chain swallowed the tsc failure
+          # via the ``|| echo`` below, then vite build was *skipped*
+          # entirely because of the ``&&``, leaving an empty ``dist/``
+          # — vite preview would launch but serve 404 on ``/``, and
+          # the curl probe in the next step timed out for 30 s).
+          # ``npm run typecheck`` still runs ``tsc -b`` and the
+          # ``Frontend`` job tracks the remaining 21 type errors.
+          npm run build
 
       - name: Install Playwright + Chromium
         working-directory: tests/e2e
@@ -381,7 +392,53 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: tests/e2e
-        run: npx playwright test --reporter=html,junit,github
+        # The reporter list is already declared in ``playwright.config.ts``
+        # under ``IS_CI`` (html + junit-with-outputFile + github).
+        # Passing ``--reporter=...`` here OVERRIDES the config tuple,
+        # which previously caused the junit reporter to write to stdout
+        # instead of ``test-results/junit.xml`` — the diagnostic step
+        # below depends on that file.
+        #
+        # ``--project=chromium`` scopes the run to the default Desktop
+        # Chrome matrix. Without it Playwright runs EVERY project in the
+        # config — including:
+        #   * ``nginx`` — asserts on production nginx-only response
+        #     headers (HSTS, CSP, X-Frame-Options) that vite preview
+        #     doesn't ship; tests intentionally only pass when run
+        #     against the full Docker stack with the nginx ingress.
+        #   * ``firefox`` / ``webkit`` — bundled browsers aren't
+        #     installed in CI (we only ``playwright install ...
+        #     chromium`` above) so these projects fail to launch.
+        #   * ``mobile-chrome`` — tests rely on the mobile viewport
+        #     fixture that ``@mobile``-tagged specs gate themselves on.
+        # Chromium has ``dependencies: ["setup"]`` in the config, so
+        # the setup project still runs as a prereq.
+        run: npx playwright test --project=chromium
+
+      - name: Post failing test list as PR comment
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+        working-directory: tests/e2e
+        run: |
+          # Extract failed testcase names from junit.xml and post as a
+          # PR comment. The annotations API requires auth and is opaque
+          # to outside debuggers; a comment is universally readable.
+          set +e
+          if [ ! -f test-results/junit.xml ]; then
+            echo "No junit.xml — skipping comment."
+            exit 0
+          fi
+          python3 scripts/dump_failed_tests.py test-results/junit.xml > /tmp/failed.md
+          if [ ! -s /tmp/failed.md ]; then
+            echo "No failed tests parsed."
+            exit 0
+          fi
+          printf '\n_Auto-generated by E2E job on failure._\n' >> /tmp/failed.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/failed.md --repo "$GH_REPO" || \
+            echo "gh pr comment failed (non-fatal)"
 
       - name: Upload Playwright HTML report
         if: always()
@@ -407,11 +464,14 @@ jobs:
           path: /tmp/backend.log
           retention-days: 7
 
-  # ── UAT (User Acceptance Tests) ─────────────────────────────
+  # ── UAT (User Acceptance Tests) ─────────────────────────
   uat:
     name: UAT
     runs-on: ubuntu-latest
     needs: [backend-tests]
+    permissions:
+      contents: read
+      pull-requests: write
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -484,11 +544,33 @@ jobs:
           curl --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
 
       - name: Run UAT tests
-        run: pytest tests/uat/ -v
+        run: pytest tests/uat/ -v --junitxml=/tmp/uat-junit.xml --tb=short
+
+      - name: Post failing UAT list as PR comment
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set +e
+          if [ ! -f /tmp/uat-junit.xml ]; then
+            echo "No junit.xml — skipping comment."
+            exit 0
+          fi
+          python3 tests/e2e/scripts/dump_failed_tests.py /tmp/uat-junit.xml \
+            | sed 's/Failed E2E tests/Failed UAT tests/' > /tmp/failed-uat.md
+          if [ ! -s /tmp/failed-uat.md ]; then
+            echo "No failed tests parsed."
+            exit 0
+          fi
+          printf '\n_Auto-generated by UAT job on failure._\n' >> /tmp/failed-uat.md
+          gh pr comment "$PR_NUMBER" --body-file /tmp/failed-uat.md \
+            --repo "$GH_REPO" || echo "gh pr comment failed (non-fatal)"
 
       # Services auto-cleanup when job ends
 
-  # ── Frontend ────────────────────────────────────────────────
+  # ── Frontend ───────────────────────────────────────
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
@@ -521,9 +603,9 @@ jobs:
         # fails on the same 21 errors. Promote to required once the
         # cleanup pass lands.
         continue-on-error: true
-        run: npm run build
+        run: npm run build:strict
 
-  # ── Build & Push Docker Images ──────────────────────────────
+  # ── Build & Push Docker Images ───────────────────────────
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest

@@ -20,6 +20,13 @@ interface AuthStoreSlice {
   // them. We only need a hook for the 401 path so the client can clear the
   // local user and bounce to /login.
   logout: () => Promise<void> | void;
+  // Local-only sibling of ``logout``: clears the in-memory user
+  // without round-tripping ``/auth/logout``. Used when the SERVER has
+  // already invalidated the session (e.g. we got a 401), so calling
+  // the network logout would just add the cookie's jti to the
+  // revocation list — which cascades into other tabs / parallel test
+  // workers sharing the same access token.
+  clearLocalUser: () => void;
 }
 
 // Auth store accessor, set externally to avoid circular dependency.
@@ -67,10 +74,16 @@ async function request<T>(
   });
 
   if (response.status === 401 && !skipAuth) {
-    // Cookie missing/expired/revoked. Clear the local user and let the
-    // installed handler (typically a router redirect) take over.
+    // Cookie missing/expired/revoked. Clear the LOCAL user state and
+    // let the installed handler (typically a router redirect) take
+    // over. We deliberately do NOT call the network ``logout()`` here:
+    // a 401 already means the cookie is dead on the server, and
+    // POSTing /auth/logout would put the jti on the revocation list —
+    // which, in parallel test runs (or any multi-tab session that
+    // shares cookies), propagates the revocation to every other
+    // context using the same access token.
     try {
-      await getAuthStore().logout();
+      getAuthStore().clearLocalUser();
     } catch {
       // ignore — we're already in the failure path
     }

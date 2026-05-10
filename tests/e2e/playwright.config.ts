@@ -33,10 +33,17 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
 
-  // CI runs the full matrix sequentially-per-worker so trace files
-  // don't fight for disk; local dev parallelises by default.
+  // CI runs the full matrix in a single worker. We tried 4 workers
+  // earlier — the wall-time savings (~2 min) were eaten by the
+  // cross-worker test pollution every run produced: every
+  // workers=N>1 spec set saw the same shape of cascading failures
+  // (analyst trying to add an IOC to a freshly-created investigation
+  // hits ``404 Not found`` on roughly 1 in N runs because the
+  // route-level scoping check sees the parent investigation_id
+  // before the creating worker's transaction has settled, etc.).
+  // Local dev still parallelises so the suite is fast there.
   fullyParallel: !IS_CI,
-  workers: IS_CI ? 4 : undefined,
+  workers: IS_CI ? 1 : undefined,
 
   // Sets a max-failures cap so a single broken commit doesn't
   // exhaust runner minutes by retrying every test.
