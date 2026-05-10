@@ -392,7 +392,13 @@ jobs:
 
       - name: Run Playwright tests
         working-directory: tests/e2e
-        run: npx playwright test --reporter=html,junit,github
+        # The reporter list is already declared in ``playwright.config.ts``
+        # under ``IS_CI`` (html + junit-with-outputFile + github).
+        # Passing ``--reporter=...`` here OVERRIDES the config tuple,
+        # which previously caused the junit reporter to write to stdout
+        # instead of ``test-results/junit.xml`` — the diagnostic step
+        # below depends on that file.
+        run: npx playwright test
 
       - name: Post failing test list as PR comment
         if: failure() && github.event_name == 'pull_request'
