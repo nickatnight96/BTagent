@@ -3,7 +3,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { GitBranch } from "lucide-react";
 import type { ParallelForkNodeData } from "@/types/playbook";
 
-function ParallelForkNodeComponent({ data, selected }: NodeProps) {
+function ParallelForkNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as ParallelForkNodeData;
   const branchCount = nodeData.branchCount || 2;
 
@@ -15,6 +15,8 @@ function ParallelForkNodeComponent({ data, selected }: NodeProps) {
 
   return (
     <div
+      data-testid={`playbook-builder-node-${id}`}
+      data-node-type="parallel_fork"
       className={`
         relative min-w-[220px] rounded-lg border-l-4 border-purple-500
         bg-slate-800 shadow-lg transition-all duration-150

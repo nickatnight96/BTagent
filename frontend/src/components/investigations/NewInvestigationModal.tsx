@@ -73,11 +73,15 @@ export function NewInvestigationModal({
       setError(null);
 
       try {
+        // Backend expects ``tlp_level: lowercase`` (matching the
+        // shared ``TLP`` enum in ``btagent_shared.types.config``); the
+        // frontend ``TLP`` enum stores uppercase strings for display
+        // in the form, so coerce to lowercase before posting.
         const investigation = await createInvestigation({
           title: title.trim(),
           description: description.trim(),
           severity,
-          tlp,
+          tlp_level: (tlp as string).toLowerCase() as TLP,
           template: template || undefined,
         });
 
@@ -107,65 +111,85 @@ export function NewInvestigationModal({
         title="New Investigation"
         description="Create a new security investigation. The AI agent will begin analysis once created."
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="Title"
-            placeholder="e.g., Suspicious login from 185.220.101.x"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            autoFocus
-          />
-
-          <Textarea
-            label="Description"
-            placeholder="Describe the incident or alert details..."
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={3}
-          />
-
-          <div className="grid grid-cols-2 gap-4">
-            <Select
-              label="Severity"
-              options={severityOptions}
-              value={severity}
-              onChange={(e) => setSeverity(e.target.value as Severity)}
+        <div data-testid="new-investigation-dialog">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-4"
+            data-testid="new-investigation-form"
+          >
+            <Input
+              label="Title"
+              placeholder="e.g., Suspicious login from 185.220.101.x"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              autoFocus
+              data-testid="new-investigation-title-input"
             />
 
-            <Select
-              label="TLP"
-              options={tlpOptions}
-              value={tlp}
-              onChange={(e) => setTlp(e.target.value as TLP)}
+            <Textarea
+              label="Description"
+              placeholder="Describe the incident or alert details..."
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              data-testid="new-investigation-description-input"
             />
-          </div>
 
-          <Select
-            label="Template"
-            options={templateOptions}
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
-          />
+            <div className="grid grid-cols-2 gap-4">
+              <Select
+                label="Severity"
+                options={severityOptions}
+                value={severity}
+                onChange={(e) => setSeverity(e.target.value as Severity)}
+                data-testid="new-investigation-severity-input"
+              />
 
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-md p-3 text-sm text-red-400">
-              {error}
+              <Select
+                label="TLP"
+                options={tlpOptions}
+                value={tlp}
+                onChange={(e) => setTlp(e.target.value as TLP)}
+                data-testid="new-investigation-tlp-input"
+              />
             </div>
-          )}
 
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" isLoading={isSubmitting}>
-              Create Investigation
-            </Button>
-          </DialogFooter>
-        </form>
+            <Select
+              label="Template"
+              options={templateOptions}
+              value={template}
+              onChange={(e) => setTemplate(e.target.value)}
+              data-testid="new-investigation-template-input"
+            />
+
+            {error && (
+              <div
+                className="bg-red-500/10 border border-red-500/30 rounded-md p-3 text-sm text-red-400"
+                role="alert"
+                data-testid="new-investigation-error"
+              >
+                {error}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => onOpenChange(false)}
+                data-testid="new-investigation-cancel-button"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                isLoading={isSubmitting}
+                data-testid="new-investigation-submit-button"
+              >
+                Create Investigation
+              </Button>
+            </DialogFooter>
+          </form>
+        </div>
       </DialogContent>
     </Dialog>
   );

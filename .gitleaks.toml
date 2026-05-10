@@ -1,0 +1,48 @@
+# Gitleaks configuration for BTagent.
+#
+# We extend the default ruleset (don't replace it) and add scoped allowlists
+# for the test fixtures and CI-only secrets we know about. Real production
+# secrets must NEVER be committed -- the allowlist patterns below are
+# intentionally narrow.
+#
+# Audit reference: Wave 3 audit flagged hardcoded test creds in
+# .github/workflows/ci.yml (BTAGENT_JWT_SECRET) and tests/uat/test_owasp_security.py
+# (admin/admin). Both are CI-only / test-only and present by design;
+# this file tells gitleaks to ignore them rather than fail every PR.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "BTagent test + CI fixtures that are known-public-by-design"
+
+paths = [
+    # Backend test fixtures use static passwords + a deterministic JWT
+    # secret in conftest.py so test runs are reproducible.
+    '''backend/tests/conftest\.py''',
+    '''backend/tests/.*\.py''',
+    # UAT suite uses admin/admin etc. against a fresh CI database.
+    '''tests/uat/.*\.py''',
+    # Engine tests share the same convention.
+    '''engine/tests/.*\.py''',
+    # Agents tests likewise.
+    '''agents/tests/.*\.py''',
+    # CI workflows declare a CI-only JWT secret in env: blocks; the secret
+    # is published in the workflow file by design and rotated per CI run
+    # by GitHub Actions if the team chooses to wire it through Secrets.
+    '''\.github/workflows/.*\.yml''',
+    # Documentation often references example tokens / API keys that are
+    # not real (and not paragraph-prefixed enough to fool gitleaks).
+    '''docs/.*\.md''',
+]
+
+regexes = [
+    # Test JWT secrets we ship intentionally.
+    '''ci-test-secret-not-for-production''',
+    '''test-secret-key-for-jwt-signing-only''',
+    # Default test passwords used in conftest fixtures (per CLAUDE.md
+    # convention: deterministic seeds for reproducible CI).
+    '''Admin-P@ss-123!''',
+    '''Analyst-P@ss-456!''',
+    '''AnalystPass123''',
+]

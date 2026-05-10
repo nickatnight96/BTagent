@@ -13,6 +13,10 @@ export interface MitreTechnique {
   id: string;
   name: string;
   description: string;
+  /** Single-tactic shortname returned by the current backend
+   *  (e.g. "initial-access"). The matrix groups by this when
+   *  ``tactic_names`` is unset. */
+  tactic?: string;
   tactic_ids?: string[];
   tactic_names?: string[];
   platforms?: string[];

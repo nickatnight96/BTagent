@@ -789,17 +789,25 @@ class TestPlaybookRBAC:
 
         assert has_permission("senior_analyst", "playbook:execute") is True
 
-    def test_playbook_delete_admin(self):
-        """Admin can delete playbooks."""
+    def test_playbook_delete_senior(self):
+        """Senior analyst can soft-delete playbooks.
+
+        Symmetric with ``playbook:create`` / ``playbook:edit`` /
+        ``playbook:execute`` — SOAR authors own the full lifecycle.
+        The DELETE endpoint is soft-delete (``active=false``); admin
+        is still the gate for hard removal via the DB.
+        """
         from btagent_backend.auth.rbac import has_permission
 
+        assert has_permission("senior_analyst", "playbook:delete") is True
+        # Admin still inherits the permission via role hierarchy.
         assert has_permission("admin", "playbook:delete") is True
 
-    def test_playbook_delete_senior_denied(self):
-        """Senior analyst cannot delete playbooks."""
+    def test_playbook_delete_analyst_denied(self):
+        """Plain analyst cannot delete playbooks (no soft-delete either)."""
         from btagent_backend.auth.rbac import has_permission
 
-        assert has_permission("senior_analyst", "playbook:delete") is False
+        assert has_permission("analyst", "playbook:delete") is False
 
     def test_playbook_execute_containment_commander(self):
         """Incident commander can execute containment playbooks."""
