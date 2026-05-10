@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, type FormEvent, type KeyboardEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Shield, Eye, EyeOff } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/Button";
@@ -7,16 +7,25 @@ import { Input } from "@/components/ui/Input";
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, isLoading, error, clearError } = useAuthStore();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
-  // Clear any stale errors and auth state on mount
+  // Clear any stale errors on mount. We deliberately do NOT call the
+  // network ``logout()`` here — that would POST to ``/auth/logout``,
+  // which revokes the access-token jti server-side. In a multi-tab /
+  // multi-context environment (and in parallel test runs that share
+  // an .auth storage state across workers) that revocation cascades
+  // into spurious "session expired" redirects on the OTHER context's
+  // next protected request. The login flow itself rotates tokens,
+  // and an explicit Sign-Out button still calls ``logout()``; mounting
+  // the login screen to type credentials should not destroy any
+  // existing session.
   useEffect(() => {
     clearError();
-    useAuthStore.getState().logout();
   }, [clearError]);
 
   const handleSubmit = useCallback(
@@ -26,10 +35,17 @@ export function LoginPage() {
 
       const success = await login(username.trim(), password);
       if (success) {
-        navigate("/", { replace: true });
+        // Honour the ``?redirect=`` query param set by the
+        // ProtectedRoute when an anonymous request was bounced.
+        // Restrict to same-origin paths to avoid open-redirect.
+        const next = searchParams.get("redirect");
+        const target = next && next.startsWith("/") && !next.startsWith("//")
+          ? next
+          : "/";
+        navigate(target, { replace: true });
       }
     },
-    [username, password, login, navigate],
+    [username, password, login, navigate, searchParams],
   );
 
   const handleKeyDown = useCallback(
@@ -49,7 +65,7 @@ export function LoginPage() {
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/5 rounded-full blur-3xl" />
       </div>
 
-      <div className="relative w-full max-w-md">
+      <div className="relative w-full max-w-md" data-testid="login">
         {/* Logo and branding */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/30 mb-4">
@@ -65,7 +81,11 @@ export function LoginPage() {
 
         {/* Login form */}
         <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-6 shadow-2xl shadow-black/40">
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-5"
+            data-testid="login-form"
+          >
             <Input
               label="Username"
               type="text"
@@ -78,6 +98,7 @@ export function LoginPage() {
               onKeyDown={handleKeyDown}
               autoComplete="username"
               autoFocus
+              data-testid="login-username-input"
             />
 
             <div className="relative">
@@ -92,12 +113,15 @@ export function LoginPage() {
                 }}
                 onKeyDown={handleKeyDown}
                 autoComplete="current-password"
+                data-testid="login-password-input"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-[34px] text-slate-400 hover:text-slate-200 transition-colors"
                 tabIndex={-1}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                data-testid="login-password-toggle"
               >
                 {showPassword ? (
                   <EyeOff className="h-4 w-4" />
@@ -108,7 +132,11 @@ export function LoginPage() {
             </div>
 
             {error && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-md p-3 text-sm text-red-400">
+              <div
+                className="bg-red-500/10 border border-red-500/30 rounded-md p-3 text-sm text-red-400"
+                role="alert"
+                data-testid="login-error"
+              >
                 {error}
               </div>
             )}
@@ -119,6 +147,7 @@ export function LoginPage() {
               size="lg"
               isLoading={isLoading}
               disabled={!username.trim() || !password.trim()}
+              data-testid="login-submit-button"
             >
               Sign In
             </Button>

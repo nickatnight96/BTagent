@@ -7,15 +7,36 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
-from btagent_backend.db.models import IOCRow
+from btagent_backend.auth.scoping import (
+    assert_can_access_investigation,
+    assert_can_access_ioc,
+)
+from btagent_backend.db.models import InvestigationRow, IOCRow
 from btagent_backend.services import ioc_service, stix_service
 
 logger = logging.getLogger("btagent.api.iocs")
 
 router = APIRouter(prefix="/iocs", tags=["iocs"])
+
+# AUTH-B1: roles allowed to see every IOC in their org regardless of which
+# investigation owns it. Plain analysts can only see IOCs whose parent
+# investigation they own.
+_ORG_WIDE_ROLES = frozenset({"admin", "incident_commander", "senior_analyst"})
+
+
+async def _load_investigation_or_404(db: AsyncSession, investigation_id: str) -> InvestigationRow:
+    """Fetch an investigation row or raise 404 (no scoping check)."""
+    result = await db.execute(
+        select(InvestigationRow).where(InvestigationRow.id == investigation_id)
+    )
+    inv = result.scalar_one_or_none()
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return inv
 
 
 # --------------------------------------------------------------------------- #
@@ -82,6 +103,18 @@ class STIXImportRequest(BaseModel):
     investigation_id: str
 
 
+class TextImportRequest(BaseModel):
+    """Frontend-shaped import body (``IOCImportModal`` sends ``{data, investigation_id}``).
+
+    Used by both ``/import/csv`` (raw CSV text) and ``/import/stix`` (STIX
+    bundle as a JSON string — kept distinct from ``STIXImportRequest``
+    which expects an already-parsed object).
+    """
+
+    data: str
+    investigation_id: str
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -114,6 +147,7 @@ async def list_iocs(
     investigation_id: str | None = Query(None),
     confidence_min: float | None = Query(None, ge=0.0, le=1.0),
     enriched: bool | None = Query(None),
+    search: str | None = Query(None, description="Substring filter on IOC value (ilike)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -122,14 +156,35 @@ async def list_iocs(
     """List IOCs with optional filters and pagination."""
     user.require_permission("ioc:view")
 
+    # AUTH-B1: tenant scoping. If the caller filters by investigation_id we
+    # validate access to that investigation up front; otherwise we narrow
+    # the query to the caller's org (and, for plain analysts, to investigations
+    # they own).
+    accessible_investigation_ids: list[str] | None = None
+    if investigation_id is not None:
+        inv = await _load_investigation_or_404(db, investigation_id)
+        assert_can_access_investigation(user, inv)
+    else:
+        # Build the set of investigation_ids the caller may see, then push
+        # that into the IOC list query.
+        inv_q = select(InvestigationRow.id).where(InvestigationRow.org_id == user.org_id)
+        if user.role not in _ORG_WIDE_ROLES:
+            inv_q = inv_q.where(InvestigationRow.assigned_to == user.id)
+        inv_result = await db.execute(inv_q)
+        accessible_investigation_ids = [row[0] for row in inv_result.all()]
+        if not accessible_investigation_ids:
+            return IOCListResponse(items=[], total=0, page=page, page_size=page_size)
+
     rows, total = await ioc_service.list_iocs(
         db,
         investigation_id=investigation_id,
         ioc_type=ioc_type,
         confidence_min=confidence_min,
         enriched=enriched,
+        search=search,
         page=page,
         page_size=page_size,
+        investigation_id_in=accessible_investigation_ids,
     )
 
     return IOCListResponse(
@@ -156,6 +211,18 @@ async def search_iocs(
     """
     user.require_permission("ioc:view")
 
+    # AUTH-B1: cross-investigation search must still respect tenant + (for
+    # plain analysts) ownership scoping. Compute the accessible parent set
+    # and pass it down so the service-layer filter is applied at the SQL
+    # level rather than after-the-fact.
+    inv_q = select(InvestigationRow.id).where(InvestigationRow.org_id == user.org_id)
+    if user.role not in _ORG_WIDE_ROLES:
+        inv_q = inv_q.where(InvestigationRow.assigned_to == user.id)
+    inv_result = await db.execute(inv_q)
+    accessible_investigation_ids = [row[0] for row in inv_result.all()]
+    if not accessible_investigation_ids:
+        return IOCListResponse(items=[], total=0, page=page, page_size=page_size)
+
     rows, total = await ioc_service.search_cross_investigation(
         db,
         value=value,
@@ -163,6 +230,7 @@ async def search_iocs(
         confidence_min=confidence_min,
         page=page,
         page_size=page_size,
+        investigation_id_in=accessible_investigation_ids,
     )
 
     return IOCListResponse(
@@ -173,6 +241,62 @@ async def search_iocs(
     )
 
 
+@router.get("/export", response_model=None)
+async def export_stix(
+    investigation_id: str = Query(...),
+    tlp_level: str = Query("green"),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Export IOCs as a STIX 2.1 JSON bundle.
+
+    Respects TLP enforcement: TLP:RED IOCs are never included in exports.
+    """
+    user.require_permission("ioc:export")
+
+    if tlp_level == "red":
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot export TLP:RED IOCs. Downgrade TLP level before export.",
+        )
+
+    # AUTH-B1: scope check on the parent investigation before exporting.
+    inv = await _load_investigation_or_404(db, investigation_id)
+    assert_can_access_investigation(user, inv)
+
+    rows, _ = await ioc_service.list_iocs(
+        db,
+        investigation_id=investigation_id,
+        page=1,
+        page_size=10000,  # Export all
+    )
+
+    # Filter out TLP:RED IOCs
+    ioc_dicts = [
+        {
+            "id": r.id,
+            "type": r.type,
+            "value": r.value,
+            "confidence": r.confidence,
+            "context": r.context,
+            "tlp_level": r.tlp_level,
+            "enrichment": r.enrichment,
+            "first_seen": r.first_seen.isoformat() if r.first_seen else None,
+        }
+        for r in rows
+        if r.tlp_level != "red"
+    ]
+
+    bundle = stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=tlp_level)
+
+    return bundle
+
+
+# NOTE: ``/{ioc_id}`` MUST stay below the static-path GET routes
+# (``/search``, ``/export``) — FastAPI matches in declaration order
+# and a path-param route here would shadow them, so a request to
+# ``GET /iocs/export`` would fall into ``get_ioc(ioc_id="export")``
+# and 404 with "IOC not found".
 @router.get("/{ioc_id}", response_model=IOCResponse)
 async def get_ioc(
     ioc_id: str,
@@ -186,6 +310,11 @@ async def get_ioc(
     if not row:
         raise HTTPException(status_code=404, detail="IOC not found")
 
+    # AUTH-B1: scope via parent investigation. Out-of-scope -> 404 to avoid
+    # leaking that the IOC ID exists.
+    inv = await _load_investigation_or_404(db, row.investigation_id)
+    assert_can_access_ioc(user, row, investigation=inv)
+
     return _to_response(row)
 
 
@@ -198,11 +327,18 @@ async def create_ioc(
     """Create one or more IOCs."""
     user.require_permission("ioc:create")
 
+    # AUTH-B1: validate the caller can write to the parent investigation
+    # before any rows are inserted. This closes the High-severity audit
+    # finding where POST accepted any user-supplied investigation_id.
+    inv = await _load_investigation_or_404(db, body.investigation_id)
+    assert_can_access_investigation(user, inv, write=True)
+
     if isinstance(body, BulkCreateIOCRequest):
         rows = await ioc_service.create_iocs_bulk(
             db,
             investigation_id=body.investigation_id,
             iocs=[ioc.model_dump() for ioc in body.iocs],
+            org_id=inv.org_id,
         )
         return [_to_response(r) for r in rows]
 
@@ -215,6 +351,7 @@ async def create_ioc(
         confidence=body.confidence,
         context=body.context,
         source=body.source,
+        org_id=inv.org_id,
     )
 
     return _to_response(row)
@@ -229,6 +366,15 @@ async def update_ioc(
 ):
     """Update an existing IOC."""
     user.require_permission("ioc:edit")
+
+    # AUTH-B1: scope check before mutation (closes the High-severity audit
+    # finding where PUT updated any IOC). Load IOC + parent first, scope-check,
+    # then apply the update.
+    existing = await ioc_service.get_ioc(db, ioc_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="IOC not found")
+    inv = await _load_investigation_or_404(db, existing.investigation_id)
+    assert_can_access_ioc(user, existing, investigation=inv, write=True)
 
     # Build update dict from non-None fields
     update_fields = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -258,6 +404,10 @@ async def delete_ioc(
     row = await ioc_service.get_ioc(db, ioc_id)
     if not row:
         raise HTTPException(status_code=404, detail="IOC not found")
+
+    # AUTH-B1: scope check before mutation.
+    inv = await _load_investigation_or_404(db, row.investigation_id)
+    assert_can_access_ioc(user, row, investigation=inv, write=True)
 
     # Soft delete: zero out confidence and mark as deleted in context
     await ioc_service.update_ioc(
@@ -293,6 +443,10 @@ async def trigger_enrich(
     if not row:
         raise HTTPException(status_code=404, detail="IOC not found")
 
+    # AUTH-B1: scope check before triggering enrichment (writes to the IOC).
+    inv = await _load_investigation_or_404(db, row.investigation_id)
+    assert_can_access_ioc(user, row, investigation=inv, write=True)
+
     result = await ioc_service.trigger_enrichment(db, ioc_id)
 
     return result
@@ -310,6 +464,16 @@ async def trigger_bulk_enrich(
     asynchronously in the background.
     """
     user.require_permission("ioc:enrich")
+
+    # AUTH-B1: every IOC ID in the list must be in-scope; reject the whole
+    # request if any one is not. We treat partial-success as a leak (caller
+    # would learn which IDs exist by elimination).
+    for ioc_id in body.ioc_ids:
+        row = await ioc_service.get_ioc(db, ioc_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="IOC not found")
+        inv = await _load_investigation_or_404(db, row.investigation_id)
+        assert_can_access_ioc(user, row, investigation=inv, write=True)
 
     result = await ioc_service.trigger_bulk_enrichment(db, body.ioc_ids)
 
@@ -334,6 +498,12 @@ async def import_stix(
     """
     user.require_permission("ioc:create")
 
+    # AUTH-B1: validate caller can write to the target investigation before
+    # importing — otherwise a STIX bundle is a back door for cross-tenant
+    # IOC creation.
+    inv = await _load_investigation_or_404(db, body.investigation_id)
+    assert_can_access_investigation(user, inv, write=True)
+
     ioc_dicts = stix_service.stix_to_iocs(
         body.bundle,
         investigation_id=body.investigation_id,
@@ -347,6 +517,7 @@ async def import_stix(
         db,
         investigation_id=body.investigation_id,
         iocs=ioc_dicts,
+        org_id=inv.org_id,
     )
 
     return {
@@ -356,48 +527,150 @@ async def import_stix(
     }
 
 
-@router.get("/export", response_model=None)
-async def export_stix(
-    investigation_id: str = Query(...),
-    tlp_level: str = Query("green"),
+# Valid IOC types — kept in sync with the frontend ``IOCImportModal``
+# preview parser. Anything outside this set is dropped from the import
+# rather than failing the whole bundle.
+_VALID_IOC_TYPES = frozenset(
+    {
+        "ip",
+        "domain",
+        "hash_md5",
+        "hash_sha1",
+        "hash_sha256",
+        "url",
+        "email",
+        "cve",
+        "file_path",
+        "other",
+    }
+)
+
+
+def _parse_csv_rows(text: str) -> tuple[list[dict[str, Any]], int]:
+    """Parse the import-modal CSV format into ``create_iocs_bulk`` dicts.
+
+    Header columns (case-insensitive): ``type,value,source,confidence,tags``.
+    First line is treated as a header if it contains ``type``, ``value`` or
+    ``ioc`` — matches ``parseCSVPreview`` in ``IOCImportModal.tsx``.
+
+    Returns ``(rows, skipped)`` where ``skipped`` counts lines that were
+    parseable but failed validation (bad type, empty value).
+    """
+    rows: list[dict[str, Any]] = []
+    skipped = 0
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return rows, 0
+
+    first_lower = lines[0].lower()
+    has_header = "type" in first_lower or "value" in first_lower or "ioc" in first_lower
+    data_lines = lines[1:] if has_header else lines
+
+    for line in data_lines:
+        parts = [p.strip().strip('"') for p in line.split(",")]
+        ioc_type = (parts[0] if parts else "").lower()
+        value = parts[1] if len(parts) > 1 else ""
+        source = parts[2] if len(parts) > 2 and parts[2] else "csv_import"
+        confidence_raw = parts[3] if len(parts) > 3 and parts[3] else "0.5"
+        try:
+            confidence = float(confidence_raw)
+        except ValueError:
+            confidence = 0.5
+        if not value or ioc_type not in _VALID_IOC_TYPES:
+            skipped += 1
+            continue
+        rows.append(
+            {
+                "type": ioc_type,
+                "value": value,
+                "source": source,
+                "confidence": max(0.0, min(1.0, confidence)),
+            }
+        )
+    return rows, skipped
+
+
+@router.post("/import/csv", status_code=201)
+async def import_csv(
+    body: TextImportRequest,
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Export IOCs as a STIX 2.1 JSON bundle.
+    """Import IOCs from a CSV body (analyst-friendly path).
 
-    Respects TLP enforcement: TLP:RED IOCs are never included in exports.
+    Companion to ``/import/stix``. Same scoping + RBAC contract: the
+    caller must hold ``ioc:create`` *and* write access on the target
+    investigation. The CSV column convention matches the frontend's
+    ``IOCImportModal`` preview parser: ``type,value,source,confidence,tags``.
     """
-    user.require_permission("ioc:export")
+    user.require_permission("ioc:create")
 
-    if tlp_level == "red":
-        raise HTTPException(
-            status_code=403,
-            detail="Cannot export TLP:RED IOCs. Downgrade TLP level before export.",
-        )
+    inv = await _load_investigation_or_404(db, body.investigation_id)
+    assert_can_access_investigation(user, inv, write=True)
 
-    rows, _ = await ioc_service.list_iocs(
+    parsed, skipped = _parse_csv_rows(body.data)
+    if not parsed:
+        return {
+            "imported": 0,
+            "skipped": skipped,
+            "message": "No valid rows in CSV",
+        }
+
+    rows = await ioc_service.create_iocs_bulk(
         db,
-        investigation_id=investigation_id,
-        page=1,
-        page_size=10000,  # Export all
+        investigation_id=body.investigation_id,
+        iocs=parsed,
+        org_id=inv.org_id,
     )
 
-    # Filter out TLP:RED IOCs
-    ioc_dicts = [
-        {
-            "id": r.id,
-            "type": r.type,
-            "value": r.value,
-            "confidence": r.confidence,
-            "context": r.context,
-            "tlp_level": r.tlp_level,
-            "enrichment": r.enrichment,
-            "first_seen": r.first_seen.isoformat() if r.first_seen else None,
-        }
-        for r in rows
-        if r.tlp_level != "red"
-    ]
+    return {
+        "imported": len(rows),
+        "skipped": skipped,
+        "ioc_ids": [r.id for r in rows],
+        "investigation_id": body.investigation_id,
+    }
 
-    bundle = stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=tlp_level)
 
-    return bundle
+@router.post("/import/stix", status_code=201)
+async def import_stix_text(
+    body: TextImportRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Import IOCs from a STIX 2.1 JSON *string* (frontend transport).
+
+    Mirrors ``/import`` but accepts ``body.data`` as a raw JSON string
+    (what the import modal posts) instead of a pre-parsed ``bundle``.
+    """
+    import json as _json
+
+    user.require_permission("ioc:create")
+
+    inv = await _load_investigation_or_404(db, body.investigation_id)
+    assert_can_access_investigation(user, inv, write=True)
+
+    try:
+        bundle = _json.loads(body.data)
+    except _json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid STIX JSON: {exc}") from exc
+
+    ioc_dicts = stix_service.stix_to_iocs(
+        bundle,
+        investigation_id=body.investigation_id,
+        source="stix_import",
+    )
+    if not ioc_dicts:
+        return {"imported": 0, "message": "No valid indicators found in STIX bundle"}
+
+    rows = await ioc_service.create_iocs_bulk(
+        db,
+        investigation_id=body.investigation_id,
+        iocs=ioc_dicts,
+        org_id=inv.org_id,
+    )
+
+    return {
+        "imported": len(rows),
+        "ioc_ids": [r.id for r in rows],
+        "investigation_id": body.investigation_id,
+    }

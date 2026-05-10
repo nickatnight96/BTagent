@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from btagent_shared.security import assert_tlp_allows_egress
 from btagent_shared.utils.ids import generate_id
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -79,6 +80,7 @@ class KnowledgeService:
         content: str,
         source_type: str,
         metadata: dict[str, Any] | None = None,
+        classification: str | None = None,
     ) -> KnowledgeDocumentRow:
         """Chunk text, generate embeddings, and store document + chunks.
 
@@ -94,12 +96,34 @@ class KnowledgeService:
             One of KNOWLEDGE_SOURCE_TYPES.
         metadata : dict | None
             Additional metadata.
+        classification : str | None
+            TLP level of the source (``"red"``, ``"amber_strict"``,
+            ``"amber"``, ``"green"``, ``"white"``). Defaults to green when
+            unset. TLP:RED material is refused -- the RAG knowledge base is
+            shared across investigations and lower-clearance retrievals must
+            not surface restricted content.
 
         Returns
         -------
         KnowledgeDocumentRow
             The persisted document row.
+
+        Raises
+        ------
+        btagent_shared.security.TLPViolation
+            If ``classification`` resolves to TLP:RED, or if ``metadata``
+            contains a TLP:RED tag. Per audit recommendation: refuse rather
+            than silently drop, so callers don't lose data without knowing.
         """
+        # Knowledge ingest is a non-LLM egress kind -- once content is in the
+        # KB it is retrievable by future investigations regardless of their
+        # clearance, so we hard-block RED and warn on AMBER_STRICT.
+        assert_tlp_allows_egress(
+            metadata or {},
+            "knowledge_ingest",
+            classification_ctx=classification,
+        )
+
         if source_type not in KNOWLEDGE_SOURCE_TYPES:
             raise ValueError(
                 f"Invalid source_type '{source_type}'. "
@@ -201,14 +225,21 @@ class KnowledgeService:
         # --- Vector search ---
         vector_results: list[tuple[str, float]] = []
         if query_embedding is not None:
+            # Use ``CAST(... AS vector)`` instead of ``:embedding::vector``.
+            # SQLAlchemy's ``text()`` with the postgres ``::`` cast
+            # operator next to a named bind (``:embedding::vector``) is
+            # parsed as bind ``:embedding`` followed by another bind
+            # ``:vector`` on some asyncpg paths, which surfaces as
+            # ``PostgresSyntaxError: syntax error at or near ":"`` and a
+            # 500 on the search endpoint.
             vector_sql = text(
                 """
-                SELECT kc.id, 1 - (kc.embedding <=> :embedding::vector) AS similarity
+                SELECT kc.id, 1 - (kc.embedding <=> CAST(:embedding AS vector)) AS similarity
                 FROM knowledge_chunks kc
                 JOIN knowledge_documents kd ON kd.id = kc.document_id
                 WHERE kc.embedding IS NOT NULL
                 {source_filter}
-                ORDER BY kc.embedding <=> :embedding::vector
+                ORDER BY kc.embedding <=> CAST(:embedding AS vector)
                 LIMIT :limit
             """.format(
                     source_filter=(
@@ -387,6 +418,7 @@ class KnowledgeService:
                 "status": investigation.status,
                 "auto_indexed": True,
             },
+            classification=investigation.tlp_level,
         )
 
         logger.info(
@@ -415,6 +447,16 @@ class KnowledgeService:
         KnowledgeDocumentRow | None
             The created document, or None if no enriched IOCs found.
         """
+        # Fetch the investigation's TLP level to pass to the ingest gate.
+        # We deliberately re-query rather than rely on per-IOC tlp_level: the
+        # investigation-level classification is what bounds what may enter the
+        # shared RAG knowledge base.
+        inv_result = await db.execute(
+            select(InvestigationRow).where(InvestigationRow.id == investigation_id)
+        )
+        investigation = inv_result.scalar_one_or_none()
+        investigation_tlp = investigation.tlp_level if investigation is not None else None
+
         result = await db.execute(
             select(IOCRow).where(
                 IOCRow.investigation_id == investigation_id,
@@ -454,6 +496,7 @@ class KnowledgeService:
                 "ioc_count": len(iocs),
                 "auto_indexed": True,
             },
+            classification=investigation_tlp,
         )
 
         logger.info(

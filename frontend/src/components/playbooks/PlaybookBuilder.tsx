@@ -405,11 +405,14 @@ export function PlaybookBuilder() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="playbook-builder">
       {/* Mobile warning */}
-      <div className="md:hidden flex items-center justify-center h-full p-8 text-center">
+      <div
+        className="md:hidden flex items-center justify-center h-full p-8 text-center"
+        data-testid="playbook-builder-mobile-warning"
+      >
         <div className="space-y-3">
-          <Monitor className="w-12 h-12 text-slate-500 mx-auto" />
+          <Monitor className="w-12 h-12 text-slate-500 mx-auto" aria-hidden="true" />
           <h2 className="text-lg font-semibold text-slate-200">Desktop Required</h2>
           <p className="text-sm text-slate-400 max-w-sm">
             The visual playbook builder requires a desktop-sized screen. Please use a larger display to access this feature.
@@ -417,8 +420,9 @@ export function PlaybookBuilder() {
           <button
             onClick={() => navigate("/playbooks")}
             className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-400 bg-blue-500/10 border border-blue-500/20 rounded-lg hover:bg-blue-500/20 transition-colors"
+            data-testid="playbook-builder-mobile-back-button"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
             Back to Playbooks
           </button>
         </div>
@@ -427,17 +431,24 @@ export function PlaybookBuilder() {
       {/* Desktop builder */}
       <div className="hidden md:flex flex-col h-full">
         {/* Toolbar */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50 bg-slate-900 shrink-0">
+        <div
+          className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50 bg-slate-900 shrink-0"
+          data-testid="playbook-builder-toolbar"
+        >
           <div className="flex items-center gap-3">
             <button
               onClick={() => navigate("/playbooks")}
               className="flex items-center gap-1.5 px-2 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+              data-testid="playbook-builder-back-button"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
               Back
             </button>
             <div className="w-px h-5 bg-slate-700" />
-            <h2 className="text-sm font-semibold text-slate-200">
+            <h2
+              className="text-sm font-semibold text-slate-200"
+              data-testid="playbook-builder-title"
+            >
               {currentPlaybook?.name ?? "New Playbook"}
             </h2>
           </div>
@@ -446,22 +457,25 @@ export function PlaybookBuilder() {
             <button
               onClick={handleValidate}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-md hover:bg-slate-700 transition-colors"
+              data-testid="playbook-builder-validate-button"
             >
-              <CheckCircle2 className="w-3.5 h-3.5" />
+              <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
               Validate
             </button>
             <button
               onClick={handleImportYaml}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-md hover:bg-slate-700 transition-colors"
+              data-testid="playbook-builder-import-yaml-button"
             >
-              <FileUp className="w-3.5 h-3.5" />
+              <FileUp className="w-3.5 h-3.5" aria-hidden="true" />
               Import YAML
             </button>
             <button
               onClick={handleExportYaml}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800 border border-slate-700 rounded-md hover:bg-slate-700 transition-colors"
+              data-testid="playbook-builder-export-yaml-button"
             >
-              <FileDown className="w-3.5 h-3.5" />
+              <FileDown className="w-3.5 h-3.5" aria-hidden="true" />
               Export YAML
             </button>
             <button
@@ -471,6 +485,8 @@ export function PlaybookBuilder() {
                   ? "text-blue-400 bg-blue-500/10 border border-blue-500/20"
                   : "text-slate-300 bg-slate-800 border border-slate-700 hover:bg-slate-700"
               }`}
+              aria-pressed={showYaml}
+              data-testid="playbook-builder-yaml-toggle"
             >
               YAML
             </button>
@@ -478,8 +494,9 @@ export function PlaybookBuilder() {
               onClick={handleSave}
               disabled={isLoading || !id}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              data-testid="playbook-builder-save-button"
             >
-              <Save className="w-3.5 h-3.5" />
+              <Save className="w-3.5 h-3.5" aria-hidden="true" />
               Save
             </button>
           </div>
@@ -495,10 +512,22 @@ export function PlaybookBuilder() {
                   ? "bg-green-500/10 border-green-500/20 text-green-400"
                   : "bg-amber-500/10 border-amber-500/20 text-amber-400"
             }`}
+            role={error ? "alert" : "status"}
+            data-testid={
+              error
+                ? "playbook-builder-error"
+                : validationMsg?.startsWith("Playbook is valid")
+                  ? "playbook-builder-validation-success"
+                  : "playbook-builder-validation-warning"
+            }
           >
             {error || validationMsg}
             {error && (
-              <button onClick={clearError} className="ml-2 underline">
+              <button
+                onClick={clearError}
+                className="ml-2 underline"
+                data-testid="playbook-builder-error-dismiss-button"
+              >
                 dismiss
               </button>
             )}
@@ -515,6 +544,7 @@ export function PlaybookBuilder() {
             <div
               className={`${showYaml ? "w-[70%]" : "w-full"} relative`}
               ref={reactFlowWrapper}
+              data-testid="playbook-builder-canvas"
             >
               <ReactFlow
                 nodes={nodes}
@@ -581,8 +611,11 @@ export function PlaybookBuilder() {
             )}
           </div>
 
-          {/* Right: Config panel */}
-          {selectedNodeId && <PlaybookConfigPanel />}
+          {/* Right: Config panel — always mounted so the empty-state
+              testid (``playbook-config-empty``) is reachable when no
+              node is selected. The panel itself decides whether to
+              render the populated form or the empty placeholder. */}
+          <PlaybookConfigPanel />
         </div>
       </div>
     </div>

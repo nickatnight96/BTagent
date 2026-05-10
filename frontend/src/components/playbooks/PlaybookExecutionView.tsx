@@ -223,19 +223,23 @@ export function PlaybookExecutionView() {
   const memoNodeTypes = useMemo(() => nodeTypes, []);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="playbook-execution">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700/50 bg-slate-900 shrink-0">
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate("/playbooks")}
             className="flex items-center gap-1.5 px-2 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+            data-testid="playbook-execution-back-button"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
             Back
           </button>
           <div className="w-px h-5 bg-slate-700" />
-          <h2 className="text-sm font-semibold text-slate-200">
+          <h2
+            className="text-sm font-semibold text-slate-200"
+            data-testid="playbook-execution-title"
+          >
             {currentPlaybook?.name ?? "Playbook Execution"}
           </h2>
         </div>
@@ -248,9 +252,10 @@ export function PlaybookExecutionView() {
                 PLAYBOOK_STATUS_STYLES[executionState.status] ??
                   PLAYBOOK_STATUS_STYLES[PlaybookStatus.PENDING],
               )}
+              data-testid="playbook-execution-status"
             >
               {executionState.status === PlaybookStatus.RUNNING && (
-                <Loader2 className="w-3 h-3 animate-spin" />
+                <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
               )}
               {executionState.status.replace(/_/g, " ").toUpperCase()}
             </span>
@@ -260,6 +265,7 @@ export function PlaybookExecutionView() {
               onClick={handleStartExecution}
               disabled={isLoading}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+              data-testid="playbook-execution-start-button"
             >
               Start Execution
             </button>
@@ -270,7 +276,7 @@ export function PlaybookExecutionView() {
       {/* Main content */}
       <div className="flex flex-1 min-h-0">
         {/* Canvas */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative" data-testid="playbook-execution-canvas">
           <ReactFlow
             nodes={executionNodes}
             edges={executionEdges}
@@ -315,7 +321,10 @@ export function PlaybookExecutionView() {
 
         {/* Right: Step detail panel */}
         {selectedStepResult && (
-          <div className="w-80 bg-slate-900 border-l border-slate-700/50 flex flex-col">
+          <div
+            className="w-80 bg-slate-900 border-l border-slate-700/50 flex flex-col"
+            data-testid="playbook-execution-step-detail"
+          >
             <div className="px-4 py-3 border-b border-slate-700/50">
               <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
                 Step Result
@@ -324,14 +333,20 @@ export function PlaybookExecutionView() {
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1">Step ID</label>
-                <div className="text-sm text-slate-200 font-mono">
+                <div
+                  className="text-sm text-slate-200 font-mono"
+                  data-testid="playbook-execution-step-detail-id"
+                >
                   {selectedStepResult.step_id}
                 </div>
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-slate-400 mb-1">Status</label>
-                <div className="flex items-center gap-2">
+                <div
+                  className="flex items-center gap-2"
+                  data-testid="playbook-execution-step-detail-status"
+                >
                   {STEP_STATUS_STYLES[selectedStepResult.status]?.icon}
                   <span className="text-sm text-slate-200">
                     {STEP_STATUS_STYLES[selectedStepResult.status]?.label ?? selectedStepResult.status}
@@ -342,7 +357,10 @@ export function PlaybookExecutionView() {
               {selectedStepResult.started_at && (
                 <div>
                   <label className="block text-xs font-medium text-slate-400 mb-1">Started</label>
-                  <div className="text-xs text-slate-300 font-mono">
+                  <div
+                    className="text-xs text-slate-300 font-mono"
+                    data-testid="playbook-execution-step-detail-started"
+                  >
                     {new Date(selectedStepResult.started_at).toLocaleString()}
                   </div>
                 </div>
@@ -351,7 +369,10 @@ export function PlaybookExecutionView() {
               {selectedStepResult.completed_at && (
                 <div>
                   <label className="block text-xs font-medium text-slate-400 mb-1">Completed</label>
-                  <div className="text-xs text-slate-300 font-mono">
+                  <div
+                    className="text-xs text-slate-300 font-mono"
+                    data-testid="playbook-execution-step-detail-completed"
+                  >
                     {new Date(selectedStepResult.completed_at).toLocaleString()}
                   </div>
                 </div>
@@ -360,10 +381,14 @@ export function PlaybookExecutionView() {
               {selectedStepResult.error && (
                 <div>
                   <label className="block text-xs font-medium text-red-400 mb-1">
-                    <AlertTriangle className="w-3 h-3 inline mr-1" />
+                    <AlertTriangle className="w-3 h-3 inline mr-1" aria-hidden="true" />
                     Error
                   </label>
-                  <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-md p-2 font-mono">
+                  <div
+                    className="text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-md p-2 font-mono"
+                    role="alert"
+                    data-testid="playbook-execution-step-detail-error"
+                  >
                     {selectedStepResult.error}
                   </div>
                 </div>
@@ -372,7 +397,10 @@ export function PlaybookExecutionView() {
               {Object.keys(selectedStepResult.output ?? {}).length > 0 && (
                 <div>
                   <label className="block text-xs font-medium text-slate-400 mb-1">Output</label>
-                  <pre className="text-xs text-slate-300 bg-slate-800 border border-slate-700 rounded-md p-2 font-mono overflow-auto max-h-60">
+                  <pre
+                    className="text-xs text-slate-300 bg-slate-800 border border-slate-700 rounded-md p-2 font-mono overflow-auto max-h-60"
+                    data-testid="playbook-execution-step-detail-output"
+                  >
                     {JSON.stringify(selectedStepResult.output ?? {}, null, 2)}
                   </pre>
                 </div>
@@ -384,9 +412,12 @@ export function PlaybookExecutionView() {
 
       {/* Execution timeline at bottom */}
       {executionState && (executionState.step_results ?? []).length > 0 && (
-        <div className="border-t border-slate-700/50 bg-slate-900 px-4 py-3 shrink-0">
+        <div
+          className="border-t border-slate-700/50 bg-slate-900 px-4 py-3 shrink-0"
+          data-testid="playbook-execution-timeline"
+        >
           <div className="flex items-center gap-1.5 mb-2">
-            <Clock className="w-3 h-3 text-slate-500" />
+            <Clock className="w-3 h-3 text-slate-500" aria-hidden="true" />
             <span className="text-xs font-medium text-slate-400">Execution Timeline</span>
           </div>
           <div className="flex items-center gap-1 overflow-x-auto pb-1">
@@ -405,12 +436,15 @@ export function PlaybookExecutionView() {
                       "bg-slate-800/50 text-slate-300 hover:bg-slate-800",
                     )}
                     title={sr.step_id}
+                    aria-label={`Step ${sr.step_id} ${styles.label}`}
+                    aria-pressed={selectedStepResult?.step_id === sr.step_id}
+                    data-testid={`playbook-execution-step-${sr.step_id}`}
                   >
                     {styles.icon}
                     <span className="max-w-[80px] truncate">{sr.step_id}</span>
                   </button>
                   {idx < (executionState.step_results ?? []).length - 1 && (
-                    <div className="w-4 h-px bg-slate-700 mx-0.5" />
+                    <div className="w-4 h-px bg-slate-700 mx-0.5" aria-hidden="true" />
                   )}
                 </div>
               );

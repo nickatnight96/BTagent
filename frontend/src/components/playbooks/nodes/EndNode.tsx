@@ -3,11 +3,13 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { CircleCheckBig } from "lucide-react";
 import type { EndNodeData } from "@/types/playbook";
 
-function EndNodeComponent({ data, selected }: NodeProps) {
+function EndNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as EndNodeData;
 
   return (
     <div
+      data-testid={`playbook-builder-node-${id}`}
+      data-node-type="end"
       className={`
         relative min-w-[180px] rounded-lg border-l-4 border-slate-500
         bg-slate-800 shadow-lg transition-all duration-150

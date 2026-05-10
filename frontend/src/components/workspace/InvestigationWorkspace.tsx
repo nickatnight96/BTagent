@@ -49,7 +49,10 @@ export function InvestigationWorkspace() {
   const { activePanel, setActivePanel } = useUIStore();
   const { appendStreamChunk, finalizeStreamMessage, addCheckpoint } =
     useAgentStore();
-  const { accessToken } = useAuthStore();
+  // Phase C2: tokens are httpOnly cookies. We gate WS connection on the
+  // presence of a hydrated user (the proxy for "session valid"); the
+  // browser attaches the auth cookie on the upgrade handshake automatically.
+  const user = useAuthStore((state) => state.user);
 
   // Fetch investigation (only when ID changes, not on store reference change)
   useEffect(() => {
@@ -61,7 +64,7 @@ export function InvestigationWorkspace() {
 
   // Connect WebSocket for real-time events
   useEffect(() => {
-    if (!id || !accessToken) return;
+    if (!id || !user) return;
 
     const wsClient = getWSClient();
     const eventStore = useEventStore.getState();
@@ -119,7 +122,8 @@ export function InvestigationWorkspace() {
     };
 
     if (!wsClient.isConnected) {
-      wsClient.connect(accessToken);
+      // Cookies authenticate the upgrade — no token argument needed.
+      wsClient.connect();
     }
 
     return () => {
@@ -127,7 +131,7 @@ export function InvestigationWorkspace() {
     };
   }, [
     id,
-    accessToken,
+    user,
     appendStreamChunk,
     finalizeStreamMessage,
     updateStatus,
@@ -157,8 +161,14 @@ export function InvestigationWorkspace() {
     return (
       <>
         <Header title="Investigation" />
-        <div className="flex-1 flex items-center justify-center text-slate-500">
-          <div className="animate-spin w-8 h-8 border-2 border-slate-600 border-t-blue-500 rounded-full" />
+        <div
+          className="flex-1 flex items-center justify-center text-slate-500"
+          data-testid="investigation-workspace-loading"
+        >
+          <div
+            className="animate-spin w-8 h-8 border-2 border-slate-600 border-t-blue-500 rounded-full"
+            aria-label="Loading investigation"
+          />
         </div>
       </>
     );
@@ -177,19 +187,24 @@ export function InvestigationWorkspace() {
     activePanel === "chat" ? "events" : (activePanel as WorkspaceTab);
 
   return (
-    <>
+    <div data-testid="investigation-workspace">
       {/* Workspace header */}
       <div className="flex items-center justify-between px-6 py-3 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 shrink-0">
         <div className="flex items-center gap-4 min-w-0">
           <button
             onClick={() => navigate("/")}
             className="text-slate-400 hover:text-slate-200 transition-colors shrink-0"
+            aria-label="Back to investigations"
+            data-testid="investigation-workspace-back-button"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
 
           <div className="min-w-0">
-            <h1 className="text-base font-semibold text-slate-100 truncate">
+            <h1
+              className="text-base font-semibold text-slate-100 truncate"
+              data-testid="investigation-workspace-title"
+            >
               {inv.title}
             </h1>
             <div className="flex items-center gap-2 mt-1">
@@ -204,19 +219,37 @@ export function InvestigationWorkspace() {
         {canControl && (
           <div className="flex items-center gap-2 shrink-0">
             {isRunning && (
-              <Button variant="secondary" size="sm" onClick={handlePause}>
-                <Pause className="w-4 h-4" />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handlePause}
+                aria-label="Pause investigation"
+                data-testid="investigation-workspace-pause-button"
+              >
+                <Pause className="w-4 h-4" aria-hidden="true" />
                 <span className="hidden sm:inline">Pause</span>
               </Button>
             )}
             {isPaused && (
-              <Button variant="secondary" size="sm" onClick={handleResume}>
-                <Play className="w-4 h-4" />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleResume}
+                aria-label="Resume investigation"
+                data-testid="investigation-workspace-resume-button"
+              >
+                <Play className="w-4 h-4" aria-hidden="true" />
                 <span className="hidden sm:inline">Resume</span>
               </Button>
             )}
-            <Button variant="danger" size="sm" onClick={handleStop}>
-              <Square className="w-4 h-4" />
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleStop}
+              aria-label="Stop investigation"
+              data-testid="investigation-workspace-stop-button"
+            >
+              <Square className="w-4 h-4" aria-hidden="true" />
               <span className="hidden sm:inline">Stop</span>
             </Button>
           </div>
@@ -233,11 +266,19 @@ export function InvestigationWorkspace() {
         {/* Right panel: Tabbed content */}
         <div className="w-[400px] lg:w-[480px] hidden md:flex flex-col bg-slate-950 shrink-0">
           {/* Tabs */}
-          <div className="flex border-b border-slate-700/50 shrink-0">
+          <div
+            className="flex border-b border-slate-700/50 shrink-0"
+            role="tablist"
+            aria-label="Investigation panels"
+            data-testid="investigation-workspace-tabs"
+          >
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActivePanel(tab.id)}
+                role="tab"
+                aria-selected={rightTab === tab.id}
+                data-testid={`investigation-workspace-tab-${tab.id}`}
                 className={clsx(
                   "flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors",
                   rightTab === tab.id
@@ -262,7 +303,7 @@ export function InvestigationWorkspace() {
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 

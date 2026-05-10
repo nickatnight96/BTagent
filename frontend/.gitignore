@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+.vite
+.cache
+
+# Vite / TypeScript build artifacts
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea
+.vscode

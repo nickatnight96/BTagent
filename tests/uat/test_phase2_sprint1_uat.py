@@ -312,15 +312,31 @@ class TestSTIXService:
         assert len(bundle["objects"]) == 2
 
     def test_stix_bundle_excludes_tlp_red(self):
-        """TLP:RED IOCs are excluded from STIX export."""
+        """TLP:RED IOCs are blocked from STIX export.
+
+        Audit cleanup (Phase 0) hardened the contract: previously
+        ``stix_bundle_from_iocs`` silently filtered RED IOCs out of the
+        bundle. The new ``assert_tlp_allows_egress`` helper at
+        ``stix_service.py:184`` raises ``TLPViolation`` if the payload
+        contains any RED-tagged item, forcing callers to pre-filter at
+        the API layer (see ``api/v1/iocs.py:export_stix``). This test
+        pins both the new "raises" contract and the API-layer
+        pre-filter pattern.
+        """
         from btagent_backend.services.stix_service import stix_bundle_from_iocs
+        from btagent_shared.security import TLPViolation
 
         iocs = [
             {"type": "ip", "value": "10.0.0.1", "confidence": 0.8, "tlp_level": "red"},
             {"type": "domain", "value": "evil.com", "confidence": 0.7, "tlp_level": "green"},
         ]
-        bundle = stix_bundle_from_iocs(iocs, tlp_level="green")
-        assert len(bundle["objects"]) == 1  # Red IOC excluded
+        with pytest.raises(TLPViolation):
+            stix_bundle_from_iocs(iocs, tlp_level="green")
+
+        # Pre-filtering RED IOCs (the API-layer pattern) succeeds.
+        pre_filtered = [i for i in iocs if i.get("tlp_level") != "red"]
+        bundle = stix_bundle_from_iocs(pre_filtered, tlp_level="green")
+        assert len(bundle["objects"]) == 1
 
     def test_stix_roundtrip(self):
         """IOC -> STIX -> IOC roundtrip preserves type and value."""

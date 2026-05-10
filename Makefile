@@ -1,4 +1,4 @@
-.PHONY: dev up down build test uat eval lint fmt clean
+.PHONY: dev up down build test uat eval lint fmt clean e2e e2e-headed e2e-ui e2e-debug e2e-install
 
 # ── Development ──────────────────────────────────────────────
 dev: ## Start full dev stack (infra in Docker, backend+frontend local with hot reload)
@@ -53,8 +53,50 @@ eval: ## Run agent evaluation (DeepEval)
 load: ## Run k6 load tests
 	k6 run tests/load/api_load.js
 
-e2e: ## Run Playwright E2E tests
+e2e-install: ## Install Playwright browsers (one-time setup)
+	cd tests/e2e && npm install && npx playwright install --with-deps chromium
+
+e2e: ## Run all Playwright E2E tests (chromium, headless) — needs make dev + seed-data
 	cd tests/e2e && npx playwright test
+
+e2e-headed: ## Run Playwright E2E tests in a visible browser window
+	cd tests/e2e && npx playwright test --headed
+
+e2e-ui: ## Open Playwright's interactive test runner
+	cd tests/e2e && npx playwright test --ui
+
+e2e-debug: ## Run Playwright E2E with debugger paused at first step
+	cd tests/e2e && npx playwright test --debug
+
+e2e-auth: ## Run only the auth + RBAC specs
+	cd tests/e2e && npx playwright test specs/auth/
+
+e2e-investigations: ## Run only the investigation lifecycle specs
+	cd tests/e2e && npx playwright test specs/investigations/
+
+e2e-iocs: ## Run only the IOC management specs
+	cd tests/e2e && npx playwright test specs/iocs/
+
+e2e-knowledge: ## Run only the knowledge base specs
+	cd tests/e2e && npx playwright test specs/knowledge/
+
+e2e-mitre: ## Run only the MITRE ATT&CK specs
+	cd tests/e2e && npx playwright test specs/mitre/
+
+e2e-playbooks: ## Run only the playbook specs
+	cd tests/e2e && npx playwright test specs/playbooks/
+
+e2e-security: ## Run only the security/negative specs
+	cd tests/e2e && npx playwright test specs/security/
+
+e2e-mobile: ## Run mobile-tagged tests on Pixel 7 viewport
+	cd tests/e2e && npx playwright test --project=mobile-chrome
+
+e2e-cross-browser: ## Run @cross-browser-tagged tests on Firefox + WebKit
+	cd tests/e2e && npx playwright test --project=firefox --project=webkit
+
+e2e-report: ## Open the last Playwright HTML report
+	cd tests/e2e && npx playwright show-report
 
 # ── Code Quality ─────────────────────────────────────────────
 lint: ## Lint Python and TypeScript

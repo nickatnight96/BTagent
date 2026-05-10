@@ -7,9 +7,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.auth.scoping import assert_can_access_investigation
+from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_playbook import PlaybookExecutionRow, PlaybookRow
 from btagent_backend.services.playbook_service import PlaybookService
 
@@ -318,6 +321,17 @@ async def execute_playbook(
     Requires playbook:execute permission.
     """
     user.require_permission("playbook:execute")
+
+    # AUTH-B1: if the caller supplies an investigation_id, validate access
+    # before executing the playbook against it.
+    if body.investigation_id is not None:
+        result = await db.execute(
+            select(InvestigationRow).where(InvestigationRow.id == body.investigation_id)
+        )
+        inv = result.scalar_one_or_none()
+        if inv is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        assert_can_access_investigation(user, inv, write=True)
 
     try:
         execution = await _service.execute_playbook(
