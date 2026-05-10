@@ -103,6 +103,18 @@ class STIXImportRequest(BaseModel):
     investigation_id: str
 
 
+class TextImportRequest(BaseModel):
+    """Frontend-shaped import body (``IOCImportModal`` sends ``{data, investigation_id}``).
+
+    Used by both ``/import/csv`` (raw CSV text) and ``/import/stix`` (STIX
+    bundle as a JSON string — kept distinct from ``STIXImportRequest``
+    which expects an already-parsed object).
+    """
+
+    data: str
+    investigation_id: str
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -498,6 +510,155 @@ async def import_stix(
         source="stix_import",
     )
 
+    if not ioc_dicts:
+        return {"imported": 0, "message": "No valid indicators found in STIX bundle"}
+
+    rows = await ioc_service.create_iocs_bulk(
+        db,
+        investigation_id=body.investigation_id,
+        iocs=ioc_dicts,
+        org_id=inv.org_id,
+    )
+
+    return {
+        "imported": len(rows),
+        "ioc_ids": [r.id for r in rows],
+        "investigation_id": body.investigation_id,
+    }
+
+
+# Valid IOC types — kept in sync with the frontend ``IOCImportModal``
+# preview parser. Anything outside this set is dropped from the import
+# rather than failing the whole bundle.
+_VALID_IOC_TYPES = frozenset(
+    {
+        "ip",
+        "domain",
+        "hash_md5",
+        "hash_sha1",
+        "hash_sha256",
+        "url",
+        "email",
+        "cve",
+        "file_path",
+        "other",
+    }
+)
+
+
+def _parse_csv_rows(text: str) -> tuple[list[dict[str, Any]], int]:
+    """Parse the import-modal CSV format into ``create_iocs_bulk`` dicts.
+
+    Header columns (case-insensitive): ``type,value,source,confidence,tags``.
+    First line is treated as a header if it contains ``type``, ``value`` or
+    ``ioc`` — matches ``parseCSVPreview`` in ``IOCImportModal.tsx``.
+
+    Returns ``(rows, skipped)`` where ``skipped`` counts lines that were
+    parseable but failed validation (bad type, empty value).
+    """
+    rows: list[dict[str, Any]] = []
+    skipped = 0
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return rows, 0
+
+    first_lower = lines[0].lower()
+    has_header = "type" in first_lower or "value" in first_lower or "ioc" in first_lower
+    data_lines = lines[1:] if has_header else lines
+
+    for line in data_lines:
+        parts = [p.strip().strip('"') for p in line.split(",")]
+        ioc_type = (parts[0] if parts else "").lower()
+        value = parts[1] if len(parts) > 1 else ""
+        source = parts[2] if len(parts) > 2 and parts[2] else "csv_import"
+        confidence_raw = parts[3] if len(parts) > 3 and parts[3] else "0.5"
+        try:
+            confidence = float(confidence_raw)
+        except ValueError:
+            confidence = 0.5
+        if not value or ioc_type not in _VALID_IOC_TYPES:
+            skipped += 1
+            continue
+        rows.append(
+            {
+                "type": ioc_type,
+                "value": value,
+                "source": source,
+                "confidence": max(0.0, min(1.0, confidence)),
+            }
+        )
+    return rows, skipped
+
+
+@router.post("/import/csv", status_code=201)
+async def import_csv(
+    body: TextImportRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Import IOCs from a CSV body (analyst-friendly path).
+
+    Companion to ``/import/stix``. Same scoping + RBAC contract: the
+    caller must hold ``ioc:create`` *and* write access on the target
+    investigation. The CSV column convention matches the frontend's
+    ``IOCImportModal`` preview parser: ``type,value,source,confidence,tags``.
+    """
+    user.require_permission("ioc:create")
+
+    inv = await _load_investigation_or_404(db, body.investigation_id)
+    assert_can_access_investigation(user, inv, write=True)
+
+    parsed, skipped = _parse_csv_rows(body.data)
+    if not parsed:
+        return {
+            "imported": 0,
+            "skipped": skipped,
+            "message": "No valid rows in CSV",
+        }
+
+    rows = await ioc_service.create_iocs_bulk(
+        db,
+        investigation_id=body.investigation_id,
+        iocs=parsed,
+        org_id=inv.org_id,
+    )
+
+    return {
+        "imported": len(rows),
+        "skipped": skipped,
+        "ioc_ids": [r.id for r in rows],
+        "investigation_id": body.investigation_id,
+    }
+
+
+@router.post("/import/stix", status_code=201)
+async def import_stix_text(
+    body: TextImportRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Import IOCs from a STIX 2.1 JSON *string* (frontend transport).
+
+    Mirrors ``/import`` but accepts ``body.data`` as a raw JSON string
+    (what the import modal posts) instead of a pre-parsed ``bundle``.
+    """
+    import json as _json
+
+    user.require_permission("ioc:create")
+
+    inv = await _load_investigation_or_404(db, body.investigation_id)
+    assert_can_access_investigation(user, inv, write=True)
+
+    try:
+        bundle = _json.loads(body.data)
+    except _json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid STIX JSON: {exc}") from exc
+
+    ioc_dicts = stix_service.stix_to_iocs(
+        bundle,
+        investigation_id=body.investigation_id,
+        source="stix_import",
+    )
     if not ioc_dicts:
         return {"imported": 0, "message": "No valid indicators found in STIX bundle"}
 
