@@ -54,11 +54,11 @@ test("STIX export from a TLP:RED IOC notebook is blocked in the UI", async ({
 
   // Try to submit — backend must 403 the call.
   await dialog.submitButton.click();
-  const apiResp = await analystApi.ctx.post(
-    "/api/v1/iocs/export?format=stix",
-    {
-      data: { investigation_id: investigation.id },
-    },
+  // The export endpoint is a GET (``/iocs/export?investigation_id=...&tlp_level=red``)
+  // not a POST; the TLP:RED guard at iocs.py lives in the query-param
+  // path and returns 403 with a "Cannot export TLP:RED IOCs" detail.
+  const apiResp = await analystApi.ctx.get(
+    `/api/v1/iocs/export?investigation_id=${investigation.id}&tlp_level=red`,
   );
   expect([400, 403]).toContain(apiResp.status());
 });
