@@ -398,7 +398,22 @@ jobs:
         # which previously caused the junit reporter to write to stdout
         # instead of ``test-results/junit.xml`` — the diagnostic step
         # below depends on that file.
-        run: npx playwright test
+        #
+        # ``--project=chromium`` scopes the run to the default Desktop
+        # Chrome matrix. Without it Playwright runs EVERY project in the
+        # config — including:
+        #   * ``nginx`` — asserts on production nginx-only response
+        #     headers (HSTS, CSP, X-Frame-Options) that vite preview
+        #     doesn't ship; tests intentionally only pass when run
+        #     against the full Docker stack with the nginx ingress.
+        #   * ``firefox`` / ``webkit`` — bundled browsers aren't
+        #     installed in CI (we only ``playwright install ...
+        #     chromium`` above) so these projects fail to launch.
+        #   * ``mobile-chrome`` — tests rely on the mobile viewport
+        #     fixture that ``@mobile``-tagged specs gate themselves on.
+        # Chromium has ``dependencies: ["setup"]`` in the config, so
+        # the setup project still runs as a prereq.
+        run: npx playwright test --project=chromium
 
       - name: Post failing test list as PR comment
         if: failure() && github.event_name == 'pull_request'
