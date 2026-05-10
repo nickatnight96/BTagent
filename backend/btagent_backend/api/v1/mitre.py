@@ -79,7 +79,12 @@ class CoverageScoreResponse(BaseModel):
 @router.get("/techniques", response_model=TechniqueListResponse)
 async def list_techniques(
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    # Cap raised from 200 → 1000 because the matrix UI requests every
+    # technique up front (TACTIC_ORDER × N grid). Full ATT&CK
+    # Enterprise has ~600 techniques + sub-techniques, so 200 truncates
+    # the matrix and the frontend's ``page_size=500`` request was
+    # 422'ing.
+    page_size: int = Query(50, ge=1, le=1000),
     tactic: str | None = Query(None, description="Filter by tactic shortname"),
     q: str | None = Query(None, description="Search query"),
     db: AsyncSession = Depends(get_db),

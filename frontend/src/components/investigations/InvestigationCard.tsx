@@ -31,6 +31,9 @@ export function InvestigationCard({ investigation }: InvestigationCardProps) {
       hoverable
       onClick={() => navigate(`/investigations/${investigation.id}`)}
       className="group"
+      role="link"
+      aria-label={`Open investigation ${investigation.title}`}
+      data-testid={`investigation-card-${investigation.id}`}
     >
       {/* Header row: severity + status */}
       <div className="flex items-center justify-between mb-3">

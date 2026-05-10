@@ -15,13 +15,35 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+# Default to read-only token at the workflow level. The deploy job below
+# elevates ``packages: read`` locally; nothing here writes to GitHub.
+permissions:
+  contents: read
+
 env:
   REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/nickatnight96/btagent-backend
   FRONTEND_IMAGE: ghcr.io/nickatnight96/btagent-frontend
 
 jobs:
+  # Final secret scan against the tagged commit. Belt-and-braces with the CI
+  # workflow's gitleaks step so a tag that was created out-of-band still gets
+  # scanned before any image is deployed.
+  secret-scan:
+    name: Secret Scan (pre-deploy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   validate:
+    needs: [secret-scan]
     name: Pre-deploy Validation
     runs-on: ubuntu-latest
     outputs:

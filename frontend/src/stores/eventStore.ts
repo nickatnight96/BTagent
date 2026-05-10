@@ -18,6 +18,15 @@ interface EventState {
 
 const FLUSH_INTERVAL_MS = 50;
 
+// Stable empty-array sentinel for ``getEvents`` fallbacks. Returning a fresh
+// ``[]`` literal each call breaks Zustand's referential equality — the
+// selector's snapshot value differs on every store-state read, React detects
+// "getSnapshot should be cached to avoid an infinite loop" (error #185), and
+// the workspace tab where ``EventStream`` mounts crashes. Returning this
+// frozen sentinel keeps the reference stable across calls before any events
+// arrive for an investigation.
+const EMPTY_EVENTS: readonly AgentEvent[] = Object.freeze([]);
+
 export const useEventStore = create<EventState>((set, get) => ({
   events: new Map(),
   seenIds: new Map(),
@@ -74,7 +83,7 @@ export const useEventStore = create<EventState>((set, get) => ({
   },
 
   getEvents: (investigationId: string) => {
-    return get().events.get(investigationId) ?? [];
+    return get().events.get(investigationId) ?? (EMPTY_EVENTS as AgentEvent[]);
   },
 
   clearEvents: (investigationId: string) => {

@@ -62,13 +62,25 @@ export async function validatePlaybook(
   return api.post<ValidationResult>("/v1/playbooks/validate", data);
 }
 
+// Backend returns ``step_results`` as ``dict[str, StepResult]`` keyed by
+// step id; the frontend stores + iterates an array. Normalise here so
+// every consumer sees the same shape.
+function _normalizeExecution<T extends { step_results?: unknown }>(exec: T): T {
+  const sr = exec.step_results;
+  if (sr && typeof sr === "object" && !Array.isArray(sr)) {
+    exec.step_results = Object.values(sr) as T["step_results"];
+  }
+  return exec;
+}
+
 export async function executePlaybook(
   id: string,
   investigationId?: string,
 ): Promise<PlaybookExecution> {
-  return api.post<PlaybookExecution>(`/v1/playbooks/${id}/execute`, {
+  const exec = await api.post<PlaybookExecution>(`/v1/playbooks/${id}/execute`, {
     investigation_id: investigationId,
   });
+  return _normalizeExecution(exec);
 }
 
 export async function getExecutions(
@@ -80,5 +92,11 @@ export async function getExecutions(
 }
 
 export async function getExecution(executionId: string): Promise<PlaybookExecution> {
-  return api.get<PlaybookExecution>(`/v1/executions/${executionId}`);
+  // Backend's executions live at /v1/playbooks/executions/{id}; the
+  // bare /v1/executions path 404s. The frontend store polls this
+  // every 2s while a run is in progress.
+  const exec = await api.get<PlaybookExecution>(
+    `/v1/playbooks/executions/${executionId}`,
+  );
+  return _normalizeExecution(exec);
 }

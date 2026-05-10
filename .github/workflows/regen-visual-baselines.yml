@@ -1,0 +1,198 @@
+name: Regenerate Visual Baselines
+
+# Manually-triggered baseline-refresh workflow for visual snapshot tests.
+# Runs the same boot sequence as the regular ``e2e`` job, but invokes
+# ``playwright test specs/visual/ --update-snapshots`` so the baselines
+# are regenerated against ubuntu-latest chromium font rendering.
+#
+# After a green run, download the ``visual-baselines-chromium-linux``
+# artifact, replace ``tests/e2e/specs/visual/snapshots.spec.ts-snapshots/``
+# with its contents, and drop the ``test.describe.skip`` in
+# ``tests/e2e/specs/visual/snapshots.spec.ts:30``.
+#
+# Tracked in #64. ``workflow_dispatch`` only — never auto-triggers.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to regenerate baselines from (default: main)"
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  regen:
+    name: Regenerate visual baselines
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: btagent
+          POSTGRES_PASSWORD: btagent_ci_password
+          POSTGRES_DB: btagent_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U btagent"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://btagent:btagent_ci_password@localhost:5432/btagent_test
+      BTAGENT_REDIS_URL: redis://localhost:6379
+      BTAGENT_ENV: test
+      BTAGENT_JWT_SECRET: ci-test-secret-not-for-production
+      BTAGENT_MOCK_CONNECTORS: "true"
+      E2E_BASE_URL: http://localhost:5173
+      E2E_API_URL: http://localhost:8000
+      E2E_MODE: ci
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install uv + Python deps
+        run: |
+          pip install uv
+          uv pip install --system -e shared/
+          uv pip install --system -e engine/
+          uv pip install --system -e agents/
+          uv pip install --system -e "backend/[dev]"
+
+      - name: Install frontend deps + build
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          # Visual baselines must reflect the prod bundle that real
+          # users see. ``vite preview`` serves the build output.
+          npm run build || echo "build had non-fatal errors"
+
+      - name: Install Playwright + Chromium
+        working-directory: tests/e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run database migrations
+        run: cd backend && alembic upgrade head
+
+      - name: Seed database with deterministic test users
+        run: python infra/scripts/seed-data.py
+
+      - name: Start backend (uvicorn)
+        run: |
+          cd backend
+          uvicorn btagent_backend.main:app --host 0.0.0.0 --port 8000 \
+            > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null; then
+              echo "Backend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Backend failed to start. Last 100 log lines:"
+          tail -n 100 /tmp/backend.log
+          exit 1
+
+      - name: Start frontend (vite preview)
+        working-directory: frontend
+        run: |
+          npx vite preview --host 0.0.0.0 --port 5173 \
+            > /tmp/frontend.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:5173 > /dev/null; then
+              echo "Frontend up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Frontend failed to start. Last 100 log lines:"
+          tail -n 100 /tmp/frontend.log
+          exit 1
+
+      - name: Temporarily un-skip the visual specs
+        # The committed spec uses ``test.describe.skip`` so the suite
+        # currently passes without baselines. We need the specs to
+        # actually RUN to regenerate the PNGs, so flip ``skip`` →
+        # ``describe`` for this run only. The change stays in the
+        # checked-out tree and is uploaded with the artifacts so a
+        # human can compare; the tree is discarded at job end.
+        run: |
+          sed -i 's/test\.describe\.skip(/test.describe(/' \
+            tests/e2e/specs/visual/snapshots.spec.ts
+
+      - name: Run Playwright with --update-snapshots
+        working-directory: tests/e2e
+        # Update-snapshots intentionally REWRITES the on-disk PNGs to
+        # match what chromium just rendered. Subsequent runs of the
+        # main ``e2e`` job (after a human commits the regenerated
+        # PNGs and drops the describe.skip) diff against these.
+        run: |
+          npx playwright test specs/visual/ \
+            --project=chromium \
+            --update-snapshots \
+            --reporter=list
+
+      - name: Upload regenerated baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-chromium-linux
+          path: tests/e2e/specs/visual/snapshots.spec.ts-snapshots/
+          retention-days: 30
+          # ``if-no-files-found: error`` so the workflow fails loudly
+          # when zero PNGs were produced (something broke earlier).
+          if-no-files-found: error
+
+      - name: Upload Playwright HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Upload backend log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-log
+          path: /tmp/backend.log
+          retention-days: 7

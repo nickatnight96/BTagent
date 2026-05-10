@@ -40,15 +40,20 @@ function ToolCallCard({ toolCall }: ToolCallCardProps) {
   };
 
   return (
-    <div className="bg-slate-800/50 border border-slate-700/40 rounded-md my-1.5 text-xs overflow-hidden">
+    <div
+      className="bg-slate-800/50 border border-slate-700/40 rounded-md my-1.5 text-xs overflow-hidden"
+      data-testid={`agent-chat-tool-call-${toolCall.id}`}
+    >
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-2 w-full px-3 py-2 hover:bg-slate-800 transition-colors text-left"
+        aria-expanded={expanded}
+        data-testid={`agent-chat-tool-call-${toolCall.id}-toggle`}
       >
         {expanded ? (
-          <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" />
+          <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" aria-hidden="true" />
         ) : (
-          <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" />
+          <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" aria-hidden="true" />
         )}
         {statusIcon[toolCall.status]}
         <span className="font-mono text-slate-300 font-medium">
@@ -99,9 +104,12 @@ function HITLCard({ checkpoint, onRespond }: HITLCardProps) {
   const [comment, setComment] = useState("");
 
   return (
-    <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4 my-3 animate-slide-in">
+    <div
+      className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-4 my-3 animate-slide-in"
+      data-testid={`agent-chat-hitl-${checkpoint.id}`}
+    >
       <div className="flex items-center gap-2 mb-2">
-        <ShieldAlert className="w-5 h-5 text-purple-400" />
+        <ShieldAlert className="w-5 h-5 text-purple-400" aria-hidden="true" />
         <span className="text-sm font-semibold text-purple-300">
           Approval Required
         </span>
@@ -126,11 +134,14 @@ function HITLCard({ checkpoint, onRespond }: HITLCardProps) {
         onChange={(e) => setComment(e.target.value)}
         className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-500 mb-3 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500/50"
         rows={2}
+        aria-label="Approval comment"
+        data-testid={`agent-chat-hitl-${checkpoint.id}-comment-input`}
       />
       <div className="flex items-center gap-3">
         <Button
           size="sm"
           onClick={() => onRespond(checkpoint.id, true, comment || undefined)}
+          data-testid={`agent-chat-hitl-${checkpoint.id}-approve-button`}
         >
           Approve
         </Button>
@@ -138,6 +149,7 @@ function HITLCard({ checkpoint, onRespond }: HITLCardProps) {
           variant="danger"
           size="sm"
           onClick={() => onRespond(checkpoint.id, false, comment || undefined)}
+          data-testid={`agent-chat-hitl-${checkpoint.id}-reject-button`}
         >
           Reject
         </Button>
@@ -162,6 +174,8 @@ function MessageBubble({ message }: MessageBubbleProps) {
         "flex gap-3 animate-slide-in",
         isUser ? "flex-row-reverse" : "flex-row",
       )}
+      data-testid={`agent-chat-message-${message.id}`}
+      data-message-role={message.role}
     >
       {/* Avatar */}
       <div
@@ -175,9 +189,9 @@ function MessageBubble({ message }: MessageBubbleProps) {
         )}
       >
         {isUser ? (
-          <User className="w-3.5 h-3.5 text-blue-400" />
+          <User className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
         ) : (
-          <Bot className="w-3.5 h-3.5 text-slate-300" />
+          <Bot className="w-3.5 h-3.5 text-slate-300" aria-hidden="true" />
         )}
       </div>
 
@@ -284,16 +298,28 @@ export function AgentChat({ investigationId }: AgentChatProps) {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="agent-chat">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+        data-testid="agent-chat-message-list"
+      >
         {isLoadingHistory ? (
-          <div className="flex items-center justify-center h-full">
-            <Loader2 className="w-6 h-6 text-slate-500 animate-spin" />
+          <div
+            className="flex items-center justify-center h-full"
+            data-testid="agent-chat-loading"
+          >
+            <Loader2
+              className="w-6 h-6 text-slate-500 animate-spin"
+              aria-label="Loading chat history"
+            />
           </div>
         ) : displayMessages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-slate-500">
-            <Bot className="w-10 h-10 mb-3 text-slate-600" />
+          <div
+            className="flex flex-col items-center justify-center h-full text-slate-500"
+            data-testid="agent-chat-empty"
+          >
+            <Bot className="w-10 h-10 mb-3 text-slate-600" aria-hidden="true" />
             <p className="text-sm font-medium text-slate-400">
               Investigation Agent
             </p>
@@ -318,9 +344,12 @@ export function AgentChat({ investigationId }: AgentChatProps) {
 
         {/* Thinking indicator */}
         {isStreaming && !streamingContent && (
-          <div className="flex items-center gap-3 animate-slide-in">
+          <div
+            className="flex items-center gap-3 animate-slide-in"
+            data-testid="agent-chat-thinking"
+          >
             <div className="w-7 h-7 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center">
-              <Bot className="w-3.5 h-3.5 text-slate-300" />
+              <Bot className="w-3.5 h-3.5 text-slate-300" aria-hidden="true" />
             </div>
             <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/40 rounded-xl px-4 py-3">
               <div className="flex gap-1">
@@ -338,7 +367,11 @@ export function AgentChat({ investigationId }: AgentChatProps) {
 
       {/* Input bar */}
       <div className="shrink-0 border-t border-slate-700/50 p-4 bg-slate-900/50">
-        <form onSubmit={handleSend} className="flex items-end gap-3">
+        <form
+          onSubmit={handleSend}
+          className="flex items-end gap-3"
+          data-testid="agent-chat-form"
+        >
           <textarea
             ref={inputRef}
             value={inputValue}
@@ -351,14 +384,18 @@ export function AgentChat({ investigationId }: AgentChatProps) {
               minHeight: "40px",
               height: "auto",
             }}
+            aria-label="Message to agent"
+            data-testid="agent-chat-input"
           />
           <Button
             type="submit"
             size="md"
             disabled={!inputValue.trim() || isStreaming}
             className="shrink-0"
+            aria-label="Send message"
+            data-testid="agent-chat-send-button"
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-4 h-4" aria-hidden="true" />
           </Button>
         </form>
       </div>

@@ -61,7 +61,11 @@ export interface CreateInvestigationRequest {
   title: string;
   description: string;
   severity: Severity;
-  tlp: TLP;
+  // Backend's ``tlp_level`` field name; values must be lowercase
+  // (``"green"``, ``"amber"``, ...) to match
+  // ``btagent_shared.types.config.TLP``. The new-investigation modal
+  // coerces from the frontend's uppercase enum at the call site.
+  tlp_level: TLP;
   template?: string;
 }
 

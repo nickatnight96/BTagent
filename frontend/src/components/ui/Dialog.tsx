@@ -65,8 +65,11 @@ function DialogContent({
               </RadixDialog.Description>
             )}
           </div>
-          <RadixDialog.Close className="text-slate-400 hover:text-slate-200 p-1 rounded-md hover:bg-slate-800 transition-colors">
-            <X className="h-5 w-5" />
+          <RadixDialog.Close
+            aria-label="Close dialog"
+            className="text-slate-400 hover:text-slate-200 p-1 rounded-md hover:bg-slate-800 transition-colors"
+          >
+            <X className="h-5 w-5" aria-hidden="true" />
           </RadixDialog.Close>
         </div>
         {children}

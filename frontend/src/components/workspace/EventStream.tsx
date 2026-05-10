@@ -111,11 +111,15 @@ function EventRow({ event }: { event: AgentEvent }) {
         isError && "bg-red-500/5",
         isHITL && "bg-purple-500/5",
       )}
+      data-testid={`event-stream-item-${event.id}`}
+      data-event-type={event.type}
     >
       <span className="text-slate-600 font-mono shrink-0 pt-0.5">
         {formatTimestamp(event.timestamp)}
       </span>
-      <span className="shrink-0 pt-0.5">{getEventIcon(event.type)}</span>
+      <span className="shrink-0 pt-0.5" aria-hidden="true">
+        {getEventIcon(event.type)}
+      </span>
       <span
         className={clsx(
           "text-slate-300 leading-relaxed break-all",
@@ -141,21 +145,31 @@ export function EventStream({ investigationId }: EventStreamProps) {
   }, [events]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="event-stream">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-700/50 shrink-0">
         <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
           Event Stream
         </span>
-        <span className="text-[10px] text-slate-500 font-mono">
+        <span
+          className="text-[10px] text-slate-500 font-mono"
+          data-testid="event-stream-count"
+        >
           {events.length} events
         </span>
       </div>
 
       {/* Events list */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto divide-y divide-slate-800/50">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto divide-y divide-slate-800/50"
+        data-testid="event-stream-list"
+      >
         {events.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-slate-500 text-xs">
+          <div
+            className="flex items-center justify-center h-full text-slate-500 text-xs"
+            data-testid="event-stream-empty"
+          >
             Waiting for events...
           </div>
         ) : (

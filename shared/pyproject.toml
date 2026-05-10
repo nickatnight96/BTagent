@@ -4,14 +4,14 @@ version = "0.1.0"
 description = "Shared types and utilities for BTagent"
 requires-python = ">=3.12"
 dependencies = [
-    "pydantic>=2.12.0",
-    "python-ulid>=3.0.0",
+    "pydantic>=2.13.0",
+    "python-ulid>=3.1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
-    "ruff>=0.8.0",
+    "ruff>=0.15.10",
 ]
 
 [build-system]

@@ -69,7 +69,20 @@ cd backend && uvicorn btagent_backend.main:app --reload --port 8000
 cd frontend && npm run dev
 ```
 
-### 9. Verify
+### 9. Enable the pre-push hook (one-time)
+
+The repo ships a pre-push git hook at `.githooks/pre-push` that runs the
+same `ruff format --check` + `ruff check` the CI `Lint` job runs. Without
+it, sub-agents authoring code in worktrees routinely landed format-only
+drift that broke CI on every push. Enable once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+To bypass for a WIP push to a personal branch: `git push --no-verify`.
+
+### 10. Verify
 
 - Backend health: `curl http://localhost:8000/health`
 - Frontend: Open `http://localhost:5173` in a browser

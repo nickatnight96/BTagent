@@ -3,11 +3,13 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { ShieldAlert } from "lucide-react";
 import type { HITLGateNodeData } from "@/types/playbook";
 
-function HITLGateNodeComponent({ data, selected }: NodeProps) {
+function HITLGateNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as HITLGateNodeData;
 
   return (
     <div
+      data-testid={`playbook-builder-node-${id}`}
+      data-node-type="hitl_gate"
       className={`
         relative min-w-[220px] rounded-lg border-l-4 border-red-500
         bg-slate-800 shadow-lg transition-all duration-150

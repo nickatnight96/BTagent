@@ -81,13 +81,20 @@ export async function exportNavigator(
   investigationId?: string,
 ): Promise<NavigatorLayer> {
   const params = investigationId ? { investigation_id: investigationId } : {};
-  const endpoint = `/v1/mitre/navigator/export${buildQuery(params)}`;
+  // Backend mounts the navigator export at /v1/mitre/export/navigator
+  // (see backend/btagent_backend/api/v1/mitre.py:243); the previous
+  // ``/navigator/export`` path returned 404 silently because the
+  // store's catch swallowed the error.
+  const endpoint = `/v1/mitre/export/navigator${buildQuery(params)}`;
   return api.get<NavigatorLayer>(endpoint);
 }
 
 export async function searchTTPs(
   query: string,
 ): Promise<PaginatedResponse<MitreTechnique>> {
-  const endpoint = `/v1/mitre/techniques${buildQuery({ search: query })}`;
+  // Backend expects ``q`` (see backend/btagent_backend/api/v1/mitre.py).
+  // The previous ``search`` key was silently ignored, which is why the
+  // search-narrow + empty-state tests in matrix.spec.ts never resolved.
+  const endpoint = `/v1/mitre/techniques${buildQuery({ q: query, page_size: 1000 })}`;
   return api.get<PaginatedResponse<MitreTechnique>>(endpoint);
 }

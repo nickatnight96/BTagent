@@ -11,12 +11,14 @@ const TRIGGER_LABELS: Record<string, string> = {
   schedule: "Schedule",
 };
 
-function TriggerNodeComponent({ data, selected }: NodeProps) {
+function TriggerNodeComponent({ id, data, selected }: NodeProps) {
   const nodeData = data as unknown as TriggerNodeData;
   const triggerLabel = TRIGGER_LABELS[nodeData.triggerType] ?? nodeData.triggerType;
 
   return (
     <div
+      data-testid={`playbook-builder-node-${id}`}
+      data-node-type="trigger"
       className={`
         relative min-w-[220px] rounded-lg border-l-4 border-green-500
         bg-slate-800 shadow-lg transition-all duration-150

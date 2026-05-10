@@ -7,7 +7,7 @@ from helpers import auth_header
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.db.models import InvestigationRow, UserRow
+from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, UserRow
 
 # ---- POST /api/v1/investigations ----
 
@@ -212,6 +212,7 @@ async def test_pause_investigation(
     # We need an investigation in INVESTIGATING status. Insert directly in DB.
     inv = InvestigationRow(
         id=generate_id("inv"),
+        org_id=DEFAULT_ORG_ID,
         title="Pausable investigation",
         status=InvestigationStatus.INVESTIGATING.value,
         severity="medium",
@@ -240,6 +241,7 @@ async def test_stop_investigation_sets_cancelled(
     # senior_analyst or higher can stop. Admin qualifies.
     inv = InvestigationRow(
         id=generate_id("inv"),
+        org_id=DEFAULT_ORG_ID,
         title="Stoppable investigation",
         status=InvestigationStatus.INVESTIGATING.value,
         severity="high",
