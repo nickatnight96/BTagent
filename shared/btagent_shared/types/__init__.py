@@ -51,6 +51,17 @@ from btagent_shared.types.playbook import (
     TriggerType,
     ValidationResult,
 )
+from btagent_shared.types.workflow import (
+    CreateWorkflowRequest,
+    CreateWorkflowVersionRequest,
+    UpdateWorkflowRequest,
+    UpdateWorkflowVersionRequest,
+    WorkflowListResponse,
+    WorkflowResponse,
+    WorkflowVersionListResponse,
+    WorkflowVersionResponse,
+    WorkflowVersionState,
+)
 
 __all__ = [
     "AgentConfig",
@@ -96,4 +107,14 @@ __all__ = [
     "TriggerCondition",
     "TriggerType",
     "ValidationResult",
+    # Workflow CRUD types (Phase 2 v1)
+    "CreateWorkflowRequest",
+    "CreateWorkflowVersionRequest",
+    "UpdateWorkflowRequest",
+    "UpdateWorkflowVersionRequest",
+    "WorkflowListResponse",
+    "WorkflowResponse",
+    "WorkflowVersionListResponse",
+    "WorkflowVersionResponse",
+    "WorkflowVersionState",
 ]
