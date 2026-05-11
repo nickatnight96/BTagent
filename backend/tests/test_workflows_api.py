@@ -356,12 +356,26 @@ async def test_cross_org_workflow_returns_404(
     by the investigations / IOCs endpoints — we don't confirm-by-status
     that an id exists in another tenant.
     """
-    # Seed a workflow row directly in a foreign org.
+    from btagent_backend.db.models import OrganizationRow
+
+    # Seed the foreign org first so the FK from ``workflows.org_id`` is
+    # satisfied; the test wants a *real* row in a different tenant, not
+    # a fabricated id.
+    foreign_org_id = f"org_{generate_id('foreign')}"
+    db_session.add(
+        OrganizationRow(
+            id=foreign_org_id,
+            name=f"Foreign Org {foreign_org_id}",
+            created_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+
     foreign_wf = WorkflowRow(
         id=generate_id("wf"),
         name="foreign",
         description="",
-        org_id="org_foreign",
+        org_id=foreign_org_id,
         created_by=None,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
