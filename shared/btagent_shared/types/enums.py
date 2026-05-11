@@ -38,6 +38,10 @@ class IOCType(StrEnum):
     USER_AGENT = "user_agent"
     MUTEX = "mutex"
     PROCESS_NAME = "process_name"
+    # ``other`` is the frontend-side catch-all; mirrored here so the
+    # backend Pydantic schemas (now typed against this enum) accept what
+    # the import modal already emits.
+    OTHER = "other"
 
 
 class ContainmentStatus(StrEnum):

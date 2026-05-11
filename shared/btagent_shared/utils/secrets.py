@@ -10,21 +10,41 @@ Patterns:
     ${VAR_NAME}                          → Legacy env variable pattern
 """
 
+import logging
 import os
 import re
 from functools import lru_cache
+
+logger = logging.getLogger("btagent.shared.secrets")
 
 SECRET_PATTERN = re.compile(
     r"\$\{(?:secret:(?P<provider>vault|aws|keyring):(?P<path>[^}#]+)(?:#(?P<field>[^}]+))?|env:(?P<env>[^}]+)|(?P<legacy>[A-Z_][A-Z0-9_]*))\}"
 )
 
 
+class UnresolvedSecretError(RuntimeError):
+    """Raised when a ``${secret:vault:...}`` / ``${secret:aws:...}`` reference
+    can't be resolved AND we're in an environment that should never silently
+    fall through to a `<unresolved:...>` literal (prod).
+
+    The vault/aws code paths historically returned a placeholder string when
+    no real client was wired in, which is fine for dev but silently shipped
+    broken config to prod. ``BTAGENT_ENV=prod`` now turns the silent fallback
+    into a hard failure.
+    """
+
+
 def resolve_secret(value: str) -> str:
     """Resolve secret references in a string value.
 
     For Phase 1, only env and legacy patterns are implemented.
-    Vault and AWS providers return placeholders until configured.
+    Vault and AWS providers return placeholders in non-prod when no client is
+    wired in; in ``BTAGENT_ENV=prod`` an unresolvable vault/aws reference
+    raises :class:`UnresolvedSecretError` instead of silently producing a
+    ``<unresolved:...>`` literal that downstream config would happily accept.
     """
+
+    is_prod = os.environ.get("BTAGENT_ENV", "").lower() == "prod"
 
     def _replace(match: re.Match) -> str:
         provider = match.group("provider")
@@ -50,9 +70,29 @@ def resolve_secret(value: str) -> str:
                 return os.environ.get(path.upper().replace("-", "_"), "")
 
         if provider in ("vault", "aws"):
-            # Placeholder — real implementation in production
             env_fallback = path.upper().replace("/", "_").replace("-", "_")
-            return os.environ.get(env_fallback, f"<unresolved:{provider}:{path}>")
+            resolved = os.environ.get(env_fallback)
+            if resolved is not None:
+                return resolved
+            # No real client wired in; the env fallback also missed. In prod
+            # this is a fatal config error — fail loudly rather than ship
+            # ``<unresolved:...>`` to whatever downstream uses the value.
+            if is_prod:
+                raise UnresolvedSecretError(
+                    f"Cannot resolve ${{secret:{provider}:{path}}} in prod: "
+                    f"no {provider.upper()} client configured and env fallback "
+                    f"`{env_fallback}` is not set."
+                )
+            # Non-prod: keep the historical placeholder so smoke tests and
+            # local dev keep limping along, but emit a warning so the gap
+            # is visible in CI logs.
+            logger.warning(
+                "secret resolver: no client for provider=%s; env fallback %r not set; "
+                "emitting placeholder for non-prod env",
+                provider,
+                env_fallback,
+            )
+            return f"<unresolved:{provider}:{path}>"
 
         return match.group(0)
 

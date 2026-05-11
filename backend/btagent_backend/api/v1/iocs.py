@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from btagent_shared.types.enums import IOCType
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -44,28 +45,37 @@ async def _load_investigation_or_404(db: AsyncSession, investigation_id: str) ->
 # --------------------------------------------------------------------------- #
 
 
+# Hard caps on bulk endpoints. ``BulkCreateIOCRequest.iocs`` and
+# ``BulkEnrichRequest.ioc_ids`` are unauthenticated-ish in the sense that a
+# legitimate analyst can submit them, but without a list-size cap an
+# off-by-one in the FE (or a malicious actor with valid creds) can DoS the
+# enrichment scheduler with a single request. 500 is comfortably above any
+# real analyst workflow and well below the heap-pressure threshold.
+_MAX_BULK_IOCS = 500
+
+
 class CreateIOCRequest(BaseModel):
     investigation_id: str
-    type: str
-    value: str
+    type: IOCType
+    value: str = Field(..., min_length=1, max_length=2048)
     tlp_level: str = "green"
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-    context: str = ""
-    source: str = ""
+    context: str = Field(default="", max_length=4096)
+    source: str = Field(default="", max_length=256)
 
 
 class BulkCreateIOCRequest(BaseModel):
     investigation_id: str
-    iocs: list[CreateIOCRequest]
+    iocs: list[CreateIOCRequest] = Field(..., min_length=1, max_length=_MAX_BULK_IOCS)
 
 
 class UpdateIOCRequest(BaseModel):
-    type: str | None = None
-    value: str | None = None
+    type: IOCType | None = None
+    value: str | None = Field(default=None, min_length=1, max_length=2048)
     tlp_level: str | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
-    context: str | None = None
-    source: str | None = None
+    context: str | None = Field(default=None, max_length=4096)
+    source: str | None = Field(default=None, max_length=256)
     enrichment: dict[str, Any] | None = None
 
 
@@ -95,7 +105,10 @@ class EnrichRequest(BaseModel):
 
 
 class BulkEnrichRequest(BaseModel):
-    ioc_ids: list[str]
+    # See ``_MAX_BULK_IOCS`` above — same DoS-mitigation cap. Each id is
+    # also length-bounded so a million-character "id" can't sneak past the
+    # FastAPI request-body size limit.
+    ioc_ids: list[str] = Field(..., min_length=1, max_length=_MAX_BULK_IOCS)
 
 
 class STIXImportRequest(BaseModel):

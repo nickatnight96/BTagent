@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from btagent_backend.config import get_settings
 from btagent_backend.middleware.request_id import RequestIDMiddleware
+from btagent_backend.middleware.security_headers import SecurityHeadersMiddleware
 from btagent_backend.observability import metrics_endpoint, setup_logging, setup_otel, shutdown_otel
 from btagent_backend.services.task_manager import TaskManager
 from btagent_backend.ws import WebSocketHub, init_ws_routes, ws_router
@@ -91,6 +92,12 @@ def create_app() -> FastAPI:
 
     # Request-ID middleware (adds X-Request-ID to every request/response)
     app.add_middleware(RequestIDMiddleware)
+
+    # Security headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options,
+    # Referrer-Policy, Permissions-Policy). Idempotent with the production
+    # nginx ingress so the backend can stand alone in dev / helm-without-
+    # nginx topologies.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Mount routers
     from btagent_backend.api.v1.router import api_v1_router, health_router_root

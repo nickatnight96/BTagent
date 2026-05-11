@@ -89,9 +89,23 @@ async def get_current_user(
     # AUTH-A2: enforce the Redis-backed revocation list.
     if payload.jti is None:
         # Legacy access tokens issued before AUTH-A2 have no jti and therefore
-        # cannot be revoked individually. Accept them during the rollout window
-        # so analysts aren't force-logged-out, but emit a warning so we can
-        # detect their use and tighten the policy once the window closes.
+        # cannot be revoked individually. The rollout-window policy used to
+        # accept them everywhere with a warning; the audit-cleanup hardening
+        # closes that gap in prod (only) so a stolen legacy token can't
+        # outlast the rollout. Dev/test still warn-and-accept so the suite
+        # doesn't have to mint jti'd tokens for every fixture.
+        from btagent_backend.config import get_settings
+
+        if get_settings().env == "prod":
+            logger.warning(
+                "Rejecting legacy access token without jti in prod for user=%s",
+                payload.sub,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token is missing required identifier (jti)",
+                headers=_INVALID_TOKEN_HEADERS,
+            )
         logger.warning(
             "Accepted legacy access token without jti for user=%s; "
             "force re-login recommended before AUTH-A2 rollout completes",
