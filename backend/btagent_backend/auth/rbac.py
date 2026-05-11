@@ -63,6 +63,17 @@ PERMISSIONS: dict[str, UserRole] = {
     "playbook:delete": UserRole.SENIOR_ANALYST,
     "playbook:execute": UserRole.SENIOR_ANALYST,
     "playbook:execute_containment": UserRole.INCIDENT_COMMANDER,
+    # Workflows (Phase 2 v1 — workflow CRUD store)
+    # Analysts can browse/run workflows; senior_analyst authors and edits;
+    # publishing a new version is the gate that pushes new automation to
+    # the production-running pipeline so it's also senior; deprecate-
+    # without-replacement is admin-only because it can take live
+    # automation offline.
+    "workflow:view": UserRole.ANALYST,
+    "workflow:create": UserRole.SENIOR_ANALYST,
+    "workflow:edit": UserRole.SENIOR_ANALYST,
+    "workflow:publish": UserRole.SENIOR_ANALYST,
+    "workflow:deprecate": UserRole.ADMIN,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,

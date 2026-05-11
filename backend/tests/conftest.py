@@ -81,6 +81,7 @@ get_settings.cache_clear()
 import btagent_backend.db.models_knowledge  # noqa: E402, F401
 import btagent_backend.db.models_mitre  # noqa: E402, F401
 import btagent_backend.db.models_playbook  # noqa: E402, F401
+import btagent_backend.db.models_workflow  # noqa: E402, F401
 from btagent_backend.db.models import Base  # noqa: E402
 
 # PostgreSQL JSONB columns are incompatible with SQLite — swap to plain JSON.
