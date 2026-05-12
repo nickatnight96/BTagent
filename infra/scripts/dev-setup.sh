@@ -168,7 +168,12 @@ step "Step 5/6 — Alembic migrations"
 DEV_DB_URL="${BTAGENT_DATABASE_URL:-postgresql+asyncpg://btagent:btagent_password@localhost:5432/btagent}"
 
 info "running migrations against ${DEV_DB_URL%@*}@..."
-BTAGENT_DATABASE_URL="$DEV_DB_URL" alembic -c backend/alembic.ini upgrade head
+# Alembic resolves ``script_location = migrations`` in ``backend/alembic.ini``
+# RELATIVE TO CWD, not relative to the .ini's directory. The Makefile gets
+# around this by ``cd backend && alembic upgrade head``; mirror that here so
+# the migrations/ folder is found regardless of where the user invoked the
+# script from.
+(cd backend && BTAGENT_DATABASE_URL="$DEV_DB_URL" alembic upgrade head)
 ok "migrations applied"
 
 # ---------------------------------------------------------------------------
