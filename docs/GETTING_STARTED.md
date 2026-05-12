@@ -163,7 +163,7 @@ In a new terminal:
 source .venv/bin/activate
 BTAGENT_ENV=test \
   BTAGENT_JWT_SECRET="dev-secret-for-local-only" \
-  BTAGENT_DATABASE_URL="postgresql+asyncpg://btagent:btagent_password@localhost:5432/btagent" \
+  BTAGENT_DATABASE_URL="postgresql+asyncpg://btagent:btagent_dev_password@localhost:5432/btagent" \
   BTAGENT_REDIS_URL="redis://localhost:6379" \
   uvicorn btagent_backend.main:app --reload --port 8000 --app-dir backend
 ```
