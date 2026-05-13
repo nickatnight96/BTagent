@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { ThemeProvider } from "./components/theme-provider";
+import { Toaster } from "./components/ds/sonner";
 import "./index.css";
 
 const rootElement = document.getElementById("root");
@@ -13,6 +14,7 @@ createRoot(rootElement).render(
   <StrictMode>
     <ThemeProvider>
       <App />
+      <Toaster />
     </ThemeProvider>
   </StrictMode>,
 );
