@@ -64,6 +64,28 @@ for i in $(seq 1 20); do
 done
 
 # ---------------------------------------------------------------------------
+# Step 1b: migrations + seed (idempotent — covers the case where the
+# postgres volume was recycled between runs)
+# ---------------------------------------------------------------------------
+step "Step 1b — Apply migrations + seed (idempotent)"
+DEV_DB_URL="postgresql+asyncpg://btagent:btagent_dev_password@localhost:5432/btagent"
+(
+  # shellcheck source=/dev/null
+  source .venv/bin/activate
+  cd backend
+  BTAGENT_DATABASE_URL="$DEV_DB_URL" alembic upgrade head >/dev/null
+)
+ok "alembic upgrade head"
+(
+  # shellcheck source=/dev/null
+  source .venv/bin/activate
+  BTAGENT_ENV=test \
+    BTAGENT_DATABASE_URL="$DEV_DB_URL" \
+    python infra/scripts/seed-data.py >/dev/null
+)
+ok "seed (test-mode deterministic passwords)"
+
+# ---------------------------------------------------------------------------
 # Step 2: start backend (uvicorn with --reload) on :8000
 # ---------------------------------------------------------------------------
 step "Step 2/3 — Backend on :8000 (uvicorn --reload)"

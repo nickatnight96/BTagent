@@ -103,16 +103,38 @@ async def seed():
         await _seed_mitre_attack(session)
         await session.commit()
 
-        # Check if admin exists
-        result = await session.execute(select(UserRow).where(UserRow.username == "admin"))
-        if result.scalar_one_or_none():
-            print("Admin user already exists, skipping seed.")
-            return
-
-        # Generate random passwords for each user
+        # Generate passwords for each user (deterministic in test mode, random otherwise)
         admin_pw = _generate_seed_password("admin")
         analyst_pw = _generate_seed_password("analyst1")
         senior_pw = _generate_seed_password("senior1")
+
+        # Check if admin exists
+        result = await session.execute(select(UserRow).where(UserRow.username == "admin"))
+        existing_admin = result.scalar_one_or_none()
+        if existing_admin:
+            # In test mode, always reset known users' passwords to the deterministic
+            # value so 'admin'/'admin' works even if a stale row exists from a
+            # previous non-test seed run.
+            if os.environ.get("BTAGENT_ENV") == "test":
+                for username, pw in (
+                    ("admin", admin_pw),
+                    ("analyst1", analyst_pw),
+                    ("senior1", senior_pw),
+                ):
+                    res = await session.execute(
+                        select(UserRow).where(UserRow.username == username)
+                    )
+                    user = res.scalar_one_or_none()
+                    if user is not None:
+                        user.password_hash = hash_password(pw)
+                await session.commit()
+                print("Test-mode seed: reset admin/analyst1/senior1 passwords to deterministic values.")
+                print(f"  Admin user:    admin / {admin_pw}")
+                print(f"  Analyst user:  analyst1 / {analyst_pw}")
+                print(f"  Senior user:   senior1 / {senior_pw}")
+                return
+            print("Admin user already exists, skipping seed.")
+            return
 
         # Create admin user
         admin = UserRow(
