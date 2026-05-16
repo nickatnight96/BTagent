@@ -10,8 +10,8 @@ import {
   BarChart3,
 } from "lucide-react";
 import { useMitreStore } from "@/stores/mitreStore";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ds/button";
+import { Badge } from "@/components/ds/badge";
 import type { MitreTechnique } from "@/types/mitre";
 
 interface TechniqueDetailProps {
@@ -27,7 +27,7 @@ function SectionHeader({
   children: React.ReactNode;
 }) {
   return (
-    <h3 className="flex items-center gap-2 text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+    <h3 className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
       {icon}
       {children}
     </h3>
@@ -53,15 +53,15 @@ function ConfidenceHistogram({ data }: { data: number[] }) {
         const height = (count / max) * 100;
         const labels = ["0-20%", "20-40%", "40-60%", "60-80%", "80-100%"];
         const colors = [
-          "bg-red-500/60",
+          "bg-destructive/60",
           "bg-orange-500/60",
           "bg-amber-500/60",
-          "bg-blue-500/60",
+          "bg-primary/60",
           "bg-green-500/60",
         ];
         return (
           <div key={idx} className="flex flex-col items-center flex-1 gap-0.5">
-            <span className="text-[9px] text-slate-500 tabular-nums">
+            <span className="text-[9px] text-muted-foreground tabular-nums">
               {count > 0 ? count : ""}
             </span>
             <div className="w-full relative" style={{ height: "48px" }}>
@@ -70,7 +70,7 @@ function ConfidenceHistogram({ data }: { data: number[] }) {
                 style={{ height: `${height}%`, minHeight: count > 0 ? "4px" : "0" }}
               />
             </div>
-            <span className="text-[8px] text-slate-600">{labels[idx]}</span>
+            <span className="text-[8px] text-muted-foreground/60">{labels[idx]}</span>
           </div>
         );
       })}
@@ -130,14 +130,14 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
 
       {/* Panel */}
       <div
-        className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-slate-950 border-l border-slate-700/50 z-50 overflow-y-auto shadow-2xl shadow-black/40 animate-slide-in-right"
+        className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-background border-l border-border/50 z-50 overflow-y-auto shadow-2xl shadow-black/40 animate-slide-in-right"
         role="dialog"
         aria-modal="true"
         aria-labelledby="technique-detail-title"
         data-testid="technique-detail"
       >
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-slate-950/95 backdrop-blur-sm border-b border-slate-700/50 p-4">
+        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/50 p-4">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
@@ -158,7 +158,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
               </div>
               <h2
                 id="technique-detail-title"
-                className="text-lg font-semibold text-slate-100"
+                className="text-lg font-semibold text-foreground"
                 data-testid="technique-detail-name"
               >
                 {technique.name}
@@ -167,7 +167,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
                 {(technique.tactic_names ?? []).map((tactic) => (
                   <span
                     key={tactic}
-                    className="px-1.5 py-0.5 bg-slate-800 rounded text-[10px] text-slate-400"
+                    className="px-1.5 py-0.5 bg-accent rounded text-[10px] text-muted-foreground"
                     data-testid={`technique-detail-tactic-${tactic.toLowerCase().replace(/\s+/g, "-")}`}
                   >
                     {tactic}
@@ -177,7 +177,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
             </div>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-200 p-1 rounded-md hover:bg-slate-800 transition-colors shrink-0 ml-3"
+              className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-accent transition-colors shrink-0 ml-3"
               aria-label="Close technique details"
               data-testid="technique-detail-close-button"
             >
@@ -190,7 +190,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
               href={mitreUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-slate-800 text-slate-300 hover:text-slate-100 hover:bg-slate-700 border border-slate-700 transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-accent text-foreground hover:text-foreground hover:bg-muted border border-border transition-colors"
               data-testid="technique-detail-mitre-link"
             >
               <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
@@ -214,7 +214,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
             <SectionHeader icon={<BookOpen className="w-3.5 h-3.5" />}>
               Description
             </SectionHeader>
-            <p className="text-sm text-slate-300 leading-relaxed">
+            <p className="text-sm text-foreground leading-relaxed">
               {technique.description || "No description available."}
             </p>
           </div>
@@ -245,7 +245,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
                 {(technique.data_sources ?? []).map((ds) => (
                   <div
                     key={ds}
-                    className="px-3 py-2 bg-slate-900 rounded-lg border border-slate-800 text-xs text-slate-300"
+                    className="px-3 py-2 bg-card rounded-lg border border-border text-xs text-foreground"
                   >
                     {ds}
                   </div>
@@ -260,8 +260,8 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
               <SectionHeader icon={<Shield className="w-3.5 h-3.5" />}>
                 Detection Guidance
               </SectionHeader>
-              <div className="bg-slate-900 rounded-lg border border-slate-800 p-3">
-                <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">
+              <div className="bg-card rounded-lg border border-border p-3">
+                <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
                   {technique.detection}
                 </p>
               </div>
@@ -274,7 +274,7 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
               <SectionHeader icon={<BarChart3 className="w-3.5 h-3.5" />}>
                 Confidence Distribution ({confidenceData.length} tags)
               </SectionHeader>
-              <div className="bg-slate-900 rounded-lg border border-slate-800 p-3">
+              <div className="bg-card rounded-lg border border-border p-3">
                 <ConfidenceHistogram data={confidenceData} />
               </div>
             </div>
@@ -290,9 +290,9 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
                 {taggedInvestigations.map((ref) => (
                   <div
                     key={ref.tactic}
-                    className="flex items-center justify-between px-3 py-2 bg-slate-900 rounded-lg border border-slate-800"
+                    className="flex items-center justify-between px-3 py-2 bg-card rounded-lg border border-border"
                   >
-                    <span className="text-xs text-slate-300 capitalize">
+                    <span className="text-xs text-foreground capitalize">
                       {ref.tactic.replace(/-/g, " ")}
                     </span>
                     <Badge className="text-[10px]">
@@ -318,18 +318,18 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
                       const { selectTechnique } = useMitreStore.getState();
                       selectTechnique(sub);
                     }}
-                    className="flex items-center gap-2 w-full text-left px-3 py-2 bg-slate-900 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors"
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 bg-card rounded-lg border border-border hover:border-border transition-colors"
                     aria-label={`View sub-technique ${sub.name} (${sub.id})`}
                     data-testid={`technique-detail-subtechnique-${sub.id}`}
                   >
                     <span className="font-mono text-[10px] text-purple-400">
                       {sub.id}
                     </span>
-                    <span className="text-xs text-slate-300 truncate">
+                    <span className="text-xs text-foreground truncate">
                       {sub.name}
                     </span>
                     <ExternalLink
-                      className="w-3 h-3 text-slate-600 ml-auto shrink-0"
+                      className="w-3 h-3 text-muted-foreground/60 ml-auto shrink-0"
                       aria-hidden="true"
                     />
                   </button>
