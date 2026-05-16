@@ -15,8 +15,8 @@ import {
   Link2,
 } from "lucide-react";
 import { useIOCStore } from "@/stores/iocStore";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ds/button";
+import { Badge } from "@/components/ds/badge";
 import type { EnrichmentStatus, MitreTag } from "@/types/ioc";
 
 interface IOCDetailPanelProps {
@@ -28,11 +28,11 @@ function EnrichmentStatusIcon({ status }: { status: EnrichmentStatus }) {
     case "enriched":
       return <CheckCircle2 className="w-4 h-4 text-green-400" />;
     case "enriching":
-      return <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />;
+      return <Loader2 className="w-4 h-4 text-primary animate-spin" />;
     case "failed":
-      return <XCircle className="w-4 h-4 text-red-400" />;
+      return <XCircle className="w-4 h-4 text-destructive" />;
     default:
-      return <Circle className="w-4 h-4 text-slate-500" />;
+      return <Circle className="w-4 h-4 text-muted-foreground" />;
   }
 }
 
@@ -45,9 +45,9 @@ function StatusLabel({ status }: { status: EnrichmentStatus }) {
   };
   const colors: Record<EnrichmentStatus, string> = {
     enriched: "text-green-400",
-    enriching: "text-blue-400",
-    failed: "text-red-400",
-    pending: "text-slate-500",
+    enriching: "text-primary",
+    failed: "text-destructive",
+    pending: "text-muted-foreground",
   };
   return (
     <span className={`text-xs font-medium ${colors[status]}`}>
@@ -59,13 +59,13 @@ function StatusLabel({ status }: { status: EnrichmentStatus }) {
 function ConfidenceBar({ confidence }: { confidence: number }) {
   const color =
     confidence < 0.3
-      ? "bg-red-500"
+      ? "bg-destructive"
       : confidence < 0.7
         ? "bg-amber-500"
         : "bg-green-500";
   const bgColor =
     confidence < 0.3
-      ? "bg-red-500/20"
+      ? "bg-destructive/20"
       : confidence < 0.7
         ? "bg-amber-500/20"
         : "bg-green-500/20";
@@ -78,7 +78,7 @@ function ConfidenceBar({ confidence }: { confidence: number }) {
           style={{ width: `${Math.round(confidence * 100)}%` }}
         />
       </div>
-      <span className="text-xs text-slate-400 tabular-nums">
+      <span className="text-xs text-muted-foreground tabular-nums">
         {Math.round(confidence * 100)}%
       </span>
     </div>
@@ -87,7 +87,7 @@ function ConfidenceBar({ confidence }: { confidence: number }) {
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+    <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
       {children}
     </h3>
   );
@@ -135,13 +135,13 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
 
       {/* Slide-over panel */}
       <div
-        className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-slate-950 border-l border-slate-700/50 z-50 overflow-y-auto shadow-2xl shadow-black/40 animate-slide-in-right"
+        className="fixed right-0 top-0 bottom-0 w-full max-w-lg bg-background border-l border-border/50 z-50 overflow-y-auto shadow-2xl shadow-black/40 animate-slide-in-right"
         role="dialog"
         aria-labelledby="ioc-detail-title"
         data-testid="ioc-detail"
       >
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-slate-950/95 backdrop-blur-sm border-b border-slate-700/50 p-4">
+        <div className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border/50 p-4">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
@@ -153,7 +153,7 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
               </div>
               <p
                 id="ioc-detail-title"
-                className="font-mono text-sm text-slate-200 break-all"
+                className="font-mono text-sm text-foreground break-all"
                 data-testid="ioc-detail-value"
               >
                 {selectedIOC.value}
@@ -161,7 +161,7 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
             </div>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-slate-200 p-1 rounded-md hover:bg-slate-800 transition-colors shrink-0 ml-3"
+              className="text-muted-foreground hover:text-foreground p-1 rounded-md hover:bg-accent transition-colors shrink-0 ml-3"
               aria-label="Close IOC detail panel"
               data-testid="ioc-detail-close-button"
             >
@@ -173,11 +173,17 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
             <Button
               size="sm"
               onClick={handleEnrich}
-              isLoading={isEnriching}
-              disabled={(selectedIOC.enrichment_status ?? "pending") === "enriching"}
+              disabled={
+                isEnriching ||
+                (selectedIOC.enrichment_status ?? "pending") === "enriching"
+              }
               data-testid="ioc-detail-enrich-button"
             >
-              <Zap className="w-3.5 h-3.5" aria-hidden="true" />
+              {isEnriching ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <Zap className="w-3.5 h-3.5 mr-1" aria-hidden="true" />
+              )}
               Enrich Now
             </Button>
           </div>
@@ -188,35 +194,35 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
           <div>
             <SectionHeader>Summary</SectionHeader>
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-slate-900 rounded-lg p-3 border border-slate-800">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+              <div className="bg-card rounded-lg p-3 border border-border">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
                   Source
                 </span>
-                <p className="text-sm text-slate-200 mt-0.5">
+                <p className="text-sm text-foreground mt-0.5">
                   {selectedIOC.source}
                 </p>
               </div>
-              <div className="bg-slate-900 rounded-lg p-3 border border-slate-800">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+              <div className="bg-card rounded-lg p-3 border border-border">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
                   TLP
                 </span>
-                <p className="text-sm text-slate-200 mt-0.5">
+                <p className="text-sm text-foreground mt-0.5">
                   {selectedIOC.tlp ?? selectedIOC.tlp_level ?? "N/A"}
                 </p>
               </div>
-              <div className="bg-slate-900 rounded-lg p-3 border border-slate-800">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+              <div className="bg-card rounded-lg p-3 border border-border">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
                   Confidence
                 </span>
                 <div className="mt-1">
                   <ConfidenceBar confidence={selectedIOC.confidence} />
                 </div>
               </div>
-              <div className="bg-slate-900 rounded-lg p-3 border border-slate-800">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wide">
+              <div className="bg-card rounded-lg p-3 border border-border">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
                   First Seen
                 </span>
-                <p className="text-sm text-slate-200 mt-0.5">
+                <p className="text-sm text-foreground mt-0.5">
                   {new Date(selectedIOC.first_seen).toLocaleDateString(
                     undefined,
                     { month: "short", day: "numeric", year: "numeric" },
@@ -245,21 +251,21 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
               <div className="space-y-3">
                 {/* VirusTotal */}
                 {enrichment_data.virus_total && (
-                  <div className="bg-slate-900 rounded-lg p-4 border border-slate-800" data-testid="ioc-detail-virustotal">
+                  <div className="bg-card rounded-lg p-4 border border-border" data-testid="ioc-detail-virustotal">
                     <div className="flex items-center gap-2 mb-3">
-                      <Shield className="w-4 h-4 text-blue-400" aria-hidden="true" />
-                      <span className="text-sm font-medium text-slate-200">
+                      <Shield className="w-4 h-4 text-primary" aria-hidden="true" />
+                      <span className="text-sm font-medium text-foreground">
                         VirusTotal
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div>
-                        <span className="text-slate-500">Detections</span>
-                        <p className="text-slate-200 font-medium">
+                        <span className="text-muted-foreground">Detections</span>
+                        <p className="text-foreground font-medium">
                           <span
                             className={
                               enrichment_data.virus_total.positives > 5
-                                ? "text-red-400"
+                                ? "text-destructive"
                                 : enrichment_data.virus_total.positives > 0
                                   ? "text-amber-400"
                                   : "text-green-400"
@@ -271,14 +277,14 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                         </p>
                       </div>
                       <div>
-                        <span className="text-slate-500">Reputation</span>
-                        <p className="text-slate-200 font-medium">
+                        <span className="text-muted-foreground">Reputation</span>
+                        <p className="text-foreground font-medium">
                           {enrichment_data.virus_total.reputation}
                         </p>
                       </div>
                       <div className="col-span-2">
-                        <span className="text-slate-500">Last Analysis</span>
-                        <p className="text-slate-200">
+                        <span className="text-muted-foreground">Last Analysis</span>
+                        <p className="text-foreground">
                           {new Date(
                             enrichment_data.virus_total.last_analysis_date,
                           ).toLocaleString()}
@@ -290,21 +296,21 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
 
                 {/* Shodan */}
                 {enrichment_data.shodan && (
-                  <div className="bg-slate-900 rounded-lg p-4 border border-slate-800" data-testid="ioc-detail-shodan">
+                  <div className="bg-card rounded-lg p-4 border border-border" data-testid="ioc-detail-shodan">
                     <div className="flex items-center gap-2 mb-3">
                       <Server className="w-4 h-4 text-orange-400" aria-hidden="true" />
-                      <span className="text-sm font-medium text-slate-200">
+                      <span className="text-sm font-medium text-foreground">
                         Shodan
                       </span>
                     </div>
                     <div className="space-y-2 text-xs">
                       <div>
-                        <span className="text-slate-500">Open Ports</span>
+                        <span className="text-muted-foreground">Open Ports</span>
                         <div className="flex flex-wrap gap-1 mt-1">
                           {(enrichment_data.shodan.ports ?? []).map((port) => (
                             <span
                               key={port}
-                              className="px-1.5 py-0.5 bg-slate-800 rounded text-slate-300 font-mono"
+                              className="px-1.5 py-0.5 bg-accent rounded text-foreground font-mono"
                             >
                               {port}
                             </span>
@@ -313,14 +319,14 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                       </div>
                       {(enrichment_data.shodan.vulns ?? []).length > 0 && (
                         <div>
-                          <span className="text-slate-500">
+                          <span className="text-muted-foreground">
                             Vulnerabilities
                           </span>
                           <div className="flex flex-wrap gap-1 mt-1">
                             {(enrichment_data.shodan.vulns ?? []).map((vuln) => (
                               <span
                                 key={vuln}
-                                className="px-1.5 py-0.5 bg-red-500/15 rounded text-red-400 font-mono text-[10px]"
+                                className="px-1.5 py-0.5 bg-destructive/15 rounded text-destructive font-mono text-[10px]"
                               >
                                 {vuln}
                               </span>
@@ -330,14 +336,14 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                       )}
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <span className="text-slate-500">ISP</span>
-                          <p className="text-slate-200">
+                          <span className="text-muted-foreground">ISP</span>
+                          <p className="text-foreground">
                             {enrichment_data.shodan.isp ?? "N/A"}
                           </p>
                         </div>
                         <div>
-                          <span className="text-slate-500">Location</span>
-                          <p className="text-slate-200">
+                          <span className="text-muted-foreground">Location</span>
+                          <p className="text-foreground">
                             {enrichment_data.shodan.city ?? "Unknown"},{" "}
                             {enrichment_data.shodan.country ?? "Unknown"}
                           </p>
@@ -349,39 +355,39 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
 
                 {/* GreyNoise */}
                 {enrichment_data.grey_noise && (
-                  <div className="bg-slate-900 rounded-lg p-4 border border-slate-800" data-testid="ioc-detail-greynoise">
+                  <div className="bg-card rounded-lg p-4 border border-border" data-testid="ioc-detail-greynoise">
                     <div className="flex items-center gap-2 mb-3">
                       <Globe className="w-4 h-4 text-teal-400" aria-hidden="true" />
-                      <span className="text-sm font-medium text-slate-200">
+                      <span className="text-sm font-medium text-foreground">
                         GreyNoise
                       </span>
                     </div>
                     <div className="grid grid-cols-3 gap-3 text-xs">
                       <div>
-                        <span className="text-slate-500">Classification</span>
+                        <span className="text-muted-foreground">Classification</span>
                         <p
                           className={`font-medium ${
                             enrichment_data.grey_noise.classification ===
                             "malicious"
-                              ? "text-red-400"
+                              ? "text-destructive"
                               : enrichment_data.grey_noise.classification ===
                                   "benign"
                                 ? "text-green-400"
-                                : "text-slate-300"
+                                : "text-foreground"
                           }`}
                         >
                           {enrichment_data.grey_noise.classification}
                         </p>
                       </div>
                       <div>
-                        <span className="text-slate-500">Noise</span>
-                        <p className="text-slate-200">
+                        <span className="text-muted-foreground">Noise</span>
+                        <p className="text-foreground">
                           {enrichment_data.grey_noise.noise ? "Yes" : "No"}
                         </p>
                       </div>
                       <div>
-                        <span className="text-slate-500">RIOT</span>
-                        <p className="text-slate-200">
+                        <span className="text-muted-foreground">RIOT</span>
+                        <p className="text-foreground">
                           {enrichment_data.grey_noise.riot ? "Yes" : "No"}
                         </p>
                       </div>
@@ -391,21 +397,21 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
 
                 {/* AbuseIPDB */}
                 {enrichment_data.abuse_ipdb && (
-                  <div className="bg-slate-900 rounded-lg p-4 border border-slate-800" data-testid="ioc-detail-abuseipdb">
+                  <div className="bg-card rounded-lg p-4 border border-border" data-testid="ioc-detail-abuseipdb">
                     <div className="flex items-center gap-2 mb-3">
-                      <AlertTriangle className="w-4 h-4 text-red-400" aria-hidden="true" />
-                      <span className="text-sm font-medium text-slate-200">
+                      <AlertTriangle className="w-4 h-4 text-destructive" aria-hidden="true" />
+                      <span className="text-sm font-medium text-foreground">
                         AbuseIPDB
                       </span>
                     </div>
                     <div className="grid grid-cols-2 gap-3 text-xs">
                       <div>
-                        <span className="text-slate-500">Abuse Score</span>
+                        <span className="text-muted-foreground">Abuse Score</span>
                         <p
                           className={`text-lg font-bold ${
                             enrichment_data.abuse_ipdb
                               .abuse_confidence_score > 75
-                              ? "text-red-400"
+                              ? "text-destructive"
                               : enrichment_data.abuse_ipdb
                                     .abuse_confidence_score > 30
                                 ? "text-amber-400"
@@ -416,20 +422,20 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                         </p>
                       </div>
                       <div>
-                        <span className="text-slate-500">Total Reports</span>
-                        <p className="text-lg font-bold text-slate-200">
+                        <span className="text-muted-foreground">Total Reports</span>
+                        <p className="text-lg font-bold text-foreground">
                           {enrichment_data.abuse_ipdb.total_reports}
                         </p>
                       </div>
                       <div>
-                        <span className="text-slate-500">ISP</span>
-                        <p className="text-slate-200">
+                        <span className="text-muted-foreground">ISP</span>
+                        <p className="text-foreground">
                           {enrichment_data.abuse_ipdb.isp}
                         </p>
                       </div>
                       <div>
-                        <span className="text-slate-500">Usage</span>
-                        <p className="text-slate-200">
+                        <span className="text-muted-foreground">Usage</span>
+                        <p className="text-foreground">
                           {enrichment_data.abuse_ipdb.usage_type}
                         </p>
                       </div>
@@ -439,10 +445,10 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
 
                 {/* MISP */}
                 {enrichment_data.misp && (
-                  <div className="bg-slate-900 rounded-lg p-4 border border-slate-800" data-testid="ioc-detail-misp">
+                  <div className="bg-card rounded-lg p-4 border border-border" data-testid="ioc-detail-misp">
                     <div className="flex items-center gap-2 mb-3">
                       <Shield className="w-4 h-4 text-indigo-400" aria-hidden="true" />
-                      <span className="text-sm font-medium text-slate-200">
+                      <span className="text-sm font-medium text-foreground">
                         MISP
                       </span>
                       <Badge className="text-[10px]">
@@ -454,12 +460,12 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                         {(enrichment_data.misp.events ?? []).slice(0, 5).map((evt) => (
                           <div
                             key={evt.id}
-                            className="flex items-start gap-2 py-1.5 border-b border-slate-800 last:border-0 text-xs"
+                            className="flex items-start gap-2 py-1.5 border-b border-border last:border-0 text-xs"
                           >
-                            <span className="text-slate-500 shrink-0">
+                            <span className="text-muted-foreground shrink-0">
                               {evt.date}
                             </span>
-                            <span className="text-slate-300">{evt.info}</span>
+                            <span className="text-foreground">{evt.info}</span>
                           </div>
                         ))}
                       </div>
@@ -490,20 +496,20 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                   {(enrichment_data?.raw_results ?? []).map((result, idx) => (
                     <div
                       key={idx}
-                      className="flex items-center gap-3 text-xs py-2 border-b border-slate-800/50 last:border-0"
+                      className="flex items-center gap-3 text-xs py-2 border-b border-border/50 last:border-0"
                     >
                       <EnrichmentStatusIcon status={result.status} />
                       <div className="flex-1">
-                        <span className="text-slate-200 font-medium">
+                        <span className="text-foreground font-medium">
                           {result.source}
                         </span>
                         {result.error && (
-                          <p className="text-red-400 text-[10px] mt-0.5">
+                          <p className="text-destructive text-[10px] mt-0.5">
                             {result.error}
                           </p>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 text-slate-500">
+                      <div className="flex items-center gap-1 text-muted-foreground">
                         <Clock className="w-3 h-3" aria-hidden="true" />
                         {new Date(result.timestamp).toLocaleTimeString()}
                       </div>
@@ -527,15 +533,15 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
                       const { selectIOC } = useIOCStore.getState();
                       selectIOC(relatedId);
                     }}
-                    className="flex items-center gap-2 w-full text-left px-3 py-2 bg-slate-900 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors"
+                    className="flex items-center gap-2 w-full text-left px-3 py-2 bg-card rounded-lg border border-border hover:border-border transition-colors"
                     aria-label={`Open related IOC ${relatedId}`}
                     data-testid={`ioc-detail-related-item-${relatedId}`}
                   >
-                    <Link2 className="w-3.5 h-3.5 text-slate-500 shrink-0" aria-hidden="true" />
-                    <span className="font-mono text-xs text-slate-300 truncate">
+                    <Link2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" aria-hidden="true" />
+                    <span className="font-mono text-xs text-foreground truncate">
                       {relatedId}
                     </span>
-                    <ExternalLink className="w-3 h-3 text-slate-600 shrink-0 ml-auto" aria-hidden="true" />
+                    <ExternalLink className="w-3 h-3 text-muted-foreground/60 shrink-0 ml-auto" aria-hidden="true" />
                   </button>
                 ))}
               </div>
@@ -548,15 +554,15 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
               <SectionHeader>Investigation</SectionHeader>
               <a
                 href={`/investigations/${selectedIOC.investigation_id}`}
-                className="flex items-center gap-2 px-3 py-2.5 bg-slate-900 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors"
+                className="flex items-center gap-2 px-3 py-2.5 bg-card rounded-lg border border-border hover:border-border transition-colors"
                 aria-label={`Open investigation ${selectedIOC.investigation_title ?? selectedIOC.investigation_id}`}
                 data-testid="ioc-detail-investigation-link"
               >
-                <span className="text-xs text-slate-300">
+                <span className="text-xs text-foreground">
                   {selectedIOC.investigation_title ??
                     selectedIOC.investigation_id}
                 </span>
-                <ExternalLink className="w-3 h-3 text-slate-500 ml-auto" aria-hidden="true" />
+                <ExternalLink className="w-3 h-3 text-muted-foreground ml-auto" aria-hidden="true" />
               </a>
             </div>
           )}
