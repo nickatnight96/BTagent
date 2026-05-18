@@ -62,6 +62,22 @@ from btagent_shared.types.workflow import (
     WorkflowVersionResponse,
     WorkflowVersionState,
 )
+from btagent_shared.types.hunt import (
+    Backend,
+    CorrelationRule,
+    ExecSummary,
+    Finding,
+    HuntInput,
+    HuntPlan,
+    HuntPlanState,
+    HuntScope,
+    Hypothesis,
+    NoiseProfile,
+    PostHuntAction,
+    Query,
+    TTPRunbookEntry,
+    TTPState,
+)
 
 __all__ = [
     "AgentConfig",
@@ -117,4 +133,19 @@ __all__ = [
     "WorkflowVersionListResponse",
     "WorkflowVersionResponse",
     "WorkflowVersionState",
+    # Hunt types (Phase A of #99)
+    "Backend",
+    "CorrelationRule",
+    "ExecSummary",
+    "Finding",
+    "HuntInput",
+    "HuntPlan",
+    "HuntPlanState",
+    "HuntScope",
+    "Hypothesis",
+    "NoiseProfile",
+    "PostHuntAction",
+    "Query",
+    "TTPRunbookEntry",
+    "TTPState",
 ]

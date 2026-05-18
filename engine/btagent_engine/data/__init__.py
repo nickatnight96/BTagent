@@ -22,6 +22,11 @@ from btagent_engine.data.mitre_mapper import (
     MitreMapperNode,
     MitreMapperOutput,
 )
+from btagent_engine.data.runbook_compiler import (
+    RunbookCompilerInput,
+    RunbookCompilerNode,
+    RunbookCompilerOutput,
+)
 from btagent_engine.data.transform import (
     TransformInput,
     TransformNode,
@@ -33,6 +38,9 @@ __all__ = [
     "MitreMapperInput",
     "MitreMapperNode",
     "MitreMapperOutput",
+    "RunbookCompilerInput",
+    "RunbookCompilerNode",
+    "RunbookCompilerOutput",
     "TransformInput",
     "TransformNode",
     "TransformOutput",
