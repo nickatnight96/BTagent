@@ -78,6 +78,17 @@ from btagent_shared.types.hunt import (
     TTPRunbookEntry,
     TTPState,
 )
+from btagent_shared.types.connector import (
+    ActionCapability,
+    BlastRadius,
+    ConnectorManifest,
+    CostClass,
+    CredentialType,
+    OCSFEventClass,
+    QueryCapability,
+    StreamCapability,
+    TransportKind,
+)
 
 __all__ = [
     "AgentConfig",
@@ -148,4 +159,14 @@ __all__ = [
     "Query",
     "TTPRunbookEntry",
     "TTPState",
+    # Connector manifest types (#100)
+    "ActionCapability",
+    "BlastRadius",
+    "ConnectorManifest",
+    "CostClass",
+    "CredentialType",
+    "OCSFEventClass",
+    "QueryCapability",
+    "StreamCapability",
+    "TransportKind",
 ]

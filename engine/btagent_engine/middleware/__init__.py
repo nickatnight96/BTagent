@@ -30,6 +30,20 @@ docstring for details:
 
 from btagent_engine.middleware.base import Middleware, Runner
 from btagent_engine.middleware.classification import ClassificationMiddleware
+from btagent_engine.middleware.connector_policy import (
+    CAPABILITY_ID_KEY,
+    COST_CLASS_KEY,
+    MANIFEST_NAME_KEY,
+    ConnectorPolicyMiddleware,
+    ConnectorPolicyViolation,
+    PendingHITLApproval,
+)
+from btagent_engine.middleware.ocsf_normalize import (
+    OCSF_SUMMARY_KEY,
+    OCSFContractViolation,
+    OCSFEmitSummary,
+    OCSFNormalizerMiddleware,
+)
 from btagent_engine.middleware.event_emitter import (
     EmitCallable,
     EventEmitterMiddleware,
@@ -57,10 +71,16 @@ from btagent_engine.middleware.scope import (
 )
 
 __all__ = [
+    "CAPABILITY_ID_KEY",
+    "COST_CLASS_KEY",
     "GENESIS_HASH",
+    "MANIFEST_NAME_KEY",
+    "OCSF_SUMMARY_KEY",
     "USAGE_METADATA_KEY",
     "BudgetUsage",
     "ClassificationMiddleware",
+    "ConnectorPolicyMiddleware",
+    "ConnectorPolicyViolation",
     "EmitCallable",
     "EventEmitterMiddleware",
     "EvidenceChainMiddleware",
@@ -69,6 +89,10 @@ __all__ = [
     "HITLPause",
     "InvestigationScope",
     "Middleware",
+    "OCSFContractViolation",
+    "OCSFEmitSummary",
+    "OCSFNormalizerMiddleware",
+    "PendingHITLApproval",
     "PromptBudgetExceeded",
     "PromptBudgetMiddleware",
     "Runner",
