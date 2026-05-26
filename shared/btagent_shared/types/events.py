@@ -67,6 +67,14 @@ class EventType(StrEnum):
     PLAYBOOK_FAILED = "playbook_failed"
     PLAYBOOK_HITL_GATE = "playbook_hitl_gate"
 
+    # Proactive threat hunting (Phase 6)
+    HUNT_STARTED = "hunt_started"
+    HUNT_RULE_FIRED = "hunt_rule_fired"
+    HUNT_FINDING_CREATED = "hunt_finding_created"
+    HUNT_FINDING_TRIAGED = "hunt_finding_triaged"
+    HUNT_FINDING_SUPPRESSED = "hunt_finding_suppressed"
+    HUNT_FINDING_PROMOTED = "hunt_finding_promoted"
+
     # Cost & metrics
     METRICS_UPDATE = "metrics_update"
     COST_UPDATE = "cost_update"
