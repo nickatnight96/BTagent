@@ -11,6 +11,11 @@ Coming with Phase B of #99:
     description into SPL/KQL/EQL/Sigma queries).
 """
 
+from btagent_engine.reasoning.hunt_package import (
+    HuntPackageInput,
+    HuntPackageNode,
+    HuntPackageOutput,
+)
 from btagent_engine.reasoning.hypothesis_gen import (
     HypothesisGenInput,
     HypothesisGenNode,
@@ -50,6 +55,9 @@ from btagent_engine.reasoning.query_translate import (
 )
 
 __all__ = [
+    "HuntPackageInput",
+    "HuntPackageNode",
+    "HuntPackageOutput",
     "HypothesisGenInput",
     "HypothesisGenNode",
     "HypothesisGenOutput",

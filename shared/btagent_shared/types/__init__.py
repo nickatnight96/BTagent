@@ -109,6 +109,7 @@ from btagent_shared.types.detection import (
     SigmaDraft,
 )
 from btagent_shared.types.retrohunt import RetroHuntReport, Sighting
+from btagent_shared.types.hunt_package import HuntPackage
 
 __all__ = [
     "AgentConfig",
@@ -208,4 +209,6 @@ __all__ = [
     # Retro-hunt types (UC-4.3)
     "RetroHuntReport",
     "Sighting",
+    # Hunt package (UC-2.2)
+    "HuntPackage",
 ]

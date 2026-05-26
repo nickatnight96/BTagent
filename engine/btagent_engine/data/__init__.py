@@ -28,6 +28,12 @@ from btagent_engine.data.coverage_gap import (
     CoverageGapOutput,
     TechniqueRef,
 )
+from btagent_engine.data.ioc_extractor import (
+    ExtractedIOC,
+    IOCExtractorInput,
+    IOCExtractorNode,
+    IOCExtractorOutput,
+)
 from btagent_engine.data.noise_baseline import (
     NoiseBaselineInput,
     NoiseBaselineNode,
@@ -55,6 +61,10 @@ __all__ = [
     "CoverageGapNode",
     "CoverageGapOutput",
     "TechniqueRef",
+    "ExtractedIOC",
+    "IOCExtractorInput",
+    "IOCExtractorNode",
+    "IOCExtractorOutput",
     "MitreMappedTechnique",
     "MitreMapperInput",
     "MitreMapperNode",
