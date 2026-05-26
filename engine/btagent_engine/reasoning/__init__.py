@@ -16,6 +16,12 @@ from btagent_engine.reasoning.hypothesis_gen import (
     HypothesisGenNode,
     HypothesisGenOutput,
 )
+from btagent_engine.reasoning.nl_query import (
+    NLQueryInput,
+    NLQueryNode,
+    NLQueryOutput,
+    ParsedIntent,
+)
 from btagent_engine.reasoning.query_synth import (
     QuerySynthInput,
     QuerySynthNode,
@@ -26,6 +32,10 @@ __all__ = [
     "HypothesisGenInput",
     "HypothesisGenNode",
     "HypothesisGenOutput",
+    "NLQueryInput",
+    "NLQueryNode",
+    "NLQueryOutput",
+    "ParsedIntent",
     "QuerySynthInput",
     "QuerySynthNode",
     "QuerySynthOutput",
