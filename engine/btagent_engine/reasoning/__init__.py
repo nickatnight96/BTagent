@@ -37,6 +37,11 @@ from btagent_engine.reasoning.query_synth import (
     QuerySynthNode,
     QuerySynthOutput,
 )
+from btagent_engine.reasoning.retro_hunt import (
+    RetroHuntInput,
+    RetroHuntNode,
+    RetroHuntOutput,
+)
 from btagent_engine.reasoning.query_translate import (
     QueryTranslateInput,
     QueryTranslateNode,
@@ -61,6 +66,9 @@ __all__ = [
     "QuerySynthInput",
     "QuerySynthNode",
     "QuerySynthOutput",
+    "RetroHuntInput",
+    "RetroHuntNode",
+    "RetroHuntOutput",
     "QueryTranslateInput",
     "QueryTranslateNode",
     "QueryTranslateOutput",

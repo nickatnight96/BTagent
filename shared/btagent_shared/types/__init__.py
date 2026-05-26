@@ -108,6 +108,7 @@ from btagent_shared.types.detection import (
     DetectionCluster,
     SigmaDraft,
 )
+from btagent_shared.types.retrohunt import RetroHuntReport, Sighting
 
 __all__ = [
     "AgentConfig",
@@ -204,4 +205,7 @@ __all__ = [
     "CoverageGapReport",
     "DetectionCluster",
     "SigmaDraft",
+    # Retro-hunt types (UC-4.3)
+    "RetroHuntReport",
+    "Sighting",
 ]
