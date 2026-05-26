@@ -151,6 +151,8 @@ The proactive counterpart to incident response. Where Phases 1--3 react to alert
 
 These are tracked as peer feature issues, not a single epic. The dependency keystone is the shared `HuntFinding` contract ([#119](https://github.com/nickatnight96/BTagent/issues/119)), which every hunt source emits into and which bridges hunting back to the existing investigation pipeline.
 
+> Full engineering design, schemas, and PR sequencing: [Phase 6 Threat Hunting Implementation Design](PHASE6_THREAT_HUNTING_PLAN.md).
+
 ### Hypothesis-driven hunting (PEAK)
 - **Hunt Pack Runner** ([#112](https://github.com/nickatnight96/BTagent/issues/112)) -- scheduled Sigma execution, multi-backend transpile (pysigma -> SPL/KQL/EQL/CrowdStrike), per-environment noise-baseline tuning. Requires the arq scheduler ([#101](https://github.com/nickatnight96/BTagent/issues/101) Pattern 4).
 - **Cross-Investigation Pattern Hunter** ([#120](https://github.com/nickatnight96/BTagent/issues/120)) -- walks the closed-investigation corpus in pgvector, surfaces recurring weak signals, and proposes hunts. The hunting expression of closed-loop org memory ([#98](https://github.com/nickatnight96/BTagent/issues/98) Bet 3).
