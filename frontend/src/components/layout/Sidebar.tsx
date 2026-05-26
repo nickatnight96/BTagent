@@ -10,6 +10,7 @@ import {
   Grid3X3,
   BookOpen,
   Workflow,
+  Crosshair,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,12 @@ const navItems: NavItem[] = [
     path: "/iocs",
     icon: <Database className="w-5 h-5" />,
     testId: "nav-iocs-link",
+  },
+  {
+    label: "Hunt Package",
+    path: "/hunts",
+    icon: <Crosshair className="w-5 h-5" />,
+    testId: "nav-hunts-link",
   },
   {
     label: "ATT&CK Matrix",

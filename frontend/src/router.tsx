@@ -8,6 +8,7 @@ import { IOCNotebook } from "@/components/iocs/IOCNotebook";
 import { MitreMatrix } from "@/components/mitre/MitreMatrix";
 import { KnowledgePage } from "@/components/knowledge/KnowledgePage";
 import { PlaybookList } from "@/components/playbooks/PlaybookList";
+import { HuntPackagePage } from "@/components/hunts/HuntPackagePage";
 import { PlaybookBuilder } from "@/components/playbooks/PlaybookBuilder";
 import { PlaybookExecutionView } from "@/components/playbooks/PlaybookExecutionView";
 
@@ -35,6 +36,10 @@ export const router = createBrowserRouter([
       {
         path: "iocs",
         element: <IOCNotebook />,
+      },
+      {
+        path: "hunts",
+        element: <HuntPackagePage />,
       },
       {
         path: "mitre",

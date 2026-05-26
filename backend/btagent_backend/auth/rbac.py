@@ -42,6 +42,9 @@ PERMISSIONS: dict[str, UserRole] = {
     "mitre:view": UserRole.ANALYST,
     "mitre:tag": UserRole.SENIOR_ANALYST,
     "mitre:seed": UserRole.ADMIN,
+    # Threat hunting (#99 / #105 — analyst-initiated read-only analysis)
+    "hunt:view": UserRole.ANALYST,
+    "hunt:run": UserRole.ANALYST,
     # IOCs
     "ioc:view": UserRole.ANALYST,
     "ioc:create": UserRole.ANALYST,
