@@ -22,6 +22,11 @@ from btagent_engine.reasoning.nl_query import (
     NLQueryOutput,
     ParsedIntent,
 )
+from btagent_engine.reasoning.pattern_cluster import (
+    PatternClusterInput,
+    PatternClusterNode,
+    PatternClusterOutput,
+)
 from btagent_engine.reasoning.pivot_suggest import (
     PivotSuggestInput,
     PivotSuggestNode,
@@ -47,6 +52,9 @@ __all__ = [
     "NLQueryNode",
     "NLQueryOutput",
     "ParsedIntent",
+    "PatternClusterInput",
+    "PatternClusterNode",
+    "PatternClusterOutput",
     "PivotSuggestInput",
     "PivotSuggestNode",
     "PivotSuggestOutput",

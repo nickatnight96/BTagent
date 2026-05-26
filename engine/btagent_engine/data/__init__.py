@@ -22,6 +22,12 @@ from btagent_engine.data.mitre_mapper import (
     MitreMapperNode,
     MitreMapperOutput,
 )
+from btagent_engine.data.coverage_gap import (
+    CoverageGapInput,
+    CoverageGapNode,
+    CoverageGapOutput,
+    TechniqueRef,
+)
 from btagent_engine.data.noise_baseline import (
     NoiseBaselineInput,
     NoiseBaselineNode,
@@ -45,6 +51,10 @@ from btagent_engine.data.transform import (
 )
 
 __all__ = [
+    "CoverageGapInput",
+    "CoverageGapNode",
+    "CoverageGapOutput",
+    "TechniqueRef",
     "MitreMappedTechnique",
     "MitreMapperInput",
     "MitreMapperNode",

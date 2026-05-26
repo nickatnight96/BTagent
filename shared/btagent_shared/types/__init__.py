@@ -103,6 +103,11 @@ from btagent_shared.types.query_ir import (
     QueryCondition,
     QueryIR,
 )
+from btagent_shared.types.detection import (
+    CoverageGapReport,
+    DetectionCluster,
+    SigmaDraft,
+)
 
 __all__ = [
     "AgentConfig",
@@ -195,4 +200,8 @@ __all__ = [
     "Operator",
     "QueryCondition",
     "QueryIR",
+    # Detection-engineering types (UC-4.2)
+    "CoverageGapReport",
+    "DetectionCluster",
+    "SigmaDraft",
 ]
