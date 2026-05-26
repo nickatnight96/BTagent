@@ -16,9 +16,17 @@ from btagent_engine.reasoning.hypothesis_gen import (
     HypothesisGenNode,
     HypothesisGenOutput,
 )
+from btagent_engine.reasoning.query_synth import (
+    QuerySynthInput,
+    QuerySynthNode,
+    QuerySynthOutput,
+)
 
 __all__ = [
     "HypothesisGenInput",
     "HypothesisGenNode",
     "HypothesisGenOutput",
+    "QuerySynthInput",
+    "QuerySynthNode",
+    "QuerySynthOutput",
 ]

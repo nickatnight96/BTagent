@@ -22,6 +22,11 @@ from btagent_engine.data.mitre_mapper import (
     MitreMapperNode,
     MitreMapperOutput,
 )
+from btagent_engine.data.noise_baseline import (
+    NoiseBaselineInput,
+    NoiseBaselineNode,
+    NoiseBaselineOutput,
+)
 from btagent_engine.data.runbook_compiler import (
     RunbookCompilerInput,
     RunbookCompilerNode,
@@ -38,6 +43,9 @@ __all__ = [
     "MitreMapperInput",
     "MitreMapperNode",
     "MitreMapperOutput",
+    "NoiseBaselineInput",
+    "NoiseBaselineNode",
+    "NoiseBaselineOutput",
     "RunbookCompilerInput",
     "RunbookCompilerNode",
     "RunbookCompilerOutput",
