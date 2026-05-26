@@ -32,6 +32,12 @@ from btagent_engine.reasoning.query_synth import (
     QuerySynthNode,
     QuerySynthOutput,
 )
+from btagent_engine.reasoning.query_translate import (
+    QueryTranslateInput,
+    QueryTranslateNode,
+    QueryTranslateOutput,
+    TranslateMode,
+)
 
 __all__ = [
     "HypothesisGenInput",
@@ -47,4 +53,8 @@ __all__ = [
     "QuerySynthInput",
     "QuerySynthNode",
     "QuerySynthOutput",
+    "QueryTranslateInput",
+    "QueryTranslateNode",
+    "QueryTranslateOutput",
+    "TranslateMode",
 ]

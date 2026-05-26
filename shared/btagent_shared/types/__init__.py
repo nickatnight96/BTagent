@@ -97,6 +97,12 @@ from btagent_shared.types.correlation import (
     PivotSuggestion,
     RawEventRef,
 )
+from btagent_shared.types.query_ir import (
+    LogicOp,
+    Operator,
+    QueryCondition,
+    QueryIR,
+)
 
 __all__ = [
     "AgentConfig",
@@ -184,4 +190,9 @@ __all__ = [
     "NormalizedEvent",
     "PivotSuggestion",
     "RawEventRef",
+    # Query IR (UC-1.3)
+    "LogicOp",
+    "Operator",
+    "QueryCondition",
+    "QueryIR",
 ]
