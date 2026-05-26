@@ -97,9 +97,7 @@ async def test_suppress_hides_finding_from_inbox(client, analyst_token, admin_to
     assert fid not in shown_ids
 
     # ...but the finding itself reports suppressed state on direct fetch.
-    detail = await client.get(
-        f"/api/v1/hunt/findings/{fid}", headers=auth_header(analyst_token)
-    )
+    detail = await client.get(f"/api/v1/hunt/findings/{fid}", headers=auth_header(analyst_token))
     assert detail.json()["state"] == "suppressed"
     assert detail.json()["suppressed_by"] is not None
 
@@ -154,9 +152,7 @@ async def test_promote_creates_investigation(client, analyst_token, admin_token)
     assert inv_id.startswith("inv_")
     assert promo.json()["promoted_finding_ids"] == [fid]
 
-    detail = await client.get(
-        f"/api/v1/hunt/findings/{fid}", headers=auth_header(analyst_token)
-    )
+    detail = await client.get(f"/api/v1/hunt/findings/{fid}", headers=auth_header(analyst_token))
     assert detail.json()["state"] == "promoted"
     assert detail.json()["investigation_id"] == inv_id
 

@@ -158,10 +158,10 @@ async def _upsert_cluster_for(
 
 async def _cluster_members(db: AsyncSession, *, cluster_id: str) -> list[HuntFinding]:
     rows = (
-        await db.execute(
-            select(HuntFindingRow).where(HuntFindingRow.cluster_id == cluster_id)
-        )
-    ).scalars().all()
+        (await db.execute(select(HuntFindingRow).where(HuntFindingRow.cluster_id == cluster_id)))
+        .scalars()
+        .all()
+    )
     return [row_to_finding(r) for r in rows]
 
 
@@ -280,30 +280,30 @@ async def list_clusters(
     total_clusters = (await db.execute(count_q)).scalar_one() or 0
 
     cluster_rows = (
-        await db.execute(
-            select(HuntFindingClusterRow)
-            .where(HuntFindingClusterRow.org_id == org_id)
-            .order_by(HuntFindingClusterRow.updated_at.desc())
-            .offset(offset)
-            .limit(page_size)
+        (
+            await db.execute(
+                select(HuntFindingClusterRow)
+                .where(HuntFindingClusterRow.org_id == org_id)
+                .order_by(HuntFindingClusterRow.updated_at.desc())
+                .offset(offset)
+                .limit(page_size)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     cluster_ids = [c.id for c in cluster_rows]
     findings: list[HuntFindingRow] = []
     if cluster_ids:
         finding_q = select(HuntFindingRow).where(HuntFindingRow.cluster_id.in_(cluster_ids))
         if not include_suppressed:
-            finding_q = finding_q.where(
-                HuntFindingRow.state != HuntFindingState.SUPPRESSED.value
-            )
+            finding_q = finding_q.where(HuntFindingRow.state != HuntFindingState.SUPPRESSED.value)
         finding_q = finding_q.order_by(HuntFindingRow.created_at.desc())
         findings = list((await db.execute(finding_q)).scalars().all())
 
     total_findings_q = (
-        select(func.count())
-        .select_from(HuntFindingRow)
-        .where(HuntFindingRow.org_id == org_id)
+        select(func.count()).select_from(HuntFindingRow).where(HuntFindingRow.org_id == org_id)
     )
     if not include_suppressed:
         total_findings_q = total_findings_q.where(
@@ -343,13 +343,17 @@ async def create_suppression(
     of findings it suppressed on creation.
     """
     sample_rows = (
-        await db.execute(
-            select(HuntFindingRow)
-            .where(HuntFindingRow.org_id == org_id)
-            .order_by(HuntFindingRow.created_at.desc())
-            .limit(_OVERBROAD_SAMPLE_SIZE)
+        (
+            await db.execute(
+                select(HuntFindingRow)
+                .where(HuntFindingRow.org_id == org_id)
+                .order_by(HuntFindingRow.created_at.desc())
+                .limit(_OVERBROAD_SAMPLE_SIZE)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     sample = [row_to_finding(r) for r in sample_rows]
 
     overbroad, why = triage.is_overbroad(match, sample)
@@ -381,19 +385,23 @@ async def create_suppression(
 
     # Apply to existing non-terminal findings in the org.
     existing = (
-        await db.execute(
-            select(HuntFindingRow).where(
-                HuntFindingRow.org_id == org_id,
-                HuntFindingRow.state.in_(
-                    [
-                        HuntFindingState.NEW.value,
-                        HuntFindingState.CLUSTERED.value,
-                        HuntFindingState.TRIAGED.value,
-                    ]
-                ),
+        (
+            await db.execute(
+                select(HuntFindingRow).where(
+                    HuntFindingRow.org_id == org_id,
+                    HuntFindingRow.state.in_(
+                        [
+                            HuntFindingState.NEW.value,
+                            HuntFindingState.CLUSTERED.value,
+                            HuntFindingState.TRIAGED.value,
+                        ]
+                    ),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     suppressed = 0
     for frow in existing:
@@ -428,12 +436,16 @@ async def sweep_stale_suppressions(
     """
     now = now or _utcnow()
     rows = (
-        await db.execute(
-            select(SuppressionRuleRow).where(
-                SuppressionRuleRow.state == SuppressionState.ACTIVE.value
+        (
+            await db.execute(
+                select(SuppressionRuleRow).where(
+                    SuppressionRuleRow.state == SuppressionState.ACTIVE.value
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     expired = 0
     needs_reconfirm = 0
@@ -472,13 +484,17 @@ async def promote_to_investigation(
     in-scope findings are resolved (route surfaces 404).
     """
     rows = (
-        await db.execute(
-            select(HuntFindingRow).where(
-                HuntFindingRow.id.in_(finding_ids),
-                HuntFindingRow.org_id == org_id,
+        (
+            await db.execute(
+                select(HuntFindingRow).where(
+                    HuntFindingRow.id.in_(finding_ids),
+                    HuntFindingRow.org_id == org_id,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if not rows:
         raise ValueError("No in-scope hunt findings resolved for promotion")
 
@@ -493,10 +509,7 @@ async def promote_to_investigation(
         id=generate_id("inv"),
         org_id=org_id,
         title=inv_title,
-        description=(
-            f"Promoted from {len(rows)} hunt finding(s) "
-            f"via the Phase 6 triage agent."
-        ),
+        description=(f"Promoted from {len(rows)} hunt finding(s) via the Phase 6 triage agent."),
         severity=severity.value,
         tlp_level="amber",
         status="pending",

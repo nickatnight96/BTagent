@@ -94,9 +94,7 @@ def upgrade() -> None:
     )
     op.create_index("idx_suppression_rules_org_id", "suppression_rules", ["org_id"])
     op.create_index("idx_suppression_rules_state", "suppression_rules", ["state"])
-    op.create_index(
-        "idx_suppression_rules_reconfirm_at", "suppression_rules", ["reconfirm_at"]
-    )
+    op.create_index("idx_suppression_rules_reconfirm_at", "suppression_rules", ["reconfirm_at"])
 
     # hunt_findings ----------------------------------------------------------
     op.create_table(
