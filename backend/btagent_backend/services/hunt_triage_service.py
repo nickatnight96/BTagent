@@ -55,6 +55,18 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _as_aware_utc(dt: datetime | None) -> datetime | None:
+    """Treat a naive datetime as UTC.
+
+    Postgres ``timezone=True`` columns round-trip as aware datetimes, but
+    SQLite (tests) hands them back naive. Normalising here keeps the sweep's
+    comparisons tz-safe on both backends.
+    """
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
+
+
 # --------------------------------------------------------------------------- #
 # Row <-> Pydantic
 # --------------------------------------------------------------------------- #
@@ -426,10 +438,12 @@ async def sweep_stale_suppressions(
     expired = 0
     needs_reconfirm = 0
     for rule in rows:
-        if rule.expires_at is not None and rule.expires_at <= now:
+        expires_at = _as_aware_utc(rule.expires_at)
+        reconfirm_at = _as_aware_utc(rule.reconfirm_at)
+        if expires_at is not None and expires_at <= now:
             rule.state = SuppressionState.EXPIRED.value
             expired += 1
-        elif rule.reconfirm_at is not None and rule.reconfirm_at <= now:
+        elif reconfirm_at is not None and reconfirm_at <= now:
             rule.state = SuppressionState.NEEDS_RECONFIRM.value
             needs_reconfirm += 1
 
