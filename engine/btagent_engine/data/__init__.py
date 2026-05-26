@@ -27,6 +27,12 @@ from btagent_engine.data.noise_baseline import (
     NoiseBaselineNode,
     NoiseBaselineOutput,
 )
+from btagent_engine.data.ocsf_mapper import (
+    OCSFMapperInput,
+    OCSFMapperNode,
+    OCSFMapperOutput,
+    UnknownConnectorError,
+)
 from btagent_engine.data.runbook_compiler import (
     RunbookCompilerInput,
     RunbookCompilerNode,
@@ -46,6 +52,10 @@ __all__ = [
     "NoiseBaselineInput",
     "NoiseBaselineNode",
     "NoiseBaselineOutput",
+    "OCSFMapperInput",
+    "OCSFMapperNode",
+    "OCSFMapperOutput",
+    "UnknownConnectorError",
     "RunbookCompilerInput",
     "RunbookCompilerNode",
     "RunbookCompilerOutput",

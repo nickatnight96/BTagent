@@ -89,6 +89,14 @@ from btagent_shared.types.connector import (
     StreamCapability,
     TransportKind,
 )
+from btagent_shared.types.correlation import (
+    AuditEntry,
+    CorrelationTimeline,
+    MitreTag,
+    NormalizedEvent,
+    PivotSuggestion,
+    RawEventRef,
+)
 
 __all__ = [
     "AgentConfig",
@@ -169,4 +177,11 @@ __all__ = [
     "QueryCapability",
     "StreamCapability",
     "TransportKind",
+    # Correlation types (UC-1.2)
+    "AuditEntry",
+    "CorrelationTimeline",
+    "MitreTag",
+    "NormalizedEvent",
+    "PivotSuggestion",
+    "RawEventRef",
 ]

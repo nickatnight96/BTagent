@@ -7,6 +7,7 @@ gate without crossing package boundaries.
 
 from __future__ import annotations
 
+from btagent_shared.security.ocsf_map import OCSF_MAPS, OCSFFieldMap, get_map
 from btagent_shared.security.tlp import (
     EgressKind,
     TLPViolation,
@@ -15,6 +16,9 @@ from btagent_shared.security.tlp import (
 
 __all__ = [
     "EgressKind",
+    "OCSF_MAPS",
+    "OCSFFieldMap",
     "TLPViolation",
     "assert_tlp_allows_egress",
+    "get_map",
 ]

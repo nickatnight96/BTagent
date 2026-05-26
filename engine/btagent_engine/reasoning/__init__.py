@@ -22,6 +22,11 @@ from btagent_engine.reasoning.nl_query import (
     NLQueryOutput,
     ParsedIntent,
 )
+from btagent_engine.reasoning.pivot_suggest import (
+    PivotSuggestInput,
+    PivotSuggestNode,
+    PivotSuggestOutput,
+)
 from btagent_engine.reasoning.query_synth import (
     QuerySynthInput,
     QuerySynthNode,
@@ -36,6 +41,9 @@ __all__ = [
     "NLQueryNode",
     "NLQueryOutput",
     "ParsedIntent",
+    "PivotSuggestInput",
+    "PivotSuggestNode",
+    "PivotSuggestOutput",
     "QuerySynthInput",
     "QuerySynthNode",
     "QuerySynthOutput",
