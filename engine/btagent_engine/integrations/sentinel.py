@@ -24,6 +24,7 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.integrations._manifests import SENTINEL_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:
@@ -123,6 +124,8 @@ class SentinelKQLQueryNode(Node[SentinelKQLQueryInput, SentinelKQLQueryOutput]):
     )
     input_schema = SentinelKQLQueryInput
     output_schema = SentinelKQLQueryOutput
+    manifest = SENTINEL_MANIFEST
+    capability_id = "kql_query"
 
     async def run(
         self,

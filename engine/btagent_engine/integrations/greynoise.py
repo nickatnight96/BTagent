@@ -30,6 +30,7 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.integrations._manifests import GREYNOISE_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:
@@ -130,6 +131,8 @@ class GreyNoiseLookupIPNode(Node[GreyNoiseLookupIPInput, GreyNoiseLookupIPOutput
     )
     input_schema = GreyNoiseLookupIPInput
     output_schema = GreyNoiseLookupIPOutput
+    manifest = GREYNOISE_MANIFEST
+    capability_id = "lookup_ip"
 
     async def run(
         self,

@@ -24,6 +24,7 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.integrations._manifests import ELASTIC_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:
@@ -137,6 +138,8 @@ class ElasticSearchNode(Node[ElasticSearchInput, ElasticSearchOutput]):
     )
     input_schema = ElasticSearchInput
     output_schema = ElasticSearchOutput
+    manifest = ELASTIC_MANIFEST
+    capability_id = "search"
 
     async def run(
         self,

@@ -27,6 +27,7 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.integrations._manifests import ABUSEIPDB_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:
@@ -148,6 +149,8 @@ class AbuseIPDBCheckNode(Node[AbuseIPDBCheckInput, AbuseIPDBCheckOutput]):
     )
     input_schema = AbuseIPDBCheckInput
     output_schema = AbuseIPDBCheckOutput
+    manifest = ABUSEIPDB_MANIFEST
+    capability_id = "check"
 
     async def run(
         self,

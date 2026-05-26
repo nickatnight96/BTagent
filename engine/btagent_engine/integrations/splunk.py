@@ -30,6 +30,7 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.integrations._manifests import SPLUNK_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:
@@ -144,6 +145,8 @@ class SplunkSearchNode(Node[SplunkSearchInput, SplunkSearchOutput]):
     )
     input_schema = SplunkSearchInput
     output_schema = SplunkSearchOutput
+    manifest = SPLUNK_MANIFEST
+    capability_id = "search"
 
     async def run(
         self,

@@ -27,6 +27,7 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.integrations._manifests import SHODAN_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:
@@ -164,6 +165,8 @@ class ShodanHostLookupNode(Node[ShodanHostLookupInput, ShodanHostLookupOutput]):
     )
     input_schema = ShodanHostLookupInput
     output_schema = ShodanHostLookupOutput
+    manifest = SHODAN_MANIFEST
+    capability_id = "host_lookup"
 
     async def run(
         self,

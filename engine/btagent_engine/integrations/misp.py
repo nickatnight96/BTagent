@@ -27,6 +27,7 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.integrations._manifests import MISP_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:
@@ -227,6 +228,8 @@ class MISPSearchAttributeNode(Node[MISPSearchAttributeInput, MISPSearchAttribute
     )
     input_schema = MISPSearchAttributeInput
     output_schema = MISPSearchAttributeOutput
+    manifest = MISP_MANIFEST
+    capability_id = "search_attribute"
 
     async def run(
         self,
@@ -275,6 +278,8 @@ class MISPGetEventNode(Node[MISPGetEventInput, MISPGetEventOutput]):
     )
     input_schema = MISPGetEventInput
     output_schema = MISPGetEventOutput
+    manifest = MISP_MANIFEST
+    capability_id = "get_event"
 
     async def run(
         self,
