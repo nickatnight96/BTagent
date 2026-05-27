@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { Shield, LayoutDashboard, Search, Settings, ChevronLeft, ChevronRight, Database, Grid3X3, BookOpen, Workflow } from "lucide-react";
+import { Shield, LayoutDashboard, Search, Settings, ChevronLeft, ChevronRight, Database, Grid3X3, BookOpen, Workflow, Crosshair } from "lucide-react";
 import { clsx } from "clsx";
 import { useUIStore } from "@/stores/uiStore";
 
@@ -40,6 +40,12 @@ const navItems: NavItem[] = [
     path: "/knowledge",
     icon: <BookOpen className="w-5 h-5" />,
     testId: "nav-knowledge-link",
+  },
+  {
+    label: "Hunt Triage",
+    path: "/hunt",
+    icon: <Crosshair className="w-5 h-5" />,
+    testId: "nav-hunt-link",
   },
   {
     label: "Playbooks",
