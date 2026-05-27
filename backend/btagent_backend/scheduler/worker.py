@@ -17,7 +17,7 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from btagent_backend.config import get_settings
-from btagent_backend.scheduler.jobs import stale_suppression_sweep
+from btagent_backend.scheduler.jobs import run_hunt_pack, stale_suppression_sweep
 
 logger = logging.getLogger("btagent.scheduler.worker")
 
@@ -44,7 +44,10 @@ class WorkerSettings:
     cheap enough to be inconsequential.
     """
 
-    functions = [stale_suppression_sweep]
+    # ``run_hunt_pack`` is enqueue-on-demand (a pack + schedule payload).
+    # Cron-style scheduled discovery from a pack store lands with the pack
+    # persistence layer in a follow-up; for now packs are triggered explicitly.
+    functions = [stale_suppression_sweep, run_hunt_pack]
     cron_jobs = [
         cron(stale_suppression_sweep, minute=0),  # top of every hour
     ]

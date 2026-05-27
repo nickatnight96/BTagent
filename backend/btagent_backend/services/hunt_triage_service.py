@@ -28,6 +28,7 @@ from btagent_shared.types.hunt_finding import (
     HuntEntity,
     HuntFinding,
     HuntObservable,
+    RecordFindingRequest,
     SuppressionMatch,
 )
 from btagent_shared.utils.ids import generate_id
@@ -250,6 +251,39 @@ async def record_finding(
 
     await db.flush()
     return row
+
+
+async def persist_hunt_findings(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    findings: list[RecordFindingRequest],
+) -> list[HuntFindingRow]:
+    """Persist a batch of runner-emitted findings into the #119 store.
+
+    Each is clustered + suppression-checked on insert via
+    :func:`record_finding`. Used by the Hunt Pack Runner's scheduled job to
+    land its hits in the triage queue. Returns the created rows (not committed).
+    """
+    rows: list[HuntFindingRow] = []
+    for req in findings:
+        rows.append(
+            await record_finding(
+                db,
+                org_id=org_id,
+                source=req.source.value,
+                domain=req.domain.value,
+                title=req.title,
+                description=req.description,
+                severity=req.severity,
+                confidence=req.confidence,
+                technique_ids=req.technique_ids,
+                entities=[e.model_dump() for e in req.entities],
+                observables=[o.model_dump() for o in req.observables],
+                evidence=req.evidence,
+            )
+        )
+    return rows
 
 
 async def get_finding(db: AsyncSession, finding_id: str) -> HuntFindingRow | None:
