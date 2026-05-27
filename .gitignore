@@ -77,3 +77,4 @@ infra/helm/btagent/charts/
 tmp/
 .cache/
 .claude/worktrees/
+infra/.env.local
