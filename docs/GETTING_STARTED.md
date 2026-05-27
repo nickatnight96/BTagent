@@ -107,15 +107,15 @@ make wait-healthy
 
 ## 4. Install Python Dependencies
 
-BTagent uses a monorepo structure with three Python packages. Install each with `uv`:
+BTagent uses a monorepo workspace with four Python packages — `shared`, `engine`, `agents`, and `backend`. The order matters: `agents` depends on `engine`, both depend on `shared`. Install them in one shot inside a `uv`-managed virtualenv:
 
 ```bash
-cd shared && uv sync && cd ..
-cd backend && uv sync && cd ..
-cd agents && uv sync && cd ..
+uv venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install -e shared/ -e engine/ -e agents/ -e "backend/[dev]"
 ```
 
-> **Note:** The `shared` package is a local dependency of both `backend` and `agents`. It must be installed first.
+> **Note:** `uv pip install -e` (editable install) is what wires the workspace path-deps so changes in `shared/` land in `engine/` and `agents/` without re-installing. `uv sync` per-package does not handle the cross-package path references correctly for this layout.
 
 ## 5. Run Database Migrations
 
@@ -135,28 +135,43 @@ This creates all tables including:
 Populate the database with test users and sample data:
 
 ```bash
-make db-seed
+BTAGENT_ENV=test python infra/scripts/seed-data.py
 ```
 
 The seed script creates:
-- An admin user (credentials are printed to stdout -- save them)
+- An admin user
 - An analyst user and a senior analyst user
-- A sample organisation profile
+- A sample investigation
 - MITRE ATT&CK tactic and technique data
 
-> **Warning:** The seed script generates random passwords. Copy them from the terminal output immediately. They are not stored anywhere else.
+In **test mode** (`BTAGENT_ENV=test`) the script prints **deterministic** credentials so the local dev loop is reproducible:
+
+```
+Seed data created (test mode — deterministic credentials):
+  Admin user:    admin / admin
+  Analyst user:  analyst1 / analyst1
+  Senior user:   senior1 / senior1
+```
+
+In any other environment (`BTAGENT_ENV=dev`, `staging`, `prod`) the script generates random passwords and prints them to stdout — **copy them from the terminal immediately, they are not stored anywhere else.**
 
 ## 7. Start the Backend
 
 In a new terminal:
 
 ```bash
-cd backend && uvicorn btagent_backend.main:app --reload --port 8000
+source .venv/bin/activate
+BTAGENT_ENV=test \
+  BTAGENT_JWT_SECRET="dev-secret-for-local-only" \
+  BTAGENT_DATABASE_URL="postgresql+asyncpg://btagent:btagent_password@localhost:5432/btagent" \
+  BTAGENT_REDIS_URL="redis://localhost:6379" \
+  uvicorn btagent_backend.main:app --reload --port 8000 --app-dir backend
 ```
 
 Flags:
 - `--reload`: Auto-restart on file changes (development only)
 - `--port 8000`: Listen on port 8000
+- `--app-dir backend`: Tell uvicorn where the `btagent_backend` package lives so you don't have to `cd` into `backend/` first
 
 Verify the backend is running:
 
@@ -169,7 +184,7 @@ Expected response:
 ```json
 {
   "status": "ok",
-  "env": "dev",
+  "env": "test",
   "version": "0.1.0",
   "database": "connected",
   "redis": "connected"
@@ -181,16 +196,20 @@ Expected response:
 In another terminal:
 
 ```bash
-cd frontend && npm install && npm run dev
+cd frontend && npm run dev
 ```
 
-The Vite dev server starts at `http://localhost:5173` with hot module replacement.
+(Skip `npm install` if you already ran it in step 4 / the one-command setup script.)
+
+The Vite dev server starts at `http://localhost:3000` with hot module replacement. The port is set explicitly in `frontend/vite.config.ts:13` and the dev server proxies `/api/*` and `/ws/*` to the backend on `:8000` automatically.
+
+> Production builds served via `vite preview` (and the Docker / Helm ingress) listen on `:5173`; that's the URL the E2E suite expects. For day-to-day dev hot-reload, use `:3000`.
 
 ## 9. Verify the Setup
 
 1. **Health check:** `curl http://localhost:8000/health` returns `"status": "ok"`
 2. **API docs:** Open `http://localhost:8000/api/docs` for the Swagger UI
-3. **Login:** Open `http://localhost:5173`, log in with the admin credentials from the seed script
+3. **Login:** Open `http://localhost:3000`, log in with `admin` / `admin` (test mode default) or with the credentials the seed script printed (other envs)
 4. **Dashboard:** The PunchList dashboard loads with an empty investigation list
 
 ## First Investigation Walkthrough
