@@ -193,11 +193,15 @@ class HuntPackRunner:
         entities = [HuntEntity(**e) for e in hit.get("entities", [])]
         observables = [HuntObservable(**o) for o in hit.get("observables", [])]
         summary = hit.get("summary") or rule.title
+        title = f"{rule.title}: {summary}" if summary != rule.title else rule.title
+        # Bound title/description to RecordFindingRequest's limits — a hit's
+        # summary is external SIEM data and can be arbitrarily long; an
+        # oversized field would otherwise raise and abort the whole run.
         return RecordFindingRequest(
             source=HuntSource.HUNT_PACK,
             domain=HuntDomain.SIGMA,
-            title=f"{rule.title}: {summary}" if summary != rule.title else rule.title,
-            description=hit.get("description", ""),
+            title=title[:300],
+            description=hit.get("description", "")[:8192],
             severity=rule.severity,
             technique_ids=list(rule.mitre_techniques),
             entities=entities,

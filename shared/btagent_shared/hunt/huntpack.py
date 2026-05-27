@@ -8,6 +8,7 @@ loaded :mod:`btagent_shared.types.huntpack` models.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from btagent_shared.types.huntpack import (
@@ -35,10 +36,10 @@ def load_pack(data: dict[str, Any]) -> HuntPackManifest:
     surface that as a load error. Rule ids must be unique within a pack.
     """
     pack = HuntPackManifest.model_validate(data)
-    ids = [r.id for r in pack.rules]
-    dupes = {i for i in ids if ids.count(i) > 1}
+    counts = Counter(r.id for r in pack.rules)
+    dupes = sorted(rid for rid, n in counts.items() if n > 1)
     if dupes:
-        raise ValueError(f"Duplicate rule ids in pack {pack.id!r}: {sorted(dupes)}")
+        raise ValueError(f"Duplicate rule ids in pack {pack.id!r}: {dupes}")
     return pack
 
 

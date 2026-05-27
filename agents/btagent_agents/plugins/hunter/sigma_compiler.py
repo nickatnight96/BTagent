@@ -33,23 +33,28 @@ class SigmaCompileError(Exception):
 
 
 def _load_backends() -> dict[SiemBackend, type[PySigmaBackend]]:
-    """Import the upstream pySigma backend classes.
+    """Import the available upstream pySigma backend classes.
 
-    Imported lazily (inside the function) so that merely importing this module
-    doesn't pull the whole pySigma stack — keeps import cost off the hot path
-    and lets callers handle a missing optional backend gracefully.
+    Each backend is imported independently so that a missing or incompatible
+    upstream ``pySigma-backend-*`` package (e.g. if CrowdStrike support lags a
+    pySigma core release) degrades to "that one backend is unavailable" rather
+    than taking down the whole compiler. Imported lazily (inside the function)
+    to keep the pySigma stack off the module import path.
     """
-    from sigma.backends.crowdstrike import LogScaleBackend
-    from sigma.backends.elasticsearch import LuceneBackend
-    from sigma.backends.kusto import KustoBackend
-    from sigma.backends.splunk import SplunkBackend
-
-    return {
-        SiemBackend.SPLUNK: SplunkBackend,
-        SiemBackend.ELASTIC: LuceneBackend,
-        SiemBackend.SENTINEL: KustoBackend,
-        SiemBackend.CROWDSTRIKE: LogScaleBackend,
-    }
+    specs: list[tuple[SiemBackend, str, str]] = [
+        (SiemBackend.SPLUNK, "sigma.backends.splunk", "SplunkBackend"),
+        (SiemBackend.ELASTIC, "sigma.backends.elasticsearch", "LuceneBackend"),
+        (SiemBackend.SENTINEL, "sigma.backends.kusto", "KustoBackend"),
+        (SiemBackend.CROWDSTRIKE, "sigma.backends.crowdstrike", "LogScaleBackend"),
+    ]
+    backends: dict[SiemBackend, type[PySigmaBackend]] = {}
+    for backend, module_path, class_name in specs:
+        try:
+            module = __import__(module_path, fromlist=[class_name])
+            backends[backend] = getattr(module, class_name)
+        except Exception as exc:  # missing / incompatible upstream backend
+            logger.warning("pySigma backend for %s unavailable: %s", backend.value, exc)
+    return backends
 
 
 class SigmaCompiler:
