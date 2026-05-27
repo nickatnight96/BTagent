@@ -7,6 +7,9 @@ Routes LLM requests to the appropriate provider and model based on:
 4. Fallback — automatically falls back to the next allowed provider
 
 Uses LiteLLM via LangChain's ChatLiteLLM wrapper for a unified interface.
+``ChatLiteLLM`` ships in the standalone ``langchain-litellm`` package; the
+old ``langchain_community.chat_models`` home was removed in
+langchain-community 0.4.2 (that package is being sunset).
 """
 
 from __future__ import annotations
@@ -15,8 +18,8 @@ import logging
 from typing import Any
 
 from btagent_shared.types.config import TLP, ModelProvider, ModelTier
-from langchain_community.chat_models import ChatLiteLLM
 from langchain_core.language_models import BaseChatModel
+from langchain_litellm import ChatLiteLLM
 
 logger = logging.getLogger("btagent.llm.router")
 
