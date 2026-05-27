@@ -45,6 +45,9 @@ PERMISSIONS: dict[str, UserRole] = {
     # Threat hunting (#99 / #105 — analyst-initiated read-only analysis)
     "hunt:view": UserRole.ANALYST,
     "hunt:run": UserRole.ANALYST,
+    # Audit-grade lineage (#110 UC-7.1 — CISO / auditor / IR director)
+    "audit:view": UserRole.SENIOR_ANALYST,
+    "audit:export": UserRole.ADMIN,
     # IOCs
     "ioc:view": UserRole.ANALYST,
     "ioc:create": UserRole.ANALYST,

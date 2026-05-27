@@ -91,6 +91,10 @@ export function CommandPalette() {
             <FileText className="h-4 w-4" />
             <span>Reports</span>
           </CommandItem>
+          <CommandItem onSelect={go("/audit")}>
+            <FileText className="h-4 w-4" />
+            <span>Audit Ledger</span>
+          </CommandItem>
         </CommandGroup>
 
         <CommandSeparator />
