@@ -79,6 +79,10 @@ export function CommandPalette() {
             <Target className="h-4 w-4" />
             <span>Hunt Package</span>
           </CommandItem>
+          <CommandItem onSelect={go("/correlate")}>
+            <Target className="h-4 w-4" />
+            <span>Correlation Workbench</span>
+          </CommandItem>
           <CommandItem onSelect={go("/playbooks")}>
             <GitBranch className="h-4 w-4" />
             <span>Playbooks</span>

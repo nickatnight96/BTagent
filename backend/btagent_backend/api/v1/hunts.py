@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import logging
 
+from btagent_shared.types.enums import IOCType
 from btagent_shared.types.hunt import Backend
 from btagent_shared.types.hunt_package import HuntPackage
+from btagent_shared.types.correlation import CorrelationTimeline
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -26,6 +28,10 @@ from btagent_backend.api.deps import CurrentUser, get_current_user
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import HuntPackageInput, HuntPackageNode
+from btagent_engine.reasoning.correlation_workbench import (
+    CorrelationWorkbenchInput,
+    CorrelationWorkbenchNode,
+)
 
 logger = logging.getLogger("btagent.api.hunts")
 
@@ -82,3 +88,42 @@ async def generate_hunt_package(
         },
     )
     return out.package
+
+
+class CorrelateRequest(BaseModel):
+    entity_type: IOCType = Field(..., description="Entity kind: ip / domain / hash_* / other.")
+    entity_value: str = Field(..., min_length=1, max_length=500)
+    mitre_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+
+
+@router.post("/correlate", response_model=CorrelationTimeline)
+async def correlate_entity(
+    body: CorrelateRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> CorrelationTimeline:
+    """Cross-platform IOC pivot + correlation (UC-1.2).
+
+    Fans out an entity across SIEM/EDR/firewall/identity, normalizes into
+    one OCSF-aligned timeline, auto-tags MITRE techniques, and suggests
+    next pivots. Read-only (L1) — the analyst directs every pivot.
+    """
+    user.require_permission("hunt:run")
+
+    node = CorrelationWorkbenchNode()
+    ctx = NodeContext(run_id=generate_id("run"), org_id=user.org_id)
+    try:
+        out = await node.run(
+            CorrelationWorkbenchInput(
+                entity_type=body.entity_type,
+                entity_value=body.entity_value,
+                mitre_confidence_threshold=body.mitre_confidence_threshold,
+            ),
+            ctx,
+        )
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="Live correlation is not yet wired; deployment must run in mock mode.",
+        ) from exc
+
+    return out.timeline

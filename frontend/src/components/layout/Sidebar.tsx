@@ -12,6 +12,7 @@ import {
   Workflow,
   Crosshair,
   ScrollText,
+  Network,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,12 @@ const navItems: NavItem[] = [
     path: "/hunts",
     icon: <Crosshair className="w-5 h-5" />,
     testId: "nav-hunts-link",
+  },
+  {
+    label: "Correlation",
+    path: "/correlate",
+    icon: <Network className="w-5 h-5" />,
+    testId: "nav-correlate-link",
   },
   {
     label: "ATT&CK Matrix",

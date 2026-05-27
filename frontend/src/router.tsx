@@ -10,6 +10,7 @@ import { KnowledgePage } from "@/components/knowledge/KnowledgePage";
 import { PlaybookList } from "@/components/playbooks/PlaybookList";
 import { HuntPackagePage } from "@/components/hunts/HuntPackagePage";
 import { AuditLedgerPage } from "@/components/audit/AuditLedgerPage";
+import { CorrelationPage } from "@/components/correlation/CorrelationPage";
 import { PlaybookBuilder } from "@/components/playbooks/PlaybookBuilder";
 import { PlaybookExecutionView } from "@/components/playbooks/PlaybookExecutionView";
 
@@ -41,6 +42,10 @@ export const router = createBrowserRouter([
       {
         path: "hunts",
         element: <HuntPackagePage />,
+      },
+      {
+        path: "correlate",
+        element: <CorrelationPage />,
       },
       {
         path: "audit",

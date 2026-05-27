@@ -69,3 +69,29 @@ async def test_clean_advisory_no_sighting(client: AsyncClient, analyst_token: st
     assert resp.status_code == 200, resp.text
     pkg = resp.json()
     assert pkg["retro_report"]["compromise_suspected"] is False
+
+
+# --- correlation workbench (UC-1.2) --------------------------------------- #
+
+
+async def test_correlate_entity_returns_timeline(client: AsyncClient, analyst_token: str):
+    resp = await client.post(
+        "/api/v1/hunts/correlate",
+        json={"entity_type": "ip", "entity_value": "10.1.42.17"},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    tl = resp.json()
+    # 10.1.42.17 correlates across >=3 sources in the fixtures
+    assert len(tl["sources_queried"]) >= 3
+    assert len(tl["events"]) >= 3
+    assert tl["pivots"]
+    assert len(tl["audit_trail"]) == len(tl["sources_queried"])
+
+
+async def test_correlate_requires_auth(client: AsyncClient):
+    resp = await client.post(
+        "/api/v1/hunts/correlate",
+        json={"entity_type": "ip", "entity_value": "10.1.42.17"},
+    )
+    assert resp.status_code in (401, 403)
