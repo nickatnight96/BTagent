@@ -13,9 +13,12 @@ export class Sidebar {
   readonly punchlistLink: Locator;
   readonly investigationsLink: Locator;
   readonly iocsLink: Locator;
+  readonly huntsLink: Locator;
+  readonly correlateLink: Locator;
   readonly mitreLink: Locator;
   readonly knowledgeLink: Locator;
   readonly playbooksLink: Locator;
+  readonly auditLink: Locator;
   readonly settingsLink: Locator;
   readonly collapseToggle: Locator;
 
@@ -26,9 +29,12 @@ export class Sidebar {
     this.punchlistLink = page.getByTestId("nav-punchlist-link");
     this.investigationsLink = page.getByTestId("nav-investigations-link");
     this.iocsLink = page.getByTestId("nav-iocs-link");
+    this.huntsLink = page.getByTestId("nav-hunts-link");
+    this.correlateLink = page.getByTestId("nav-correlate-link");
     this.mitreLink = page.getByTestId("nav-mitre-link");
     this.knowledgeLink = page.getByTestId("nav-knowledge-link");
     this.playbooksLink = page.getByTestId("nav-playbooks-link");
+    this.auditLink = page.getByTestId("nav-audit-link");
     this.settingsLink = page.getByTestId("nav-settings-link");
     this.collapseToggle = page.getByTestId("sidebar-collapse-toggle");
   }
@@ -41,6 +47,21 @@ export class Sidebar {
   async goToIOCs(): Promise<void> {
     await this.iocsLink.click();
     await this.page.waitForURL("**/iocs", { timeout: 5_000 });
+  }
+
+  async goToHunts(): Promise<void> {
+    await this.huntsLink.click();
+    await this.page.waitForURL("**/hunts", { timeout: 5_000 });
+  }
+
+  async goToCorrelate(): Promise<void> {
+    await this.correlateLink.click();
+    await this.page.waitForURL("**/correlate", { timeout: 5_000 });
+  }
+
+  async goToAudit(): Promise<void> {
+    await this.auditLink.click();
+    await this.page.waitForURL("**/audit", { timeout: 5_000 });
   }
 
   async goToMitre(): Promise<void> {
