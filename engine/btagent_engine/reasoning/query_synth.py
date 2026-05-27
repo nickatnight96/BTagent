@@ -273,12 +273,11 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
         input: QuerySynthInput,
         ctx: NodeContext,
     ) -> QuerySynthOutput:
-        if not _mock_mode_enabled():
-            raise NotImplementedError(
-                "Schema-aware LLM query synthesis lands with the router in a "
-                "follow-up. Set BTAGENT_MOCK_LLM=true for the template path."
-            )
-
+        # Client-or-deterministic: a schema-aware LLM query-synthesis path is a
+        # follow-up; until then this node always uses its deterministic template
+        # library. It must never hard-raise (that would break any pipeline
+        # composing it under MOCK_LLM=false) — the templates are genuinely
+        # functional, just not schema-tuned.
         backends = input.backends or _DEFAULT_BACKENDS
         library_entry = _QUERY_LIBRARY.get(input.ttp_id, {})
 

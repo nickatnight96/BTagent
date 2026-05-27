@@ -179,10 +179,12 @@ async def test_sigma_query_tags_detected_technique(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-async def test_non_mock_mode_raises(monkeypatch):
+async def test_non_mock_mode_degrades_gracefully(monkeypatch):
+    # No LLM path yet -> must NOT raise under MOCK_LLM=false; deterministic
+    # regex/keyword parser is used so composing pipelines don't break.
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
-    with pytest.raises(NotImplementedError):
-        await NLQueryNode().run(
-            NLQueryInput(intent="show me powershell", backends=[Backend.SPLUNK]),
-            _ctx(),
-        )
+    out = await NLQueryNode().run(
+        NLQueryInput(intent="show me powershell", backends=[Backend.SPLUNK]),
+        _ctx(),
+    )
+    assert Backend.SPLUNK in out.queries

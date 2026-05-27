@@ -92,9 +92,11 @@ async def test_deterministic_ordering(monkeypatch):
     assert [p.entity_value for p in a.pivots] == [p.entity_value for p in b.pivots]
 
 
-async def test_non_mock_mode_raises(monkeypatch):
+async def test_non_mock_mode_degrades_gracefully(monkeypatch):
+    # No LLM path yet -> must NOT raise under MOCK_LLM=false; deterministic
+    # frequency-rank strategy is used so composing pipelines don't break.
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
-    with pytest.raises(NotImplementedError):
-        await PivotSuggestNode().run(
-            PivotSuggestInput(entity_value="10.0.0.1", events=[]), _ctx()
-        )
+    out = await PivotSuggestNode().run(
+        PivotSuggestInput(entity_value="10.0.0.1", events=[]), _ctx()
+    )
+    assert len(out.pivots) >= 3

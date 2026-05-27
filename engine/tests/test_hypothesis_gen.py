@@ -183,10 +183,71 @@ async def test_priority_ordering_invariant(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-async def test_non_mock_mode_raises(monkeypatch):
+async def test_non_mock_no_client_degrades_to_deterministic(monkeypatch):
+    # MOCK_LLM=false but no client registered -> deterministic fallback,
+    # never raises (so pipelines composing this node don't break).
+    from btagent_engine.llm import clear_llm_client
+
+    clear_llm_client()
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
-    with pytest.raises(NotImplementedError):
-        await HypothesisGenNode().run(
+    out = await HypothesisGenNode().run(
+        HypothesisGenInput(hunt_input=_hi(adversaries=["APT29"])),
+        _ctx(),
+    )
+    assert out.mock_mode is True
+    assert {h.ttp_id for h in out.hypotheses} >= {"T1059.001", "T1078.004"}
+
+
+async def test_non_mock_with_client_uses_llm(monkeypatch):
+    """A registered client + MOCK_LLM=false -> the node uses the LLM path."""
+    from btagent_engine.llm import clear_llm_client, set_llm_client
+    from btagent_shared.llm import LLMRequest, LLMResponse, LLMUsage
+
+    class _FakeClient:
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            return LLMResponse(
+                content='[{"ttp_id":"T1566.001","ttp_name":"Spearphishing",'
+                '"rationale":"actor phishes","behavioral_description":"watch attachments",'
+                '"priority":0.9}]',
+                provider="anthropic",
+                model="claude-sonnet-4-6",
+                usage=LLMUsage(input_tokens=30, output_tokens=20),
+            )
+
+    clear_llm_client()
+    set_llm_client(_FakeClient())
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
+    try:
+        out = await HypothesisGenNode().run(
             HypothesisGenInput(hunt_input=_hi(adversaries=["APT29"])),
             _ctx(),
         )
+        assert out.mock_mode is False
+        assert out.hypotheses[0].ttp_id == "T1566.001"
+        assert out.hypotheses[0].sources == ["llm"]
+    finally:
+        clear_llm_client()
+
+
+async def test_llm_failure_falls_back_to_deterministic(monkeypatch):
+    """A malformed LLM response must degrade to deterministic, not crash."""
+    from btagent_engine.llm import clear_llm_client, set_llm_client
+    from btagent_shared.llm import LLMRequest, LLMResponse
+
+    class _BadClient:
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            return LLMResponse(content="not json at all", provider="x", model="y")
+
+    clear_llm_client()
+    set_llm_client(_BadClient())
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
+    try:
+        out = await HypothesisGenNode().run(
+            HypothesisGenInput(hunt_input=_hi(adversaries=["APT29"])),
+            _ctx(),
+        )
+        # fell back to deterministic
+        assert out.mock_mode is True
+        assert out.hypotheses
+    finally:
+        clear_llm_client()

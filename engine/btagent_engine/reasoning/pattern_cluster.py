@@ -77,12 +77,9 @@ class PatternClusterNode(Node[PatternClusterInput, PatternClusterOutput]):
         input: PatternClusterInput,
         ctx: NodeContext,
     ) -> PatternClusterOutput:
-        if not _mock_mode_enabled():
-            raise NotImplementedError(
-                "Sequence-aware LLM pattern clustering lands with the router. "
-                "Set BTAGENT_MOCK_LLM=true for the deterministic group-by path."
-            )
-
+        # Client-or-deterministic: sequence-aware LLM clustering is a follow-up;
+        # the deterministic group-by is functional and used always. Never
+        # hard-raise under MOCK_LLM=false.
         # group events by (technique_id, primary_host)
         groups: dict[tuple[str, str], list[NormalizedEvent]] = defaultdict(list)
         for ev in input.events:

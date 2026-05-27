@@ -80,10 +80,12 @@ async def test_missing_library_backend_falls_back_to_generic(monkeypatch):
     assert "TODO" in out.queries[Backend.CROWDSTRIKE].query
 
 
-async def test_non_mock_mode_raises(monkeypatch):
+async def test_non_mock_mode_degrades_gracefully(monkeypatch):
+    # No LLM path yet -> must NOT raise under MOCK_LLM=false; it falls back
+    # to the deterministic template library so composing pipelines don't break.
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
-    with pytest.raises(NotImplementedError):
-        await QuerySynthNode().run(
-            QuerySynthInput(ttp_id="T1059.001", backends=[Backend.SPLUNK]),
-            _ctx(),
-        )
+    out = await QuerySynthNode().run(
+        QuerySynthInput(ttp_id="T1059.001", backends=[Backend.SPLUNK]),
+        _ctx(),
+    )
+    assert Backend.SPLUNK in out.queries

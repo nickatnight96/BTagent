@@ -332,12 +332,9 @@ class NLQueryNode(Node[NLQueryInput, NLQueryOutput]):
         input: NLQueryInput,
         ctx: NodeContext,
     ) -> NLQueryOutput:
-        if not _mock_mode_enabled():
-            raise NotImplementedError(
-                "Schema-aware LLM NL->query understanding lands with the router. "
-                "Set BTAGENT_MOCK_LLM=true for the deterministic regex/keyword path."
-            )
-
+        # Client-or-deterministic: schema-aware LLM NL understanding is a
+        # follow-up; the deterministic regex/keyword parser is genuinely
+        # functional and used always. Never hard-raise under MOCK_LLM=false.
         parsed = _parse(input.intent)
         backends = input.backends or _DEFAULT_BACKENDS
 

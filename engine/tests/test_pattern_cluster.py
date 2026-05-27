@@ -79,7 +79,9 @@ async def test_empty_events(monkeypatch):
     assert out.clusters == []
 
 
-async def test_non_mock_mode_raises(monkeypatch):
+async def test_non_mock_mode_degrades_gracefully(monkeypatch):
+    # No LLM path yet -> must NOT raise under MOCK_LLM=false; deterministic
+    # group-by is used so composing pipelines don't break.
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
-    with pytest.raises(NotImplementedError):
-        await PatternClusterNode().run(PatternClusterInput(events=[]), _ctx())
+    out = await PatternClusterNode().run(PatternClusterInput(events=[]), _ctx())
+    assert out.clusters == []

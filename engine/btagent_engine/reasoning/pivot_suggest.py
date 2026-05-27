@@ -85,12 +85,9 @@ class PivotSuggestNode(Node[PivotSuggestInput, PivotSuggestOutput]):
         input: PivotSuggestInput,
         ctx: NodeContext,
     ) -> PivotSuggestOutput:
-        if not _mock_mode_enabled():
-            raise NotImplementedError(
-                "LLM-backed pivot reasoning lands with the router. Set "
-                "BTAGENT_MOCK_LLM=true for the deterministic rule-based path."
-            )
-
+        # Client-or-deterministic: LLM-backed pivot reasoning is a follow-up;
+        # the deterministic frequency-rank strategy is functional and used
+        # always. Never hard-raise under MOCK_LLM=false.
         queried = input.entity_value.lower()
 
         # Count occurrences of every candidate pivot entity (value -> (count,

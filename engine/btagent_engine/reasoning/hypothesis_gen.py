@@ -177,19 +177,102 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
         input: HypothesisGenInput,
         ctx: NodeContext,
     ) -> HypothesisGenOutput:
-        if _mock_mode_enabled():
-            hyps = self._mock_generate(input.hunt_input)
-            return HypothesisGenOutput(hypotheses=hyps, mock_mode=True)
+        # Client-or-deterministic: use the injected LLM client when one is
+        # registered and mock mode is off; otherwise (mock mode, or no client)
+        # fall back to the deterministic generator. Never hard-raise — that
+        # would break any pipeline composing this node under MOCK_LLM=false.
+        from btagent_engine.llm import get_llm_client
 
-        # Phase B: route through the LLM router with a structured-output
-        # prompt. For now match the LLMCallNode convention of failing
-        # loudly until that wiring lands so callers can't accidentally
-        # ship un-LLM'd hypotheses to prod.
-        raise NotImplementedError(
-            "Real LLM-backed hypothesis generation lands with the router "
-            "in #99 Phase B. Set BTAGENT_MOCK_LLM=true for the deterministic "
-            "mock path."
+        client = get_llm_client()
+        if not _mock_mode_enabled() and client is not None:
+            try:
+                hyps = await self._llm_generate(input.hunt_input, client, ctx)
+                if hyps:
+                    return HypothesisGenOutput(hypotheses=hyps, mock_mode=False)
+            except Exception:  # noqa: BLE001 - LLM failure must degrade, not crash
+                import logging
+
+                logging.getLogger("btagent.reasoning.hypothesis_gen").warning(
+                    "LLM hypothesis generation failed; falling back to deterministic",
+                    exc_info=True,
+                )
+
+        hyps = self._mock_generate(input.hunt_input)
+        return HypothesisGenOutput(hypotheses=hyps, mock_mode=True)
+
+    # --- LLM generator ---------------------------------------------------- #
+
+    async def _llm_generate(self, hunt_input, client, ctx):
+        """Real LLM path: ask the model for a prioritised hypothesis list.
+
+        Robust by construction: any parse/shape failure raises and the
+        caller falls back to the deterministic generator, so a flaky model
+        response can never break the hunt.
+        """
+        import json
+
+        from btagent_shared.llm import LLMMessage, LLMRequest
+        from btagent_shared.types.config import TLP, ModelTier
+
+        adversaries = ", ".join(hunt_input.adversaries) or "(none)"
+        ttps = ", ".join(hunt_input.ttps) or "(none)"
+        iocs = ", ".join(f"{i.type}:{i.value}" for i in hunt_input.iocs) or "(none)"
+
+        system = (
+            "You are a threat-hunt planner. Given an adversary, ATT&CK TTPs, and "
+            "IOCs, produce a prioritised list of falsifiable hunt hypotheses. "
+            "Respond ONLY with a JSON array; each item has keys: ttp_id (ATT&CK id), "
+            "ttp_name, rationale, behavioral_description, priority (0..1 float). "
+            "Order by priority descending. Max 25 items."
         )
+        user = (
+            f"Adversaries: {adversaries}\nTTPs: {ttps}\nIOCs: {iocs}\n"
+            "Return the JSON array now."
+        )
+        try:
+            tlp = TLP(ctx.tlp_level)
+        except ValueError:
+            tlp = TLP.GREEN
+
+        resp = await client.complete(
+            LLMRequest(
+                messages=[
+                    LLMMessage(role="system", content=system),
+                    LLMMessage(role="user", content=user),
+                ],
+                tier=ModelTier.STANDARD,
+                tlp=tlp,
+                temperature=0.2,
+                max_tokens=2048,
+                json_mode=True,
+            )
+        )
+
+        text = resp.content.strip()
+        # Tolerate a ```json fence or leading prose: extract the array span.
+        start, end = text.find("["), text.rfind("]")
+        if start == -1 or end == -1:
+            raise ValueError("no JSON array in LLM response")
+        raw = json.loads(text[start : end + 1])
+
+        hyps: list[Hypothesis] = []
+        for idx, item in enumerate(raw[:_MAX_HYPOTHESES], start=1):
+            ttp_id = str(item["ttp_id"]).strip()
+            if not ttp_id:
+                continue
+            priority = float(item.get("priority", _PRIORITY_TTP))
+            hyps.append(
+                Hypothesis(
+                    id=_stable_hypothesis_id(idx, f"llm:{ttp_id}"),
+                    ttp_id=ttp_id,
+                    ttp_name=str(item.get("ttp_name", ttp_id)),
+                    rationale=str(item.get("rationale", "")),
+                    behavioral_description=str(item.get("behavioral_description", "")),
+                    priority=max(0.0, min(1.0, priority)),
+                    sources=["llm"],
+                )
+            )
+        return sorted(hyps, key=lambda h: h.priority, reverse=True)
 
     # --- Mock generator --------------------------------------------------- #
 
