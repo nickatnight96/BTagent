@@ -19,6 +19,9 @@ PREFIXES = {
     "rpt": "rpt",  # Report
     "ntf": "ntf",  # Notification
     "org": "org",  # Organization (tenant scope)
+    "hfnd": "hfnd",  # Hunt finding
+    "hclu": "hclu",  # Hunt finding cluster
+    "supp": "supp",  # Suppression rule
 }
 
 
