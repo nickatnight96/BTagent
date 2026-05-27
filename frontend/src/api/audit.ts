@@ -36,11 +36,11 @@ export async function listAuditEntries(params?: {
   if (params?.limit) q.set("limit", String(params.limit));
   if (params?.offset) q.set("offset", String(params.offset));
   const qs = q.toString();
-  return api.get<AuditEntryList>(`/api/v1/audit/entries${qs ? `?${qs}` : ""}`);
+  return api.get<AuditEntryList>(`/v1/audit/entries${qs ? `?${qs}` : ""}`);
 }
 
 export async function verifyAuditChain(): Promise<ChainVerify> {
-  return api.get<ChainVerify>("/api/v1/audit/verify");
+  return api.get<ChainVerify>("/v1/audit/verify");
 }
 
 /** Returns the export endpoint URL (the browser downloads via a link/fetch). */

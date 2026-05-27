@@ -60,5 +60,5 @@ export interface HuntPackageRequest {
 export async function generateHuntPackage(
   req: HuntPackageRequest
 ): Promise<HuntPackage> {
-  return api.post<HuntPackage>("/api/v1/hunts/package", req);
+  return api.post<HuntPackage>("/v1/hunts/package", req);
 }

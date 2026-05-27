@@ -57,5 +57,5 @@ export interface CorrelateRequest {
 export async function correlateEntity(
   req: CorrelateRequest
 ): Promise<CorrelationTimeline> {
-  return api.post<CorrelationTimeline>("/api/v1/hunts/correlate", req);
+  return api.post<CorrelationTimeline>("/v1/hunts/correlate", req);
 }

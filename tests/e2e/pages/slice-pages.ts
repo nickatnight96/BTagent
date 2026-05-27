@@ -39,6 +39,8 @@ export class HuntPackagePage {
   }
 
   async goto(): Promise<void> {
+    await this.page.goto("/");
+    await this.sidebar.root.waitFor({ state: "visible", timeout: 15_000 });
     await this.sidebar.goToHunts();
     await this.root.waitFor({ state: "visible", timeout: 10_000 });
   }
@@ -68,6 +70,8 @@ export class CorrelationPage {
   }
 
   async goto(): Promise<void> {
+    await this.page.goto("/");
+    await this.sidebar.root.waitFor({ state: "visible", timeout: 15_000 });
     await this.sidebar.goToCorrelate();
     await this.root.waitFor({ state: "visible", timeout: 10_000 });
   }
@@ -91,6 +95,8 @@ export class AuditLedgerPage {
   }
 
   async goto(): Promise<void> {
+    await this.page.goto("/");
+    await this.sidebar.root.waitFor({ state: "visible", timeout: 15_000 });
     await this.sidebar.goToAudit();
     await this.root.waitFor({ state: "visible", timeout: 10_000 });
   }
