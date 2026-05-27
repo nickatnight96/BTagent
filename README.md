@@ -73,39 +73,47 @@ BTagent combines a **LangGraph multi-agent orchestrator**, **9 MCP connectors** 
 
 ## Quick Start
 
-### Docker Compose (5 minutes)
+### One-command local dev (5 minutes)
 
 ```bash
 git clone https://github.com/nickatnight96/BTagent.git
 cd BTagent
-cp infra/.env.example infra/.env   # Edit with your API keys
-make up                             # Start full stack
+./infra/scripts/dev-setup.sh    # prereq check + docker infra + venv + migrations + seed
 ```
 
-Open `http://localhost:8080` in your browser. Default dev credentials are printed by the seed script.
-
-### Development Setup (30 minutes)
+Then in two terminals:
 
 ```bash
-# 1. Start infrastructure
-make dev
+# Terminal A — backend
+source .venv/bin/activate
+BTAGENT_ENV=test \
+  BTAGENT_JWT_SECRET="dev-secret-for-local-only" \
+  BTAGENT_DATABASE_URL="postgresql+asyncpg://btagent:btagent_password@localhost:5432/btagent" \
+  BTAGENT_REDIS_URL="redis://localhost:6379" \
+  uvicorn btagent_backend.main:app --reload --port 8000 --app-dir backend
 
-# 2. Install dependencies
-cd shared && uv sync && cd ..
-cd backend && uv sync && cd ..
-cd agents && uv sync && cd ..
-cd frontend && npm install && cd ..
-
-# 3. Database setup
-make db-migrate
-make db-seed
-
-# 4. Start services (in separate terminals)
-cd backend && uvicorn btagent_backend.main:app --reload --port 8000
+# Terminal B — frontend
 cd frontend && npm run dev
 ```
 
-Backend: `http://localhost:8000` | Frontend: `http://localhost:5173` | API docs: `http://localhost:8000/api/docs`
+Open `http://localhost:3000` and log in with `admin` / `admin` (seeded by `dev-setup.sh` in test mode).
+
+### Manual setup (if the script can't run)
+
+```bash
+git clone https://github.com/nickatnight96/BTagent.git
+cd BTagent
+cp infra/.env.example infra/.env    # edit with your API keys
+make dev                             # docker infra
+uv venv .venv --python 3.12 && source .venv/bin/activate
+uv pip install -e shared/ -e engine/ -e agents/ -e "backend/[dev]"
+cd frontend && npm install && cd ..
+make db-migrate
+BTAGENT_ENV=test python infra/scripts/seed-data.py
+# then the two terminal commands from the one-command path above
+```
+
+Backend: `http://localhost:8000` | Frontend: `http://localhost:3000` | API docs: `http://localhost:8000/api/docs`
 
 > **Note:** See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for the full step-by-step guide with environment variable walkthrough.
 
