@@ -78,6 +78,7 @@ get_settings.cache_clear()
 # registry when their modules are imported. Without these side-effect
 # imports, their JSONB columns survive untouched and SQLite chokes on them
 # at table-creation time (``JSONB cannot render in SQLite``).
+import btagent_backend.db.models_hunt  # noqa: E402, F401
 import btagent_backend.db.models_knowledge  # noqa: E402, F401
 import btagent_backend.db.models_mitre  # noqa: E402, F401
 import btagent_backend.db.models_playbook  # noqa: E402, F401

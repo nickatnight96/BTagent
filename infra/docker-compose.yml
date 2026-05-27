@@ -90,6 +90,26 @@ services:
     networks:
       - btagent-net
 
+  scheduler:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.backend
+    command: ["arq", "btagent_backend.scheduler.worker.WorkerSettings"]
+    env_file:
+      - .env
+    environment:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-btagent}:${POSTGRES_PASSWORD:-btagent_dev_password}@postgres:5432/${POSTGRES_DB:-btagent}
+      BTAGENT_REDIS_URL: redis://redis:6379
+      BTAGENT_S3_ENDPOINT: http://minio:9000
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - btagent-net
+
   frontend:
     build:
       context: ../frontend

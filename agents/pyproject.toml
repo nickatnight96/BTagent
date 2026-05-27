@@ -7,10 +7,18 @@ dependencies = [
     "langgraph>=1.1.6",
     "langchain-core>=0.3.0",
     "langchain-anthropic>=1.4.0",
-    "langchain-community>=0.4.1",
+    # ChatLiteLLM moved out of langchain-community (sunset; removed it in
+    # 0.4.2) into the standalone langchain-litellm package.
+    "langchain-litellm>=0.6.0",
     "litellm>=1.80.0",
     "pydantic>=2.12.0",
     "pyyaml>=6.0.0",
+    # Hunt Pack Runner (#112): Sigma -> multi-backend transpile.
+    "pysigma>=0.11.0",
+    "pysigma-backend-splunk>=1.0.0",
+    "pysigma-backend-elasticsearch>=1.0.0",
+    "pysigma-backend-kusto>=0.4.0",
+    "pysigma-backend-crowdstrike>=1.0.0",
     "redis>=5.0.0",
     "btagent-shared",
     # Phase 1 Sprint 2 introduced the workflow engine as a sibling package.
