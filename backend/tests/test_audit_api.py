@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import delete
 
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 
+from btagent_backend.db.models import AuditLogRow
 from btagent_backend.services.audit_trail import AuditTrail
 from tests.helpers import auth_header
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _isolate_audit_log(db_session):
+    """Clear audit_logs before + after each test in this module.
+
+    The in-memory test DB is shared across modules and this module commits
+    audit rows via AuditTrail.record() (seq = max+1). The pre-existing
+    test_audit_trail.py assigns seq from its own module-global counter, so
+    leftover rows from here collide on the audit_logs.seq UNIQUE constraint.
+    Cleaning up contains this module's writes.
+    """
+    await db_session.execute(delete(AuditLogRow))
+    await db_session.commit()
+    yield
+    await db_session.execute(delete(AuditLogRow))
+    await db_session.commit()
 
 
 async def _seed(db_session, n: int = 3):
