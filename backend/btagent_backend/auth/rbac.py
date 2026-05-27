@@ -74,6 +74,15 @@ PERMISSIONS: dict[str, UserRole] = {
     "workflow:edit": UserRole.SENIOR_ANALYST,
     "workflow:publish": UserRole.SENIOR_ANALYST,
     "workflow:deprecate": UserRole.ADMIN,
+    # Proactive threat hunting (Phase 6)
+    # Analysts browse + triage the hunt inbox; suppressing noise and
+    # promoting a finding into a full investigation are senior actions
+    # because they shape what the SOC does (and doesn't) look at.
+    "hunt:view": UserRole.ANALYST,
+    "hunt:create": UserRole.ANALYST,
+    "hunt:triage": UserRole.ANALYST,
+    "hunt:suppress": UserRole.SENIOR_ANALYST,
+    "hunt:promote": UserRole.SENIOR_ANALYST,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,
