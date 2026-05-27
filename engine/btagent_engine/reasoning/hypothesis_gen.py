@@ -205,13 +205,11 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
     async def _llm_generate(self, hunt_input, client, ctx):
         """Real LLM path: ask the model for a prioritised hypothesis list.
 
-        Robust by construction: any parse/shape failure raises and the
-        caller falls back to the deterministic generator, so a flaky model
-        response can never break the hunt.
+        Robust by construction: any parse/shape failure returns an empty
+        list and the caller falls back to the deterministic generator, so
+        a flaky model response can never break the hunt.
         """
-        import json
-
-        from btagent_shared.llm import LLMMessage, LLMRequest
+        from btagent_engine.reasoning._llm_json import call_llm_json
         from btagent_shared.types.config import TLP, ModelTier
 
         adversaries = ", ".join(hunt_input.adversaries) or "(none)"
@@ -221,9 +219,12 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
         system = (
             "You are a threat-hunt planner. Given an adversary, ATT&CK TTPs, and "
             "IOCs, produce a prioritised list of falsifiable hunt hypotheses. "
-            "Respond ONLY with a JSON array; each item has keys: ttp_id (ATT&CK id), "
-            "ttp_name, rationale, behavioral_description, priority (0..1 float). "
-            "Order by priority descending. Max 25 items."
+            "Respond ONLY with a JSON array (no prose, no markdown). Each item: "
+            '{"ttp_id": ATT&CK id, "ttp_name": str, "rationale": str, '
+            '"behavioral_description": str, "priority": float 0..1}. '
+            "Order by priority descending. Return AT MOST 8 hypotheses. Keep "
+            "rationale and behavioral_description to ONE short sentence each so "
+            "the JSON stays compact."
         )
         user = (
             f"Adversaries: {adversaries}\nTTPs: {ttps}\nIOCs: {iocs}\n"
@@ -234,33 +235,28 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
         except ValueError:
             tlp = TLP.GREEN
 
-        resp = await client.complete(
-            LLMRequest(
-                messages=[
-                    LLMMessage(role="system", content=system),
-                    LLMMessage(role="user", content=user),
-                ],
-                tier=ModelTier.STANDARD,
-                tlp=tlp,
-                temperature=0.2,
-                max_tokens=2048,
-                json_mode=True,
-            )
+        raw = await call_llm_json(
+            client,
+            system=system,
+            user=user,
+            tlp=tlp,
+            tier=ModelTier.STANDARD,
+            max_tokens=4096,
         )
-
-        text = resp.content.strip()
-        # Tolerate a ```json fence or leading prose: extract the array span.
-        start, end = text.find("["), text.rfind("]")
-        if start == -1 or end == -1:
-            raise ValueError("no JSON array in LLM response")
-        raw = json.loads(text[start : end + 1])
+        if not isinstance(raw, list):
+            return []
 
         hyps: list[Hypothesis] = []
         for idx, item in enumerate(raw[:_MAX_HYPOTHESES], start=1):
-            ttp_id = str(item["ttp_id"]).strip()
+            if not isinstance(item, dict):
+                continue
+            ttp_id = str(item.get("ttp_id", "")).strip()
             if not ttp_id:
                 continue
-            priority = float(item.get("priority", _PRIORITY_TTP))
+            try:
+                priority = float(item.get("priority", _PRIORITY_TTP))
+            except (TypeError, ValueError):
+                priority = _PRIORITY_TTP
             hyps.append(
                 Hypothesis(
                     id=_stable_hypothesis_id(idx, f"llm:{ttp_id}"),

@@ -273,14 +273,23 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
         input: QuerySynthInput,
         ctx: NodeContext,
     ) -> QuerySynthOutput:
-        # Client-or-deterministic: a schema-aware LLM query-synthesis path is a
-        # follow-up; until then this node always uses its deterministic template
-        # library. It must never hard-raise (that would break any pipeline
-        # composing it under MOCK_LLM=false) — the templates are genuinely
-        # functional, just not schema-tuned.
         backends = input.backends or _DEFAULT_BACKENDS
-        library_entry = _QUERY_LIBRARY.get(input.ttp_id, {})
 
+        # Client-or-deterministic: when a real LLM client is registered and
+        # mock mode is off, generate queries via the model; otherwise (and on
+        # any LLM failure) fall back to the deterministic template library,
+        # which is genuinely functional. Never hard-raise.
+        from btagent_engine.llm import get_llm_client
+
+        client = get_llm_client()
+        if not _mock_mode_enabled() and client is not None:
+            llm_queries = await self._llm_generate(input, backends, client, ctx)
+            if llm_queries:
+                return QuerySynthOutput(
+                    ttp_id=input.ttp_id, queries=llm_queries, mock_mode=False
+                )
+
+        library_entry = _QUERY_LIBRARY.get(input.ttp_id, {})
         queries: dict[Backend, Query] = {}
         for backend in backends:
             template = library_entry.get(backend)
@@ -294,6 +303,49 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
         return QuerySynthOutput(
             ttp_id=input.ttp_id, queries=queries, mock_mode=True
         )
+
+    async def _llm_generate(self, input, backends, client, ctx):
+        """LLM path: one count-capped query per backend. Returns {} on any
+        failure so the caller falls back to the template library."""
+        from btagent_engine.reasoning._llm_json import call_llm_json
+        from btagent_shared.types.config import TLP, ModelTier
+
+        backend_list = ", ".join(b.value for b in backends)
+        system = (
+            "You are a detection engineer. Given an ATT&CK technique and a "
+            "behavioural description, write ONE hunt query per requested backend. "
+            "Respond ONLY with a JSON object mapping backend -> query string "
+            "(no prose, no markdown). Every query MUST be result-capped "
+            "(| head N, | take N, LIMIT N, or equivalent). Backends use their "
+            "native language: splunk=SPL, sentinel/defender=KQL, elastic=ES|QL, "
+            "crowdstrike=CQL, sigma=Sigma YAML."
+        )
+        user = (
+            f"technique: {input.ttp_id}\n"
+            f"behaviour: {input.behavioral_description or '(none given)'}\n"
+            f"backends: {backend_list}\nReturn the JSON object now."
+        )
+        try:
+            tlp = TLP(ctx.tlp_level)
+        except ValueError:
+            tlp = TLP.GREEN
+
+        raw = await call_llm_json(
+            client, system=system, user=user, tlp=tlp, tier=ModelTier.STANDARD, array=False
+        )
+        if not isinstance(raw, dict):
+            return {}
+
+        out: dict[Backend, Query] = {}
+        for backend in backends:
+            q = raw.get(backend.value)
+            if isinstance(q, str) and q.strip():
+                out[backend] = Query(
+                    backend=backend,
+                    query=q.strip(),
+                    notes=f"LLM-generated for {input.ttp_id}. Review fields before running.",
+                )
+        return out
 
 
 NodeRegistry.register(QuerySynthNode)

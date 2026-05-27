@@ -332,27 +332,76 @@ class NLQueryNode(Node[NLQueryInput, NLQueryOutput]):
         input: NLQueryInput,
         ctx: NodeContext,
     ) -> NLQueryOutput:
-        # Client-or-deterministic: schema-aware LLM NL understanding is a
-        # follow-up; the deterministic regex/keyword parser is genuinely
-        # functional and used always. Never hard-raise under MOCK_LLM=false.
-        parsed = _parse(input.intent)
-        backends = input.backends or _DEFAULT_BACKENDS
+        # Client-or-deterministic: when a real LLM client is registered and
+        # mock mode is off, the LLM *parses the intent* (better at free-form
+        # phrasing than regex); otherwise the deterministic regex/keyword
+        # parser is used. Either way the per-backend QUERIES are built by the
+        # deterministic builders from a fixed safe field set — so there are
+        # never hallucinated field names (UC-1.1 criterion). Never hard-raise.
+        from btagent_engine.llm import get_llm_client
 
+        client = get_llm_client()
+        parsed = None
+        used_llm = False
+        if not _mock_mode_enabled() and client is not None:
+            parsed = await self._llm_parse(input.intent, client, ctx)
+            used_llm = parsed is not None
+        if parsed is None:
+            parsed = _parse(input.intent)
+
+        backends = input.backends or _DEFAULT_BACKENDS
         queries: dict[Backend, Query] = {}
         for backend in backends:
-            builder = _BUILDERS.get(backend)
-            if builder is None:
-                # Backend without a dedicated builder (e.g. CrowdStrike) —
-                # fall back to a Splunk-ish form rather than failing.
-                builder = _build_splunk
+            builder = _BUILDERS.get(backend) or _build_splunk
             queries[backend] = Query(
                 backend=backend,
                 query=builder(parsed),
-                notes="Generated from NL intent in mock mode — review field "
-                "names + filters before executing (HITL).",
+                notes="Built from a fixed safe field set — review filters before "
+                "executing (HITL).",
             )
 
-        return NLQueryOutput(parsed=parsed, queries=queries, mock_mode=True)
+        return NLQueryOutput(parsed=parsed, queries=queries, mock_mode=not used_llm)
+
+    async def _llm_parse(self, intent: str, client, ctx) -> ParsedIntent | None:
+        """LLM intent parsing -> ParsedIntent. Returns None on any failure so
+        the caller falls back to the deterministic regex parser."""
+        from btagent_engine.reasoning._llm_json import call_llm_json
+        from btagent_shared.types.config import TLP, ModelTier
+
+        system = (
+            "You parse a SOC analyst's plain-English hunt request into structure. "
+            "Respond ONLY with a JSON object (no prose) with keys: "
+            '"time_window_hours" (int, default 24), "severity" (one of '
+            'critical/high/medium/low/info or null), "entities" '
+            '({"ip":[...],"user":[...],"host":[...]}), "keywords" (list of str), '
+            '"mitre_techniques" (list of ATT&CK ids).'
+        )
+        try:
+            tlp = TLP(ctx.tlp_level)
+        except ValueError:
+            tlp = TLP.GREEN
+
+        raw = await call_llm_json(
+            client, system=system, user=intent, tlp=tlp, tier=ModelTier.FAST, array=False
+        )
+        if not isinstance(raw, dict):
+            return None
+        try:
+            ents = raw.get("entities") or {}
+            return ParsedIntent(
+                raw_intent=intent,
+                time_window_hours=int(raw.get("time_window_hours") or _DEFAULT_WINDOW_HOURS),
+                severity=(raw.get("severity") or None),
+                entities={
+                    k: [str(v) for v in (ents.get(k) or [])]
+                    for k in ("ip", "user", "host")
+                    if ents.get(k)
+                },
+                keywords=[str(k) for k in (raw.get("keywords") or [])],
+                mitre_techniques=[str(t) for t in (raw.get("mitre_techniques") or [])],
+            )
+        except (TypeError, ValueError):
+            return None
 
 
 NodeRegistry.register(NLQueryNode)

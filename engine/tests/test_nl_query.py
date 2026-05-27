@@ -188,3 +188,32 @@ async def test_non_mock_mode_degrades_gracefully(monkeypatch):
         _ctx(),
     )
     assert Backend.SPLUNK in out.queries
+
+
+async def test_llm_parse_used_when_client_registered(monkeypatch):
+    from btagent_engine.llm import clear_llm_client, set_llm_client
+    from btagent_shared.llm import LLMRequest, LLMResponse
+
+    class _FakeClient:
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            return LLMResponse(
+                content='{"time_window_hours":48,"severity":"high",'
+                '"entities":{"ip":["9.9.9.9"]},"keywords":["beacon"],'
+                '"mitre_techniques":["T1071.001"]}',
+                provider="anthropic", model="claude-haiku-4-5-20251001",
+            )
+
+    clear_llm_client(); set_llm_client(_FakeClient())
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
+    try:
+        out = await NLQueryNode().run(
+            NLQueryInput(intent="anything", backends=[Backend.SPLUNK]), _ctx()
+        )
+        assert out.mock_mode is False
+        assert out.parsed.time_window_hours == 48
+        assert out.parsed.severity == "high"
+        assert "9.9.9.9" in out.parsed.entities.get("ip", [])
+        # query built deterministically from the LLM-parsed structure
+        assert "earliest=-48h" in out.queries[Backend.SPLUNK].query
+    finally:
+        clear_llm_client()
