@@ -184,12 +184,15 @@ async def test_llm_call_through_runner_trips_prompt_budget_cap():
 # --------------------------------------------------------------------------- #
 
 
-async def test_llm_call_production_mode_raises_pointing_at_sprint_3(monkeypatch):
-    """Live LLM dispatch lives in the Sprint 3 LLM-router middleware,
-    not in the Node. The production path must fail loud so a misconfigured
-    env doesn't silently no-op."""
+async def test_llm_call_production_mode_without_client_raises(monkeypatch):
+    """Live LLM dispatch requires a client registered via
+    btagent_engine.llm.set_llm_client. With no client AND no mock, the
+    Node must fail loud so a misconfigured env doesn't silently no-op."""
+    from btagent_engine.llm import clear_llm_client
+
+    clear_llm_client()
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
-    with pytest.raises(NotImplementedError, match="Sprint 3"):
+    with pytest.raises(NotImplementedError, match="set_llm_client"):
         await LLMCallNode().run(
             LLMCallInput(messages=[{"role": "user", "content": "hi"}]),
             _ctx(),
