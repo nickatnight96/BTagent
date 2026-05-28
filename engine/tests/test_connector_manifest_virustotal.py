@@ -101,7 +101,9 @@ async def test_ocsf_normalizer_silent_when_vt_output_has_no_claims(monkeypatch):
     current output shape.
     """
     monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
-    policy = ConnectorPolicyMiddleware()
+    # GREEN context: this test exercises the OCSF normalizer, not the TLP
+    # gate (which now fails closed when no active_tlp is given).
+    policy = ConnectorPolicyMiddleware(active_tlp=TLP.GREEN)
     norm = OCSFNormalizerMiddleware()
     ctx = _ctx()
 

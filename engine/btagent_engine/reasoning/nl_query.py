@@ -57,7 +57,7 @@ from btagent_engine.node import (
 
 
 def _mock_mode_enabled() -> bool:
-    return os.getenv("BTAGENT_MOCK_LLM", "true").lower() == "true"
+    return os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() != "false"
 
 
 # Severity is an enum-like field; constrain it to a known allowlist rather
@@ -101,7 +101,8 @@ def _yaml_sq(v: str) -> str:
 _DEFAULT_WINDOW_HOURS = 24
 _RESULT_CAP = 1000
 
-_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+_IPV4_RE = re.compile(rf"\b(?:{_IPV4_OCTET}\.){{3}}{_IPV4_OCTET}\b")
 _TIME_RE = re.compile(
     r"(?:last|past|previous|within)\s+(\d+)\s*(minute|min|hour|hr|day|week)s?",
     re.IGNORECASE,

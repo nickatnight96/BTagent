@@ -95,7 +95,7 @@ def _resolve_tier(model_handle: str):  # noqa: ANN202 - returns ModelTier
 
 def _mock_mode_enabled() -> bool:
     """Resolve the mock-mode flag at call time so tests can flip it."""
-    return os.getenv("BTAGENT_MOCK_LLM", "true").lower() == "true"
+    return os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() != "false"
 
 
 # ---------------------------------------------------------------------------

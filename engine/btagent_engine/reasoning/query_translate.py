@@ -65,10 +65,11 @@ class TranslateMode(StrEnum):
 
 
 def _q(value: object) -> str:
-    """Quote a scalar value for a query string."""
+    """Quote a scalar value for a query string, escaping embedded quotes."""
     if isinstance(value, (int, float)):
         return str(value)
-    return f'"{value}"'
+    s = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{s}"'
 
 
 def _splunk_cond(c: QueryCondition) -> str:
@@ -288,12 +289,17 @@ def _render_sigma(ir: QueryIR) -> str:
     return "\n".join(lines)
 
 
+def _sigma_sq(x: object) -> str:
+    """A single-quoted YAML scalar, escaping embedded quotes by doubling."""
+    return "'" + str(x).replace("'", "''") + "'"
+
+
 def _sigma_value(v: object) -> str:
     if isinstance(v, list):
-        return "[" + ", ".join(f"'{x}'" for x in v) + "]"
+        return "[" + ", ".join(_sigma_sq(x) for x in v) + "]"
     if isinstance(v, (int, float)):
         return str(v)
-    return f"'{v}'"
+    return _sigma_sq(v)
 
 
 _RENDERERS = {
