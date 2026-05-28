@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -54,12 +55,45 @@ class UserRow(Base):
     )
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Phase 1b (#144): NULLABLE. SSO/JIT-provisioned users authenticate at the
+    # IdP and have no local password; ``None`` here means "no local credential".
+    # The local-password login path treats a missing hash as "cannot log in
+    # with a password" (see ``api/v1/auth.py::login``).
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="analyst")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("idx_users_org_id", "org_id", "id"),)
+
+
+class SSOIdentityRow(Base):
+    """Links a local ``users`` row to an external IdP identity (#144 Phase 1b).
+
+    The natural key is ``(provider, subject)`` — the IdP-issued ``sub`` claim is
+    stable, while emails/usernames can change. JIT provisioning looks up this
+    pair on every SSO callback: a hit reuses the linked user; a miss
+    find-or-creates a user (by email) and inserts a new row here.
+    """
+
+    __tablename__ = "sso_identity"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_sso_identity_provider_subject"),
+        Index("idx_sso_identity_user_id", "user_id"),
+    )
 
 
 class InvestigationRow(Base):

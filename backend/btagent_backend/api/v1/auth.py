@@ -134,7 +134,12 @@ async def login(
     result = await db.execute(select(UserRow).where(UserRow.username == body.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(body.password, user.password_hash):
+    # Phase 1b (#144): ``password_hash`` is nullable — an SSO/JIT-only user has
+    # no local credential and therefore cannot authenticate via this endpoint.
+    # Guard the None case BEFORE ``verify_password`` (which would raise on a
+    # ``None`` hash) and return the same generic 401 so we don't disclose which
+    # usernames are SSO-only.
+    if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
