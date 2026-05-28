@@ -45,13 +45,32 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Graceful shutdown — checkpoint running investigations
+    # Graceful shutdown — uvicorn translates SIGTERM into this lifespan
+    # teardown after in-flight requests drain. Each step is best-effort so a
+    # failure in one cleanup path does not strand the others.
+
+    # Checkpoint running investigations.
     await task_manager.shutdown()
     logger.info("TaskManager shut down")
 
-    # Graceful shutdown — stop WebSocket hub (notifies clients, closes Redis)
+    # Stop WebSocket hub (notifies clients, closes its Redis connection).
     await hub.stop()
     logger.info("WebSocket hub shut down")
+
+    # Close the shared token-revocation Redis client.
+    from btagent_backend.auth.revocation import close_redis
+
+    await close_redis()
+    logger.info("Revocation Redis client closed")
+
+    # Dispose the async DB engine pool so connections are returned cleanly.
+    try:
+        from btagent_backend.db.engine import engine as db_engine
+
+        await db_engine.dispose()
+        logger.info("Database engine pool disposed")
+    except Exception:
+        logger.warning("error disposing database engine pool", exc_info=True)
 
     # Flush OTEL spans/metrics
     await shutdown_otel()
