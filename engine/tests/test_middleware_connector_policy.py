@@ -130,7 +130,9 @@ def _ctx() -> NodeContext:
 
 
 async def test_query_capability_runs_without_hitl_and_records_cost():
-    mw = ConnectorPolicyMiddleware()
+    # GREEN context so the GREEN-egress capability passes the (now
+    # fail-closed) TLP gate; this test exercises cost recording, not TLP.
+    mw = ConnectorPolicyMiddleware(active_tlp=TLP.GREEN)
     ctx = _ctx()
     await mw.before_run(_PingNode(), _StubInput(), ctx)
     assert ctx.metadata[MANIFEST_NAME_KEY] == "testconn"
@@ -152,11 +154,20 @@ async def test_no_manifest_is_a_noop():
 
 
 async def test_action_capability_pauses_with_pending_hitl():
-    mw = ConnectorPolicyMiddleware()
+    # GREEN context so the TLP gate passes and we reach the HITL gate.
+    mw = ConnectorPolicyMiddleware(active_tlp=TLP.GREEN)
     with pytest.raises(PendingHITLApproval) as ei:
         await mw.before_run(_PurgeNode(), _StubInput(), _ctx())
     assert ei.value.capability_id == "purge_data"
     assert ei.value.connector_name == "testconn"
+
+
+async def test_missing_active_tlp_fails_closed():
+    # No active_tlp -> treated as TLP:RED (most restrictive), so a GREEN
+    # capability is refused rather than silently allowed (fail-closed).
+    mw = ConnectorPolicyMiddleware()
+    with pytest.raises(ConnectorPolicyViolation):
+        await mw.before_run(_PingNode(), _StubInput(), _ctx())
 
 
 # --------------------------------------------------------------------------- #

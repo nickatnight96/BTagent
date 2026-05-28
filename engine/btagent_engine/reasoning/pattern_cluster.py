@@ -33,7 +33,7 @@ from btagent_engine.node import (
 
 
 def _mock_mode_enabled() -> bool:
-    return os.getenv("BTAGENT_MOCK_LLM", "true").lower() == "true"
+    return os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() != "false"
 
 
 def _primary_host(ev: NormalizedEvent) -> str:

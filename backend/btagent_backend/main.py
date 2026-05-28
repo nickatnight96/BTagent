@@ -51,7 +51,9 @@ async def lifespan(app: FastAPI):
     # registered so engine nodes dispatch to real providers.
     import os
 
-    if os.getenv("BTAGENT_MOCK_LLM", "true").lower() != "true":
+    # Fail-safe: only go to the real provider on an explicit "false". A typo
+    # or empty value keeps mock mode on, so a misconfig never causes egress.
+    if os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() == "false":
         try:
             from btagent_agents.llm.client import LiteLLMClient
             from btagent_engine.llm import set_llm_client

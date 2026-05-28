@@ -33,19 +33,15 @@ def _compute_hash(
     details: str,
     prev_hash: str,
 ) -> str:
-    payload = "|".join(
-        [
-            id,
-            str(seq),
-            timestamp,
-            actor,
-            category,
-            action,
-            resource,
-            outcome,
-            details,
-            prev_hash,
-        ]
+    # JSON-encode the ordered field list rather than ``"|".join`` — a plain
+    # delimiter is forgeable across free-text fields (actor="a|b" vs
+    # actor="a", category="b" hash identically). JSON escaping makes the
+    # boundary unambiguous. record() + both verifiers share this function, so
+    # the chain stays self-consistent.
+    payload = json.dumps(
+        [id, seq, timestamp, actor, category, action, resource, outcome, details, prev_hash],
+        separators=(",", ":"),
+        ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

@@ -110,7 +110,7 @@ _IOC_TYPE_DEFAULT_TTP: dict[str, tuple[str, str]] = {
 
 def _mock_mode_enabled() -> bool:
     """Resolve the mock-mode flag at call time (so tests can flip it)."""
-    return os.getenv("BTAGENT_MOCK_LLM", "true").lower() == "true"
+    return os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() != "false"
 
 
 def _stable_hypothesis_id(idx: int, seed: str) -> str:

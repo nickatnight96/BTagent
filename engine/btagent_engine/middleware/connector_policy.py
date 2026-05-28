@@ -144,10 +144,11 @@ class ConnectorPolicyMiddleware(Middleware):
     """Enforce per-capability HITL + TLP + cost policy from the manifest.
 
     Constructor takes the active TLP for the run (the classification
-    layer typically sets this once at workflow start). If omitted the
-    TLP check is skipped — this is the right default for unit tests
-    and for workflows that haven't classified themselves yet, but
-    production runs should always pass a level.
+    layer typically sets this once at workflow start). If omitted it
+    fails **closed** — the check runs as if the context were TLP:RED
+    (most restrictive) so an unconfigured caller can't bypass egress
+    gating by omission. Production runs should still pass an explicit
+    level.
     """
 
     name = "connector_policy"
@@ -177,14 +178,15 @@ class ConnectorPolicyMiddleware(Middleware):
                 "manifest entry) or the input must set _capability_id."
             )
 
-        # 1. TLP egress check
-        if self._active_tlp is not None and not _tlp_allows(
-            capability.tlp_egress, self._active_tlp
-        ):
+        # 1. TLP egress check. Fail closed: a missing active context is
+        # treated as TLP:RED (most restrictive) so an unconfigured caller
+        # can't bypass the gate by omission.
+        active = self._active_tlp if self._active_tlp is not None else TLP.RED
+        if not _tlp_allows(capability.tlp_egress, active):
             raise ConnectorPolicyViolation(
                 f"Capability {manifest.name!r}.{capability.id!r} declares "
                 f"tlp_egress={capability.tlp_egress.value} but the active "
-                f"context is {self._active_tlp.value} — refusing execution."
+                f"context is {active.value} — refusing execution."
             )
 
         # 2. HITL gate
