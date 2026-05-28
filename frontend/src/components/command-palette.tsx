@@ -8,6 +8,7 @@ import {
   Home,
   Moon,
   Network,
+  ScrollText,
   Search,
   Sun,
   Target,
@@ -96,6 +97,10 @@ export function CommandPalette() {
           <CommandItem onSelect={go("/reports")}>
             <FileText className="h-4 w-4" />
             <span>Reports</span>
+          </CommandItem>
+          <CommandItem onSelect={go("/audit")}>
+            <ScrollText className="h-4 w-4" />
+            <span>Audit Ledger</span>
           </CommandItem>
         </CommandGroup>
 

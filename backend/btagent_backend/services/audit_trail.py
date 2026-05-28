@@ -33,19 +33,15 @@ def _compute_hash(
     details: str,
     prev_hash: str,
 ) -> str:
-    payload = "|".join(
-        [
-            id,
-            str(seq),
-            timestamp,
-            actor,
-            category,
-            action,
-            resource,
-            outcome,
-            details,
-            prev_hash,
-        ]
+    # JSON-encode the ordered field list rather than ``"|".join`` — a plain
+    # delimiter is forgeable across free-text fields (actor="a|b" vs
+    # actor="a", category="b" hash identically). JSON escaping makes the
+    # boundary unambiguous. record() + both verifiers share this function, so
+    # the chain stays self-consistent.
+    payload = json.dumps(
+        [id, seq, timestamp, actor, category, action, resource, outcome, details, prev_hash],
+        separators=(",", ":"),
+        ensure_ascii=False,
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -164,9 +160,16 @@ class AuditTrail:
                     f"(stored='{row.prev_hash}', expected='{prev_hash}')"
                 )
 
-            # Recompute the hash and verify
+            # Recompute the hash and verify. ``record()`` hashes a tz-aware
+            # ISO string (``datetime.now(UTC)``); Postgres preserves the tz on
+            # round-trip but SQLite drops it, so re-apply UTC to a naive value
+            # to keep the recomputed hash byte-identical. This keeps
+            # /audit/verify and /audit/lineage in agreement on every backend.
             canonical_details = _details_to_canonical(row.details or {})
-            ts_iso = row.timestamp.isoformat() if row.timestamp else ""
+            ts = row.timestamp
+            if ts is not None and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            ts_iso = ts.isoformat() if ts else ""
 
             expected_hash = _compute_hash(
                 id=row.id,

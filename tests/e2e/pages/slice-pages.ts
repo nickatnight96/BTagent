@@ -1,6 +1,6 @@
 /**
- * POMs for the NightWing vertical slices — Hunt Package (UC-1.3) and
- * Correlation Workbench (UC-1.2).
+ * POMs for the NightWing vertical slices — Hunt Package (UC-1.3),
+ * Correlation Workbench (UC-1.2), and the Audit Ledger (UC-7.1).
  *
  * Each page exposes the page-root testid plus the input/result testids
  * the components already render, so specs assert on stable hooks rather
@@ -73,6 +73,31 @@ export class CorrelationPage {
     await this.page.goto("/");
     await this.sidebar.root.waitFor({ state: "visible", timeout: 15_000 });
     await this.sidebar.goToCorrelate();
+    await this.root.waitFor({ state: "visible", timeout: 10_000 });
+  }
+}
+
+export class AuditLedgerPage {
+  readonly page: Page;
+  readonly header: Header;
+  readonly sidebar: Sidebar;
+  readonly root: Locator;
+  readonly table: Locator;
+  readonly error: Locator;
+
+  constructor(page: Page) {
+    this.page = page;
+    this.header = new Header(page);
+    this.sidebar = new Sidebar(page);
+    this.root = page.getByTestId("audit-ledger");
+    this.table = page.getByTestId("audit-table");
+    this.error = page.getByRole("alert");
+  }
+
+  async goto(): Promise<void> {
+    await this.page.goto("/");
+    await this.sidebar.root.waitFor({ state: "visible", timeout: 15_000 });
+    await this.sidebar.goToAudit();
     await this.root.waitFor({ state: "visible", timeout: 10_000 });
   }
 }

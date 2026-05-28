@@ -13,6 +13,7 @@ import {
   Crosshair,
   FileSearch,
   Network,
+  ScrollText,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -78,6 +79,12 @@ const navItems: NavItem[] = [
     path: "/playbooks",
     icon: <Workflow className="w-5 h-5" />,
     testId: "nav-playbooks-link",
+  },
+  {
+    label: "Audit Ledger",
+    path: "/audit",
+    icon: <ScrollText className="w-5 h-5" />,
+    testId: "nav-audit-link",
   },
   {
     label: "Settings",
