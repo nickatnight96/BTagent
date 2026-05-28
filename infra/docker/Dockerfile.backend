@@ -18,23 +18,40 @@ FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}} AS builder
 WORKDIR /app
 RUN pip install --no-cache-dir uv
 
-# Install shared package first (cacheable layer)
+# Install the four workspace packages editable, in dependency order:
+#   shared -> engine -> agents -> backend
+# This mirrors .github/workflows/ci.yml. ``engine`` must precede ``agents``
+# because ``btagent-engine`` is a runtime dep of ``btagent-agents``, and the
+# backend imports both ``btagent_agents`` (task_manager, report_service,
+# playbook_service, scheduler.jobs) and ``btagent_engine`` (ws adapter,
+# models_workflow) at runtime — so all four must be present or the container
+# crashes on first import.
+#
+# Each package's source is copied before its install so the editable install
+# resolves against the local tree (not PyPI, where these don't exist).
+
+# shared (no internal deps)
 COPY shared/pyproject.toml shared/
 COPY shared/btagent_shared/ shared/btagent_shared/
 RUN cd shared && uv pip install --system -e .
 
-# Install backend + agents
-COPY backend/pyproject.toml backend/
-RUN cd backend && uv pip install --system -e .
+# engine (depends on shared) — pulls in pyyaml etc.
+COPY engine/pyproject.toml engine/
+COPY engine/btagent_engine/ engine/btagent_engine/
+RUN cd engine && uv pip install --system -e .
 
+# agents (depends on shared + engine) — pulls in the heavy runtime deps:
+# langgraph, litellm, langchain-*, pysigma*.
 COPY agents/pyproject.toml agents/
-# Agents deps will be installed when pyproject.toml exists
+COPY agents/btagent_agents/ agents/btagent_agents/
+RUN cd agents && uv pip install --system -e .
 
-# Copy source
+# backend (depends on shared) — FastAPI app, migrations, scheduler.
+COPY backend/pyproject.toml backend/
 COPY backend/btagent_backend/ backend/btagent_backend/
 COPY backend/alembic.ini backend/
 COPY backend/migrations/ backend/migrations/
-COPY agents/btagent_agents/ agents/btagent_agents/
+RUN cd backend && uv pip install --system -e .
 
 # Stage 2: Production
 FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}}
