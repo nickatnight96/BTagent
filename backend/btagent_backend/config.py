@@ -61,6 +61,23 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 7
 
+    # MFA (opt-in TOTP, #144). ``mfa_issuer`` labels the authenticator entry.
+    # ``mfa_secret_enc_key`` is the Fernet key used to encrypt TOTP secrets at
+    # rest; it follows the ``${secret:...}`` / env injection pattern.
+    #
+    # CI / test-mode safety: this key is INTENTIONALLY allowed to be empty and
+    # there is deliberately NO model_validator that fails when it is unset —
+    # ``Settings(env="test")`` must construct fine with no key so the backend
+    # boots in CI (where MFA is never exercised). The MFA code path itself
+    # resolves the effective key lazily (see ``auth/mfa.py``):
+    #   * if a key is configured, it is used verbatim;
+    #   * else, in dev/test ONLY, a deterministic key is derived from
+    #     ``jwt_secret`` so the test suite can round-trip without extra config;
+    #   * else (prod, no key) the MFA endpoints raise a clear config error —
+    #     MFA is opt-in, so this only affects users actively enrolling.
+    mfa_issuer: str = "BTagent"
+    mfa_secret_enc_key: str = ""
+
     @model_validator(mode="after")
     def _validate_jwt_secret(self) -> "Settings":
         """SEC-001 FIX: Refuse to start with a known-insecure JWT secret in non-dev."""

@@ -60,6 +60,9 @@ const AuditLedgerPage = lazy(() =>
 const TLPPolicyPage = lazy(() =>
   import("@/components/policies/TLPPolicyPage").then((m) => ({ default: m.TLPPolicyPage })),
 );
+const MfaSettingsPage = lazy(() =>
+  import("@/components/auth/MfaSettingsPage").then((m) => ({ default: m.MfaSettingsPage })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -150,6 +153,10 @@ export const router = createBrowserRouter([
       {
         path: "policies",
         element: lazyRoute(TLPPolicyPage),
+      },
+      {
+        path: "security",
+        element: lazyRoute(MfaSettingsPage),
       },
     ],
   },

@@ -23,9 +23,14 @@ from btagent_backend.config import get_settings
 
 ACCESS_COOKIE_NAME = "btagent_access"
 REFRESH_COOKIE_NAME = "btagent_refresh"
+# MFA (#144): short-lived challenge cookie set after a correct password for an
+# MFA-enrolled user. Scoped tight (SameSite=Strict, path = the MFA endpoints)
+# so it only travels to /auth/mfa/* and never doubles as a session cookie.
+MFA_CHALLENGE_COOKIE_NAME = "btagent_mfa_challenge"
 
 ACCESS_COOKIE_PATH = "/"
 REFRESH_COOKIE_PATH = "/api/v1/auth/refresh"
+MFA_CHALLENGE_COOKIE_PATH = "/api/v1/auth/mfa"
 
 
 def _is_secure() -> bool:
@@ -64,6 +69,31 @@ def set_auth_cookies(
         secure=secure,
         samesite="strict",
     )
+
+
+def set_mfa_challenge_cookie(response: Response, token: str) -> None:
+    """Attach the short-lived MFA-challenge cookie (#144).
+
+    Mirrors the access cookie's flags (HttpOnly, Secure-outside-dev) but uses
+    SameSite=Strict and a tight path so it only reaches the MFA endpoints, and
+    a max-age matching the challenge TTL.
+    """
+    from btagent_backend.auth.jwt import MFA_CHALLENGE_TTL_MINUTES
+
+    response.set_cookie(
+        key=MFA_CHALLENGE_COOKIE_NAME,
+        value=token,
+        max_age=MFA_CHALLENGE_TTL_MINUTES * 60,
+        path=MFA_CHALLENGE_COOKIE_PATH,
+        httponly=True,
+        secure=_is_secure(),
+        samesite="strict",
+    )
+
+
+def clear_mfa_challenge_cookie(response: Response) -> None:
+    """Delete the MFA-challenge cookie (after a successful verify or on logout)."""
+    response.delete_cookie(key=MFA_CHALLENGE_COOKIE_NAME, path=MFA_CHALLENGE_COOKIE_PATH)
 
 
 def clear_auth_cookies(response: Response) -> None:
