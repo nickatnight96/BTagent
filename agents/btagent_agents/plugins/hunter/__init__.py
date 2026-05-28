@@ -1,10 +1,12 @@
-"""Hunt Pack Runner plugin (Phase 6 #112).
+"""Hunter plugin package.
 
-Transpiles Sigma rules to every connected SIEM/EDR backend
-(:class:`SigmaCompiler`) and runs versioned hunt packs on a schedule
+Combines the proactive threat-hunting agent (#99, :class:`HunterPlugin`)
+with the Hunt Pack Runner (Phase 6 #112): Sigma transpilation
+(:class:`SigmaCompiler`) and scheduled multi-backend hunt-pack execution
 (:class:`HuntPackRunner`), landing hits in the #119 HuntFinding triage queue.
 """
 
+from btagent_agents.plugins.hunter.plugin import HunterPlugin
 from btagent_agents.plugins.hunter.runner import (
     HuntPackRunner,
     RuleRunResult,
@@ -16,9 +18,10 @@ from btagent_agents.plugins.hunter.sigma_compiler import (
 )
 
 __all__ = [
-    "SigmaCompiler",
-    "SigmaCompileError",
     "HuntPackRunner",
+    "HunterPlugin",
     "RuleRunResult",
+    "SigmaCompileError",
+    "SigmaCompiler",
     "make_mock_hunt_executor",
 ]

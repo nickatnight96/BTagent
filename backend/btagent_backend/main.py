@@ -34,6 +34,25 @@ async def lifespan(app: FastAPI):
     app.state.ws_hub = hub
     logger.info("WebSocket hub initialised")
 
+    # Register the live LLM client unless running in mock mode. In dev
+    # (BTAGENT_MOCK_LLM defaults to "true") this is skipped and the engine's
+    # reasoning nodes use their deterministic mock path. In a real deployment
+    # (BTAGENT_MOCK_LLM=false + provider keys) the LiteLLM-backed client is
+    # registered so engine nodes dispatch to real providers.
+    import os
+
+    # Fail-safe: only go to the real provider on an explicit "false". A typo
+    # or empty value keeps mock mode on, so a misconfig never causes egress.
+    if os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() == "false":
+        try:
+            from btagent_agents.llm.client import LiteLLMClient
+            from btagent_engine.llm import set_llm_client
+
+            set_llm_client(LiteLLMClient())
+            logger.info("Live LLM client registered (LiteLLM router)")
+        except Exception:  # noqa: BLE001 - never let LLM wiring block startup
+            logger.exception("Failed to register live LLM client; nodes will raise on dispatch")
+
     # Initialize TaskManager and auto-resume active investigations
     task_manager = TaskManager(
         redis_url=settings.redis_url,
