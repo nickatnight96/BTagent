@@ -7,7 +7,7 @@
 #   Terminal A:  source .venv/bin/activate && \
 #                BTAGENT_ENV=test \
 #                BTAGENT_JWT_SECRET="dev-secret-for-local-only" \
-#                BTAGENT_DATABASE_URL="postgresql+asyncpg://btagent:btagent_password@localhost:5432/btagent" \
+#                BTAGENT_DATABASE_URL="postgresql+asyncpg://btagent:btagent_dev_password@localhost:5432/btagent" \
 #                BTAGENT_REDIS_URL="redis://localhost:6379" \
 #                uvicorn btagent_backend.main:app --reload --port 8000 --app-dir backend
 #
@@ -165,7 +165,7 @@ step "Step 5/6 — Alembic migrations"
 
 # Default compose creds; override via DATABASE_URL env if you customized the
 # infra/docker-compose.yml or infra/.env.
-DEV_DB_URL="${BTAGENT_DATABASE_URL:-postgresql+asyncpg://btagent:btagent_password@localhost:5432/btagent}"
+DEV_DB_URL="${BTAGENT_DATABASE_URL:-postgresql+asyncpg://btagent:btagent_dev_password@localhost:5432/btagent}"
 
 info "running migrations against ${DEV_DB_URL%@*}@..."
 # Alembic resolves ``script_location = migrations`` in ``backend/alembic.ini``
