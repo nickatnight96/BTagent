@@ -1,0 +1,112 @@
+name: Release Images
+
+# Builds and pushes version-tagged (semver) production images on ``v*`` tags.
+#
+# Why this exists (GitHub #136 / B2): ``deploy-prod.yml`` triggers on the same
+# ``push: tags: ["v*"]`` event and its ``validate`` job runs
+# ``docker manifest inspect <image>:<tag>`` before deploying. The only other
+# image-building job — ``build-images`` in ``ci.yml`` — runs ONLY on push to
+# ``main``, tags by commit SHA, and is gated behind
+# ``vars.ENABLE_IMAGE_BUILD == 'true'``. So no ``...:v1.2.3`` artifact ever
+# existed and ``deploy-prod`` failed immediately at ``validate``. This
+# workflow produces exactly the tag ``validate`` resolves.
+#
+# Tag alignment (load-bearing): on a tag push, ``deploy-prod.yml``'s validate
+# step sets ``tag=${GITHUB_REF_NAME}`` (the literal git ref name, e.g.
+# ``v1.0.0`` WITH the leading ``v``) and inspects ``<image>:v1.0.0``. The
+# ``docker/metadata-action`` config below therefore emits a ``v``-PREFIXED
+# tag:
+#   * ``type=ref,event=tag``         → the literal ref name (``v1.0.0``,
+#                                       ``v1.0.0-rc1``, ...), guaranteeing an
+#                                       exact ``GITHUB_REF_NAME`` match.
+#   * ``type=semver,pattern=v{{version}}`` → validates the tag parses as
+#                                       semver and re-emits it ``v``-prefixed
+#                                       (``v1.0.0``); for tag ``v1.0.0`` this
+#                                       is identical to the ref tag and is
+#                                       de-duplicated.
+# Both resolve to ``v1.0.0`` for tag ``v1.0.0`` — exactly what validate
+# inspects. (Plain ``pattern={{version}}`` would emit ``1.0.0`` WITHOUT the
+# ``v`` and would NOT match — see #136.)
+#
+# Additive only: this does not touch ``build-images`` (SHA tags on main) or
+# any other workflow.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Read-only by default; the build job elevates ``packages: write`` locally to
+# push to GHCR.
+permissions:
+  contents: read
+
+jobs:
+  build-release-images:
+    name: Build & Push Release Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Docker metadata (backend)
+        id: meta-backend
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/nickatnight96/btagent-backend
+          # ``v``-prefixed to match ``deploy-prod.yml`` validate, which
+          # resolves ``tag=${GITHUB_REF_NAME}`` (e.g. ``v1.0.0``) and inspects
+          # ``<image>:v1.0.0``. See header comment for the full rationale.
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=ref,event=tag
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: true
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Docker metadata (frontend)
+        id: meta-frontend
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/nickatnight96/btagent-frontend
+          # Same ``v``-prefixed scheme as backend so both images carry the
+          # tag ``deploy-prod.yml`` inspects.
+          tags: |
+            type=semver,pattern=v{{version}}
+            type=ref,event=tag
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v7
+        with:
+          context: frontend
+          file: infra/docker/Dockerfile.frontend
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
