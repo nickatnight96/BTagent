@@ -16,7 +16,7 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from btagent_shared.types.enums import InvestigationStatus
 from btagent_shared.types.events import EventType
@@ -27,17 +27,12 @@ from btagent_backend.config import get_settings
 from btagent_backend.db.engine import async_session_factory
 from btagent_backend.db.models import InvestigationRow
 
-logger = logging.getLogger("btagent.task_manager")
-
-# ---------------------------------------------------------------------------
-# Lazy imports for the agents package -- may fail if not installed or if
-# LangGraph dependencies are missing.
-# ---------------------------------------------------------------------------
-
-_AGENTS_AVAILABLE = False
-_agents_import_error: str | None = None
-
-try:
+if TYPE_CHECKING:
+    # Type-only imports: resolved by static checkers, never executed at runtime
+    # (``TYPE_CHECKING`` is always False at runtime, so these cost nothing at
+    # import). The runtime bindings for these names are populated lazily by
+    # ``_load_agents`` (see below) and injected into module globals; this block
+    # is what tells the type checker / linter the names exist.
     from btagent_agents.events.emitter import RedisEmitter
     from btagent_agents.hooks.base import HookRegistry
     from btagent_agents.hooks.classification_hook import ClassificationHook
@@ -51,13 +46,83 @@ try:
     from btagent_agents.orchestrator.state import InvestigationState
     from btagent_shared.types.config import TLP, AgentConfig, AutonomyLevel
 
-    _AGENTS_AVAILABLE = True
-except ImportError as exc:
-    _agents_import_error = str(exc)
-    logger.warning(
-        "agents package not available -- TaskManager will operate in stub mode: %s",
-        _agents_import_error,
-    )
+logger = logging.getLogger("btagent.task_manager")
+
+# ---------------------------------------------------------------------------
+# Lazy imports for the agents package.
+# ---------------------------------------------------------------------------
+#
+# Importing the agents package eagerly pulls in the full LangGraph / LiteLLM /
+# LangChain stack, which dominates backend cold-start (hundreds of ms of import
+# plus bytecode compilation of thousands of submodules with no cached ``.pyc``).
+# Because ``btagent_backend.main`` imports this module at app-import time, that
+# cost was paid before the server could even bind its port.
+#
+# To cut cold start we defer the heavy import to first actual use via
+# ``_load_agents``. The function binds the required names into module globals
+# (so every existing reference below works unchanged) and records availability
+# exactly as the previous eager ``try/except ImportError`` block did, preserving
+# the "stub mode" behaviour when the agents package or its deps are missing.
+
+_AGENTS_AVAILABLE = False
+_agents_import_error: str | None = None
+_agents_loaded = False
+
+
+def _load_agents() -> bool:
+    """Import the agents package on first use and bind its names to globals.
+
+    Idempotent: the heavy import runs at most once. Returns ``_AGENTS_AVAILABLE``
+    so callers can branch on availability exactly as before. On import failure
+    the module stays in "stub mode" (``_AGENTS_AVAILABLE`` False with the error
+    string preserved), matching the previous eager-import semantics.
+    """
+    global _AGENTS_AVAILABLE, _agents_import_error, _agents_loaded
+
+    if _agents_loaded:
+        return _AGENTS_AVAILABLE
+
+    try:
+        from btagent_agents.events.emitter import RedisEmitter
+        from btagent_agents.hooks.base import HookRegistry
+        from btagent_agents.hooks.classification_hook import ClassificationHook
+        from btagent_agents.hooks.event_emitter_hook import EventEmitterHook
+        from btagent_agents.hooks.evidence_chain_hook import EvidenceChainHook
+        from btagent_agents.hooks.hitl_hook import HITLHook
+        from btagent_agents.hooks.prompt_budget_hook import PromptBudgetHook
+        from btagent_agents.hooks.scope_enforcement_hook import ScopeEnforcementHook
+        from btagent_agents.llm.cost_calculator import CostAccumulator
+        from btagent_agents.orchestrator.graph import create_investigation_graph
+        from btagent_agents.orchestrator.state import InvestigationState
+        from btagent_shared.types.config import TLP, AgentConfig, AutonomyLevel
+
+        globals().update(
+            RedisEmitter=RedisEmitter,
+            HookRegistry=HookRegistry,
+            ClassificationHook=ClassificationHook,
+            EventEmitterHook=EventEmitterHook,
+            EvidenceChainHook=EvidenceChainHook,
+            HITLHook=HITLHook,
+            PromptBudgetHook=PromptBudgetHook,
+            ScopeEnforcementHook=ScopeEnforcementHook,
+            CostAccumulator=CostAccumulator,
+            create_investigation_graph=create_investigation_graph,
+            InvestigationState=InvestigationState,
+            TLP=TLP,
+            AgentConfig=AgentConfig,
+            AutonomyLevel=AutonomyLevel,
+        )
+        _AGENTS_AVAILABLE = True
+    except ImportError as exc:
+        _agents_import_error = str(exc)
+        logger.warning(
+            "agents package not available -- TaskManager will operate in stub mode: %s",
+            _agents_import_error,
+        )
+    finally:
+        _agents_loaded = True
+
+    return _AGENTS_AVAILABLE
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +185,7 @@ class TaskManager:
             Configuration dict that will be used to build an ``AgentConfig``
             and the initial ``InvestigationState``.
         """
-        if not _AGENTS_AVAILABLE:
+        if not _load_agents():
             logger.error(
                 "Cannot start investigation %s -- agents package not available: %s",
                 investigation_id,
@@ -228,7 +293,7 @@ class TaskManager:
 
     async def resume_investigation(self, investigation_id: str) -> None:
         """Resume an investigation from its LangGraph checkpoint."""
-        if not _AGENTS_AVAILABLE:
+        if not _load_agents():
             logger.error(
                 "Cannot resume investigation %s -- agents package not available",
                 investigation_id,
@@ -309,13 +374,10 @@ class TaskManager:
 
         Returns the count of investigations resumed.
         """
-        if not _AGENTS_AVAILABLE:
-            logger.warning(
-                "auto_resume skipped -- agents package not available: %s",
-                _agents_import_error,
-            )
-            return 0
-
+        # Query the DB first so a clean boot (no in-flight investigations --
+        # the common CI / fresh-start case) never pays the cost of importing the
+        # heavy agents/LangGraph/LiteLLM stack. The agents package is only loaded
+        # when there is actually work to resume.
         count = 0
         try:
             async with async_session_factory() as session:
@@ -323,6 +385,17 @@ class TaskManager:
                     select(InvestigationRow).where(InvestigationRow.status.in_(_ACTIVE_STATUSES))
                 )
                 rows = result.scalars().all()
+
+            if not rows:
+                logger.info("auto_resume: no active investigations to resume")
+                return 0
+
+            if not _load_agents():
+                logger.warning(
+                    "auto_resume skipped -- agents package not available: %s",
+                    _agents_import_error,
+                )
+                return 0
 
             for row in rows:
                 try:
@@ -372,11 +445,15 @@ class TaskManager:
 
     def get_status(self) -> dict[str, Any]:
         """Return running task count and IDs for health/diagnostics."""
+        # Resolve agent availability on demand so the reported flags reflect
+        # whether the agents package actually imports -- the same value the old
+        # eager import produced -- without paying the import cost during boot.
+        agents_available = _load_agents()
         return {
             "running": len(self._tasks),
             "total_started": self._total_started,
             "running_ids": sorted(self._tasks.keys()),
-            "agents_available": _AGENTS_AVAILABLE,
+            "agents_available": agents_available,
             "agents_import_error": _agents_import_error,
             "uptime_seconds": round(time.monotonic() - self._started_at, 1),
         }
@@ -556,10 +633,10 @@ class TaskManager:
 
     def _build_hooks(
         self,
-        emitter: RedisEmitter,  # type: ignore[name-defined]
+        emitter: RedisEmitter,
         investigation_id: str,
         agent_config: Any,
-    ) -> HookRegistry:  # type: ignore[name-defined]
+    ) -> HookRegistry:
         """Construct the hook registry for an investigation."""
         registry = HookRegistry()
 
@@ -644,7 +721,7 @@ class TaskManager:
     def _build_agent_config(
         investigation_id: str,
         config: dict[str, Any],
-    ) -> AgentConfig:  # type: ignore[name-defined]
+    ) -> AgentConfig:
         """Build an ``AgentConfig`` from the raw configuration dict."""
         settings = get_settings()
         return AgentConfig(
@@ -767,7 +844,7 @@ class TaskManager:
         **data: Any,
     ) -> None:
         """Emit a one-off lifecycle event via a short-lived RedisEmitter."""
-        if not _AGENTS_AVAILABLE:
+        if not _load_agents():
             return
 
         emitter: RedisEmitter | None = None
