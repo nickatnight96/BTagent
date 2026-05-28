@@ -29,4 +29,20 @@ test.describe("Audit Ledger", () => {
     // Shell renders, but the data fetch is rejected -> error banner.
     await expect(audit.error).toBeVisible({ timeout: 20_000 });
   });
+
+  test("lineage section renders for the senior persona (UC-7.1)", async ({
+    seniorPage,
+  }) => {
+    const audit = new AuditLedgerPage(seniorPage);
+    await audit.goto();
+    // Lineage card mounts once /audit/lineage resolves.
+    await expect(seniorPage.getByTestId("audit-lineage")).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(seniorPage.getByTestId("audit-lineage-table")).toBeVisible();
+    // The card describes itself with a node/edge count.
+    await expect(seniorPage.getByTestId("audit-lineage")).toContainText(
+      /Lineage graph — \d+ node/i,
+    );
+  });
 });

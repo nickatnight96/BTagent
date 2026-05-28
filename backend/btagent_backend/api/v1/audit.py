@@ -5,6 +5,7 @@ audit_logs table) for forensics + compliance consumption:
 
   * GET /audit/entries  — paginated, filterable entry list
   * GET /audit/verify   — chain integrity check (tamper evidence)
+  * GET /audit/lineage  — node/edge projection of the hash chain
   * GET /audit/export   — CSV export for external auditors
 
 The ledger is always-on read-only infrastructure (autonomy L2 in the
@@ -27,6 +28,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.services.audit_trail import AuditTrail
+from btagent_backend.services.lineage_service import (
+    AuditLineageGraph,
+    build_audit_lineage,
+)
 
 logger = logging.getLogger("btagent.api.audit")
 
@@ -98,6 +103,23 @@ async def verify_audit_chain(
     user.require_permission("audit:view")
     valid, errors = await AuditTrail(db).verify_chain()
     return ChainVerifyResponse(valid=valid, errors=errors)
+
+
+@router.get("/lineage", response_model=AuditLineageGraph)
+async def get_audit_lineage(
+    up_to_hash: str | None = Query(
+        None,
+        description=(
+            "Point-in-time replay: return the chain prefix up to and including "
+            "the row with this hash. Omit for the full graph."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> AuditLineageGraph:
+    """Project the audit hash chain into a node/edge lineage graph (UC-7.1)."""
+    user.require_permission("audit:view")
+    return await build_audit_lineage(db, up_to_hash=up_to_hash)
 
 
 @router.get("/export")

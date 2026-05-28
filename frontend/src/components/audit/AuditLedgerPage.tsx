@@ -13,8 +13,10 @@ import {
 import {
   listAuditEntries,
   verifyAuditChain,
+  getAuditLineage,
   type AuditEntry,
   type ChainVerify,
+  type LineageGraph,
 } from "@/api/audit";
 
 const CATEGORY_VARIANT: Record<string, "secondary" | "info" | "medium" | "destructive"> = {
@@ -30,19 +32,23 @@ const CATEGORY_VARIANT: Record<string, "secondary" | "info" | "medium" | "destru
 export function AuditLedgerPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [verify, setVerify] = useState<ChainVerify | null>(null);
+  const [lineage, setLineage] = useState<LineageGraph | null>(null);
+  const [replayCutoff, setReplayCutoff] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (upToHash?: string | null) => {
     setLoading(true);
     setError(null);
     try {
-      const [list, chain] = await Promise.all([
+      const [list, chain, graph] = await Promise.all([
         listAuditEntries({ limit: 100 }),
         verifyAuditChain(),
+        getAuditLineage(upToHash ?? undefined),
       ]);
       setEntries(list.items);
       setVerify(chain);
+      setLineage(graph);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load audit ledger");
     } finally {
@@ -51,8 +57,8 @@ export function AuditLedgerPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load(replayCutoff);
+  }, [load, replayCutoff]);
 
   return (
     <>
@@ -169,6 +175,107 @@ export function AuditLedgerPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Lineage graph — UC-7.1 */}
+        {lineage && (
+          <Card data-testid="audit-lineage">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center justify-between">
+                <span>
+                  Lineage graph — {lineage.nodes.length} node
+                  {lineage.nodes.length === 1 ? "" : "s"} ·{" "}
+                  {lineage.edges.length} edge{lineage.edges.length === 1 ? "" : "s"}
+                </span>
+                {replayCutoff && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setReplayCutoff(null)}
+                    data-testid="lineage-clear-replay"
+                  >
+                    Clear replay
+                  </Button>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Each row is one chain link; click <em>Replay to here</em> to view
+                the chain prefix as it stood when that entry was appended.
+                {!lineage.intact && (
+                  <span className="block mt-1 text-destructive">
+                    Chain integrity break detected at{" "}
+                    <span className="font-mono">{lineage.broken_at?.slice(0, 12)}…</span>
+                  </span>
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto rounded-md border border-border">
+                <table className="w-full text-xs" data-testid="audit-lineage-table">
+                  <thead className="bg-card sticky top-0">
+                    <tr className="text-left text-muted-foreground">
+                      <th className="px-2 py-2 font-medium">#</th>
+                      <th className="px-2 py-2 font-medium">Action</th>
+                      <th className="px-2 py-2 font-medium">Actor</th>
+                      <th className="px-2 py-2 font-medium">Parent → Hash</th>
+                      <th className="px-2 py-2 font-medium text-right" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineage.nodes.map((n) => {
+                      const broken = lineage.broken_at === n.id;
+                      return (
+                        <tr
+                          key={n.id}
+                          className={
+                            broken
+                              ? "border-t border-destructive/50 bg-destructive/5"
+                              : "border-t border-border/40"
+                          }
+                        >
+                          <td className="px-2 py-1.5 tabular-nums text-muted-foreground">
+                            {n.sequence}
+                          </td>
+                          <td className="px-2 py-1.5">{n.action}</td>
+                          <td className="px-2 py-1.5 font-mono">{n.actor}</td>
+                          <td className="px-2 py-1.5 font-mono text-muted-foreground">
+                            {n.sequence === 0 ? (
+                              <span>genesis → {n.id.slice(0, 12)}…</span>
+                            ) : (
+                              <span>
+                                {n.prev_hash.slice(0, 8)}… → {n.id.slice(0, 12)}…
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setReplayCutoff(n.id)}
+                              disabled={replayCutoff === n.id}
+                              data-testid={`lineage-replay-${n.sequence}`}
+                            >
+                              {replayCutoff === n.id ? "Replaying" : "Replay to here"}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {lineage.nodes.length === 0 && (
+                      <tr>
+                        <td
+                          colSpan={5}
+                          className="px-2 py-8 text-center text-muted-foreground"
+                        >
+                          No lineage to show.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </>
   );

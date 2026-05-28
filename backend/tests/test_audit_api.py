@@ -98,3 +98,77 @@ async def test_export_forbidden_for_non_admin(client: AsyncClient, analyst_token
 async def test_entries_require_auth(client: AsyncClient):
     resp = await client.get("/api/v1/audit/entries")
     assert resp.status_code in (401, 403)
+
+
+# --- lineage (senior-analyst) --------------------------------------------- #
+
+
+async def test_lineage_requires_senior(client: AsyncClient, analyst_token: str):
+    resp = await client.get("/api/v1/audit/lineage", headers=auth_header(analyst_token))
+    assert resp.status_code == 403
+
+
+async def test_lineage_empty_ledger(client: AsyncClient, admin_token: str):
+    # Autouse fixture cleared audit_logs; the graph should be empty + intact.
+    resp = await client.get("/api/v1/audit/lineage", headers=auth_header(admin_token))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body == {"nodes": [], "edges": [], "intact": True, "broken_at": None}
+
+
+async def test_lineage_happy_path(client: AsyncClient, admin_token: str, db_session):
+    await _seed(db_session, 4)
+    resp = await client.get("/api/v1/audit/lineage", headers=auth_header(admin_token))
+    assert resp.status_code == 200, resp.text
+    g = resp.json()
+    assert len(g["nodes"]) == 4
+    # Genesis has no incoming edge -> n-1 edges in a linear chain.
+    assert len(g["edges"]) == 3
+    assert g["intact"] is True
+    assert g["broken_at"] is None
+    assert [n["sequence"] for n in g["nodes"]] == [0, 1, 2, 3]
+    hashes = [n["id"] for n in g["nodes"]]
+    for i, e in enumerate(g["edges"], start=1):
+        assert e["source"] == hashes[i - 1]
+        assert e["target"] == hashes[i]
+        assert e["kind"] == "chain"
+
+
+async def test_lineage_up_to_hash_returns_prefix(client: AsyncClient, admin_token: str, db_session):
+    await _seed(db_session, 5)
+    full = await client.get("/api/v1/audit/lineage", headers=auth_header(admin_token))
+    cutoff_hash = full.json()["nodes"][2]["id"]
+
+    resp = await client.get(
+        f"/api/v1/audit/lineage?up_to_hash={cutoff_hash}",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 200, resp.text
+    g = resp.json()
+    assert len(g["nodes"]) == 3
+    assert g["nodes"][-1]["id"] == cutoff_hash
+    assert g["intact"] is True
+
+
+async def test_lineage_detects_tampered_prev_hash(
+    client: AsyncClient, admin_token: str, db_session
+):
+    from sqlalchemy import select
+
+    await _seed(db_session, 3)
+    rows = (
+        (await db_session.execute(select(AuditLogRow).order_by(AuditLogRow.seq.asc())))
+        .scalars()
+        .all()
+    )
+    victim = rows[1]
+    victim.prev_hash = "f" * 64
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/audit/lineage", headers=auth_header(admin_token))
+    assert resp.status_code == 200, resp.text
+    g = resp.json()
+    assert g["intact"] is False
+    assert g["broken_at"] == victim.hash
+    # Full graph still returned so the UI can highlight the break.
+    assert len(g["nodes"]) == 3

@@ -43,6 +43,37 @@ export async function verifyAuditChain(): Promise<ChainVerify> {
   return api.get<ChainVerify>("/v1/audit/verify");
 }
 
+export interface LineageNode {
+  id: string;
+  seq: number;
+  timestamp: string;
+  actor: string;
+  category: string;
+  action: string;
+  resource: string;
+  outcome: string;
+  prev_hash: string;
+  sequence: number;
+}
+
+export interface LineageEdge {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+export interface LineageGraph {
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  intact: boolean;
+  broken_at: string | null;
+}
+
+export async function getAuditLineage(upToHash?: string): Promise<LineageGraph> {
+  const qs = upToHash ? `?up_to_hash=${encodeURIComponent(upToHash)}` : "";
+  return api.get<LineageGraph>(`/v1/audit/lineage${qs}`);
+}
+
 /** Returns the export endpoint URL (the browser downloads via a link/fetch). */
 export function auditExportUrl(): string {
   return "/api/v1/audit/export";
