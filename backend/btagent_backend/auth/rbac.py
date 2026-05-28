@@ -83,6 +83,9 @@ PERMISSIONS: dict[str, UserRole] = {
     "hunt:triage": UserRole.ANALYST,
     "hunt:suppress": UserRole.SENIOR_ANALYST,
     "hunt:promote": UserRole.SENIOR_ANALYST,
+    # Hunt package + correlation workbench (UC-1.2 / UC-2.2): read-only
+    # engine-backed pivots and advisory triage — analysts run these directly.
+    "hunt:run": UserRole.ANALYST,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,

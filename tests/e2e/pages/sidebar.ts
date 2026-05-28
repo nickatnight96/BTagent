@@ -15,6 +15,8 @@ export class Sidebar {
   readonly iocsLink: Locator;
   readonly mitreLink: Locator;
   readonly knowledgeLink: Locator;
+  readonly huntsLink: Locator;
+  readonly correlateLink: Locator;
   readonly playbooksLink: Locator;
   readonly settingsLink: Locator;
   readonly collapseToggle: Locator;
@@ -28,6 +30,8 @@ export class Sidebar {
     this.iocsLink = page.getByTestId("nav-iocs-link");
     this.mitreLink = page.getByTestId("nav-mitre-link");
     this.knowledgeLink = page.getByTestId("nav-knowledge-link");
+    this.huntsLink = page.getByTestId("nav-hunts-link");
+    this.correlateLink = page.getByTestId("nav-correlate-link");
     this.playbooksLink = page.getByTestId("nav-playbooks-link");
     this.settingsLink = page.getByTestId("nav-settings-link");
     this.collapseToggle = page.getByTestId("sidebar-collapse-toggle");
@@ -51,6 +55,16 @@ export class Sidebar {
   async goToKnowledge(): Promise<void> {
     await this.knowledgeLink.click();
     await this.page.waitForURL("**/knowledge", { timeout: 5_000 });
+  }
+
+  async goToHunts(): Promise<void> {
+    await this.huntsLink.click();
+    await this.page.waitForURL("**/hunts", { timeout: 5_000 });
+  }
+
+  async goToCorrelate(): Promise<void> {
+    await this.correlateLink.click();
+    await this.page.waitForURL("**/correlate", { timeout: 5_000 });
   }
 
   async goToPlaybooks(): Promise<void> {

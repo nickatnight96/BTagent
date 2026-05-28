@@ -6,6 +6,7 @@ from btagent_backend.api.v1.auth import router as auth_router
 from btagent_backend.api.v1.config import router as config_router
 from btagent_backend.api.v1.health import router as health_router
 from btagent_backend.api.v1.hunt_findings import router as hunt_router
+from btagent_backend.api.v1.hunts import router as hunts_router
 from btagent_backend.api.v1.investigations import router as investigations_router
 from btagent_backend.api.v1.iocs import router as iocs_router
 from btagent_backend.api.v1.knowledge import router as knowledge_router
@@ -19,6 +20,7 @@ api_v1_router = APIRouter(prefix="/api/v1")
 api_v1_router.include_router(auth_router)
 api_v1_router.include_router(config_router)
 api_v1_router.include_router(hunt_router)
+api_v1_router.include_router(hunts_router)
 api_v1_router.include_router(investigations_router)
 api_v1_router.include_router(iocs_router)
 api_v1_router.include_router(knowledge_router)

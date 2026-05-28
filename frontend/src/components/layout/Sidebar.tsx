@@ -11,6 +11,8 @@ import {
   BookOpen,
   Workflow,
   Crosshair,
+  FileSearch,
+  Network,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -58,6 +60,18 @@ const navItems: NavItem[] = [
     path: "/hunt",
     icon: <Crosshair className="w-5 h-5" />,
     testId: "nav-hunt-link",
+  },
+  {
+    label: "Hunt Package",
+    path: "/hunts",
+    icon: <FileSearch className="w-5 h-5" />,
+    testId: "nav-hunts-link",
+  },
+  {
+    label: "Correlation",
+    path: "/correlate",
+    icon: <Network className="w-5 h-5" />,
+    testId: "nav-correlate-link",
   },
   {
     label: "Playbooks",

@@ -35,6 +35,14 @@ const KnowledgePage = lazy(() =>
 const HuntTriagePage = lazy(() =>
   import("@/components/hunt/HuntTriagePage").then((m) => ({ default: m.HuntTriagePage })),
 );
+const HuntPackagePage = lazy(() =>
+  import("@/components/hunts/HuntPackagePage").then((m) => ({ default: m.HuntPackagePage })),
+);
+const CorrelationPage = lazy(() =>
+  import("@/components/correlation/CorrelationPage").then((m) => ({
+    default: m.CorrelationPage,
+  })),
+);
 const PlaybookList = lazy(() =>
   import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
 );
@@ -104,6 +112,14 @@ export const router = createBrowserRouter([
       {
         path: "hunt",
         element: lazyRoute(HuntTriagePage),
+      },
+      {
+        path: "hunts",
+        element: lazyRoute(HuntPackagePage),
+      },
+      {
+        path: "correlate",
+        element: lazyRoute(CorrelationPage),
       },
       {
         path: "playbooks",
