@@ -1,7 +1,18 @@
 import { useState, useCallback, type FormEvent } from "react";
-import { Dialog, DialogContent, DialogFooter } from "@/components/ui/Dialog";
-import { Button } from "@/components/ui/Button";
-import { Input, Textarea, Select } from "@/components/ui/Input";
+import { Loader2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ds/dialog";
+import { Button } from "@/components/ds/button";
+import { Input } from "@/components/ds/input";
+import { Label } from "@/components/ds/label";
+import { Textarea } from "@/components/ds/textarea";
+import { NativeSelect } from "@/components/ds/native-select";
 import { Severity, TLP } from "@/types/config";
 import { createInvestigation } from "@/api/investigations";
 import { useInvestigationStore } from "@/stores/investigationStore";
@@ -96,7 +107,16 @@ export function NewInvestigationModal({
         setIsSubmitting(false);
       }
     },
-    [title, description, severity, tlp, template, upsertInvestigation, resetForm, onOpenChange],
+    [
+      title,
+      description,
+      severity,
+      tlp,
+      template,
+      upsertInvestigation,
+      resetForm,
+      onOpenChange,
+    ]
   );
 
   return (
@@ -107,89 +127,125 @@ export function NewInvestigationModal({
         onOpenChange(isOpen);
       }}
     >
-      <DialogContent
-        title="New Investigation"
-        description="Create a new security investigation. The AI agent will begin analysis once created."
-      >
-        <div data-testid="new-investigation-dialog">
-          <form
-            onSubmit={handleSubmit}
-            className="space-y-4"
-            data-testid="new-investigation-form"
-          >
+      <DialogContent data-testid="new-investigation-dialog">
+        <DialogHeader>
+          <DialogTitle>New Investigation</DialogTitle>
+          <DialogDescription>
+            Create a new security investigation. The AI agent will begin analysis
+            once created.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-4"
+          data-testid="new-investigation-form"
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="new-investigation-title">Title</Label>
             <Input
-              label="Title"
+              id="new-investigation-title"
               placeholder="e.g., Suspicious login from 185.220.101.x"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               autoFocus
               data-testid="new-investigation-title-input"
             />
+          </div>
 
+          <div className="space-y-1.5">
+            <Label htmlFor="new-investigation-description">Description</Label>
             <Textarea
-              label="Description"
+              id="new-investigation-description"
               placeholder="Describe the incident or alert details..."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
               data-testid="new-investigation-description-input"
             />
+          </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Select
-                label="Severity"
-                options={severityOptions}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="new-investigation-severity">Severity</Label>
+              <NativeSelect
+                id="new-investigation-severity"
                 value={severity}
                 onChange={(e) => setSeverity(e.target.value as Severity)}
                 data-testid="new-investigation-severity-input"
-              />
+              >
+                {severityOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
 
-              <Select
-                label="TLP"
-                options={tlpOptions}
+            <div className="space-y-1.5">
+              <Label htmlFor="new-investigation-tlp">TLP</Label>
+              <NativeSelect
+                id="new-investigation-tlp"
                 value={tlp}
                 onChange={(e) => setTlp(e.target.value as TLP)}
                 data-testid="new-investigation-tlp-input"
-              />
+              >
+                {tlpOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </NativeSelect>
             </div>
+          </div>
 
-            <Select
-              label="Template"
-              options={templateOptions}
+          <div className="space-y-1.5">
+            <Label htmlFor="new-investigation-template">Template</Label>
+            <NativeSelect
+              id="new-investigation-template"
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
               data-testid="new-investigation-template-input"
-            />
+            >
+              {templateOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
 
-            {error && (
-              <div
-                className="bg-red-500/10 border border-red-500/30 rounded-md p-3 text-sm text-red-400"
-                role="alert"
-                data-testid="new-investigation-error"
-              >
-                {error}
-              </div>
-            )}
+          {error && (
+            <div
+              className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+              role="alert"
+              data-testid="new-investigation-error"
+            >
+              {error}
+            </div>
+          )}
 
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => onOpenChange(false)}
-                data-testid="new-investigation-cancel-button"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                isLoading={isSubmitting}
-                data-testid="new-investigation-submit-button"
-              >
-                Create Investigation
-              </Button>
-            </DialogFooter>
-          </form>
-        </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+              data-testid="new-investigation-cancel-button"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={isSubmitting}
+              data-testid="new-investigation-submit-button"
+            >
+              {isSubmitting && (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              )}
+              Create Investigation
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

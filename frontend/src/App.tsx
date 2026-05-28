@@ -26,10 +26,9 @@ setUnauthenticatedHandler(() => {
 });
 
 export default function App() {
-  // Ensure dark class is always on the html element
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-  }, []);
+  // Theme class on <html> is owned by ThemeProvider (see main.tsx);
+  // App.tsx used to force-add `dark` here, which fought the
+  // ThemeProvider's swap-to-light path. Removed.
 
   // Phase C2 bootstrap: the persisted user is a UI hint only — the cookie
   // is the source of truth. Verify the session on app load by hitting

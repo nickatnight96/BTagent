@@ -1,8 +1,26 @@
 import { useState, useCallback, useMemo } from "react";
-import { Upload, FileText, AlertTriangle, CheckCircle2, XCircle, Loader2 } from "lucide-react";
-import { Dialog, DialogContent, DialogFooter } from "@/components/ui/Dialog";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
+import {
+  Upload,
+  FileText,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+} from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ds/dialog";
+import { Button } from "@/components/ds/button";
+import { Badge } from "@/components/ds/badge";
+import { Label } from "@/components/ds/label";
+import { Textarea } from "@/components/ds/textarea";
+import { NativeSelect } from "@/components/ds/native-select";
+import { cn } from "@/lib/utils";
 import { useIOCStore } from "@/stores/iocStore";
 import { useInvestigationStore } from "@/stores/investigationStore";
 import type { ImportPreviewRow, IOCType } from "@/types/ioc";
@@ -22,7 +40,6 @@ function parseCSVPreview(text: string): ImportPreviewRow[] {
     .filter((l) => l.trim());
   if (lines.length === 0) return [];
 
-  // Detect if first line is a header
   const firstLine = lines[0].toLowerCase();
   const hasHeader =
     firstLine.includes("type") ||
@@ -39,8 +56,16 @@ function parseCSVPreview(text: string): ImportPreviewRow[] {
     const tags = parts[4] ? parts[4].split(";").map((t) => t.trim()) : [];
 
     const validTypes: IOCType[] = [
-      "ip", "domain", "hash_md5", "hash_sha1", "hash_sha256",
-      "url", "email", "cve", "file_path", "other",
+      "ip",
+      "domain",
+      "hash_md5",
+      "hash_sha1",
+      "hash_sha256",
+      "url",
+      "email",
+      "cve",
+      "file_path",
+      "other",
     ];
 
     const valid = validTypes.includes(type) && value.length > 0;
@@ -58,28 +83,28 @@ function parseCSVPreview(text: string): ImportPreviewRow[] {
 function parseSTIXPreview(text: string): ImportPreviewRow[] {
   try {
     const parsed = JSON.parse(text);
-    const objects = parsed.objects ?? (Array.isArray(parsed) ? parsed : [parsed]);
+    const objects =
+      parsed.objects ?? (Array.isArray(parsed) ? parsed : [parsed]);
 
     const stixTypeMap: Record<string, IOCType> = {
       "ipv4-addr": "ip",
       "ipv6-addr": "ip",
       "domain-name": "domain",
-      "url": "url",
+      url: "url",
       "email-addr": "email",
-      "file": "hash_sha256",
+      file: "hash_sha256",
     };
 
     return objects
       .filter(
         (obj: Record<string, unknown>) =>
-          obj.type === "indicator" || stixTypeMap[obj.type as string],
+          obj.type === "indicator" || stixTypeMap[obj.type as string]
       )
       .map((obj: Record<string, unknown>) => {
         const pattern = (obj.pattern as string) ?? "";
         const name = (obj.name as string) ?? "";
         const type = stixTypeMap[obj.type as string] ?? "other";
 
-        // Try to extract value from STIX pattern
         const valueMatch = pattern.match(/'([^']+)'/);
         const value = valueMatch?.[1] ?? name ?? String(obj.value ?? "");
 
@@ -87,10 +112,14 @@ function parseSTIXPreview(text: string): ImportPreviewRow[] {
           type,
           value,
           source: "stix_import",
-          confidence: typeof obj.confidence === "number" ? obj.confidence / 100 : 0.5,
+          confidence:
+            typeof obj.confidence === "number" ? obj.confidence / 100 : 0.5,
           tags: [] as string[],
           valid: value.length > 0,
-          error: value.length === 0 ? "Could not extract value from STIX object" : undefined,
+          error:
+            value.length === 0
+              ? "Could not extract value from STIX object"
+              : undefined,
         };
       });
   } catch {
@@ -129,7 +158,7 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
       const result = await importIOCs(
         rawText,
         format,
-        investigationId || undefined,
+        investigationId || undefined
       );
       setImportResult({
         imported: result.imported ?? 0,
@@ -137,9 +166,7 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
         errors: (result.errors ?? []).length,
       });
     } catch (err) {
-      setImportError(
-        err instanceof Error ? err.message : "Import failed",
-      );
+      setImportError(err instanceof Error ? err.message : "Import failed");
     }
   }, [rawText, format, investigationId, importIOCs]);
 
@@ -153,67 +180,63 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
   }, [onOpenChange]);
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={(o) => (o ? onOpenChange(o) : handleClose())}>
       <DialogContent
-        title="Import IOCs"
-        description="Paste CSV data or STIX 2.1 JSON to import indicators of compromise."
         className="max-w-2xl"
+        data-testid="ioc-import"
       >
-        <div data-testid="ioc-import">
+        <DialogHeader>
+          <DialogTitle>Import IOCs</DialogTitle>
+          <DialogDescription>
+            Paste CSV data or STIX 2.1 JSON to import indicators of compromise.
+          </DialogDescription>
+        </DialogHeader>
+
         {/* Format selector */}
-        <div className="flex items-center gap-2 mb-4">
-          <label className="text-xs text-slate-500 font-medium">Format</label>
+        <div className="flex items-center gap-2">
+          <Label>Format</Label>
           <div
-            className="flex items-center gap-0.5 bg-slate-800 rounded-md p-0.5"
+            className="flex items-center gap-0.5 bg-muted rounded-md p-0.5"
             role="tablist"
             aria-label="Import format"
           >
-            <button
-              onClick={() => setFormat("csv")}
-              role="tab"
-              aria-selected={format === "csv"}
-              data-testid="ioc-import-format-tab-csv"
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                format === "csv"
-                  ? "bg-blue-600/20 text-blue-400"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" aria-hidden="true" />
-                CSV
-              </span>
-            </button>
-            <button
-              onClick={() => setFormat("stix")}
-              role="tab"
-              aria-selected={format === "stix"}
-              data-testid="ioc-import-format-tab-stix"
-              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                format === "stix"
-                  ? "bg-blue-600/20 text-blue-400"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" aria-hidden="true" />
-                STIX 2.1
-              </span>
-            </button>
+            {(["csv", "stix"] as ImportFormat[]).map((f) => {
+              const active = format === f;
+              return (
+                <button
+                  key={f}
+                  onClick={() => setFormat(f)}
+                  role="tab"
+                  aria-selected={active}
+                  data-testid={`ioc-import-format-tab-${f}`}
+                  className={cn(
+                    "px-3 py-1.5 rounded text-xs font-medium transition-colors",
+                    active
+                      ? "bg-primary/20 text-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                    {f === "csv" ? "CSV" : "STIX 2.1"}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {/* Investigation assignment */}
-        <div className="mb-4">
-          <label className="block text-xs text-slate-500 font-medium mb-1.5">
+        <div className="space-y-1.5">
+          <Label htmlFor="ioc-import-investigation">
             Assign to Investigation (optional)
-          </label>
-          <select
+          </Label>
+          <NativeSelect
+            id="ioc-import-investigation"
             value={investigationId}
             onChange={(e) => setInvestigationId(e.target.value)}
             aria-label="Assign import to investigation"
             data-testid="ioc-import-investigation-input"
-            className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
           >
             <option value="">No investigation</option>
             {investigations.map((inv) => (
@@ -221,17 +244,18 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
                 {inv.title}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
 
         {/* Paste area */}
-        <div className="mb-4">
-          <label className="block text-xs text-slate-500 font-medium mb-1.5">
+        <div className="space-y-1.5">
+          <Label htmlFor="ioc-import-paste">
             {format === "csv"
               ? "Paste CSV (type,value,source,confidence,tags)"
               : "Paste STIX 2.1 JSON"}
-          </label>
-          <textarea
+          </Label>
+          <Textarea
+            id="ioc-import-paste"
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
             placeholder={
@@ -240,46 +264,51 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
                 : '{"type": "bundle", "objects": [{"type": "indicator", "pattern": "[ipv4-addr:value = \'10.0.0.1\']", ...}]}'
             }
             rows={6}
-            aria-label={format === "csv" ? "Paste CSV IOC data" : "Paste STIX 2.1 JSON"}
+            aria-label={
+              format === "csv" ? "Paste CSV IOC data" : "Paste STIX 2.1 JSON"
+            }
             data-testid="ioc-import-paste-input"
-            className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-100 font-mono placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-colors resize-none"
+            className="font-mono resize-none"
           />
         </div>
 
         {/* Preview table */}
         {preview.length > 0 && (
-          <div className="mb-4" data-testid="ioc-import-preview">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-slate-400">
+          <div className="space-y-2" data-testid="ioc-import-preview">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-muted-foreground">
                 Preview ({preview.length} rows)
               </span>
               <div className="flex items-center gap-3 text-xs">
-                <span className="flex items-center gap-1 text-green-400">
+                <span className="flex items-center gap-1 text-severity-low">
                   <CheckCircle2 className="w-3 h-3" aria-hidden="true" />
                   {validCount} valid
                 </span>
                 {invalidCount > 0 && (
-                  <span className="flex items-center gap-1 text-red-400">
+                  <span className="flex items-center gap-1 text-destructive">
                     <XCircle className="w-3 h-3" aria-hidden="true" />
                     {invalidCount} invalid
                   </span>
                 )}
               </div>
             </div>
-            <div className="max-h-48 overflow-auto rounded-lg border border-slate-700/50">
-              <table className="w-full text-xs" data-testid="ioc-import-preview-table">
-                <thead className="bg-slate-900 sticky top-0">
+            <div className="max-h-48 overflow-auto rounded-md border border-border">
+              <table
+                className="w-full text-xs"
+                data-testid="ioc-import-preview-table"
+              >
+                <thead className="bg-card sticky top-0">
                   <tr>
-                    <th className="px-2 py-1.5 text-left text-slate-500 font-medium">
+                    <th className="px-2 py-1.5 text-left text-muted-foreground font-medium">
                       Status
                     </th>
-                    <th className="px-2 py-1.5 text-left text-slate-500 font-medium">
+                    <th className="px-2 py-1.5 text-left text-muted-foreground font-medium">
                       Type
                     </th>
-                    <th className="px-2 py-1.5 text-left text-slate-500 font-medium">
+                    <th className="px-2 py-1.5 text-left text-muted-foreground font-medium">
                       Value
                     </th>
-                    <th className="px-2 py-1.5 text-left text-slate-500 font-medium">
+                    <th className="px-2 py-1.5 text-left text-muted-foreground font-medium">
                       Confidence
                     </th>
                   </tr>
@@ -289,26 +318,35 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
                     <tr
                       key={idx}
                       data-testid={`ioc-import-preview-row-${idx}`}
-                      className={`border-b border-slate-800/50 ${
-                        idx % 2 === 0 ? "bg-slate-950" : "bg-slate-900/50"
-                      }`}
+                      className={cn(
+                        "border-b border-border/40",
+                        idx % 2 === 0 ? "bg-background" : "bg-card/40"
+                      )}
                     >
                       <td className="px-2 py-1.5">
                         {row.valid ? (
-                          <CheckCircle2 className="w-3.5 h-3.5 text-green-400" aria-label="Valid row" />
+                          <CheckCircle2
+                            className="w-3.5 h-3.5 text-severity-low"
+                            aria-label="Valid row"
+                          />
                         ) : (
                           <span title={row.error}>
-                            <XCircle className="w-3.5 h-3.5 text-red-400" aria-label={row.error ?? "Invalid row"} />
+                            <XCircle
+                              className="w-3.5 h-3.5 text-destructive"
+                              aria-label={row.error ?? "Invalid row"}
+                            />
                           </span>
                         )}
                       </td>
                       <td className="px-2 py-1.5">
-                        <Badge className="text-[9px]">{row.type}</Badge>
+                        <Badge variant="secondary" className="text-[9px]">
+                          {row.type}
+                        </Badge>
                       </td>
-                      <td className="px-2 py-1.5 font-mono text-slate-300 max-w-[200px] truncate">
+                      <td className="px-2 py-1.5 font-mono text-foreground max-w-[200px] truncate">
                         {row.value}
                       </td>
-                      <td className="px-2 py-1.5 text-slate-400 tabular-nums">
+                      <td className="px-2 py-1.5 text-muted-foreground tabular-nums">
                         {Math.round(row.confidence * 100)}%
                       </td>
                     </tr>
@@ -317,7 +355,7 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
               </table>
             </div>
             {preview.length > 50 && (
-              <p className="text-[10px] text-slate-600 mt-1">
+              <p className="text-[10px] text-muted-foreground/60">
                 Showing first 50 of {preview.length} rows
               </p>
             )}
@@ -327,20 +365,23 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
         {/* Import result */}
         {importResult && (
           <div
-            className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg"
+            className="p-3 rounded-md border border-severity-low/30 bg-severity-low/10"
             data-testid="ioc-import-result"
           >
             <div className="flex items-center gap-2 mb-1">
-              <CheckCircle2 className="w-4 h-4 text-green-400" aria-hidden="true" />
-              <span className="text-sm font-medium text-green-400">
+              <CheckCircle2
+                className="w-4 h-4 text-severity-low"
+                aria-hidden="true"
+              />
+              <span className="text-sm font-medium text-severity-low">
                 Import Complete
               </span>
             </div>
-            <div className="flex items-center gap-4 text-xs text-slate-300 mt-1">
+            <div className="flex items-center gap-4 text-xs text-foreground mt-1">
               <span>{importResult.imported} imported</span>
               <span>{importResult.skipped} skipped</span>
               {importResult.errors > 0 && (
-                <span className="text-red-400">
+                <span className="text-destructive">
                   {importResult.errors} errors
                 </span>
               )}
@@ -351,13 +392,16 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
         {/* Import error */}
         {importError && (
           <div
-            className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-lg"
+            className="p-3 rounded-md border border-destructive/30 bg-destructive/10"
             role="alert"
             data-testid="ioc-import-error"
           >
             <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-400" aria-hidden="true" />
-              <span className="text-sm text-red-400">{importError}</span>
+              <AlertTriangle
+                className="w-4 h-4 text-destructive"
+                aria-hidden="true"
+              />
+              <span className="text-sm text-destructive">{importError}</span>
             </div>
           </div>
         )}
@@ -365,7 +409,6 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
         <DialogFooter>
           <Button
             variant="ghost"
-            size="sm"
             onClick={handleClose}
             data-testid="ioc-import-cancel-button"
           >
@@ -373,18 +416,19 @@ export function IOCImportModal({ open, onOpenChange }: IOCImportModalProps) {
           </Button>
           {!importResult && (
             <Button
-              size="sm"
               onClick={handleImport}
               disabled={validCount === 0 || isImporting}
-              isLoading={isImporting}
               data-testid="ioc-import-submit-button"
             >
-              <Upload className="w-4 h-4" aria-hidden="true" />
+              {isImporting ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4 mr-2" aria-hidden="true" />
+              )}
               Import {validCount} IOC{validCount !== 1 ? "s" : ""}
             </Button>
           )}
         </DialogFooter>
-        </div>
       </DialogContent>
     </Dialog>
   );

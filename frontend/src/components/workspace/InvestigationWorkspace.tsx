@@ -26,8 +26,9 @@ import type { ContainmentAction, TimelineEntry, IOC } from "@/types/investigatio
 import { getWSClient } from "@/api/ws";
 import { EventType } from "@/types/events";
 import { Header } from "@/components/layout/Header";
-import { Button } from "@/components/ui/Button";
-import { SeverityBadge, StatusBadge } from "@/components/ui/Badge";
+import { Button } from "@/components/ds/button";
+import { SeverityBadge } from "@/components/ds/severity-badge";
+import { StatusBadge } from "@/components/ds/status-badge";
 import { CostBadge } from "./CostBadge";
 import { AgentChat } from "./AgentChat";
 import { EventStream } from "./EventStream";
@@ -162,11 +163,11 @@ export function InvestigationWorkspace() {
       <>
         <Header title="Investigation" />
         <div
-          className="flex-1 flex items-center justify-center text-slate-500"
+          className="flex-1 flex items-center justify-center text-muted-foreground"
           data-testid="investigation-workspace-loading"
         >
           <div
-            className="animate-spin w-8 h-8 border-2 border-slate-600 border-t-blue-500 rounded-full"
+            className="animate-spin w-8 h-8 border-2 border-border border-t-blue-500 rounded-full"
             aria-label="Loading investigation"
           />
         </div>
@@ -189,11 +190,11 @@ export function InvestigationWorkspace() {
   return (
     <div data-testid="investigation-workspace">
       {/* Workspace header */}
-      <div className="flex items-center justify-between px-6 py-3 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 shrink-0">
+      <div className="flex items-center justify-between px-6 py-3 bg-card/80 backdrop-blur-sm border-b border-border/50 shrink-0">
         <div className="flex items-center gap-4 min-w-0">
           <button
             onClick={() => navigate("/")}
-            className="text-slate-400 hover:text-slate-200 transition-colors shrink-0"
+            className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
             aria-label="Back to investigations"
             data-testid="investigation-workspace-back-button"
           >
@@ -202,7 +203,7 @@ export function InvestigationWorkspace() {
 
           <div className="min-w-0">
             <h1
-              className="text-base font-semibold text-slate-100 truncate"
+              className="text-base font-semibold text-foreground truncate"
               data-testid="investigation-workspace-title"
             >
               {inv.title}
@@ -243,7 +244,7 @@ export function InvestigationWorkspace() {
               </Button>
             )}
             <Button
-              variant="danger"
+              variant="destructive"
               size="sm"
               onClick={handleStop}
               aria-label="Stop investigation"
@@ -259,15 +260,15 @@ export function InvestigationWorkspace() {
       {/* Split layout */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Left panel: Agent Chat */}
-        <div className="flex-1 min-w-0 border-r border-slate-700/50">
+        <div className="flex-1 min-w-0 border-r border-border/50">
           <AgentChat investigationId={inv.id} />
         </div>
 
         {/* Right panel: Tabbed content */}
-        <div className="w-[400px] lg:w-[480px] hidden md:flex flex-col bg-slate-950 shrink-0">
+        <div className="w-[400px] lg:w-[480px] hidden md:flex flex-col bg-background shrink-0">
           {/* Tabs */}
           <div
-            className="flex border-b border-slate-700/50 shrink-0"
+            className="flex border-b border-border/50 shrink-0"
             role="tablist"
             aria-label="Investigation panels"
             data-testid="investigation-workspace-tabs"
@@ -282,8 +283,8 @@ export function InvestigationWorkspace() {
                 className={clsx(
                   "flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors",
                   rightTab === tab.id
-                    ? "text-blue-400 border-blue-400"
-                    : "text-slate-400 border-transparent hover:text-slate-200 hover:border-slate-600",
+                    ? "text-primary border-blue-400"
+                    : "text-muted-foreground border-transparent hover:text-foreground hover:border-border",
                 )}
               >
                 {tab.icon}
@@ -312,7 +313,7 @@ export function InvestigationWorkspace() {
 function TimelinePanel({ timeline }: { timeline: TimelineEntry[] }) {
   if (timeline.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         No timeline entries yet
       </div>
     );
@@ -323,16 +324,16 @@ function TimelinePanel({ timeline }: { timeline: TimelineEntry[] }) {
       {timeline.map((entry) => (
         <div
           key={entry.id}
-          className="relative pl-6 before:absolute before:left-2 before:top-2 before:w-1.5 before:h-1.5 before:rounded-full before:bg-slate-500 border-l border-slate-700/50 ml-2"
+          className="relative pl-6 before:absolute before:left-2 before:top-2 before:w-1.5 before:h-1.5 before:rounded-full before:bg-slate-500 border-l border-border/50 ml-2"
         >
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-mono text-slate-500">
+            <span className="text-[10px] font-mono text-muted-foreground">
               {new Date(entry.timestamp).toLocaleString()}
             </span>
             <SeverityBadge severity={entry.severity} />
           </div>
-          <p className="text-sm text-slate-300">{entry.description}</p>
-          <span className="text-[10px] text-slate-500">
+          <p className="text-sm text-foreground">{entry.description}</p>
+          <span className="text-[10px] text-muted-foreground">
             Source: {entry.source}
           </span>
         </div>
@@ -346,7 +347,7 @@ function TimelinePanel({ timeline }: { timeline: TimelineEntry[] }) {
 function IOCsPanel({ iocs }: { iocs: IOC[] }) {
   if (iocs.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-slate-500 text-sm">
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
         No IOCs discovered yet
       </div>
     );
@@ -357,10 +358,10 @@ function IOCsPanel({ iocs }: { iocs: IOC[] }) {
       {iocs.map((ioc) => (
         <div
           key={ioc.id}
-          className="bg-slate-900 border border-slate-700/40 rounded-md p-3"
+          className="bg-card border border-border/40 rounded-md p-3"
         >
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground bg-accent px-1.5 py-0.5 rounded">
               {ioc.type}
             </span>
             <span
@@ -370,24 +371,24 @@ function IOCsPanel({ iocs }: { iocs: IOC[] }) {
                   ? "text-green-400"
                   : ioc.confidence >= 0.5
                     ? "text-amber-400"
-                    : "text-slate-400",
+                    : "text-muted-foreground",
               )}
             >
               {Math.round(ioc.confidence * 100)}% confidence
             </span>
           </div>
-          <p className="font-mono text-sm text-slate-200 break-all">
+          <p className="font-mono text-sm text-foreground break-all">
             {ioc.value}
           </p>
           {ioc.context && (
-            <p className="text-xs text-slate-500 mt-1">{ioc.context}</p>
+            <p className="text-xs text-muted-foreground mt-1">{ioc.context}</p>
           )}
           {(ioc.tags ?? []).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
               {(ioc.tags ?? []).map((tag) => (
                 <span
                   key={tag}
-                  className="px-1.5 py-0.5 text-[10px] rounded bg-slate-800 text-slate-400"
+                  className="px-1.5 py-0.5 text-[10px] rounded bg-accent text-muted-foreground"
                 >
                   {tag}
                 </span>
@@ -404,9 +405,9 @@ function IOCsPanel({ iocs }: { iocs: IOC[] }) {
 
 function EvidencePanel() {
   return (
-    <div className="flex flex-col items-center justify-center h-full text-slate-500 text-sm p-6">
-      <FileText className="w-10 h-10 text-slate-600 mb-3" />
-      <p className="font-medium text-slate-400">Evidence Collection</p>
+    <div className="flex flex-col items-center justify-center h-full text-muted-foreground text-sm p-6">
+      <FileText className="w-10 h-10 text-muted-foreground/60 mb-3" />
+      <p className="font-medium text-muted-foreground">Evidence Collection</p>
       <p className="text-xs mt-1 text-center">
         Collected files, screenshots, and artifacts will appear here as the
         investigation progresses
