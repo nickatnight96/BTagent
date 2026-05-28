@@ -72,6 +72,22 @@ async def _get_redis() -> Redis | None:
         return None
 
 
+async def close_redis() -> None:
+    """Close the shared revocation Redis client (graceful-shutdown hook).
+
+    Idempotent and never raises — safe to call from the FastAPI lifespan even
+    when Redis was never opened or already failed.
+    """
+    global _redis_client, _redis_unavailable
+    client, _redis_client = _redis_client, None
+    _redis_unavailable = False
+    if client is not None:
+        try:
+            await client.aclose()
+        except Exception as exc:  # noqa: BLE001 — shutdown must not raise
+            logger.warning("error closing revocation Redis client: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # In-memory fallback (single-process; for tests / dev without Redis)
 # ---------------------------------------------------------------------------

@@ -109,8 +109,8 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         if not settings.rate_limit_enabled:
             return await call_next(request)
 
-        # Skip health checks.
-        if request.url.path == "/health":
+        # Skip health/readiness probes (hit frequently by orchestrators).
+        if request.url.path == "/health" or request.url.path.startswith("/health/"):
             return await call_next(request)
 
         role = _extract_role(request)
