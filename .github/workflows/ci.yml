@@ -555,6 +555,28 @@ jobs:
           path: /tmp/backend.log
           retention-days: 7
 
+  # ── E2E gate (stable required-check name) ───────────────
+  # The ``e2e`` job above is a 3-way matrix, so its checks report as
+  # "E2E (Playwright) 1/3 … 3/3". This gate publishes a single check named
+  # "E2E (Playwright)" — the pre-sharding name — so branch protection that
+  # requires that exact check keeps working with no settings change, and
+  # stays stable if the shard count ever changes. ``if: always()`` lets it
+  # report a definitive pass/fail even when a shard fails (a skipped
+  # required check would otherwise leave the PR pending forever).
+  e2e-gate:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    needs: [e2e]
+    if: always()
+    steps:
+      - name: Require all E2E shards to pass
+        run: |
+          if [ "${{ needs.e2e.result }}" != "success" ]; then
+            echo "E2E shards did not all pass (result: ${{ needs.e2e.result }})."
+            exit 1
+          fi
+          echo "All E2E shards passed."
+
   # ── UAT (User Acceptance Tests) ─────────────────────────
   uat:
     name: UAT
