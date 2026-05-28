@@ -21,6 +21,16 @@ class TokenPayload(BaseModel):
     # DB lookup. Optional + defaulted to "org_default" so legacy tokens issued
     # before Phase B1 still validate during the rollout window.
     org_id: str = "org_default"
+    # P142: issued-at (unix seconds). Optional so legacy tokens (issued before
+    # P142) still decode; the middleware only enforces the per-user revocation
+    # epoch when ``iat`` is present.
+    iat: int | None = None
+    # P142: refresh-token family id. Every refresh token in a single login
+    # session shares one ``fid``; rotation mints a new ``jti`` but keeps the
+    # ``fid``, so reuse of a consumed (already-rotated) refresh token can be
+    # detected and the whole family revoked (theft response). Only set on
+    # refresh tokens.
+    fid: str | None = None
 
 
 class TokenPair(BaseModel):
@@ -55,7 +65,8 @@ def create_access_token(
     reject cross-org access without an extra DB lookup.
     """
     settings = get_settings()
-    expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_ttl_minutes)
+    now = datetime.now(UTC)
+    expire = now + timedelta(minutes=settings.access_token_ttl_minutes)
     jti = str(uuid.uuid4())
     payload = {
         "sub": user_id,
@@ -65,6 +76,9 @@ def create_access_token(
         "type": "access",
         "jti": jti,
         "org_id": org_id,
+        # P142: issued-at powers the per-user revocation epoch (admin force
+        # logout). int(timestamp) keeps the claim a plain JWT NumericDate.
+        "iat": int(now.timestamp()),
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, jti
@@ -75,18 +89,27 @@ def create_refresh_token(
     username: str,
     role: str,
     org_id: str = "org_default",
-) -> tuple[str, str]:
-    """Issue a signed refresh token and return ``(token, jti)``.
+    family_id: str | None = None,
+) -> tuple[str, str, str]:
+    """Issue a signed refresh token and return ``(token, jti, family_id)``.
 
     AUTH-A2: refresh tokens already carried a jti; we now also return it so the
     rotation path in ``/auth/refresh`` can revoke it the moment it is consumed.
 
     AUTH-B1: ``org_id`` is propagated through refresh-token rotation so the
     new access token issued during refresh stays bound to the same tenant.
+
+    P142: every refresh token carries a family id (``fid``). On login a fresh
+    family is started (``family_id=None`` → new uuid); on rotation the caller
+    passes the presented token's ``fid`` so the new token stays in the same
+    family. The family id lets ``/auth/refresh`` detect reuse of an already-
+    rotated token and revoke the entire family (theft response).
     """
     settings = get_settings()
-    expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_ttl_days)
+    now = datetime.now(UTC)
+    expire = now + timedelta(days=settings.refresh_token_ttl_days)
     jti = str(uuid.uuid4())
+    fid = family_id or str(uuid.uuid4())
     payload = {
         "sub": user_id,
         "username": username,
@@ -95,9 +118,11 @@ def create_refresh_token(
         "type": "refresh",
         "jti": jti,
         "org_id": org_id,
+        "iat": int(now.timestamp()),
+        "fid": fid,
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
-    return token, jti
+    return token, jti, fid
 
 
 def create_token_pair(
@@ -108,7 +133,7 @@ def create_token_pair(
 ) -> TokenPair:
     settings = get_settings()
     access_token, _ = create_access_token(user_id, username, role, org_id=org_id)
-    refresh_token, _ = create_refresh_token(user_id, username, role, org_id=org_id)
+    refresh_token, _, _ = create_refresh_token(user_id, username, role, org_id=org_id)
     return TokenPair(
         access_token=access_token,
         refresh_token=refresh_token,
