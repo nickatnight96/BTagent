@@ -1,16 +1,72 @@
+import { lazy, Suspense, type ComponentType } from "react";
 import { createBrowserRouter } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
-import { InvestigationList } from "@/components/investigations/InvestigationList";
-import { InvestigationWorkspace } from "@/components/workspace/InvestigationWorkspace";
-import { IOCNotebook } from "@/components/iocs/IOCNotebook";
-import { MitreMatrix } from "@/components/mitre/MitreMatrix";
-import { KnowledgePage } from "@/components/knowledge/KnowledgePage";
-import { HuntTriagePage } from "@/components/hunt/HuntTriagePage";
-import { PlaybookList } from "@/components/playbooks/PlaybookList";
-import { PlaybookBuilder } from "@/components/playbooks/PlaybookBuilder";
-import { PlaybookExecutionView } from "@/components/playbooks/PlaybookExecutionView";
+import { Skeleton } from "@/components/ds/skeleton";
+
+// #146 perf: code-split the route pages. The app shell (Layout, Sidebar,
+// LoginPage, ProtectedRoute) stays in the eager entry bundle since it is
+// always needed on first paint, but each page below is pulled into its own
+// async chunk so the initial download no longer carries every screen.
+//
+// react-router's `lazy` route option only supports its own data-router
+// module contract, so we use plain `React.lazy` + a `<Suspense>` wrapper.
+// Named exports are mapped to the default export `React.lazy` expects.
+const InvestigationList = lazy(() =>
+  import("@/components/investigations/InvestigationList").then((m) => ({
+    default: m.InvestigationList,
+  })),
+);
+const InvestigationWorkspace = lazy(() =>
+  import("@/components/workspace/InvestigationWorkspace").then((m) => ({
+    default: m.InvestigationWorkspace,
+  })),
+);
+const IOCNotebook = lazy(() =>
+  import("@/components/iocs/IOCNotebook").then((m) => ({ default: m.IOCNotebook })),
+);
+const MitreMatrix = lazy(() =>
+  import("@/components/mitre/MitreMatrix").then((m) => ({ default: m.MitreMatrix })),
+);
+const KnowledgePage = lazy(() =>
+  import("@/components/knowledge/KnowledgePage").then((m) => ({ default: m.KnowledgePage })),
+);
+const HuntTriagePage = lazy(() =>
+  import("@/components/hunt/HuntTriagePage").then((m) => ({ default: m.HuntTriagePage })),
+);
+const PlaybookList = lazy(() =>
+  import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
+);
+const PlaybookBuilder = lazy(() =>
+  import("@/components/playbooks/PlaybookBuilder").then((m) => ({ default: m.PlaybookBuilder })),
+);
+const PlaybookExecutionView = lazy(() =>
+  import("@/components/playbooks/PlaybookExecutionView").then((m) => ({
+    default: m.PlaybookExecutionView,
+  })),
+);
+
+/** Fallback shown while a route chunk is being fetched. */
+function RouteFallback() {
+  return (
+    <div className="flex-1 space-y-4 p-6">
+      <Skeleton className="h-8 w-64" />
+      <Skeleton className="h-4 w-full max-w-2xl" />
+      <Skeleton className="h-4 w-full max-w-xl" />
+      <Skeleton className="h-64 w-full" />
+    </div>
+  );
+}
+
+/** Wrap a lazily-loaded page in a Suspense boundary with the shared fallback. */
+function lazyRoute(Component: ComponentType) {
+  return (
+    <Suspense fallback={<RouteFallback />}>
+      <Component />
+    </Suspense>
+  );
+}
 
 export const router = createBrowserRouter([
   {
@@ -27,43 +83,43 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <InvestigationList />,
+        element: lazyRoute(InvestigationList),
       },
       {
         path: "investigations/:id",
-        element: <InvestigationWorkspace />,
+        element: lazyRoute(InvestigationWorkspace),
       },
       {
         path: "iocs",
-        element: <IOCNotebook />,
+        element: lazyRoute(IOCNotebook),
       },
       {
         path: "mitre",
-        element: <MitreMatrix />,
+        element: lazyRoute(MitreMatrix),
       },
       {
         path: "knowledge",
-        element: <KnowledgePage />,
+        element: lazyRoute(KnowledgePage),
       },
       {
         path: "hunt",
-        element: <HuntTriagePage />,
+        element: lazyRoute(HuntTriagePage),
       },
       {
         path: "playbooks",
-        element: <PlaybookList />,
+        element: lazyRoute(PlaybookList),
       },
       {
         path: "playbooks/builder",
-        element: <PlaybookBuilder />,
+        element: lazyRoute(PlaybookBuilder),
       },
       {
         path: "playbooks/builder/:id",
-        element: <PlaybookBuilder />,
+        element: lazyRoute(PlaybookBuilder),
       },
       {
         path: "playbooks/:id/execute",
-        element: <PlaybookExecutionView />,
+        element: lazyRoute(PlaybookExecutionView),
       },
     ],
   },
