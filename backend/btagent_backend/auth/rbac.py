@@ -91,6 +91,12 @@ PERMISSIONS: dict[str, UserRole] = {
     # IR/forensics; CSV export for external auditors is admin-only.
     "audit:view": UserRole.SENIOR_ANALYST,
     "audit:export": UserRole.ADMIN,
+    # TLP egress policy (#110 UC-7.2 — analysts see policy; CISO/admin writes).
+    # Reading the exception set is senior_analyst+ so analysts know what may
+    # leave the enclave; creating/revoking a policy widens egress and so
+    # requires CISO sign-off (admin).
+    "policy:view": UserRole.SENIOR_ANALYST,
+    "policy:manage": UserRole.ADMIN,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,

@@ -6,6 +6,7 @@ import {
   FileText,
   GitBranch,
   Home,
+  Lock,
   Moon,
   Network,
   ScrollText,
@@ -101,6 +102,10 @@ export function CommandPalette() {
           <CommandItem onSelect={go("/audit")}>
             <ScrollText className="h-4 w-4" />
             <span>Audit Ledger</span>
+          </CommandItem>
+          <CommandItem onSelect={go("/policies")}>
+            <Lock className="h-4 w-4" />
+            <span>TLP Policies</span>
           </CommandItem>
         </CommandGroup>
 
