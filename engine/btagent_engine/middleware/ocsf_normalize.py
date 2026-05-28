@@ -33,6 +33,7 @@ Design notes:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from btagent_shared.types.connector import ConnectorManifest, OCSFEventClass
@@ -43,6 +44,8 @@ from btagent_engine.middleware.connector_policy import (
     CAPABILITY_ID_KEY,
     MANIFEST_NAME_KEY,
 )
+
+logger = logging.getLogger("btagent.middleware.ocsf_normalize")
 
 if TYPE_CHECKING:
     from btagent_engine.node import Node, NodeContext
@@ -144,9 +147,19 @@ class OCSFNormalizerMiddleware(Middleware):
         # against.
         capability_id = ctx.metadata.get(CAPABILITY_ID_KEY)
         if not isinstance(capability_id, str):
+            logger.debug(
+                "OCSF normalizer skipped for %r: no capability id in context "
+                "(ConnectorPolicyMiddleware did not run before this node).",
+                manifest.name,
+            )
             return
         capability = manifest.capability(capability_id)
         if capability is None:
+            logger.debug(
+                "OCSF normalizer skipped: capability %r not found on manifest %r.",
+                capability_id,
+                manifest.name,
+            )
             return
 
         declared = list(capability.ocsf_emits)
