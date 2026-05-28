@@ -245,7 +245,10 @@ class LLMCallNode(Node[LLMCallInput, LLMCallOutput]):
         try:
             tlp = TLP(ctx.tlp_level)
         except ValueError:
-            tlp = TLP.GREEN
+            # Fail CLOSED: an unknown/garbage classification must be treated as
+            # the most restrictive level (RED → on-prem only), never GREEN
+            # (any provider). Matches agents/.../middleware/llm_router._coerce_tlp.
+            tlp = TLP.RED
 
         response = await client.complete(
             LLMRequest(

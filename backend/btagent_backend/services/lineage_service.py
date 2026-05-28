@@ -151,19 +151,18 @@ async def build_audit_lineage(
     """Build the audit lineage graph over the persisted ledger.
 
     If *up_to_hash* is provided, returns the chain prefix up to and
-    including the row with that hash (UC-7.1 point-in-time replay). If
-    no row matches, the full graph is returned (caller may treat that as
-    a not-found at the API layer).
+    including the row with that hash (UC-7.1 point-in-time replay), or
+    raises :class:`LookupError` if no row matches (the API layer maps it
+    to 404).
     """
     result = await db.execute(select(AuditLogRow).order_by(AuditLogRow.seq.asc()))
     rows = list(result.scalars().all())
 
     if up_to_hash is not None:
         cutoff = next((i for i, r in enumerate(rows) if r.hash == up_to_hash), None)
-        if cutoff is not None:
-            rows = rows[: cutoff + 1]
-        # If cutoff is None we fall through and return the full graph; the
-        # API layer decides whether to 404 instead.
+        if cutoff is None:
+            raise LookupError(f"No audit entry with hash {up_to_hash!r}")
+        rows = rows[: cutoff + 1]
 
     return _project_rows(rows)
 

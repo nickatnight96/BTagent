@@ -58,6 +58,15 @@ class EvaluateRequest(BaseModel):
     tlp: TLP
     egress_kind: str
 
+    @model_validator(mode="after")
+    def _check_kind(self) -> EvaluateRequest:
+        if self.egress_kind not in _VALID_EGRESS_KINDS:
+            raise ValueError(
+                f"Unknown egress_kind {self.egress_kind!r}; expected one of "
+                f"{sorted(_VALID_EGRESS_KINDS)}"
+            )
+        return self
+
 
 class PolicyDecisionResponse(BaseModel):
     allowed: bool

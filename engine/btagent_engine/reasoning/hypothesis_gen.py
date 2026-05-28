@@ -15,10 +15,10 @@ Design notes:
    demos run the full pipeline without an LLM key, and gives the
    downstream nodes realistic shapes to work with.
 
-2. **Real LLM mode lands with the LLM router in Phase B.** When
-   mock mode is off, the node raises ``NotImplementedError`` -- same
-   convention as ``LLMCallNode``. The router work will replace this
-   stub with a structured-output call to the active provider.
+2. **Client-or-deterministic.** When a real LLM client is registered and
+   mock mode is off, the node generates hypotheses via a structured-output
+   call; on any failure (or no client) it falls back to the deterministic
+   generator. The node never raises.
 
 3. **Priority is bounded [0, 1]**. The ordering convention is
    "higher == hunt first". Priority is *not* the same as severity
@@ -210,7 +210,7 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
         """
         from btagent_shared.types.config import TLP, ModelTier
 
-        from btagent_engine.reasoning._llm_json import call_llm_json
+        from btagent_engine.reasoning._llm_json import call_llm_json, wrap_external_data
 
         adversaries = ", ".join(hunt_input.adversaries) or "(none)"
         ttps = ", ".join(hunt_input.ttps) or "(none)"
@@ -226,11 +226,15 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
             "rationale and behavioral_description to ONE short sentence each so "
             "the JSON stays compact."
         )
-        user = f"Adversaries: {adversaries}\nTTPs: {ttps}\nIOCs: {iocs}\nReturn the JSON array now."
+        user = (
+            wrap_external_data(f"Adversaries: {adversaries}\nTTPs: {ttps}\nIOCs: {iocs}")
+            + "\nReturn the JSON array now."
+        )
         try:
             tlp = TLP(ctx.tlp_level)
         except ValueError:
-            tlp = TLP.GREEN
+            # Fail closed: unknown classification → most restrictive.
+            tlp = TLP.RED
 
         raw = await call_llm_json(
             client,

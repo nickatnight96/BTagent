@@ -21,7 +21,7 @@ import io
 import logging
 
 from btagent_shared.types.enums import AuditCategory
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -119,7 +119,10 @@ async def get_audit_lineage(
 ) -> AuditLineageGraph:
     """Project the audit hash chain into a node/edge lineage graph (UC-7.1)."""
     user.require_permission("audit:view")
-    return await build_audit_lineage(db, up_to_hash=up_to_hash)
+    try:
+        return await build_audit_lineage(db, up_to_hash=up_to_hash)
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.get("/export")

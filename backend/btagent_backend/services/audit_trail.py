@@ -164,9 +164,16 @@ class AuditTrail:
                     f"(stored='{row.prev_hash}', expected='{prev_hash}')"
                 )
 
-            # Recompute the hash and verify
+            # Recompute the hash and verify. ``record()`` hashes a tz-aware
+            # ISO string (``datetime.now(UTC)``); Postgres preserves the tz on
+            # round-trip but SQLite drops it, so re-apply UTC to a naive value
+            # to keep the recomputed hash byte-identical. This keeps
+            # /audit/verify and /audit/lineage in agreement on every backend.
             canonical_details = _details_to_canonical(row.details or {})
-            ts_iso = row.timestamp.isoformat() if row.timestamp else ""
+            ts = row.timestamp
+            if ts is not None and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            ts_iso = ts.isoformat() if ts else ""
 
             expected_hash = _compute_hash(
                 id=row.id,

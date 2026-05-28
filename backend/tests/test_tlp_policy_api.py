@@ -117,6 +117,15 @@ async def test_delete_requires_manage(client: AsyncClient, admin_token: str, ana
 # --- evaluate -------------------------------------------------------------- #
 
 
+async def test_evaluate_rejects_unknown_egress_kind(client: AsyncClient, admin_token: str):
+    resp = await client.post(
+        "/api/v1/tlp-policies/evaluate",
+        json={"tlp": "red", "egress_kind": "carrier_pigeon"},
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 422
+
+
 async def test_evaluate_default_deny_red(client: AsyncClient, admin_token: str):
     # No policies -> baseline default-deny for RED.
     resp = await client.post(

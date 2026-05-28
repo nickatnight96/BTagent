@@ -12,9 +12,10 @@ Design notes:
    from a built-in per-(TTP, backend) template library. The templates
    are structurally valid and plausible but not production-tuned —
    their job is to prove the pipeline and give analysts a starting
-   point to edit. Real LLM-backed synthesis (schema-aware, field-name
-   correct) lands with the router; non-mock mode raises
-   ``NotImplementedError``.
+   point to edit. When a real LLM client is registered and mock mode is
+   off, the LLM writes one count-capped query per backend; on any failure
+   (or no client) it falls back to the deterministic template library.
+   The node never raises.
 
 2. **Count-capped by default.** Every generated query carries a
    ``| head`` / ``take`` / equivalent cap so a clumsy execution can't
@@ -305,7 +306,7 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
         failure so the caller falls back to the template library."""
         from btagent_shared.types.config import TLP, ModelTier
 
-        from btagent_engine.reasoning._llm_json import call_llm_json
+        from btagent_engine.reasoning._llm_json import call_llm_json, wrap_external_data
 
         backend_list = ", ".join(b.value for b in backends)
         system = (
@@ -318,14 +319,17 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
             "crowdstrike=CQL, sigma=Sigma YAML."
         )
         user = (
-            f"technique: {input.ttp_id}\n"
-            f"behaviour: {input.behavioral_description or '(none given)'}\n"
-            f"backends: {backend_list}\nReturn the JSON object now."
+            wrap_external_data(
+                f"technique: {input.ttp_id}\n"
+                f"behaviour: {input.behavioral_description or '(none given)'}"
+            )
+            + f"\nbackends: {backend_list}\nReturn the JSON object now."
         )
         try:
             tlp = TLP(ctx.tlp_level)
         except ValueError:
-            tlp = TLP.GREEN
+            # Fail closed: unknown classification → most restrictive.
+            tlp = TLP.RED
 
         raw = await call_llm_json(
             client, system=system, user=user, tlp=tlp, tier=ModelTier.STANDARD, array=False

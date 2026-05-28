@@ -36,7 +36,8 @@ def _chain(specs: list[tuple[str, str]]) -> list[EvidenceRecord]:
     for i, (node_id, run_id) in enumerate(specs):
         in_h = _sha256_of({"node": node_id, "i": i, "side": "in"})
         out_h = _sha256_of({"node": node_id, "i": i, "side": "out"})
-        link = _link_hash(in_h, out_h, run_id, prev)
+        ts = datetime(2026, 5, 28, 12, i, tzinfo=UTC)
+        link = _link_hash(node_id, in_h, out_h, run_id, ts.isoformat(), prev)
         recs.append(
             EvidenceRecord(
                 run_id=run_id,
@@ -45,7 +46,7 @@ def _chain(specs: list[tuple[str, str]]) -> list[EvidenceRecord]:
                 link_hash=link,
                 input_hash=in_h,
                 output_hash=out_h,
-                timestamp=datetime(2026, 5, 28, 12, i, tzinfo=UTC),
+                timestamp=ts,
             )
         )
         prev = link
@@ -129,6 +130,25 @@ def test_broken_prev_linkage_detected():
     recs = _chain(_LINEAGE)
     # Sever the linkage at record[2] by pointing prev_hash elsewhere.
     recs[2] = recs[2].model_copy(update={"prev_hash": "f" * 64})
+    intact, broken_at = verify_chain(recs)
+    assert intact is False
+    assert broken_at == recs[2].link_hash
+
+
+def test_tampered_node_id_detected():
+    # node_id is displayed in the lineage view, so re-labelling a step must
+    # invalidate the chain (HIGH-4: node_id is bound by the hash).
+    recs = _chain(_LINEAGE)
+    recs[1] = recs[1].model_copy(update={"node_id": "evil_node"})
+    intact, broken_at = verify_chain(recs)
+    assert intact is False
+    assert broken_at == recs[1].link_hash
+
+
+def test_tampered_timestamp_detected():
+    # timestamp is displayed too; back-dating a record must be detected.
+    recs = _chain(_LINEAGE)
+    recs[2] = recs[2].model_copy(update={"timestamp": datetime(2099, 1, 1, tzinfo=UTC)})
     intact, broken_at = verify_chain(recs)
     assert intact is False
     assert broken_at == recs[2].link_hash

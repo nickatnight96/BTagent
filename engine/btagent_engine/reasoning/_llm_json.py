@@ -26,6 +26,16 @@ import json
 from typing import Any
 
 
+def wrap_external_data(text: str) -> str:
+    """Fence untrusted external text for LLM prompts (prompt-injection defense).
+
+    CLAUDE.md requires all external data in agent prompts to be wrapped in
+    ``<external-data>`` XML tags. Engine can't import the agents-tier helper
+    (zero-dep boundary), so the reasoning nodes share this one.
+    """
+    return f"<external-data>\n{text}\n</external-data>"
+
+
 async def call_llm_json(
     client: Any,
     *,
@@ -71,4 +81,4 @@ async def call_llm_json(
         return None
 
 
-__all__ = ["call_llm_json"]
+__all__ = ["call_llm_json", "wrap_external_data"]

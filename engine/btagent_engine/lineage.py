@@ -77,7 +77,14 @@ def verify_chain(records: Sequence[EvidenceRecord]) -> tuple[bool, str | None]:
     for rec in records:
         if rec.prev_hash != expected_prev:
             return False, rec.link_hash
-        recomputed = _link_hash(rec.input_hash, rec.output_hash, rec.run_id, rec.prev_hash)
+        recomputed = _link_hash(
+            rec.node_id,
+            rec.input_hash,
+            rec.output_hash,
+            rec.run_id,
+            rec.timestamp.isoformat(),
+            rec.prev_hash,
+        )
         if recomputed != rec.link_hash:
             return False, rec.link_hash
         expected_prev = rec.link_hash

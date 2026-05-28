@@ -172,3 +172,14 @@ async def test_lineage_detects_tampered_prev_hash(
     assert g["broken_at"] == victim.hash
     # Full graph still returned so the UI can highlight the break.
     assert len(g["nodes"]) == 3
+
+
+async def test_lineage_unknown_up_to_hash_returns_404(
+    client: AsyncClient, admin_token: str, db_session
+):
+    await _seed(db_session, 2)
+    resp = await client.get(
+        "/api/v1/audit/lineage?up_to_hash=deadbeef",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 404

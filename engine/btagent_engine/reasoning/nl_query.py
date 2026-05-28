@@ -22,8 +22,10 @@ Design notes:
 1. **Mock mode is deterministic** (matches the other reasoning nodes).
    The mock path does real (regex/keyword) intent parsing and a
    real query build — it just doesn't use an LLM, so it can't handle
-   arbitrary phrasing. Real schema-aware NL understanding lands with
-   the router; non-mock mode raises ``NotImplementedError``.
+   arbitrary phrasing. When a real LLM client is registered and mock
+   mode is off, the LLM parses the intent and the deterministic builders
+   still construct the queries; if no client is registered it falls back
+   to the regex parser. The node never raises.
 
 2. **No hallucinated fields.** The mock builder only emits field names
    from a fixed, per-backend safe set. The real LLM path will validate
@@ -56,6 +58,40 @@ from btagent_engine.node import (
 
 def _mock_mode_enabled() -> bool:
     return os.getenv("BTAGENT_MOCK_LLM", "true").lower() == "true"
+
+
+# Severity is an enum-like field; constrain it to a known allowlist rather
+# than interpolating arbitrary (LLM-derived) text into the query language.
+_SEVERITIES: frozenset[str] = frozenset({"critical", "high", "medium", "low", "info"})
+
+
+def _safe_severity(sev: str | None) -> str | None:
+    return sev if sev in _SEVERITIES else None
+
+
+# Value escapers — entity/keyword values may come from the LLM intent parser
+# and are therefore untrusted. Safe field *names* are not enough (a KQL
+# break-out like ``'high' | union SecretTable | take 9999 //`` was reproduced
+# in review); every interpolated *value* must be quote-escaped for its target
+# query language.
+def _spl_v(v: str) -> str:
+    """Escape a value for a double-quoted SPL string."""
+    return v.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _kql_v(v: str) -> str:
+    """Escape a value for a single-quoted KQL string."""
+    return v.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _es_v(v: str) -> str:
+    """Escape a value for a double-quoted ES|QL string."""
+    return v.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _yaml_sq(v: str) -> str:
+    """Escape a value for a single-quoted YAML scalar (quote doubling)."""
+    return v.replace("'", "''")
 
 
 # ---------------------------------------------------------------------------
@@ -245,14 +281,15 @@ def _parse(intent: str) -> ParsedIntent:
 
 def _build_splunk(p: ParsedIntent) -> str:
     parts = ["index=*"]
-    if p.severity:
-        parts.append(f"severity={p.severity}")
+    sev = _safe_severity(p.severity)
+    if sev:
+        parts.append(f"severity={sev}")
     for ip in p.entities.get("ip", []):
-        parts.append(f'(src_ip="{ip}" OR dest_ip="{ip}")')
+        parts.append(f'(src_ip="{_spl_v(ip)}" OR dest_ip="{_spl_v(ip)}")')
     for user in p.entities.get("user", []):
-        parts.append(f'user="{user}"')
+        parts.append(f'user="{_spl_v(user)}"')
     if p.keywords:
-        kw = " OR ".join(f'search="*{k}*"' for k in p.keywords)
+        kw = " OR ".join(f'search="*{_spl_v(k)}*"' for k in p.keywords)
         parts.append(f"({kw})")
     parts.append(f"earliest=-{p.time_window_hours}h")
     return " ".join(parts) + f" | head {_RESULT_CAP}"
@@ -260,14 +297,15 @@ def _build_splunk(p: ParsedIntent) -> str:
 
 def _build_sentinel(p: ParsedIntent) -> str:
     lines = ["union *", f"| where TimeGenerated > ago({p.time_window_hours}h)"]
-    if p.severity:
-        lines.append(f"| where Severity =~ '{p.severity}'")
+    sev = _safe_severity(p.severity)
+    if sev:
+        lines.append(f"| where Severity =~ '{sev}'")
     for ip in p.entities.get("ip", []):
-        lines.append(f"| where SrcIpAddr == '{ip}' or DstIpAddr == '{ip}'")
+        lines.append(f"| where SrcIpAddr == '{_kql_v(ip)}' or DstIpAddr == '{_kql_v(ip)}'")
     for user in p.entities.get("user", []):
-        lines.append(f"| where AccountUpn =~ '{user}'")
+        lines.append(f"| where AccountUpn =~ '{_kql_v(user)}'")
     if p.keywords:
-        terms = ",".join(f"'{k}'" for k in p.keywords)
+        terms = ",".join(f"'{_kql_v(k)}'" for k in p.keywords)
         lines.append(f"| where * has_any ({terms})")
     lines.append(f"| take {_RESULT_CAP}")
     return "\n".join(lines)
@@ -275,14 +313,15 @@ def _build_sentinel(p: ParsedIntent) -> str:
 
 def _build_elastic(p: ParsedIntent) -> str:
     conds = [f"@timestamp >= now-{p.time_window_hours}h"]
-    if p.severity:
-        conds.append(f'event.severity : "{p.severity}"')
+    sev = _safe_severity(p.severity)
+    if sev:
+        conds.append(f'event.severity : "{sev}"')
     for ip in p.entities.get("ip", []):
-        conds.append(f'(source.ip : "{ip}" or destination.ip : "{ip}")')
+        conds.append(f'(source.ip : "{_es_v(ip)}" or destination.ip : "{_es_v(ip)}")')
     for user in p.entities.get("user", []):
-        conds.append(f'user.name : "{user}"')
+        conds.append(f'user.name : "{_es_v(user)}"')
     if p.keywords:
-        kw = " or ".join(f'message : "*{k}*"' for k in p.keywords)
+        kw = " or ".join(f'message : "*{_es_v(k)}*"' for k in p.keywords)
         conds.append(f"({kw})")
     return "any where " + " and ".join(conds) + f" | head {_RESULT_CAP}"
 
@@ -292,7 +331,7 @@ def _build_sigma(p: ParsedIntent) -> str:
     if p.mitre_techniques:
         title += " (" + ", ".join(p.mitre_techniques) + ")"
     detection_terms = p.keywords or ["REPLACE_ME"]
-    keywords_yaml = "\n".join(f"    - '{k}'" for k in detection_terms)
+    keywords_yaml = "\n".join(f"    - '{_yaml_sq(k)}'" for k in detection_terms)
     tags = ""
     if p.mitre_techniques:
         tag_lines = "\n".join(
@@ -382,7 +421,7 @@ class NLQueryNode(Node[NLQueryInput, NLQueryOutput]):
         the caller falls back to the deterministic regex parser."""
         from btagent_shared.types.config import TLP, ModelTier
 
-        from btagent_engine.reasoning._llm_json import call_llm_json
+        from btagent_engine.reasoning._llm_json import call_llm_json, wrap_external_data
 
         system = (
             "You parse a SOC analyst's plain-English hunt request into structure. "
@@ -395,10 +434,16 @@ class NLQueryNode(Node[NLQueryInput, NLQueryOutput]):
         try:
             tlp = TLP(ctx.tlp_level)
         except ValueError:
-            tlp = TLP.GREEN
+            # Fail closed: unknown classification → most restrictive.
+            tlp = TLP.RED
 
         raw = await call_llm_json(
-            client, system=system, user=intent, tlp=tlp, tier=ModelTier.FAST, array=False
+            client,
+            system=system,
+            user=wrap_external_data(intent),
+            tlp=tlp,
+            tier=ModelTier.FAST,
+            array=False,
         )
         if not isinstance(raw, dict):
             return None
