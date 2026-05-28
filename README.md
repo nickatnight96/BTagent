@@ -147,6 +147,7 @@ Backend: `http://localhost:8000` | Frontend: `http://localhost:3000` | API docs:
 | [Architecture](docs/ARCHITECTURE.md) | System design, data flows, agent topology |
 | [API Reference](docs/API.md) | REST, WebSocket, and webhook endpoint reference |
 | [Deployment](docs/DEPLOYMENT.md) | Docker Compose, Kubernetes, and AWS deployment |
+| [Deployment Plan](docs/DEPLOYMENT_PLAN.md) | Production deploy blockers, readiness, and roadmap sequencing |
 | [SIEM Setup](docs/SIEM_SETUP.md) | Splunk, CrowdStrike, Sentinel, and Elastic connector guides |
 | [Playbook Schema](docs/PLAYBOOK_SCHEMA.md) | SOAR playbook YAML reference |
 | [Knowledge Base](docs/KNOWLEDGE_BASE.md) | RAG pipeline architecture and configuration |

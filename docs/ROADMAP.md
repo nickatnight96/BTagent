@@ -186,7 +186,7 @@ These are tracked as peer feature issues, not a single epic. The dependency keys
 
 ## Known Limitations
 
-The following are known limitations in the current release. Several are addressed in the roadmap above.
+The following are known limitations in the current release. Several are addressed in the roadmap above. For the must-fix deployment blockers and the sequenced path to a first production deploy, see the [Deployment Plan](DEPLOYMENT_PLAN.md).
 
 | Area | Limitation | Planned Fix |
 |------|-----------|-------------|
