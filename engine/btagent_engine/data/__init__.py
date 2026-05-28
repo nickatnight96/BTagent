@@ -16,11 +16,39 @@ Sprint 4A ships two:
   ``collateral``).
 """
 
+from btagent_engine.data.coverage_gap import (
+    CoverageGapInput,
+    CoverageGapNode,
+    CoverageGapOutput,
+    TechniqueRef,
+)
+from btagent_engine.data.ioc_extractor import (
+    ExtractedIOC,
+    IOCExtractorInput,
+    IOCExtractorNode,
+    IOCExtractorOutput,
+)
 from btagent_engine.data.mitre_mapper import (
     MitreMappedTechnique,
     MitreMapperInput,
     MitreMapperNode,
     MitreMapperOutput,
+)
+from btagent_engine.data.noise_baseline import (
+    NoiseBaselineInput,
+    NoiseBaselineNode,
+    NoiseBaselineOutput,
+)
+from btagent_engine.data.ocsf_mapper import (
+    OCSFMapperInput,
+    OCSFMapperNode,
+    OCSFMapperOutput,
+    UnknownConnectorError,
+)
+from btagent_engine.data.runbook_compiler import (
+    RunbookCompilerInput,
+    RunbookCompilerNode,
+    RunbookCompilerOutput,
 )
 from btagent_engine.data.transform import (
     TransformInput,
@@ -29,10 +57,28 @@ from btagent_engine.data.transform import (
 )
 
 __all__ = [
+    "CoverageGapInput",
+    "CoverageGapNode",
+    "CoverageGapOutput",
+    "TechniqueRef",
+    "ExtractedIOC",
+    "IOCExtractorInput",
+    "IOCExtractorNode",
+    "IOCExtractorOutput",
     "MitreMappedTechnique",
     "MitreMapperInput",
     "MitreMapperNode",
     "MitreMapperOutput",
+    "NoiseBaselineInput",
+    "NoiseBaselineNode",
+    "NoiseBaselineOutput",
+    "OCSFMapperInput",
+    "OCSFMapperNode",
+    "OCSFMapperOutput",
+    "UnknownConnectorError",
+    "RunbookCompilerInput",
+    "RunbookCompilerNode",
+    "RunbookCompilerOutput",
     "TransformInput",
     "TransformNode",
     "TransformOutput",

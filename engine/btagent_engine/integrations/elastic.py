@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from btagent_engine.integrations._manifests import ELASTIC_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -137,6 +138,8 @@ class ElasticSearchNode(Node[ElasticSearchInput, ElasticSearchOutput]):
     )
     input_schema = ElasticSearchInput
     output_schema = ElasticSearchOutput
+    manifest = ELASTIC_MANIFEST
+    capability_id = "search"
 
     async def run(
         self,

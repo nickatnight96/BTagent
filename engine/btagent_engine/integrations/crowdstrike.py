@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import CROWDSTRIKE_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -161,6 +162,8 @@ class CrowdStrikeListDetectionsNode(
     )
     input_schema = CrowdStrikeListDetectionsInput
     output_schema = CrowdStrikeListDetectionsOutput
+    manifest = CROWDSTRIKE_MANIFEST
+    capability_id = "list_detections"
 
     async def run(
         self,
@@ -211,6 +214,8 @@ class CrowdStrikeIsolateHostNode(Node[CrowdStrikeIsolateHostInput, CrowdStrikeIs
     )
     input_schema = CrowdStrikeIsolateHostInput
     output_schema = CrowdStrikeIsolateHostOutput
+    manifest = CROWDSTRIKE_MANIFEST
+    capability_id = "isolate_host"
 
     async def run(
         self,

@@ -17,6 +17,15 @@ from __future__ import annotations
 
 import os
 
+from btagent_shared.types.config import TLP
+from btagent_shared.types.connector import (
+    ConnectorManifest,
+    CostClass,
+    CredentialType,
+    OCSFEventClass,
+    QueryCapability,
+    TransportKind,
+)
 from pydantic import BaseModel, Field
 
 from btagent_engine.node import (
@@ -25,6 +34,44 @@ from btagent_engine.node import (
     NodeContext,
     NodeMeta,
     NodeRegistry,
+)
+
+# ---------------------------------------------------------------------------
+# Connector manifest — VirusTotal (Layer 3 of the connector strategy, #100)
+# ---------------------------------------------------------------------------
+
+VIRUSTOTAL_MANIFEST = ConnectorManifest(
+    name="virustotal",
+    version="0.1.0",
+    description="VirusTotal v3 — IP / domain / file-hash reputation and detection counts.",
+    transport=TransportKind.HTTP_REST,
+    auth=CredentialType.API_KEY,
+    queries=[
+        QueryCapability(
+            id="ip_lookup",
+            description="Reputation + detection stats for an IPv4 / IPv6 address.",
+            ocsf_emits=[OCSFEventClass.THREAT_INTELLIGENCE],
+            tlp_egress=TLP.AMBER,
+            cost_class=CostClass.MODERATE,
+            hitl_required=False,
+        ),
+        QueryCapability(
+            id="domain_lookup",
+            description="Reputation + detection stats for a domain.",
+            ocsf_emits=[OCSFEventClass.THREAT_INTELLIGENCE],
+            tlp_egress=TLP.AMBER,
+            cost_class=CostClass.MODERATE,
+            hitl_required=False,
+        ),
+        QueryCapability(
+            id="hash_lookup",
+            description="Reputation + detection stats for a file hash (MD5 / SHA1 / SHA256).",
+            ocsf_emits=[OCSFEventClass.THREAT_INTELLIGENCE],
+            tlp_egress=TLP.AMBER,
+            cost_class=CostClass.MODERATE,
+            hitl_required=False,
+        ),
+    ],
 )
 
 
@@ -224,6 +271,8 @@ class VirusTotalIPLookupNode(Node[VirusTotalIPLookupInput, VirusTotalIPLookupOut
     )
     input_schema = VirusTotalIPLookupInput
     output_schema = VirusTotalIPLookupOutput
+    manifest = VIRUSTOTAL_MANIFEST
+    capability_id = "ip_lookup"
 
     async def run(
         self,
@@ -255,6 +304,8 @@ class VirusTotalDomainLookupNode(Node[VirusTotalDomainLookupInput, VirusTotalDom
     )
     input_schema = VirusTotalDomainLookupInput
     output_schema = VirusTotalDomainLookupOutput
+    manifest = VIRUSTOTAL_MANIFEST
+    capability_id = "domain_lookup"
 
     async def run(
         self,
@@ -287,6 +338,8 @@ class VirusTotalHashLookupNode(Node[VirusTotalHashLookupInput, VirusTotalHashLoo
     )
     input_schema = VirusTotalHashLookupInput
     output_schema = VirusTotalHashLookupOutput
+    manifest = VIRUSTOTAL_MANIFEST
+    capability_id = "hash_lookup"
 
     async def run(
         self,

@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import SHODAN_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -164,6 +165,8 @@ class ShodanHostLookupNode(Node[ShodanHostLookupInput, ShodanHostLookupOutput]):
     )
     input_schema = ShodanHostLookupInput
     output_schema = ShodanHostLookupOutput
+    manifest = SHODAN_MANIFEST
+    capability_id = "host_lookup"
 
     async def run(
         self,

@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import GREYNOISE_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -130,6 +131,8 @@ class GreyNoiseLookupIPNode(Node[GreyNoiseLookupIPInput, GreyNoiseLookupIPOutput
     )
     input_schema = GreyNoiseLookupIPInput
     output_schema = GreyNoiseLookupIPOutput
+    manifest = GREYNOISE_MANIFEST
+    capability_id = "lookup_ip"
 
     async def run(
         self,

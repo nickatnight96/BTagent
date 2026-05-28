@@ -1,9 +1,10 @@
 """Evidence-chain middleware -- hash-link audit trail of node executions.
 
 Writes one :class:`EvidenceRecord` per successful node run to an injected
-list. Each record's ``link_hash`` is a SHA-256 over ``(input, output,
-run_id, prev_hash)`` so the chain is tamper-evident in the same way a
-git commit graph is: changing one record invalidates every record after.
+list. Each record's ``link_hash`` is a SHA-256 over ``(node_id, input,
+output, run_id, timestamp, prev_hash)`` so the chain is tamper-evident in
+the same way a git commit graph is: changing one record — including its
+displayed node_id or timestamp — invalidates every record after.
 
 Departure from the legacy hook (``evidence_chain_hook.py``):
 
@@ -54,7 +55,7 @@ class EvidenceRecord(_BaseModel):
     )
     link_hash: str = Field(
         ...,
-        description="SHA-256 over (input, output, run_id, prev_hash).",
+        description="SHA-256 over (node_id, input, output, run_id, timestamp, prev_hash).",
     )
     input_hash: str
     output_hash: str
@@ -70,18 +71,24 @@ def _sha256_of(payload: Any) -> str:
 
 
 def _link_hash(
+    node_id: str,
     input_hash: str,
     output_hash: str,
     run_id: str,
+    timestamp_iso: str,
     prev_hash: str,
 ) -> str:
-    """Hash the four chain inputs in a fixed order, separator-delimited.
+    """Hash the chain inputs in a fixed order, separator-delimited.
 
-    The separator (``\\x00``) cannot appear in any of the four inputs --
-    they are all SHA-256 hex strings or a ULID -- so there's no prefix
-    ambiguity (``a + b == aa + b``-style collision).
+    Covers every field a forensics consumer displays — ``node_id`` and
+    ``timestamp`` included — so a record cannot be re-labelled or
+    back-dated without invalidating the chain (the lineage view renders
+    both, so they must be bound by the hash).
+
+    The separator (``\\x00``) cannot appear in the SHA-256/ULID/ISO-8601
+    inputs, so there's no prefix ambiguity (``a + b == aa + b`` collision).
     """
-    parts = "\x00".join((input_hash, output_hash, run_id, prev_hash))
+    parts = "\x00".join((node_id, input_hash, output_hash, run_id, timestamp_iso, prev_hash))
     return hashlib.sha256(parts.encode("utf-8")).hexdigest()
 
 
@@ -107,14 +114,15 @@ class EvidenceChainMiddleware(Middleware):
         prev_hash = self._records[-1].link_hash if self._records else GENESIS_HASH
         in_h = _sha256_of(input.model_dump(mode="json"))
         out_h = _sha256_of(output.model_dump(mode="json"))
+        ts = datetime.now(UTC)
         record = EvidenceRecord(
             run_id=ctx.run_id,
             node_id=node.meta.id,
             prev_hash=prev_hash,
-            link_hash=_link_hash(in_h, out_h, ctx.run_id, prev_hash),
+            link_hash=_link_hash(node.meta.id, in_h, out_h, ctx.run_id, ts.isoformat(), prev_hash),
             input_hash=in_h,
             output_hash=out_h,
-            timestamp=datetime.now(UTC),
+            timestamp=ts,
         )
         self._records.append(record)
 
