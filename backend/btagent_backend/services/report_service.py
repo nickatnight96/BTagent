@@ -72,6 +72,65 @@ class ReportService:
 
         return result
 
+    async def export_report_pdf(
+        self,
+        investigation_id: str,
+        *,
+        template: str = "incident_report",
+        tlp_level: str = "green",
+        severity: str = "medium",
+        org_id: str | None = None,
+    ) -> bytes:
+        """Generate a report and render it to PDF bytes.
+
+        Generates the report via the report plugin, then renders it with
+        reportlab, stamping the investigation's severity and TLP marking.
+
+        Parameters
+        ----------
+        investigation_id : str
+            The investigation to export.
+        template : str
+            Report template name.
+        tlp_level : str
+            The investigation's TLP classification. Passed to the central
+            egress gate (``assert_tlp_allows_egress``) inside the renderer so
+            TLP:RED is refused identically to every other egress path.
+        severity : str
+            The investigation's severity, stamped on the report cover.
+        org_id : str | None
+            Org identifier carried on any TLP violation event.
+
+        Returns
+        -------
+        bytes
+            The rendered PDF (starts with ``%PDF``).
+
+        Raises
+        ------
+        ValueError
+            If report generation fails (e.g. unknown investigation/template).
+        btagent_shared.security.TLPViolation
+            If the report's TLP context is TLP:RED. Defense-in-depth backstop;
+            the API layer is expected to 403 first.
+        """
+        from btagent_backend.services.report_pdf import render_report_pdf
+
+        report = await self.generate_report(
+            investigation_id=investigation_id,
+            template=template,
+        )
+
+        if report.get("status") == "failed":
+            raise ValueError(report.get("error", "Report generation failed"))
+
+        return render_report_pdf(
+            report,
+            tlp_level=tlp_level,
+            severity=severity,
+            org_id=org_id,
+        )
+
     async def list_templates(self) -> dict[str, Any]:
         """List available report templates.
 
