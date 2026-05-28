@@ -333,9 +333,7 @@ class TLPPolicyRow(Base):
     downgrade_to: Mapped[str | None] = mapped_column(String(20), nullable=True)
     approver_id: Mapped[str] = mapped_column(String(200), default="")
     rationale: Mapped[str] = mapped_column(Text, default="")
-    valid_until: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

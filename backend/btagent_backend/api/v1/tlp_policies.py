@@ -47,8 +47,7 @@ class CreateTLPPolicyRequest(BaseModel):
         bad = [k for k in self.egress_kinds if k not in _VALID_EGRESS_KINDS]
         if bad:
             raise ValueError(
-                f"Unknown egress_kind(s) {bad}; expected subset of "
-                f"{sorted(_VALID_EGRESS_KINDS)}"
+                f"Unknown egress_kind(s) {bad}; expected subset of {sorted(_VALID_EGRESS_KINDS)}"
             )
         if self.action == TLPPolicyAction.DOWNGRADE_THEN_ALLOW and self.downgrade_to is None:
             raise ValueError("downgrade_then_allow policies require a downgrade_to target")

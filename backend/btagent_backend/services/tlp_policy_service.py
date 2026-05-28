@@ -99,9 +99,7 @@ class TLPPolicyService:
         row = await self._db.get(TLPPolicyRow, policy_id)
         if row is None or row.org_id != org_id:
             return False
-        await self._db.execute(
-            delete(TLPPolicyRow).where(TLPPolicyRow.id == policy_id)
-        )
+        await self._db.execute(delete(TLPPolicyRow).where(TLPPolicyRow.id == policy_id))
         await self._db.flush()
         return True
 
@@ -119,9 +117,7 @@ class TLPPolicyService:
         policy, TLP:RED is refused and anything below RED is allowed.
         """
         policies = await self.list_policies(org_id)
-        return evaluate_egress_policy(
-            tlp=tlp, egress_kind=egress_kind, policies=policies, now=now
-        )
+        return evaluate_egress_policy(tlp=tlp, egress_kind=egress_kind, policies=policies, now=now)
 
 
 __all__ = ["TLPPolicyService"]

@@ -71,17 +71,13 @@ async def test_create_then_list(client: AsyncClient, admin_token: str):
 
 async def test_create_downgrade_requires_target(client: AsyncClient, admin_token: str):
     bad = {"action": "downgrade_then_allow", "applies_to_tlp": ["red"]}  # no downgrade_to
-    resp = await client.post(
-        "/api/v1/tlp-policies", json=bad, headers=auth_header(admin_token)
-    )
+    resp = await client.post("/api/v1/tlp-policies", json=bad, headers=auth_header(admin_token))
     assert resp.status_code == 422
 
 
 async def test_create_rejects_unknown_egress_kind(client: AsyncClient, admin_token: str):
     bad = {"action": "allow", "egress_kinds": ["carrier_pigeon"]}
-    resp = await client.post(
-        "/api/v1/tlp-policies", json=bad, headers=auth_header(admin_token)
-    )
+    resp = await client.post("/api/v1/tlp-policies", json=bad, headers=auth_header(admin_token))
     assert resp.status_code == 422
 
 
