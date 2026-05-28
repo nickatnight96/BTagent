@@ -31,6 +31,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from authlib.jose import JsonWebKey, jwt
+from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
 
 from btagent_backend.auth import oidc
@@ -78,12 +79,18 @@ def _make_id_token(
     nonce: str,
     sub: str = "idp-sub-123",
     email: str | None = "alice@idp.test.example",
+    email_verified: bool | None = True,
     groups: list[str] | None = None,
     key: JsonWebKey | None = None,
     aud: str = _CLIENT_ID,
     iss: str = _ISSUER,
 ) -> str:
-    """Sign an RS256 ID token with the (default IdP) signing key."""
+    """Sign an RS256 ID token with the (default IdP) signing key.
+
+    ``email_verified`` defaults to ``True`` (a correctly-configured IdP that
+    has verified the address). Pass ``False`` to model an unverified email and
+    ``None`` to omit the claim entirely.
+    """
     signer = key if key is not None else _signing_key
     header = {"alg": "RS256", "kid": signer.as_dict(is_private=False).get("kid")}
     now = int(time.time())
@@ -97,6 +104,8 @@ def _make_id_token(
     }
     if email is not None:
         claims["email"] = email
+    if email_verified is not None:
+        claims["email_verified"] = email_verified
     if groups is not None:
         claims["groups"] = groups
     return jwt.encode(header, claims, signer).decode("ascii")
@@ -389,6 +398,173 @@ async def test_callback_returning_user_reuses_identity(provider, idp, client, db
     )
     assert len(rows) == 1
     assert rows[0].user_id == first_user_id
+
+
+# ---------------------------------------------------------------------------
+# SECURITY: verified-email gating + no silent password-account linking (#144)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_callback_unverified_email_refused(provider, idp, client, db_session):
+    """(a) An unverified-email claim → login refused; nothing created/linked.
+
+    Closes the takeover vector where an IdP asserts ``email=victim@corp.com``
+    without having verified it.
+    """
+    state, nonce = await _begin_login(client)
+    idp.id_token = _make_id_token(
+        nonce=nonce,
+        sub="sub-unverified",
+        email="unverified@idp.test.example",
+        email_verified=False,
+    )
+    resp = await client.get(
+        _CALLBACK_PATH, params={"code": "c", "state": state}, follow_redirects=False
+    )
+    assert resp.status_code == 400
+    assert ACCESS_COOKIE_NAME not in resp.cookies
+
+    # No user with that email, and no identity for that subject, were created.
+    user = (
+        await db_session.execute(
+            select(UserRow).where(UserRow.email == "unverified@idp.test.example")
+        )
+    ).scalar_one_or_none()
+    assert user is None
+    ident = (
+        await db_session.execute(
+            select(SSOIdentityRow).where(SSOIdentityRow.subject == "sub-unverified")
+        )
+    ).scalar_one_or_none()
+    assert ident is None
+
+
+@pytest.mark.asyncio
+async def test_callback_verified_email_matches_password_user_conflict(
+    provider, idp, client, db_session
+):
+    """(b) Verified email matching an existing PASSWORD user → 409, no link.
+
+    The high-value local-credential account must not be auto-bound to SSO.
+    """
+    from btagent_backend.auth.jwt import hash_password
+    from btagent_backend.db.models import DEFAULT_ORG_ID
+
+    victim = UserRow(
+        id=generate_id("usr"),
+        org_id=DEFAULT_ORG_ID,
+        username="victim-local",
+        email="victim@corp.com",
+        password_hash=hash_password("Victim-P@ss-123!"),
+        role="incident_commander",
+    )
+    db_session.add(victim)
+    await db_session.commit()
+
+    state, nonce = await _begin_login(client)
+    idp.id_token = _make_id_token(
+        nonce=nonce,
+        sub="sub-attacker",
+        email="victim@corp.com",
+        email_verified=True,
+    )
+    resp = await client.get(
+        _CALLBACK_PATH, params={"code": "c", "state": state}, follow_redirects=False
+    )
+    assert resp.status_code == 409
+    assert ACCESS_COOKIE_NAME not in resp.cookies
+
+    # No sso_identity was linked to the victim (or anyone) for that subject.
+    ident = (
+        await db_session.execute(
+            select(SSOIdentityRow).where(SSOIdentityRow.subject == "sub-attacker")
+        )
+    ).scalar_one_or_none()
+    assert ident is None
+    # The victim account is untouched (still password-backed).
+    refreshed = await db_session.get(UserRow, victim.id)
+    assert refreshed is not None and refreshed.password_hash is not None
+
+
+@pytest.mark.asyncio
+async def test_callback_verified_email_matches_sso_only_user_links(
+    provider, idp, client, db_session
+):
+    """(c) Verified email matching an existing SSO-ONLY user → links correctly."""
+    from btagent_backend.db.models import DEFAULT_ORG_ID
+
+    sso_only = UserRow(
+        id=generate_id("usr"),
+        org_id=DEFAULT_ORG_ID,
+        username="sso-only-existing",
+        email="ssoonly@idp.test.example",
+        password_hash=None,  # SSO-only: no local credential
+        role="analyst",
+    )
+    db_session.add(sso_only)
+    await db_session.commit()
+
+    state, nonce = await _begin_login(client)
+    idp.id_token = _make_id_token(
+        nonce=nonce,
+        sub="sub-sso-link",
+        email="ssoonly@idp.test.example",
+        email_verified=True,
+    )
+    resp = await client.get(
+        _CALLBACK_PATH, params={"code": "c", "state": state}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert ACCESS_COOKIE_NAME in resp.cookies
+
+    # The identity links to the EXISTING sso-only user (no duplicate created).
+    ident = (
+        await db_session.execute(
+            select(SSOIdentityRow).where(SSOIdentityRow.subject == "sub-sso-link")
+        )
+    ).scalar_one_or_none()
+    assert ident is not None
+    assert ident.user_id == sso_only.id
+    matches = (
+        (
+            await db_session.execute(
+                select(UserRow).where(UserRow.email == "ssoonly@idp.test.example")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(matches) == 1
+
+
+@pytest.mark.asyncio
+async def test_callback_verified_email_brand_new_creates_user(provider, idp, client, db_session):
+    """(d) Verified email, brand-new subject/email → creates a password-less user."""
+    state, nonce = await _begin_login(client)
+    idp.id_token = _make_id_token(
+        nonce=nonce,
+        sub="sub-brand-new",
+        email="brandnew@idp.test.example",
+        email_verified=True,
+    )
+    resp = await client.get(
+        _CALLBACK_PATH, params={"code": "c", "state": state}, follow_redirects=False
+    )
+    assert resp.status_code == 302
+    assert ACCESS_COOKIE_NAME in resp.cookies
+
+    ident = (
+        await db_session.execute(
+            select(SSOIdentityRow).where(SSOIdentityRow.subject == "sub-brand-new")
+        )
+    ).scalar_one_or_none()
+    assert ident is not None
+    user = await db_session.get(UserRow, ident.user_id)
+    assert user is not None
+    assert user.email == "brandnew@idp.test.example"
+    assert user.password_hash is None  # SSO-only, as before
+    assert user.role == "analyst"  # no group claim → default_role
 
 
 @pytest.mark.asyncio

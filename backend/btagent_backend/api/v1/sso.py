@@ -221,9 +221,21 @@ async def sso_callback(
 
     subject = str(claims["sub"])
     email = claims.get("email")
+    # ``email_verified`` is read ONLY from the cryptographically verified ID
+    # token (the dict returned by ``oidc.verify_id_token``), never re-derived
+    # from any user-controlled or unverified input. This is the trust anchor
+    # that gates account-linking-by-email below.
+    email_verified = bool(claims.get("email_verified"))
     role = oidc.map_role(config, claims)
 
-    user = await _jit_provision(db, provider=provider, subject=subject, email=email, role=role)
+    user = await _jit_provision(
+        db,
+        provider=provider,
+        subject=subject,
+        email=email,
+        email_verified=email_verified,
+        role=role,
+    )
 
     # SSO-issued tokens flow through the same minting path as password login,
     # so revocation / refresh-rotation / org scoping all apply unchanged.
@@ -256,19 +268,31 @@ async def _jit_provision(
     provider: str,
     subject: str,
     email: str | None,
+    email_verified: bool,
     role: str,
 ) -> UserRow:
     """Find-or-create the user behind an IdP identity (JIT provisioning).
 
     1. Look up ``sso_identity (provider, subject)`` — a hit returns the linked
        user (the stable path for returning SSO users).
-    2. On a miss, find-or-create a ``UserRow``:
-       * if ``email`` matches an existing user, link to it (account linking);
-       * else create a fresh, password-less user (``password_hash=None``).
+    2. On a miss, find-or-create a ``UserRow``. Account-linking-by-email is
+       deliberately constrained to defend against takeover:
+       * Email-linking is attempted ONLY when the IdP asserted a **verified**
+         email (``email AND email_verified``). An absent/unverified email is
+         refused outright (400/409) — never linked, never used to mint a row
+         (which would also collide with the unique-email constraint).
+       * A verified-email match against an existing user that holds a **local
+         password** (``password_hash IS NOT NULL``) is REFUSED with 409: an
+         unverified/misconfigured IdP asserting ``email=victim@corp.com`` must
+         not silently seize a high-value local-credential account. Linking such
+         accounts requires an explicit administrator action.
+       * A verified-email match against an **SSO-only** user
+         (``password_hash IS NULL``) is auto-linked (the safe linking case).
+       * No match + verified email → create a fresh, password-less user.
        Then insert the ``sso_identity`` row so future logins hit step 1.
 
-    The role from ``role_map`` is applied to NEW users. For an existing local
-    user being linked we do NOT silently change their role here (least
+    The role from ``role_map`` is applied to NEW users. For an existing
+    SSO-only user being linked we do NOT silently change their role here (least
     surprise); the IdP-mapped role takes effect for IdP-provisioned accounts.
     """
     existing_identity = await db.execute(
@@ -284,18 +308,47 @@ async def _jit_provision(
             return user
         # Dangling identity (user deleted) — fall through to recreate.
 
-    user: UserRow | None = None
-    if email:
-        by_email = await db.execute(select(UserRow).where(UserRow.email == email))
-        user = by_email.scalar_one_or_none()
+    # Without a verified email we cannot safely link or create: a brand-new row
+    # would either lack a real email or duplicate an existing one (unique
+    # constraint). Refuse rather than guess.
+    if not (email and email_verified):
+        logger.warning(
+            "SSO refused: IdP did not assert a verified email for provider=%s subject=%s",
+            provider,
+            subject,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="IdP did not assert a verified email",
+        )
 
-    if user is None:
+    by_email = await db.execute(select(UserRow).where(UserRow.email == email))
+    user = by_email.scalar_one_or_none()
+
+    if user is not None:
+        # Account-linking gate: never silently bind a local-password account to
+        # SSO — that is the takeover vector. Only SSO-only accounts auto-link.
+        if user.password_hash is not None:
+            logger.warning(
+                "SSO refused: verified email %s matches an existing local-password "
+                "account for provider=%s; admin linking required",
+                email,
+                provider,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "An account with this email already exists; "
+                    "an administrator must link it to SSO"
+                ),
+            )
+    else:
         # Brand-new JIT user: password-less, role from the IdP mapping.
         username = _derive_username(email, subject)
         user = UserRow(
             id=generate_id("usr"),
             username=username,
-            email=email or f"{subject}@{provider}.sso.local",
+            email=email,
             password_hash=None,  # SSO-only: no local credential
             role=role,
         )
