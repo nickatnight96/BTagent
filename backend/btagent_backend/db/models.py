@@ -315,3 +315,37 @@ class OrgConfigRow(Base):
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (Index("idx_org_config_key", "key", unique=True),)
+
+
+class TLPPolicyRow(Base):
+    """A CISO-approved, org-scoped exception to the default-deny egress gate.
+
+    EPIC-7 UC-7.2. Mirrors :class:`btagent_shared.security.tlp_policy.TLPPolicy`:
+    an ``allow`` / ``deny`` / ``downgrade_then_allow`` action with optional
+    match conditions (``egress_kinds`` / ``applies_to_tlp`` stored as JSON
+    string arrays; empty == any) plus governance metadata.
+    """
+
+    __tablename__ = "tlp_policies"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    egress_kinds: Mapped[list] = mapped_column(JSONB, default=list)
+    applies_to_tlp: Mapped[list] = mapped_column(JSONB, default=list)
+    downgrade_to: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    approver_id: Mapped[str] = mapped_column(String(200), default="")
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    __table_args__ = (Index("idx_tlp_policies_org_id", "org_id"),)
