@@ -39,6 +39,7 @@ from btagent_engine.node import (
     NodeRegistry,
 )
 from btagent_engine.reasoning.hypothesis_gen import (
+    _IOC_TYPE_DEFAULT_TTP,
     HypothesisGenInput,
     HypothesisGenNode,
 )
@@ -149,16 +150,22 @@ class RetroHuntNode(Node[RetroHuntInput, RetroHuntOutput]):
             if not all_norm:
                 continue
             timestamps = [e.timestamp for e in all_norm]
-            # Map the IOC to a technique via the hypotheses derived above.
-            # Pick the first hypothesis technique (HypothesisGen already
-            # mapped IOC type -> default TTP); fall back to unknown.
-            ttp_id = next(iter(technique_names), "T0000")
+            # Attribute the sighting to the technique THIS indicator maps to
+            # (by IOC type), not the first hypothesis — otherwise every
+            # sighting collapses onto one technique. Prefer the
+            # hypothesis-derived name when available.
+            default = _IOC_TYPE_DEFAULT_TTP.get(ioc.type)
+            if default is not None:
+                ttp_id, ttp_name = default
+            else:
+                ttp_id, ttp_name = next(iter(technique_names.items()), ("T0000", ""))
+            ttp_name = technique_names.get(ttp_id, ttp_name)
             tactic = _TECHNIQUE_TACTIC.get(ttp_id, "unknown")
             sightings.append(
                 Sighting(
                     ioc_value=ioc.value,
                     technique_id=ttp_id,
-                    technique_name=technique_names.get(ttp_id, ""),
+                    technique_name=ttp_name,
                     tactic=tactic,
                     event_count=len(all_norm),
                     first_seen=min(timestamps),
