@@ -54,6 +54,9 @@ const PlaybookExecutionView = lazy(() =>
     default: m.PlaybookExecutionView,
   })),
 );
+const AuditLedgerPage = lazy(() =>
+  import("@/components/audit/AuditLedgerPage").then((m) => ({ default: m.AuditLedgerPage })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -136,6 +139,10 @@ export const router = createBrowserRouter([
       {
         path: "playbooks/:id/execute",
         element: lazyRoute(PlaybookExecutionView),
+      },
+      {
+        path: "audit",
+        element: lazyRoute(AuditLedgerPage),
       },
     ],
   },
