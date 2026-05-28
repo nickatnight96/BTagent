@@ -86,9 +86,7 @@ async def list_audit_entries(
     rows = await AuditTrail(db).get_entries(
         actor=actor, category=category, limit=limit, offset=offset
     )
-    return AuditEntryListResponse(
-        items=[_to_response(r) for r in rows], limit=limit, offset=offset
-    )
+    return AuditEntryListResponse(items=[_to_response(r) for r in rows], limit=limit, offset=offset)
 
 
 @router.get("/verify", response_model=ChainVerifyResponse)
@@ -112,9 +110,7 @@ async def export_audit_csv(
 ) -> StreamingResponse:
     """Export audit entries as CSV for external auditors (admin only)."""
     user.require_permission("audit:export")
-    rows = await AuditTrail(db).get_entries(
-        actor=actor, category=category, limit=limit, offset=0
-    )
+    rows = await AuditTrail(db).get_entries(actor=actor, category=category, limit=limit, offset=0)
 
     buf = io.StringIO()
     writer = csv.writer(buf)

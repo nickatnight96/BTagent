@@ -19,9 +19,8 @@ from __future__ import annotations
 import re
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from btagent_shared.types.enums import IOCType
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
     Node,
@@ -61,9 +60,7 @@ _MD5_RE = re.compile(r"\b[a-fA-F0-9]{32}\b")
 _EMAIL_RE = re.compile(r"\b[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b")
 _CVE_RE = re.compile(r"\bCVE-\d{4}-\d{4,7}\b", re.I)
 # Domain: label(s) + a TLD of 2+ alpha. Conservative to limit false positives.
-_DOMAIN_RE = re.compile(
-    r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,24}\b"
-)
+_DOMAIN_RE = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,24}\b")
 
 # TLDs that are almost always false positives in prose (file extensions).
 _NON_DOMAIN_TLDS = {"exe", "dll", "doc", "docx", "pdf", "txt", "zip", "ps1", "py", "sh", "bat"}
@@ -128,7 +125,11 @@ class IOCExtractorNode(Node[IOCExtractorInput, IOCExtractorOutput]):
 
         # 2. Hashes (length-disjoint; order doesn't matter, but check sha256
         #    before sha1/md5 to avoid a 64-hex also matching the 32/40 res).
-        for rx, t in ((_SHA256_RE, IOCType.HASH_SHA256), (_SHA1_RE, IOCType.HASH_SHA1), (_MD5_RE, IOCType.HASH_MD5)):
+        for rx, t in (
+            (_SHA256_RE, IOCType.HASH_SHA256),
+            (_SHA1_RE, IOCType.HASH_SHA1),
+            (_MD5_RE, IOCType.HASH_MD5),
+        ):
             for m in rx.finditer(text):
                 if _outside_url(m) and not any(s <= m.start() < e for s, e in consumed_spans):
                     found.append((t, m.group(0).lower()))

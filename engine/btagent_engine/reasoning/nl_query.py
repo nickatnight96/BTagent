@@ -42,6 +42,7 @@ import os
 import re
 from typing import ClassVar
 
+from btagent_shared.types.hunt import Backend, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
@@ -51,7 +52,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-from btagent_shared.types.hunt import Backend, Query
 
 
 def _mock_mode_enabled() -> bool:
@@ -78,14 +78,30 @@ _SEVERITY_RE = re.compile(
 # Keyword -> ATT&CK technique. Conservative, high-precision phrases only.
 _MITRE_KEYWORDS: list[tuple[re.Pattern[str], str, str]] = [
     (re.compile(r"\bpowershell\b", re.I), "T1059.001", "PowerShell"),
-    (re.compile(r"\b(cobalt\s*strike|beacon(?:ing)?|c2|command[- ]and[- ]control)\b", re.I), "T1071.001", "Web Protocols (C2)"),
+    (
+        re.compile(r"\b(cobalt\s*strike|beacon(?:ing)?|c2|command[- ]and[- ]control)\b", re.I),
+        "T1071.001",
+        "Web Protocols (C2)",
+    ),
     (re.compile(r"\bscheduled?\s*task", re.I), "T1053.005", "Scheduled Task"),
-    (re.compile(r"\b(brute[- ]?force|failed\s+log(?:in|on)|password\s+spray)", re.I), "T1110", "Brute Force"),
+    (
+        re.compile(r"\b(brute[- ]?force|failed\s+log(?:in|on)|password\s+spray)", re.I),
+        "T1110",
+        "Brute Force",
+    ),
     (re.compile(r"\b(spear)?phish", re.I), "T1566.001", "Spearphishing Attachment"),
-    (re.compile(r"\b(ransomware|encrypt(?:ed|ion)?\s+files?)\b", re.I), "T1486", "Data Encrypted for Impact"),
+    (
+        re.compile(r"\b(ransomware|encrypt(?:ed|ion)?\s+files?)\b", re.I),
+        "T1486",
+        "Data Encrypted for Impact",
+    ),
     (re.compile(r"\blateral\s+movement\b", re.I), "T1021", "Remote Services"),
     (re.compile(r"\b(mimikatz|credential\s+dump|lsass)\b", re.I), "T1003", "OS Credential Dumping"),
-    (re.compile(r"\b(exploit|public[- ]facing|web\s+shell)\b", re.I), "T1190", "Exploit Public-Facing Application"),
+    (
+        re.compile(r"\b(exploit|public[- ]facing|web\s+shell)\b", re.I),
+        "T1190",
+        "Exploit Public-Facing Application",
+    ),
     (re.compile(r"\bcloud\s+(account|login|sign[- ]?in)\b", re.I), "T1078.004", "Cloud Accounts"),
 ]
 
@@ -230,7 +246,7 @@ def _parse(intent: str) -> ParsedIntent:
 def _build_splunk(p: ParsedIntent) -> str:
     parts = ["index=*"]
     if p.severity:
-        parts.append(f'severity={p.severity}')
+        parts.append(f"severity={p.severity}")
     for ip in p.entities.get("ip", []):
         parts.append(f'(src_ip="{ip}" OR dest_ip="{ip}")')
     for user in p.entities.get("user", []):
@@ -356,8 +372,7 @@ class NLQueryNode(Node[NLQueryInput, NLQueryOutput]):
             queries[backend] = Query(
                 backend=backend,
                 query=builder(parsed),
-                notes="Built from a fixed safe field set — review filters before "
-                "executing (HITL).",
+                notes="Built from a fixed safe field set — review filters before executing (HITL).",
             )
 
         return NLQueryOutput(parsed=parsed, queries=queries, mock_mode=not used_llm)
@@ -365,8 +380,9 @@ class NLQueryNode(Node[NLQueryInput, NLQueryOutput]):
     async def _llm_parse(self, intent: str, client, ctx) -> ParsedIntent | None:
         """LLM intent parsing -> ParsedIntent. Returns None on any failure so
         the caller falls back to the deterministic regex parser."""
-        from btagent_engine.reasoning._llm_json import call_llm_json
         from btagent_shared.types.config import TLP, ModelTier
+
+        from btagent_engine.reasoning._llm_json import call_llm_json
 
         system = (
             "You parse a SOC analyst's plain-English hunt request into structure. "

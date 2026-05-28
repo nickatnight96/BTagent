@@ -9,6 +9,9 @@ NotImplementedError today, which we also assert.
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.config import AutonomyLevel
+from btagent_shared.types.hunt import HuntInput, HuntScope
+from btagent_shared.types.investigation import IOC
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import (
@@ -16,9 +19,6 @@ from btagent_engine.reasoning import (
     HypothesisGenNode,
     HypothesisGenOutput,
 )
-from btagent_shared.types.config import AutonomyLevel
-from btagent_shared.types.hunt import HuntInput, HuntScope
-from btagent_shared.types.investigation import IOC
 
 
 def _ctx() -> NodeContext:
@@ -141,9 +141,7 @@ async def test_dedup_keeps_highest_priority_entry(monkeypatch):
     # emits T1059.001 (lower priority). Dedup should keep the adversary
     # entry (priority 0.85) and merge sources.
     out = await HypothesisGenNode().run(
-        HypothesisGenInput(
-            hunt_input=_hi(adversaries=["APT29"], ttps=["T1059.001"])
-        ),
+        HypothesisGenInput(hunt_input=_hi(adversaries=["APT29"], ttps=["T1059.001"])),
         _ctx(),
     )
     powershell = next(h for h in out.hypotheses if h.ttp_id == "T1059.001")
@@ -200,8 +198,9 @@ async def test_non_mock_no_client_degrades_to_deterministic(monkeypatch):
 
 async def test_non_mock_with_client_uses_llm(monkeypatch):
     """A registered client + MOCK_LLM=false -> the node uses the LLM path."""
-    from btagent_engine.llm import clear_llm_client, set_llm_client
     from btagent_shared.llm import LLMRequest, LLMResponse, LLMUsage
+
+    from btagent_engine.llm import clear_llm_client, set_llm_client
 
     class _FakeClient:
         async def complete(self, request: LLMRequest) -> LLMResponse:
@@ -231,8 +230,9 @@ async def test_non_mock_with_client_uses_llm(monkeypatch):
 
 async def test_llm_failure_falls_back_to_deterministic(monkeypatch):
     """A malformed LLM response must degrade to deterministic, not crash."""
-    from btagent_engine.llm import clear_llm_client, set_llm_client
     from btagent_shared.llm import LLMRequest, LLMResponse
+
+    from btagent_engine.llm import clear_llm_client, set_llm_client
 
     class _BadClient:
         async def complete(self, request: LLMRequest) -> LLMResponse:

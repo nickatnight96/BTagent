@@ -8,6 +8,7 @@ acceptance criterion.
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.enums import IOCType
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning.correlation_workbench import (
@@ -15,7 +16,6 @@ from btagent_engine.reasoning.correlation_workbench import (
     CorrelationWorkbenchInput,
     CorrelationWorkbenchNode,
 )
-from btagent_shared.types.enums import IOCType
 
 
 def _ctx() -> NodeContext:
@@ -126,8 +126,9 @@ async def test_pivots_returned_with_rationale(monkeypatch):
     for p in out.timeline.pivots:
         assert p.rationale.strip()
     # Should never suggest pivoting back to the queried entity itself.
-    assert all(p.entity_value != "10.1.42.17" for p in out.timeline.pivots
-               if p.entity_type == IOCType.IP)
+    assert all(
+        p.entity_value != "10.1.42.17" for p in out.timeline.pivots if p.entity_type == IOCType.IP
+    )
 
 
 # --------------------------------------------------------------------------- #

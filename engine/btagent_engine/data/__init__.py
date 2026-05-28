@@ -16,12 +16,6 @@ Sprint 4A ships two:
   ``collateral``).
 """
 
-from btagent_engine.data.mitre_mapper import (
-    MitreMappedTechnique,
-    MitreMapperInput,
-    MitreMapperNode,
-    MitreMapperOutput,
-)
 from btagent_engine.data.coverage_gap import (
     CoverageGapInput,
     CoverageGapNode,
@@ -33,6 +27,12 @@ from btagent_engine.data.ioc_extractor import (
     IOCExtractorInput,
     IOCExtractorNode,
     IOCExtractorOutput,
+)
+from btagent_engine.data.mitre_mapper import (
+    MitreMappedTechnique,
+    MitreMapperInput,
+    MitreMapperNode,
+    MitreMapperOutput,
 )
 from btagent_engine.data.noise_baseline import (
     NoiseBaselineInput,

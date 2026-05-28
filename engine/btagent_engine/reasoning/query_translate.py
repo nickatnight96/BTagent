@@ -29,10 +29,9 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from btagent_shared.types.hunt import Backend
 from btagent_shared.types.query_ir import LogicOp, Operator, QueryCondition, QueryIR
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
     Node,
@@ -128,7 +127,7 @@ def _kql_cond(c: QueryCondition) -> str:
             vals = v if isinstance(v, list) else [v]
             return f"{f} in (" + ", ".join(_q(x) for x in vals) + ")"
         case Operator.REGEX:
-            return f'{f} matches regex {_q(v)}'
+            return f"{f} matches regex {_q(v)}"
     return f"{f} == {_q(v)}"
 
 
@@ -158,7 +157,7 @@ def _esql_cond(c: QueryCondition) -> str:
             vals = v if isinstance(v, list) else [v]
             return f"{f} IN (" + ", ".join(_q(x) for x in vals) + ")"
         case Operator.REGEX:
-            return f'{f} RLIKE {_q(v)}'
+            return f"{f} RLIKE {_q(v)}"
     return f"{f} == {_q(v)}"
 
 
@@ -239,7 +238,7 @@ def _render_esql(ir: QueryIR) -> str:
     # ES|QL has no inline time filter without a @timestamp field; emit a
     # conventional one so the query is runnable + bounded.
     if ir.time_window_hours:
-        parts.insert(1, f'| WHERE @timestamp >= NOW() - {ir.time_window_hours} hours')
+        parts.insert(1, f"| WHERE @timestamp >= NOW() - {ir.time_window_hours} hours")
     if ir.limit:
         parts.append(f"| LIMIT {ir.limit}")
     return " ".join(parts)
@@ -285,7 +284,7 @@ def _render_sigma(ir: QueryIR) -> str:
             key = f"{c.field}{_sigma_modifier(c.op)}"
             lines.append(f"  {name}:")
             lines.append(f"    {key}: {_sigma_value(c.value)}")
-        lines.append(f"  condition: 1 of sel_*")
+        lines.append("  condition: 1 of sel_*")
     return "\n".join(lines)
 
 
@@ -338,9 +337,7 @@ def _explain(ir: QueryIR) -> str:
             Operator.IN: "is one of",
             Operator.REGEX: "matches regex",
         }
-        clauses = [
-            f"{c.field} {op_words.get(c.op, str(c.op))} {c.value!r}" for c in ir.conditions
-        ]
+        clauses = [f"{c.field} {op_words.get(c.op, str(c.op))} {c.value!r}" for c in ir.conditions]
         joiner = " AND " if ir.logic == LogicOp.AND else " OR "
         body = f"{ir.data_source!r} events where " + joiner.join(clauses)
     window = (
@@ -360,9 +357,13 @@ def _optimize(ir: QueryIR) -> list[str]:
             "bounded; unbounded scans are the #1 cause of slow hunts."
         )
     if ir.limit is None:
-        findings.append("No result cap — add a limit to protect the backend from a runaway result set.")
+        findings.append(
+            "No result cap — add a limit to protect the backend from a runaway result set."
+        )
     elif ir.limit > 10000:
-        findings.append(f"Result cap is high ({ir.limit}); consider narrowing to <=10000 for interactive hunts.")
+        findings.append(
+            f"Result cap is high ({ir.limit}); consider narrowing to <=10000 for interactive hunts."
+        )
     for c in ir.conditions:
         if c.op == Operator.CONTAINS:
             findings.append(
@@ -381,7 +382,9 @@ def _optimize(ir: QueryIR) -> list[str]:
             "index/sourcetype/table to cut scan volume."
         )
     if not findings:
-        findings.append("No optimization issues detected — query is bounded, capped, and index-friendly.")
+        findings.append(
+            "No optimization issues detected — query is bounded, capped, and index-friendly."
+        )
     return findings
 
 
@@ -441,13 +444,9 @@ class QueryTranslateNode(Node[QueryTranslateInput, QueryTranslateOutput]):
         ctx: NodeContext,
     ) -> QueryTranslateOutput:
         if input.mode == TranslateMode.EXPLAIN:
-            return QueryTranslateOutput(
-                mode=input.mode, explanation=_explain(input.ir)
-            )
+            return QueryTranslateOutput(mode=input.mode, explanation=_explain(input.ir))
         if input.mode == TranslateMode.OPTIMIZE:
-            return QueryTranslateOutput(
-                mode=input.mode, optimizations=_optimize(input.ir)
-            )
+            return QueryTranslateOutput(mode=input.mode, optimizations=_optimize(input.ir))
 
         # translate
         targets = input.targets or _TRANSLATABLE

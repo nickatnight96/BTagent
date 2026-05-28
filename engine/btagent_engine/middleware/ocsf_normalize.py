@@ -35,9 +35,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from btagent_shared.types.connector import ConnectorManifest, OCSFEventClass
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.middleware.base import Middleware
 from btagent_engine.middleware.connector_policy import (

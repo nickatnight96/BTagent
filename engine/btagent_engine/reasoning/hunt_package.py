@@ -20,12 +20,11 @@ from __future__ import annotations
 import os
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from btagent_shared.types.detection import SigmaDraft
 from btagent_shared.types.hunt import Backend, HuntInput, HuntScope
 from btagent_shared.types.hunt_package import HuntPackage
 from btagent_shared.types.investigation import IOC
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.data.ioc_extractor import IOCExtractorInput, IOCExtractorNode
 from btagent_engine.node import (
@@ -114,9 +113,7 @@ class HuntPackageNode(Node[HuntPackageInput, HuntPackageOutput]):
         backends = input.backends or _DEFAULT_BACKENDS
 
         # 1. Extract indicators.
-        extract = await IOCExtractorNode().run(
-            IOCExtractorInput(text=input.text), ctx
-        )
+        extract = await IOCExtractorNode().run(IOCExtractorInput(text=input.text), ctx)
         iocs = [
             IOC(
                 id=f"ioc_pkg_{i}",
@@ -136,9 +133,7 @@ class HuntPackageNode(Node[HuntPackageInput, HuntPackageOutput]):
             initiated_by=input.initiated_by,
             scope=HuntScope(backends=backends),
         )
-        hyp_out = await HypothesisGenNode().run(
-            HypothesisGenInput(hunt_input=hunt_input), ctx
-        )
+        hyp_out = await HypothesisGenNode().run(HypothesisGenInput(hunt_input=hunt_input), ctx)
         techniques = {h.ttp_id: h.ttp_name for h in hyp_out.hypotheses}
 
         # 3. Retro-hunt: were these indicators already sighted?
@@ -150,9 +145,7 @@ class HuntPackageNode(Node[HuntPackageInput, HuntPackageOutput]):
         # 4. Pre-built queries per derived technique.
         queries: dict[str, dict[Backend, object]] = {}
         for ttp_id in techniques:
-            qs = await QuerySynthNode().run(
-                QuerySynthInput(ttp_id=ttp_id, backends=backends), ctx
-            )
+            qs = await QuerySynthNode().run(QuerySynthInput(ttp_id=ttp_id, backends=backends), ctx)
             queries[ttp_id] = qs.queries
 
         # 5. Sigma drafts, one per derived technique.

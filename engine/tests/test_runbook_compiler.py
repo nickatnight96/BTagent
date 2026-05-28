@@ -3,13 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
-from btagent_engine import NodeContext
-from btagent_engine.data import (
-    RunbookCompilerInput,
-    RunbookCompilerNode,
-    RunbookCompilerOutput,
-)
 from btagent_shared.types.config import AutonomyLevel
 from btagent_shared.types.hunt import (
     Backend,
@@ -20,6 +13,13 @@ from btagent_shared.types.hunt import (
     NoiseProfile,
     Query,
     TTPState,
+)
+
+from btagent_engine import NodeContext
+from btagent_engine.data import (
+    RunbookCompilerInput,
+    RunbookCompilerNode,
+    RunbookCompilerOutput,
 )
 
 

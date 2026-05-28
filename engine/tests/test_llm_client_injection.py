@@ -9,12 +9,12 @@ mock mode is unchanged either way.
 from __future__ import annotations
 
 import pytest
+from btagent_shared.llm import LLMRequest, LLMResponse, LLMUsage
 
 from btagent_engine import NodeContext
 from btagent_engine.integrations.llm_call import LLMCallInput, LLMCallNode
 from btagent_engine.llm import clear_llm_client, get_llm_client, set_llm_client
 from btagent_engine.middleware.prompt_budget import USAGE_METADATA_KEY
-from btagent_shared.llm import LLMRequest, LLMResponse, LLMUsage
 
 
 class _FakeClient:

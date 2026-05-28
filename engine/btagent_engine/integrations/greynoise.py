@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import GREYNOISE_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -30,7 +31,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-from btagent_engine.integrations._manifests import GREYNOISE_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:

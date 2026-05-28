@@ -38,12 +38,6 @@ from btagent_engine.middleware.connector_policy import (
     ConnectorPolicyViolation,
     PendingHITLApproval,
 )
-from btagent_engine.middleware.ocsf_normalize import (
-    OCSF_SUMMARY_KEY,
-    OCSFContractViolation,
-    OCSFEmitSummary,
-    OCSFNormalizerMiddleware,
-)
 from btagent_engine.middleware.event_emitter import (
     EmitCallable,
     EventEmitterMiddleware,
@@ -57,6 +51,12 @@ from btagent_engine.middleware.hitl import (
     HITLMiddleware,
     HITLPause,
     requires_approval,
+)
+from btagent_engine.middleware.ocsf_normalize import (
+    OCSF_SUMMARY_KEY,
+    OCSFContractViolation,
+    OCSFEmitSummary,
+    OCSFNormalizerMiddleware,
 )
 from btagent_engine.middleware.prompt_budget import (
     USAGE_METADATA_KEY,

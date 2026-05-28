@@ -29,15 +29,6 @@ from datetime import datetime
 from typing import ClassVar
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from btagent_engine.node import (
-    Node,
-    NodeCategory,
-    NodeContext,
-    NodeMeta,
-    NodeRegistry,
-)
 from btagent_shared.types.hunt import (
     Backend,
     CorrelationRule,
@@ -52,7 +43,15 @@ from btagent_shared.types.hunt import (
     TTPRunbookEntry,
     TTPState,
 )
+from pydantic import BaseModel, ConfigDict, Field
 
+from btagent_engine.node import (
+    Node,
+    NodeCategory,
+    NodeContext,
+    NodeMeta,
+    NodeRegistry,
+)
 
 # ---------------------------------------------------------------------------
 # Built-in pivot / evidence libraries
@@ -145,10 +144,7 @@ def _default_correlation_rules() -> list[CorrelationRule]:
         CorrelationRule(
             id="corr_co_t1059_001_t1078_004",
             description="PowerShell + cloud-account use on the same host within 24h.",
-            trigger=(
-                "Both T1059.001 and T1078.004 land hits on the same host "
-                "within 24h."
-            ),
+            trigger=("Both T1059.001 and T1078.004 land hits on the same host within 24h."),
             action="escalate_to_ir",
         ),
         CorrelationRule(
@@ -351,13 +347,9 @@ class RunbookCompilerNode(Node[RunbookCompilerInput, RunbookCompilerOutput]):
         if scope.hosts:
             parts.append(f"hosts: {len(scope.hosts)} explicit")
         if scope.date_from and scope.date_to:
-            parts.append(
-                f"window: {scope.date_from.isoformat()} -> {scope.date_to.isoformat()}"
-            )
+            parts.append(f"window: {scope.date_from.isoformat()} -> {scope.date_to.isoformat()}")
         if scope.backends:
-            parts.append(
-                "backends: " + ", ".join(b.value for b in scope.backends)
-            )
+            parts.append("backends: " + ", ".join(b.value for b in scope.backends))
         if not parts:
             return "All in-scope environments, last 7 days, all configured backends."
         return "; ".join(parts) + "."

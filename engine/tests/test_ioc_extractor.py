@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from btagent_shared.types.enums import IOCType
+
 from btagent_engine import NodeContext
 from btagent_engine.data import IOCExtractorInput, IOCExtractorNode
-from btagent_shared.types.enums import IOCType
 
 
 def _ctx() -> NodeContext:
@@ -35,9 +36,8 @@ async def test_extracts_each_ioc_type():
     assert any("payload.bin" in u for u in _values(out, IOCType.URL))
     assert "d41d8cd98f00b204e9800998ecf8427e" in _values(out, IOCType.HASH_MD5)
     assert "da39a3ee5e6b4b0d3255bfef95601890afd80709" in _values(out, IOCType.HASH_SHA1)
-    assert (
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        in _values(out, IOCType.HASH_SHA256)
+    assert "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" in _values(
+        out, IOCType.HASH_SHA256
     )
     assert "attacker@evil-c2.example" in _values(out, IOCType.EMAIL)
     assert "CVE-2026-12345" in _values(out, IOCType.CVE)

@@ -19,10 +19,9 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from btagent_shared.types.detection import CoverageGapReport, SigmaDraft
 from btagent_shared.types.mitre import CoverageMap, DetectionGap, TechniqueCoverage
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
     Node,
@@ -50,7 +49,9 @@ _DEFAULT_UNIVERSE: list[TechniqueRef] = [
     TechniqueRef(technique_id="T1059.003", name="Windows Command Shell", tactic="execution"),
     TechniqueRef(technique_id="T1078.004", name="Cloud Accounts", tactic="defense-evasion"),
     TechniqueRef(technique_id="T1110", name="Brute Force", tactic="credential-access"),
-    TechniqueRef(technique_id="T1566.001", name="Spearphishing Attachment", tactic="initial-access"),
+    TechniqueRef(
+        technique_id="T1566.001", name="Spearphishing Attachment", tactic="initial-access"
+    ),
     TechniqueRef(technique_id="T1486", name="Data Encrypted for Impact", tactic="impact"),
     TechniqueRef(technique_id="T1071.001", name="Web Protocols", tactic="command-and-control"),
     TechniqueRef(technique_id="T1053.005", name="Scheduled Task", tactic="persistence"),

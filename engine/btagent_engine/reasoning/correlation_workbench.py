@@ -23,10 +23,8 @@ gates the data source.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import ClassVar
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_shared.security.correlation_fixtures import get_fixture
 from btagent_shared.security.ocsf_map import OCSF_MAPS
@@ -38,6 +36,7 @@ from btagent_shared.types.correlation import (
     NormalizedEvent,
 )
 from btagent_shared.types.enums import IOCType
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.data.mitre_mapper import MitreMapperInput, MitreMapperNode
 from btagent_engine.data.ocsf_mapper import OCSFMapperInput, OCSFMapperNode
@@ -103,9 +102,7 @@ class CorrelationWorkbenchOutput(BaseModel):
     timeline: CorrelationTimeline
 
 
-class CorrelationWorkbenchNode(
-    Node[CorrelationWorkbenchInput, CorrelationWorkbenchOutput]
-):
+class CorrelationWorkbenchNode(Node[CorrelationWorkbenchInput, CorrelationWorkbenchOutput]):
     """Correlate an entity across multiple security tools into one timeline."""
 
     meta: ClassVar[NodeMeta] = NodeMeta(
@@ -163,7 +160,7 @@ class CorrelationWorkbenchNode(
                         connector=connector,
                         capability_id=f"{connector}.search",
                         query=f"entity={input.entity_value}",
-                        queried_at=datetime.now(timezone.utc),
+                        queried_at=datetime.now(UTC),
                         event_count=len(mapped.events),
                     )
                 )
@@ -172,7 +169,7 @@ class CorrelationWorkbenchNode(
                     AuditEntry(
                         connector=connector,
                         query=f"entity={input.entity_value}",
-                        queried_at=datetime.now(timezone.utc),
+                        queried_at=datetime.now(UTC),
                         event_count=0,
                         error=str(exc),
                     )
@@ -207,9 +204,7 @@ class CorrelationWorkbenchNode(
     # --- helpers ---------------------------------------------------------- #
 
     @staticmethod
-    def _select_connectors(
-        entity_type: IOCType, fixture: dict[str, list]
-    ) -> list[str]:
+    def _select_connectors(entity_type: IOCType, fixture: dict[str, list]) -> list[str]:
         """Connectors to fan out to.
 
         In mock mode the fixture's own connector set is authoritative
@@ -231,9 +226,7 @@ class CorrelationWorkbenchNode(
         return fallback
 
     @staticmethod
-    async def _tag_mitre(
-        events: list[NormalizedEvent], threshold: float, ctx: NodeContext
-    ) -> None:
+    async def _tag_mitre(events: list[NormalizedEvent], threshold: float, ctx: NodeContext) -> None:
         """Run each event's text through MitreMapperNode; attach tags above
         the confidence threshold. Mutates events in place.
         """
@@ -248,9 +241,7 @@ class CorrelationWorkbenchNode(
             blob = " ".join(p for p in blob_parts if p)
             if not blob.strip():
                 continue
-            result = await mapper.run(
-                MitreMapperInput(text=blob, min_confidence=threshold), ctx
-            )
+            result = await mapper.run(MitreMapperInput(text=blob, min_confidence=threshold), ctx)
             ev.mitre_techniques = [
                 MitreTag(
                     technique_id=t.technique_id,

@@ -189,9 +189,7 @@ class ConnectorPolicyMiddleware(Middleware):
 
         # 2. HITL gate
         if capability.hitl_required:
-            raise PendingHITLApproval(
-                capability_id=capability.id, connector_name=manifest.name
-            )
+            raise PendingHITLApproval(capability_id=capability.id, connector_name=manifest.name)
 
         # 3. Record cost class + capability metadata for downstream
         # observability. No side effects on policy decisions.

@@ -5,6 +5,13 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
+from btagent_shared.types.connector import (
+    ConnectorManifest,
+    CredentialType,
+    OCSFEventClass,
+    QueryCapability,
+    TransportKind,
+)
 from pydantic import BaseModel
 
 from btagent_engine import NodeContext
@@ -15,14 +22,6 @@ from btagent_engine.middleware import (
     OCSFNormalizerMiddleware,
 )
 from btagent_engine.node import Node, NodeCategory, NodeMeta
-from btagent_shared.types.connector import (
-    ConnectorManifest,
-    CredentialType,
-    OCSFEventClass,
-    QueryCapability,
-    TransportKind,
-)
-
 
 # --------------------------------------------------------------------------- #
 # Fixtures

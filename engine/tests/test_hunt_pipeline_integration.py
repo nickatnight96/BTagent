@@ -16,6 +16,8 @@ empty now get filled by the Phase B nodes.
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.config import AutonomyLevel
+from btagent_shared.types.hunt import Backend, HuntInput, HuntPlanState, HuntScope, TTPState
 
 from btagent_engine import NodeContext
 from btagent_engine.data import (
@@ -30,8 +32,6 @@ from btagent_engine.reasoning import (
     QuerySynthInput,
     QuerySynthNode,
 )
-from btagent_shared.types.config import AutonomyLevel
-from btagent_shared.types.hunt import Backend, HuntInput, HuntPlanState, HuntScope, TTPState
 
 
 async def test_full_apt29_hunt_pipeline(monkeypatch):
@@ -48,9 +48,7 @@ async def test_full_apt29_hunt_pipeline(monkeypatch):
     )
 
     # 1. Hypotheses
-    hyp_out = await HypothesisGenNode().run(
-        HypothesisGenInput(hunt_input=hunt_input), ctx
-    )
+    hyp_out = await HypothesisGenNode().run(HypothesisGenInput(hunt_input=hunt_input), ctx)
     assert len(hyp_out.hypotheses) == 3  # APT29 stock set
 
     # 2 + 3. Per-hypothesis: synth queries, baseline each query

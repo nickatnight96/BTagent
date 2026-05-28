@@ -226,9 +226,10 @@ class LLMCallNode(Node[LLMCallInput, LLMCallOutput]):
         # method, so provider selection / TLP gating / credentials stay in the
         # concrete client. If no client is registered, fail loudly rather than
         # silently no-op.
-        from btagent_engine.llm import get_llm_client
         from btagent_shared.llm import LLMMessage, LLMRequest
         from btagent_shared.types.config import TLP
+
+        from btagent_engine.llm import get_llm_client
 
         client = get_llm_client()
         if client is None:
@@ -248,10 +249,7 @@ class LLMCallNode(Node[LLMCallInput, LLMCallOutput]):
 
         response = await client.complete(
             LLMRequest(
-                messages=[
-                    LLMMessage(role=m["role"], content=m["content"])
-                    for m in input.messages
-                ],
+                messages=[LLMMessage(role=m["role"], content=m["content"]) for m in input.messages],
                 tier=tier,
                 tlp=tlp,
                 temperature=input.temperature,

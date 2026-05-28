@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.hunt import Backend
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import (
@@ -10,7 +11,6 @@ from btagent_engine.reasoning import (
     QuerySynthNode,
     QuerySynthOutput,
 )
-from btagent_shared.types.hunt import Backend
 
 
 def _ctx() -> NodeContext:
@@ -97,17 +97,20 @@ async def test_non_mock_mode_degrades_gracefully(monkeypatch):
 
 
 async def test_llm_path_used_when_client_registered(monkeypatch):
-    from btagent_engine.llm import clear_llm_client, set_llm_client
     from btagent_shared.llm import LLMRequest, LLMResponse
+
+    from btagent_engine.llm import clear_llm_client, set_llm_client
 
     class _FakeClient:
         async def complete(self, request: LLMRequest) -> LLMResponse:
             return LLMResponse(
                 content='{"splunk":"index=ep process=powershell.exe | head 100"}',
-                provider="anthropic", model="claude-sonnet-4-6",
+                provider="anthropic",
+                model="claude-sonnet-4-6",
             )
 
-    clear_llm_client(); set_llm_client(_FakeClient())
+    clear_llm_client()
+    set_llm_client(_FakeClient())
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
     try:
         out = await QuerySynthNode().run(
@@ -120,14 +123,16 @@ async def test_llm_path_used_when_client_registered(monkeypatch):
 
 
 async def test_llm_bad_response_falls_back_to_template(monkeypatch):
-    from btagent_engine.llm import clear_llm_client, set_llm_client
     from btagent_shared.llm import LLMRequest, LLMResponse
+
+    from btagent_engine.llm import clear_llm_client, set_llm_client
 
     class _BadClient:
         async def complete(self, request: LLMRequest) -> LLMResponse:
             return LLMResponse(content="sorry, no", provider="x", model="y")
 
-    clear_llm_client(); set_llm_client(_BadClient())
+    clear_llm_client()
+    set_llm_client(_BadClient())
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "false")
     try:
         out = await QuerySynthNode().run(

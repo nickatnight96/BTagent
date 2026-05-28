@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from btagent_engine.integrations._manifests import ELASTIC_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -24,7 +25,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-from btagent_engine.integrations._manifests import ELASTIC_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:

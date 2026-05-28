@@ -5,6 +5,15 @@ from __future__ import annotations
 from typing import ClassVar
 
 import pytest
+from btagent_shared.types.config import TLP
+from btagent_shared.types.connector import (
+    ActionCapability,
+    ConnectorManifest,
+    CostClass,
+    CredentialType,
+    QueryCapability,
+    TransportKind,
+)
 from pydantic import BaseModel
 
 from btagent_engine import NodeContext
@@ -17,16 +26,6 @@ from btagent_engine.middleware import (
     PendingHITLApproval,
 )
 from btagent_engine.node import Node, NodeCategory, NodeMeta
-from btagent_shared.types.config import TLP
-from btagent_shared.types.connector import (
-    ActionCapability,
-    ConnectorManifest,
-    CostClass,
-    CredentialType,
-    QueryCapability,
-    TransportKind,
-)
-
 
 # --------------------------------------------------------------------------- #
 # Test fixtures: a manifest + a node that points at one of its capabilities
@@ -186,11 +185,7 @@ async def test_tlp_white_context_allows_amber_capability():
         version="0.1.0",
         transport=TransportKind.HTTP_REST,
         auth=CredentialType.API_KEY,
-        queries=[
-            QueryCapability(
-                id="lookup", tlp_egress=TLP.AMBER, hitl_required=False
-            )
-        ],
+        queries=[QueryCapability(id="lookup", tlp_egress=TLP.AMBER, hitl_required=False)],
     )
 
     class _AmberNode(_PingNode):

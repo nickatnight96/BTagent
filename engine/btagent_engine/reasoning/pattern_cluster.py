@@ -19,10 +19,9 @@ import os
 from collections import defaultdict
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from btagent_shared.types.correlation import NormalizedEvent
 from btagent_shared.types.detection import DetectionCluster
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
     Node,

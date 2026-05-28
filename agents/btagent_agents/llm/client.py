@@ -54,8 +54,7 @@ class LiteLLMClient:
             "assistant": AIMessage,
         }
         lc_messages = [
-            role_map.get(m.role, HumanMessage)(content=m.content)
-            for m in request.messages
+            role_map.get(m.role, HumanMessage)(content=m.content) for m in request.messages
         ]
 
         result = await llm.ainvoke(lc_messages)

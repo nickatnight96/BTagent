@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.hunt import Backend
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import (
@@ -10,7 +11,6 @@ from btagent_engine.reasoning import (
     HuntPackageNode,
     HuntPackageOutput,
 )
-from btagent_shared.types.hunt import Backend
 
 _ADVISORY = (
     "CISA advisory AA26-001: actor infrastructure includes 10.1.42.17 and "

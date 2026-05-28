@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
+from btagent_shared.types.connector import OCSFEventClass
+from btagent_shared.types.correlation import MitreTag, NormalizedEvent, RawEventRef
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import (
@@ -12,8 +14,6 @@ from btagent_engine.reasoning import (
     PatternClusterNode,
     PatternClusterOutput,
 )
-from btagent_shared.types.connector import OCSFEventClass
-from btagent_shared.types.correlation import MitreTag, NormalizedEvent, RawEventRef
 
 
 def _ctx() -> NodeContext:
@@ -23,11 +23,13 @@ def _ctx() -> NodeContext:
 def _ev(eid: str, host: str, ttp: str, conf: float, **kw) -> NormalizedEvent:
     return NormalizedEvent(
         event_id=eid,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         source_connector="crowdstrike",
         ocsf_event_class=OCSFEventClass.PROCESS_ACTIVITY,
         host=host,
-        raw_ref=RawEventRef(connector="crowdstrike", capability_id="x", queried_at=datetime.now(timezone.utc)),
+        raw_ref=RawEventRef(
+            connector="crowdstrike", capability_id="x", queried_at=datetime.now(UTC)
+        ),
         mitre_techniques=[MitreTag(technique_id=ttp, name="PowerShell", confidence=conf)],
         **kw,
     )
@@ -65,9 +67,7 @@ async def test_affected_entities_rolled_up(monkeypatch):
         _ev("1", "HOST-A", "T1110", 0.8, user="alice", source_ip="10.0.0.1"),
         _ev("2", "HOST-A", "T1110", 0.8, user="bob", source_ip="10.0.0.1"),
     ]
-    out = await PatternClusterNode().run(
-        PatternClusterInput(events=events), _ctx()
-    )
+    out = await PatternClusterNode().run(PatternClusterInput(events=events), _ctx())
     cluster = out.clusters[0]
     assert set(cluster.affected_entities["user"]) == {"alice", "bob"}
     assert cluster.affected_entities["source_ip"] == ["10.0.0.1"]

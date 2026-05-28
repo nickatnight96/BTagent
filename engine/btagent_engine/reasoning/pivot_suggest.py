@@ -17,10 +17,9 @@ import os
 from collections import Counter
 from typing import ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from btagent_shared.types.correlation import NormalizedEvent, PivotSuggestion
 from btagent_shared.types.enums import IOCType
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
     Node,
@@ -104,9 +103,7 @@ class PivotSuggestNode(Node[PivotSuggestInput, PivotSuggestOutput]):
                 connectors_for.setdefault(key, connectors)
 
         # Rank by frequency, then stable by value for determinism.
-        ranked = sorted(
-            counts.items(), key=lambda kv: (-kv[1], kv[0][0])
-        )
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0][0]))
 
         pivots: list[PivotSuggestion] = []
         for (value, field, ioc_type), count in ranked[:_MAX_PIVOTS]:

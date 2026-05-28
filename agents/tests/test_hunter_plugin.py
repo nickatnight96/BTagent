@@ -26,8 +26,7 @@ def test_supported_data_sources_include_misp_and_siems():
     # at least one SIEM/EDR for query execution.
     assert "misp" in meta.supported_data_sources
     assert any(
-        ds in meta.supported_data_sources
-        for ds in ("splunk", "sentinel", "elastic", "crowdstrike")
+        ds in meta.supported_data_sources for ds in ("splunk", "sentinel", "elastic", "crowdstrike")
     )
 
 

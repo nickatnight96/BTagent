@@ -44,7 +44,6 @@ async def lifespan(app: FastAPI):
     if os.getenv("BTAGENT_MOCK_LLM", "true").lower() != "true":
         try:
             from btagent_agents.llm.client import LiteLLMClient
-
             from btagent_engine.llm import set_llm_client
 
             set_llm_client(LiteLLMClient())

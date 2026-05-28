@@ -9,7 +9,11 @@ and exercises the policy middleware against the retrofitted connectors
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.config import TLP
+from btagent_shared.types.connector import ConnectorManifest
 
+# Import the integration modules so their nodes register.
+import btagent_engine.integrations  # noqa: F401
 from btagent_engine import NodeContext
 from btagent_engine.middleware import (
     CAPABILITY_ID_KEY,
@@ -17,18 +21,11 @@ from btagent_engine.middleware import (
     PendingHITLApproval,
 )
 from btagent_engine.node import NodeCategory, NodeRegistry
-from btagent_shared.types.config import TLP
-from btagent_shared.types.connector import ConnectorManifest
-
-# Import the integration modules so their nodes register.
-import btagent_engine.integrations  # noqa: F401
 
 
 def _integration_node_classes():
     return [
-        cls
-        for cls in NodeRegistry.all().values()
-        if cls.meta.category == NodeCategory.INTEGRATION
+        cls for cls in NodeRegistry.all().values() if cls.meta.category == NodeCategory.INTEGRATION
     ]
 
 
@@ -55,7 +52,7 @@ def test_every_integration_node_capability_id_resolves():
 
 def test_expected_connectors_all_present():
     names = {
-        getattr(cls, "manifest").name
+        cls.manifest.name
         for cls in _integration_node_classes()
         if isinstance(getattr(cls, "manifest", None), ConnectorManifest)
     }
@@ -81,9 +78,7 @@ async def test_crowdstrike_isolate_host_triggers_hitl():
     mw = ConnectorPolicyMiddleware(active_tlp=TLP.RED)  # on-prem EDR allowed at RED
     node = CrowdStrikeIsolateHostNode()
     with pytest.raises(PendingHITLApproval) as ei:
-        await mw.before_run(
-            node, CrowdStrikeIsolateHostInput(hostname="WS-1"), _ctx()
-        )
+        await mw.before_run(node, CrowdStrikeIsolateHostInput(hostname="WS-1"), _ctx())
     assert ei.value.capability_id == "isolate_host"
     assert ei.value.connector_name == "crowdstrike"
 
@@ -103,19 +98,16 @@ async def test_splunk_search_runs_at_red_no_hitl():
 
 
 async def test_greynoise_blocked_at_red_context():
+    # Cloud CTI declares tlp_egress=AMBER -> must be refused at RED.
     from btagent_engine.integrations.greynoise import (
+        GreyNoiseLookupIPInput,
         GreyNoiseLookupIPNode,
     )
     from btagent_engine.middleware import ConnectorPolicyViolation
 
-    # Cloud CTI declares tlp_egress=AMBER -> must be refused at RED.
-    from btagent_engine.integrations.greynoise import GreyNoiseLookupIPInput
-
     mw = ConnectorPolicyMiddleware(active_tlp=TLP.RED)
     with pytest.raises(ConnectorPolicyViolation):
-        await mw.before_run(
-            GreyNoiseLookupIPNode(), GreyNoiseLookupIPInput(ip="1.2.3.4"), _ctx()
-        )
+        await mw.before_run(GreyNoiseLookupIPNode(), GreyNoiseLookupIPInput(ip="1.2.3.4"), _ctx())
 
 
 def _ctx() -> NodeContext:

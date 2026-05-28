@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import MISP_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -27,7 +28,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-from btagent_engine.integrations._manifests import MISP_MANIFEST
 
 
 def _mock_mode_enabled() -> bool:

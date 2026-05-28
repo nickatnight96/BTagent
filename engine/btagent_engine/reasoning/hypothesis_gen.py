@@ -37,6 +37,7 @@ import hashlib
 import os
 from typing import ClassVar
 
+from btagent_shared.types.hunt import HuntInput, Hypothesis
 from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
@@ -46,8 +47,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-from btagent_shared.types.hunt import HuntInput, Hypothesis
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -209,8 +208,9 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
         list and the caller falls back to the deterministic generator, so
         a flaky model response can never break the hunt.
         """
-        from btagent_engine.reasoning._llm_json import call_llm_json
         from btagent_shared.types.config import TLP, ModelTier
+
+        from btagent_engine.reasoning._llm_json import call_llm_json
 
         adversaries = ", ".join(hunt_input.adversaries) or "(none)"
         ttps = ", ".join(hunt_input.ttps) or "(none)"
@@ -226,10 +226,7 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
             "rationale and behavioral_description to ONE short sentence each so "
             "the JSON stays compact."
         )
-        user = (
-            f"Adversaries: {adversaries}\nTTPs: {ttps}\nIOCs: {iocs}\n"
-            "Return the JSON array now."
-        )
+        user = f"Adversaries: {adversaries}\nTTPs: {ttps}\nIOCs: {iocs}\nReturn the JSON array now."
         try:
             tlp = TLP(ctx.tlp_level)
         except ValueError:
@@ -328,8 +325,7 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
                             "campaigns per the local adversary -> TTP map."
                         ),
                         behavioral_description=(
-                            f"Hunt for behavioural indicators of {ttp_name} "
-                            f"({ttp_id})."
+                            f"Hunt for behavioural indicators of {ttp_name} ({ttp_id})."
                         ),
                         priority=_PRIORITY_ADVERSARY,
                         sources=[f"adversary:{adv}"],
@@ -345,9 +341,7 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
                     ttp_id=ttp,
                     ttp_name=ttp,  # caller didn't give a name; UI can resolve
                     rationale="Explicitly requested by the analyst.",
-                    behavioral_description=(
-                        f"Hunt for behavioural indicators of {ttp}."
-                    ),
+                    behavioral_description=(f"Hunt for behavioural indicators of {ttp}."),
                     priority=_PRIORITY_TTP,
                     sources=["analyst:explicit"],
                 )
@@ -362,9 +356,7 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
             idx_counter += 1
             candidates.append(
                 Hypothesis(
-                    id=_stable_hypothesis_id(
-                        idx_counter, f"ioc:{ioc.type}:{ioc.value}"
-                    ),
+                    id=_stable_hypothesis_id(idx_counter, f"ioc:{ioc.type}:{ioc.value}"),
                     ttp_id=ttp_id,
                     ttp_name=ttp_name,
                     rationale=(
@@ -372,8 +364,7 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
                         f"{ttp_id} via the default-TTP heuristic."
                     ),
                     behavioral_description=(
-                        f"Look for {ttp_name} ({ttp_id}) activity referencing "
-                        f"IOC '{ioc.value}'."
+                        f"Look for {ttp_name} ({ttp_id}) activity referencing IOC '{ioc.value}'."
                     ),
                     priority=_PRIORITY_IOC,
                     sources=[f"ioc:{ioc.type}:{ioc.value}"],

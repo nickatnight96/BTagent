@@ -34,6 +34,7 @@ import os
 from datetime import datetime
 from typing import ClassVar
 
+from btagent_shared.types.hunt import Backend, NoiseProfile
 from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
@@ -43,7 +44,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-from btagent_shared.types.hunt import Backend, NoiseProfile
 
 
 def _mock_mode_enabled() -> bool:
@@ -66,7 +66,7 @@ def _mock_estimate(ttp_id: str, backend: Backend) -> float:
     RunbookCompiler output stable for replay / diff). Range is biased
     toward plausible hunt-query volumes.
     """
-    seed = f"{ttp_id}:{backend.value}".encode("utf-8")
+    seed = f"{ttp_id}:{backend.value}".encode()
     digest = hashlib.sha256(seed).digest()
     # Take 2 bytes -> 0..65535, scale into [1, _MOCK_CEILING].
     raw = int.from_bytes(digest[:2], "big")

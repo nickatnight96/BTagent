@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 import pytest
+from btagent_shared.types.connector import OCSFEventClass
+from btagent_shared.types.correlation import NormalizedEvent, RawEventRef
+from btagent_shared.types.enums import IOCType
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import (
@@ -12,9 +15,6 @@ from btagent_engine.reasoning import (
     PivotSuggestNode,
     PivotSuggestOutput,
 )
-from btagent_shared.types.connector import OCSFEventClass
-from btagent_shared.types.correlation import NormalizedEvent, RawEventRef
-from btagent_shared.types.enums import IOCType
 
 
 def _ctx() -> NodeContext:
@@ -24,10 +24,10 @@ def _ctx() -> NodeContext:
 def _event(**kw) -> NormalizedEvent:
     base = dict(
         event_id=kw.pop("event_id", "e1"),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         source_connector="splunk",
         ocsf_event_class=OCSFEventClass.NETWORK_ACTIVITY,
-        raw_ref=RawEventRef(connector="splunk", capability_id="x", queried_at=datetime.now(timezone.utc)),
+        raw_ref=RawEventRef(connector="splunk", capability_id="x", queried_at=datetime.now(UTC)),
     )
     base.update(kw)
     return NormalizedEvent(**base)

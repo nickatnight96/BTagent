@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import os
 
-from pydantic import BaseModel, Field
-
 from btagent_shared.types.config import TLP
 from btagent_shared.types.connector import (
     ConnectorManifest,
@@ -28,6 +26,7 @@ from btagent_shared.types.connector import (
     QueryCapability,
     TransportKind,
 )
+from pydantic import BaseModel, Field
 
 from btagent_engine.node import (
     Node,
@@ -36,7 +35,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Connector manifest — VirusTotal (Layer 3 of the connector strategy, #100)

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.config import AutonomyLevel
+from btagent_shared.types.hunt import HuntInput, HuntScope
+from btagent_shared.types.investigation import IOC
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import (
@@ -10,9 +13,6 @@ from btagent_engine.reasoning import (
     RetroHuntNode,
     RetroHuntOutput,
 )
-from btagent_shared.types.config import AutonomyLevel
-from btagent_shared.types.hunt import HuntInput, HuntScope
-from btagent_shared.types.investigation import IOC
 
 
 def _ctx() -> NodeContext:

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pytest
 import pytest_asyncio
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from httpx import AsyncClient
 from sqlalchemy import delete
-
-from btagent_shared.types.enums import AuditCategory, AuditOutcome
 
 from btagent_backend.db.models import AuditLogRow
 from btagent_backend.services.audit_trail import AuditTrail
@@ -47,17 +46,13 @@ async def _seed(db_session, n: int = 3):
 # --- view (senior-analyst) ------------------------------------------------- #
 
 
-async def test_list_entries_requires_senior(
-    client: AsyncClient, analyst_token: str
-):
+async def test_list_entries_requires_senior(client: AsyncClient, analyst_token: str):
     # plain analyst lacks audit:view (needs senior_analyst)
     resp = await client.get("/api/v1/audit/entries", headers=auth_header(analyst_token))
     assert resp.status_code == 403
 
 
-async def test_list_entries_as_admin(
-    client: AsyncClient, admin_token: str, db_session
-):
+async def test_list_entries_as_admin(client: AsyncClient, admin_token: str, db_session):
     await _seed(db_session, 3)
     resp = await client.get("/api/v1/audit/entries", headers=auth_header(admin_token))
     assert resp.status_code == 200, resp.text
@@ -68,9 +63,7 @@ async def test_list_entries_as_admin(
     assert "prev_hash" in body["items"][0]
 
 
-async def test_verify_chain_endpoint(
-    client: AsyncClient, admin_token: str, db_session
-):
+async def test_verify_chain_endpoint(client: AsyncClient, admin_token: str, db_session):
     # NOTE: the in-memory test DB is shared across modules, so other tests'
     # audit rows coexist here and a *global* chain verify is not necessarily
     # clean. We assert the endpoint contract (status + response shape +
@@ -97,9 +90,7 @@ async def test_export_csv_admin(client: AsyncClient, admin_token: str, db_sessio
     assert text.splitlines()[0] == "seq,timestamp,actor,category,action,resource,outcome,hash"
 
 
-async def test_export_forbidden_for_non_admin(
-    client: AsyncClient, analyst_token: str
-):
+async def test_export_forbidden_for_non_admin(client: AsyncClient, analyst_token: str):
     resp = await client.get("/api/v1/audit/export", headers=auth_header(analyst_token))
     assert resp.status_code == 403
 

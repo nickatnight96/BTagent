@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter
 
-from btagent_backend.api.v1.auth import router as auth_router
 from btagent_backend.api.v1.audit import router as audit_router
+from btagent_backend.api.v1.auth import router as auth_router
 from btagent_backend.api.v1.config import router as config_router
 from btagent_backend.api.v1.health import router as health_router
 from btagent_backend.api.v1.hunts import router as hunts_router

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from btagent_shared.types.hunt import Backend
 
 from btagent_engine import NodeContext
 from btagent_engine.data import (
@@ -10,7 +11,6 @@ from btagent_engine.data import (
     NoiseBaselineNode,
     NoiseBaselineOutput,
 )
-from btagent_shared.types.hunt import Backend
 
 
 def _ctx() -> NodeContext:
@@ -51,10 +51,7 @@ async def test_different_backends_give_different_estimates(monkeypatch):
         NoiseBaselineInput(ttp_id="T1059.001", backend=Backend.ELASTIC), _ctx()
     )
     # Hash-seeded per (ttp, backend) — overwhelmingly likely to differ.
-    assert (
-        splunk.profile.expected_hits_per_day
-        != elastic.profile.expected_hits_per_day
-    )
+    assert splunk.profile.expected_hits_per_day != elastic.profile.expected_hits_per_day
 
 
 async def test_custom_sample_window_respected(monkeypatch):

@@ -31,7 +31,6 @@ from btagent_shared.types.config import AutonomyLevel
 from btagent_shared.types.enums import Severity
 from btagent_shared.types.investigation import IOC
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------

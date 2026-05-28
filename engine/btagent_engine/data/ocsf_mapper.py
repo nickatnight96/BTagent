@@ -22,13 +22,12 @@ than forcing TransformNode to grow nested support.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any, ClassVar
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_shared.security.ocsf_map import get_map
 from btagent_shared.types.correlation import NormalizedEvent, RawEventRef
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
     Node,
@@ -85,17 +84,17 @@ def _to_utc(value: Any) -> datetime:
     """
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        return datetime.fromtimestamp(float(value), tz=UTC)
 
     if isinstance(value, str):
         s = value.strip()
         # epoch-as-string
         try:
-            return datetime.fromtimestamp(float(s), tz=timezone.utc)
+            return datetime.fromtimestamp(float(s), tz=UTC)
         except (ValueError, OverflowError):
             pass
         # ISO-8601 (handle trailing Z)
@@ -103,16 +102,16 @@ def _to_utc(value: Any) -> datetime:
             iso = s.replace("Z", "+00:00")
             dt = datetime.fromisoformat(iso)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(timezone.utc)
+                dt = dt.replace(tzinfo=UTC)
+            return dt.astimezone(UTC)
         except ValueError:
             pass
 
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _event_id(connector: str, locator: str, idx: int) -> str:
-    seed = f"{connector}:{locator}:{idx}".encode("utf-8")
+    seed = f"{connector}:{locator}:{idx}".encode()
     return hashlib.sha256(seed).hexdigest()[:16]
 
 
@@ -210,7 +209,7 @@ class OCSFMapperNode(Node[OCSFMapperInput, OCSFMapperOutput]):
                         connector=input.connector,
                         capability_id=input.capability_id,
                         locator=locator,
-                        queried_at=datetime.now(timezone.utc),
+                        queried_at=datetime.now(UTC),
                     ),
                     raw_event=raw,
                 )

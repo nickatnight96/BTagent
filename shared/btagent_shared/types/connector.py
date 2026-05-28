@@ -40,7 +40,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_shared.types.config import TLP
 
-
 # ---------------------------------------------------------------------------
 # OCSF — Open Cybersecurity Schema Framework v1.4 (curated subset)
 # ---------------------------------------------------------------------------
@@ -94,7 +93,9 @@ class OCSFEventClass(StrEnum):
     DATABASE_ACTIVITY = "database_activity"
 
     # Threat intelligence
-    THREAT_INTELLIGENCE = "threat_intelligence"  # not strictly an OCSF class, but consistent terminology
+    THREAT_INTELLIGENCE = (
+        "threat_intelligence"  # not strictly an OCSF class, but consistent terminology
+    )
 
 
 # ---------------------------------------------------------------------------

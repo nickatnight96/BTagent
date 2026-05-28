@@ -35,6 +35,7 @@ from __future__ import annotations
 import os
 from typing import ClassVar
 
+from btagent_shared.types.hunt import Backend, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.node import (
@@ -44,7 +45,6 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
-from btagent_shared.types.hunt import Backend, Query
 
 
 def _mock_mode_enabled() -> bool:
@@ -102,7 +102,7 @@ _QUERY_LIBRARY: dict[str, dict[Backend, str]] = {
         ),
         Backend.ELASTIC: (
             'authentication where event.outcome == "failure" and '
-            'cloud.provider != null | stats by source.ip, user.name'
+            "cloud.provider != null | stats by source.ip, user.name"
         ),
         Backend.SIGMA: (
             "title: Suspicious Cloud Account Authentication\n"
@@ -132,16 +132,14 @@ _QUERY_LIBRARY: dict[str, dict[Backend, str]] = {
     },
     "T1110": {  # Brute Force
         Backend.SPLUNK: (
-            "index=auth action=failure | stats count by src_ip, user "
-            "| where count > 10 | head 1000"
+            "index=auth action=failure | stats count by src_ip, user | where count > 10 | head 1000"
         ),
         Backend.SENTINEL: (
             "SecurityEvent | where EventID == 4625 | summarize Failures=count() "
             "by IpAddress, Account | where Failures > 10 | take 1000"
         ),
         Backend.ELASTIC: (
-            'authentication where event.outcome == "failure" '
-            "| stats by source.ip, user.name"
+            'authentication where event.outcome == "failure" | stats by source.ip, user.name'
         ),
         Backend.CROWDSTRIKE: (
             "event_simpleName=UserLogonFailed | stats count by RemoteAddressIP4, UserName "
@@ -210,7 +208,7 @@ def _generic_query(ttp_id: str, backend: Backend) -> str:
     if backend in (Backend.SENTINEL, Backend.DEFENDER):
         return f"// TODO: refine for {ttp_id}\nsearch '{ttp_id}' | take 500"
     if backend == Backend.ELASTIC:
-        return f'any where true /* TODO: map {ttp_id} to concrete telemetry */ | head 500'
+        return f"any where true /* TODO: map {ttp_id} to concrete telemetry */ | head 500"
     if backend == Backend.CROWDSTRIKE:
         return f"// TODO: map {ttp_id}\nevent_platform=Win | head 500"
     return (
@@ -285,9 +283,7 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
         if not _mock_mode_enabled() and client is not None:
             llm_queries = await self._llm_generate(input, backends, client, ctx)
             if llm_queries:
-                return QuerySynthOutput(
-                    ttp_id=input.ttp_id, queries=llm_queries, mock_mode=False
-                )
+                return QuerySynthOutput(ttp_id=input.ttp_id, queries=llm_queries, mock_mode=False)
 
         library_entry = _QUERY_LIBRARY.get(input.ttp_id, {})
         queries: dict[Backend, Query] = {}
@@ -297,18 +293,19 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
                 template = _generic_query(input.ttp_id, backend)
                 note = f"Generic placeholder for {input.ttp_id} — refine against your schema."
             else:
-                note = f"Count-capped template for {input.ttp_id}. Review field names before running."
+                note = (
+                    f"Count-capped template for {input.ttp_id}. Review field names before running."
+                )
             queries[backend] = Query(backend=backend, query=template, notes=note)
 
-        return QuerySynthOutput(
-            ttp_id=input.ttp_id, queries=queries, mock_mode=True
-        )
+        return QuerySynthOutput(ttp_id=input.ttp_id, queries=queries, mock_mode=True)
 
     async def _llm_generate(self, input, backends, client, ctx):
         """LLM path: one count-capped query per backend. Returns {} on any
         failure so the caller falls back to the template library."""
-        from btagent_engine.reasoning._llm_json import call_llm_json
         from btagent_shared.types.config import TLP, ModelTier
+
+        from btagent_engine.reasoning._llm_json import call_llm_json
 
         backend_list = ", ".join(b.value for b in backends)
         system = (

@@ -21,15 +21,14 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import ClassVar
-
-from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_shared.security.correlation_fixtures import get_fixture
 from btagent_shared.security.ocsf_map import get_map
 from btagent_shared.types.hunt import HuntInput
 from btagent_shared.types.retrohunt import RetroHuntReport, Sighting
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_engine.data.ocsf_mapper import OCSFMapperInput, OCSFMapperNode
 from btagent_engine.node import (
@@ -74,7 +73,9 @@ def _mock_mode_enabled() -> bool:
 class RetroHuntInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    hunt_input: HuntInput = Field(..., description="TI report: adversaries / TTPs / IOCs to retro-hunt.")
+    hunt_input: HuntInput = Field(
+        ..., description="TI report: adversaries / TTPs / IOCs to retro-hunt."
+    )
     window_days: int = Field(default=90, ge=1, le=730)
     covered_technique_ids: list[str] = Field(
         default_factory=list,
@@ -119,9 +120,7 @@ class RetroHuntNode(Node[RetroHuntInput, RetroHuntOutput]):
         hunt_input = input.hunt_input
 
         # 1. Derive candidate techniques from the TI (reuse HypothesisGen).
-        hyp_out = await HypothesisGenNode().run(
-            HypothesisGenInput(hunt_input=hunt_input), ctx
-        )
+        hyp_out = await HypothesisGenNode().run(HypothesisGenInput(hunt_input=hunt_input), ctx)
         technique_names = {h.ttp_id: h.ttp_name for h in hyp_out.hypotheses}
 
         # 2. Check each IOC against historical telemetry (mock: fixtures).
@@ -186,7 +185,7 @@ class RetroHuntNode(Node[RetroHuntInput, RetroHuntOutput]):
             techniques_with_sightings=techniques_seen,
             coverage_gaps=gaps,
             compromise_suspected=bool(sightings),
-            generated_at=datetime.now(timezone.utc),
+            generated_at=datetime.now(UTC),
             mock_mode=True,
         )
         return RetroHuntOutput(report=report)

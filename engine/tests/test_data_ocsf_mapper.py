@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import UTC, timezone
 
 import pytest
 
@@ -75,7 +75,7 @@ async def test_timestamps_normalized_to_utc():
     )
     ts = out.events[0].timestamp
     assert ts.tzinfo is not None
-    assert ts.utcoffset() == timezone.utc.utcoffset(None)
+    assert ts.utcoffset() == UTC.utcoffset(None)
     # 09:14:03+05:00 -> 04:14:03Z
     assert ts.hour == 4
 
@@ -84,9 +84,7 @@ async def test_epoch_timestamp_parsed():
     out = await OCSFMapperNode().run(
         OCSFMapperInput(
             connector="crowdstrike",
-            raw_events=[
-                {"timestamp": 1747818843, "ComputerName": "H1", "UserName": "u1"}
-            ],
+            raw_events=[{"timestamp": 1747818843, "ComputerName": "H1", "UserName": "u1"}],
         ),
         _ctx(),
     )
@@ -95,9 +93,7 @@ async def test_epoch_timestamp_parsed():
 
 
 async def test_empty_events_yield_empty_output():
-    out = await OCSFMapperNode().run(
-        OCSFMapperInput(connector="splunk", raw_events=[]), _ctx()
-    )
+    out = await OCSFMapperNode().run(OCSFMapperInput(connector="splunk", raw_events=[]), _ctx())
     assert out.events == []
 
 
@@ -110,8 +106,6 @@ async def test_unknown_connector_raises():
 
 async def test_raw_event_preserved_for_lineage():
     raw = {"_time": "2026-05-21T09:14:03+00:00", "src_ip": "1.1.1.1", "extra": "kept"}
-    out = await OCSFMapperNode().run(
-        OCSFMapperInput(connector="splunk", raw_events=[raw]), _ctx()
-    )
+    out = await OCSFMapperNode().run(OCSFMapperInput(connector="splunk", raw_events=[raw]), _ctx())
     assert out.events[0].raw_event == raw
     assert out.events[0].raw_ref.connector == "splunk"
