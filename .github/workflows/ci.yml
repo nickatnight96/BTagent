@@ -360,8 +360,11 @@ jobs:
           cd backend
           uvicorn btagent_backend.main:app --host 0.0.0.0 --port 8000 \
             > /tmp/backend.log 2>&1 &
-          # Wait for health, fail fast if it never comes up.
-          for i in $(seq 1 30); do
+          # Wait for health, fail fast if it never comes up. Cold start in CI
+          # loads the full agent/LLM import graph (langchain, litellm,
+          # langgraph, pysigma) with no compiled bytecode and can take well
+          # over 30s — wait up to ~90s before giving up.
+          for i in $(seq 1 90); do
             if curl -sf http://localhost:8000/health > /dev/null; then
               echo "Backend up after ${i}s"
               exit 0
@@ -541,7 +544,12 @@ jobs:
         run: |
           cd backend && uvicorn btagent_backend.main:app --host 0.0.0.0 --port 8000 &
           sleep 5
-          curl --retry 10 --retry-delay 2 --retry-connrefused http://localhost:8000/health
+          # Cold start in CI loads the full agent/LLM import graph (langchain,
+          # litellm, langgraph, pysigma) with no compiled bytecode — this can
+          # take well over the old 25s window. Wait up to ~90s and retry on
+          # transient 5xx (DB still warming) as well as connection-refused.
+          curl --retry 45 --retry-delay 2 --retry-connrefused --retry-all-errors \
+            --fail http://localhost:8000/health
 
       - name: Run UAT tests
         run: pytest tests/uat/ -v --junitxml=/tmp/uat-junit.xml --tb=short
