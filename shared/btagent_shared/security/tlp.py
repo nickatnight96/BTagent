@@ -15,6 +15,7 @@ Egress kinds covered:
 * ``"knowledge_ingest"`` - RAG knowledge-base document ingestion
 * ``"mcp_return"``       - MCP tool-call return envelopes
 * ``"event_emit"``       - WebSocket / Redis event broadcast
+* ``"report_export"``    - rendered report export (e.g. PDF download)
 
 Behaviour:
 
@@ -62,10 +63,11 @@ EgressKind = Literal[
     "knowledge_ingest",
     "mcp_return",
     "event_emit",
+    "report_export",
 ]
 
 _VALID_EGRESS_KINDS: frozenset[str] = frozenset(
-    {"stix_export", "knowledge_ingest", "mcp_return", "event_emit"}
+    {"stix_export", "knowledge_ingest", "mcp_return", "event_emit", "report_export"}
 )
 
 # Field names searched on payloads to discover an embedded TLP tag. We accept

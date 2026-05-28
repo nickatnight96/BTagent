@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,12 +16,15 @@ from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services.report_service import ReportService
 
 
-async def _scope_or_404(db: AsyncSession, user: CurrentUser, investigation_id: str) -> None:
-    """Look up an investigation and 404 if the caller cannot access it.
+async def _load_scoped_investigation(
+    db: AsyncSession, user: CurrentUser, investigation_id: str
+) -> InvestigationRow:
+    """Look up an investigation, 404 if missing, 403 if out of scope.
 
-    AUTH-B1: report endpoints take ``investigation_id`` from the request body,
-    so each one needs an explicit scope check before delegating to the report
-    plugin (which doesn't know about tenants).
+    AUTH-B1: report endpoints take ``investigation_id`` from the request, so
+    each one needs an explicit scope check before delegating to the report
+    plugin (which doesn't know about tenants). Returns the row so callers that
+    need its ``tlp_level`` / ``severity`` (e.g. PDF export) don't re-query.
     """
     result = await db.execute(
         select(InvestigationRow).where(InvestigationRow.id == investigation_id)
@@ -30,6 +33,12 @@ async def _scope_or_404(db: AsyncSession, user: CurrentUser, investigation_id: s
     if inv is None:
         raise HTTPException(status_code=404, detail="Not found")
     assert_can_access_investigation(user, inv)
+    return inv
+
+
+async def _scope_or_404(db: AsyncSession, user: CurrentUser, investigation_id: str) -> None:
+    """Backwards-compatible wrapper that discards the loaded row."""
+    await _load_scoped_investigation(db, user, investigation_id)
 
 
 logger = logging.getLogger("btagent.api.reports")
@@ -103,6 +112,64 @@ async def generate_report(
         )
 
     return result
+
+
+@router.get("/{investigation_id}/export", response_model=None)
+async def export_report(
+    investigation_id: str,
+    format: Literal["pdf"] = Query("pdf"),
+    template: Literal[
+        "incident_report", "ioc_report", "executive_briefing", "regulatory_notification"
+    ] = Query("incident_report"),
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Export an investigation's report as a downloadable file.
+
+    Currently only ``format=pdf`` is supported. The PDF preserves the report's
+    section structure and stamps the investigation's severity and TLP marking
+    on every page.
+
+    Respects TLP enforcement the same way other egress paths do: TLP:RED is
+    refused with a 403 up front (mirroring ``GET /iocs/export``), and the
+    renderer calls the shared ``assert_tlp_allows_egress`` gate as a
+    defense-in-depth backstop.
+
+    Requires ``report:export`` permission.
+    """
+    user.require_permission("report:export")
+
+    inv = await _load_scoped_investigation(db, user, investigation_id)
+
+    # TLP enforcement, mirroring api/v1/iocs.py:export_stix — refuse TLP:RED
+    # egress at the API boundary so the caller gets a clean 403 rather than a
+    # 500 from the backstop gate inside the renderer.
+    if (inv.tlp_level or "").lower() == "red":
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot export a TLP:RED report. Downgrade the classification before export.",
+        )
+
+    if format != "pdf":
+        raise HTTPException(status_code=400, detail=f"Unsupported export format: {format}")
+
+    try:
+        pdf_bytes = await _report_service.export_report_pdf(
+            investigation_id=investigation_id,
+            template=template,
+            tlp_level=inv.tlp_level or "green",
+            severity=inv.severity or "medium",
+            org_id=inv.org_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    filename = f"report_{investigation_id}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/templates")

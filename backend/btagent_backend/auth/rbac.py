@@ -86,6 +86,7 @@ PERMISSIONS: dict[str, UserRole] = {
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,
+    "report:export": UserRole.ANALYST,
     "report:summarize": UserRole.SENIOR_ANALYST,
     # Remediation
     "remediation:generate": UserRole.ANALYST,
