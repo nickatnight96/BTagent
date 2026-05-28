@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
+  FileSearch,
   FileText,
   GitBranch,
   Home,
   Moon,
+  Network,
   Search,
   Sun,
   Target,
@@ -82,6 +84,14 @@ export function CommandPalette() {
           <CommandItem onSelect={go("/mitre")}>
             <Target className="h-4 w-4" />
             <span>MITRE Coverage</span>
+          </CommandItem>
+          <CommandItem onSelect={go("/hunts")}>
+            <FileSearch className="h-4 w-4" />
+            <span>Hunt Package</span>
+          </CommandItem>
+          <CommandItem onSelect={go("/correlate")}>
+            <Network className="h-4 w-4" />
+            <span>Correlation Workbench</span>
           </CommandItem>
           <CommandItem onSelect={go("/reports")}>
             <FileText className="h-4 w-4" />
