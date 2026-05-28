@@ -127,10 +127,31 @@ def _resolve_classification(
     return TLP.GREEN
 
 
+def _emit_block_event(egress_kind: str, org_id: str | None, reason: str) -> None:
+    """Fire a ``tlp.violation_attempt`` event for a refused egress.
+
+    Imported lazily so ``tlp`` carries no import-time dependency on the
+    policy module, and best-effort so alerting can never break the gate.
+    """
+    from btagent_shared.security.tlp_policy import TLPViolationEvent, emit_violation
+
+    emit_violation(
+        TLPViolationEvent(
+            tlp=TLP.RED,
+            egress_kind=egress_kind,
+            channel=f"egress:{egress_kind}",
+            org_id=org_id,
+            reason=reason,
+        )
+    )
+
+
 def assert_tlp_allows_egress(
     payload: Any,
     egress_kind: EgressKind | str,
     classification_ctx: TLP | str | dict[str, Any] | None = None,
+    *,
+    org_id: str | None = None,
 ) -> None:
     """Block egress of TLP:RED data; warn on TLP:AMBER_STRICT.
 
@@ -146,12 +167,17 @@ def assert_tlp_allows_egress(
         :attr:`AgentConfig.tlp_level`). May also be a string (``"red"``,
         ``"amber"``, ...) or a mapping containing a TLP field. ``None``
         defaults to :attr:`TLP.GREEN`.
+    org_id:
+        Optional org identifier carried on the emitted
+        ``tlp.violation_attempt`` event so the alerter can route by tenant.
 
     Raises
     ------
     TLPViolation:
         If the resolved context is :attr:`TLP.RED`, *or* the payload
-        contains any item explicitly tagged TLP:RED.
+        contains any item explicitly tagged TLP:RED. A
+        ``tlp.violation_attempt`` event is emitted (best-effort) before the
+        exception is raised.
     ValueError:
         If *egress_kind* is not one of the recognised values. Egress sites
         must opt into a known channel name -- silent fall-throughs would
@@ -169,6 +195,7 @@ def assert_tlp_allows_egress(
             "TLP egress block: investigation classification is TLP:RED; refusing egress via %s",
             egress_kind,
         )
+        _emit_block_event(egress_kind, org_id, "investigation classification is TLP:RED")
         raise TLPViolation(TLP.RED, f"egress:{egress_kind}")
 
     if _scan_payload_for_red(payload):
@@ -176,6 +203,7 @@ def assert_tlp_allows_egress(
             "TLP egress block: payload contains TLP:RED-tagged data; refusing egress via %s",
             egress_kind,
         )
+        _emit_block_event(egress_kind, org_id, "payload contains TLP:RED-tagged data")
         raise TLPViolation(TLP.RED, f"egress:{egress_kind}")
 
     if ctx_tlp == TLP.AMBER_STRICT:

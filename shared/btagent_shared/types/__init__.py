@@ -9,6 +9,30 @@ from btagent_shared.types.config import (
     ModelProvider,
     ModelTier,
 )
+from btagent_shared.types.connector import (
+    ActionCapability,
+    BlastRadius,
+    ConnectorManifest,
+    CostClass,
+    CredentialType,
+    OCSFEventClass,
+    QueryCapability,
+    StreamCapability,
+    TransportKind,
+)
+from btagent_shared.types.correlation import (
+    AuditEntry,
+    CorrelationTimeline,
+    MitreTag,
+    NormalizedEvent,
+    PivotSuggestion,
+    RawEventRef,
+)
+from btagent_shared.types.detection import (
+    CoverageGapReport,
+    DetectionCluster,
+    SigmaDraft,
+)
 from btagent_shared.types.enums import (
     AuditCategory,
     AuditOutcome,
@@ -19,6 +43,23 @@ from btagent_shared.types.enums import (
     UserRole,
 )
 from btagent_shared.types.events import EventEnvelope, EventType
+from btagent_shared.types.hunt import (
+    Backend,
+    CorrelationRule,
+    ExecSummary,
+    Finding,
+    HuntInput,
+    HuntPlan,
+    HuntPlanState,
+    HuntScope,
+    Hypothesis,
+    NoiseProfile,
+    PostHuntAction,
+    Query,
+    TTPRunbookEntry,
+    TTPState,
+)
+from btagent_shared.types.hunt_package import HuntPackage
 from btagent_shared.types.investigation import (
     IOC,
     ContainmentAction,
@@ -51,6 +92,13 @@ from btagent_shared.types.playbook import (
     TriggerType,
     ValidationResult,
 )
+from btagent_shared.types.query_ir import (
+    LogicOp,
+    Operator,
+    QueryCondition,
+    QueryIR,
+)
+from btagent_shared.types.retrohunt import RetroHuntReport, Sighting
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
@@ -117,4 +165,50 @@ __all__ = [
     "WorkflowVersionListResponse",
     "WorkflowVersionResponse",
     "WorkflowVersionState",
+    # Hunt types (Phase A of #99)
+    "Backend",
+    "CorrelationRule",
+    "ExecSummary",
+    "Finding",
+    "HuntInput",
+    "HuntPlan",
+    "HuntPlanState",
+    "HuntScope",
+    "Hypothesis",
+    "NoiseProfile",
+    "PostHuntAction",
+    "Query",
+    "TTPRunbookEntry",
+    "TTPState",
+    # Connector manifest types (#100)
+    "ActionCapability",
+    "BlastRadius",
+    "ConnectorManifest",
+    "CostClass",
+    "CredentialType",
+    "OCSFEventClass",
+    "QueryCapability",
+    "StreamCapability",
+    "TransportKind",
+    # Correlation types (UC-1.2)
+    "AuditEntry",
+    "CorrelationTimeline",
+    "MitreTag",
+    "NormalizedEvent",
+    "PivotSuggestion",
+    "RawEventRef",
+    # Query IR (UC-1.3)
+    "LogicOp",
+    "Operator",
+    "QueryCondition",
+    "QueryIR",
+    # Detection-engineering types (UC-4.2)
+    "CoverageGapReport",
+    "DetectionCluster",
+    "SigmaDraft",
+    # Retro-hunt types (UC-4.3)
+    "RetroHuntReport",
+    "Sighting",
+    # Hunt package (UC-2.2)
+    "HuntPackage",
 ]

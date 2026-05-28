@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import SPLUNK_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -144,6 +145,8 @@ class SplunkSearchNode(Node[SplunkSearchInput, SplunkSearchOutput]):
     )
     input_schema = SplunkSearchInput
     output_schema = SplunkSearchOutput
+    manifest = SPLUNK_MANIFEST
+    capability_id = "search"
 
     async def run(
         self,

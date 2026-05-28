@@ -68,6 +68,30 @@ _MOCK_TOKEN_DIVISOR: int = 4
 # Mock-mode prefix on the echoed text. Tests rely on this exact string.
 _MOCK_PREFIX: str = "[mock-llm]"
 
+# Abstract model-handle substrings -> capability tier name. The concrete
+# client/router resolves the tier to a provider+model; the engine only
+# speaks in tiers. Resolved to ModelTier inside run() (where config is
+# already imported) to keep this module import-light.
+_HANDLE_TIER_NAMES: dict[str, str] = {
+    "haiku": "FAST",
+    "fast": "FAST",
+    "sonnet": "STANDARD",
+    "standard": "STANDARD",
+    "opus": "PREMIUM",
+    "premium": "PREMIUM",
+    "local": "LOCAL",
+}
+
+
+def _resolve_tier(model_handle: str):  # noqa: ANN202 - returns ModelTier
+    from btagent_shared.types.config import ModelTier
+
+    h = model_handle.lower()
+    for needle, tier_name in _HANDLE_TIER_NAMES.items():
+        if needle in h:
+            return ModelTier[tier_name]
+    return ModelTier.STANDARD
+
 
 def _mock_mode_enabled() -> bool:
     """Resolve the mock-mode flag at call time so tests can flip it."""
@@ -192,22 +216,63 @@ class LLMCallNode(Node[LLMCallInput, LLMCallOutput]):
     ) -> LLMCallOutput:
         if _mock_mode_enabled():
             output = self._mock_call(input)
-        else:
-            # The engine deliberately does not call LiteLLM directly. The
-            # LLM-router middleware (Sprint 3) wraps this Node and intercepts
-            # the call to apply provider selection, TLP gating, and credential
-            # resolution. Until that lands, fail loudly so a misconfigured
-            # prod env doesn't silently no-op.
+            usage = self._estimate_usage(input, output)
+            self._record_usage(ctx, usage)
+            return output
+
+        # Real path: dispatch through the registered LLM client (set by the
+        # host via btagent_engine.llm.set_llm_client). The engine still does
+        # NOT import a provider SDK — it calls the injected client's protocol
+        # method, so provider selection / TLP gating / credentials stay in the
+        # concrete client. If no client is registered, fail loudly rather than
+        # silently no-op.
+        from btagent_shared.llm import LLMMessage, LLMRequest
+        from btagent_shared.types.config import TLP
+
+        from btagent_engine.llm import get_llm_client
+
+        client = get_llm_client()
+        if client is None:
             raise NotImplementedError(
-                "Live LLM dispatch ships in Sprint 3 LLM-router milestone; "
-                "set BTAGENT_MOCK_LLM=true to use the deterministic stub."
+                "Live LLM dispatch requires a client registered via "
+                "btagent_engine.llm.set_llm_client(); set BTAGENT_MOCK_LLM=true "
+                "to use the deterministic stub instead."
             )
 
-        # Always report usage to the budget middleware. We compute the report
-        # from the mock output; in production the router middleware will
-        # overwrite this with the real provider-reported counts.
-        usage = self._estimate_usage(input, output)
-        self._record_usage(ctx, usage)
+        # Map the node's abstract model handle to a capability tier. The
+        # concrete client/router resolves the tier to a provider+model.
+        tier = _resolve_tier(input.model)
+        try:
+            tlp = TLP(ctx.tlp_level)
+        except ValueError:
+            # Fail CLOSED: an unknown/garbage classification must be treated as
+            # the most restrictive level (RED → on-prem only), never GREEN
+            # (any provider). Matches agents/.../middleware/llm_router._coerce_tlp.
+            tlp = TLP.RED
+
+        response = await client.complete(
+            LLMRequest(
+                messages=[LLMMessage(role=m["role"], content=m["content"]) for m in input.messages],
+                tier=tier,
+                tlp=tlp,
+                temperature=input.temperature,
+                max_tokens=input.max_tokens,
+            )
+        )
+        output = LLMCallOutput(
+            text=response.content,
+            model=response.model or input.model,
+            finish_reason="stop",
+        )
+        # Record the *real* provider-reported usage.
+        self._record_usage(
+            ctx,
+            BudgetUsage(
+                input_tokens=response.usage.input_tokens,
+                output_tokens=response.usage.output_tokens,
+                cost_usd=response.usage.cost_usd,
+            ),
+        )
         return output
 
     # ------------------------------------------------------------------ #

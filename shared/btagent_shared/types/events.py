@@ -55,6 +55,9 @@ class EventType(StrEnum):
     KNOWLEDGE_INDEXED = "knowledge_indexed"
     KNOWLEDGE_QUERIED = "knowledge_queried"
 
+    # Governance / classification (EPIC-7 UC-7.2)
+    TLP_VIOLATION_ATTEMPT = "tlp.violation_attempt"
+
     # Report / Remediation lifecycle
     REPORT_GENERATION_STARTED = "report_generation_started"
     REPORT_GENERATION_COMPLETE = "report_generation_complete"

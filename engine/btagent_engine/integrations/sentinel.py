@@ -17,6 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import SENTINEL_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -123,6 +124,8 @@ class SentinelKQLQueryNode(Node[SentinelKQLQueryInput, SentinelKQLQueryOutput]):
     )
     input_schema = SentinelKQLQueryInput
     output_schema = SentinelKQLQueryOutput
+    manifest = SENTINEL_MANIFEST
+    capability_id = "kql_query"
 
     async def run(
         self,

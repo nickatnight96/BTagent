@@ -20,6 +20,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._manifests import ABUSEIPDB_MANIFEST
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -148,6 +149,8 @@ class AbuseIPDBCheckNode(Node[AbuseIPDBCheckInput, AbuseIPDBCheckOutput]):
     )
     input_schema = AbuseIPDBCheckInput
     output_schema = AbuseIPDBCheckOutput
+    manifest = ABUSEIPDB_MANIFEST
+    capability_id = "check"
 
     async def run(
         self,
