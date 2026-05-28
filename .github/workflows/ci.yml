@@ -346,8 +346,17 @@ jobs:
       - name: Install Playwright + Chromium
         working-directory: tests/e2e
         run: |
+          set -euo pipefail
           npm install --no-audit --no-fund
-          npx playwright install --with-deps chromium
+          echo "Playwright: $(npx playwright --version)"
+          # Split system-deps (apt, via sudo) from the browser download so a
+          # failure in either is attributable — ``--with-deps`` apt breakage on
+          # newer runner images has silently killed this job before.
+          npx playwright install-deps chromium
+          npx playwright install chromium
+          # Fail loudly here if the browser can't actually launch, rather than
+          # dying cryptically once the test run starts (no report produced).
+          node -e "const { chromium } = require('@playwright/test'); chromium.launch().then((b) => b.close()).then(() => console.log('Chromium launch OK')).catch((e) => { console.error('CHROMIUM LAUNCH FAILED:', e); process.exit(1); });"
 
       - name: Run database migrations
         run: cd backend && alembic upgrade head
