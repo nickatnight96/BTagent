@@ -108,6 +108,10 @@ class InvestigationRow(Base):
         Index("idx_investigations_created", "created_at"),
         Index("idx_investigations_severity", "severity"),
         Index("idx_investigations_org_id", "org_id", "id"),
+        # #146 perf: covers list_investigations org_id filter + created_at sort.
+        Index("idx_investigations_org_created", "org_id", "created_at"),
+        # #146 perf: plain-analyst ownership filter (WHERE assigned_to = :uid).
+        Index("idx_investigations_assigned_to", "assigned_to"),
     )
 
 
@@ -142,6 +146,9 @@ class IOCRow(Base):
         Index("idx_iocs_investigation", "investigation_id"),
         Index("idx_iocs_type", "type"),
         Index("idx_iocs_org_id", "org_id", "id"),
+        # #146 perf: covers list_iocs/search investigation_id filter +
+        # first_seen DESC sort in a single index scan.
+        Index("idx_iocs_investigation_first_seen", "investigation_id", "first_seen"),
     )
 
 
