@@ -19,8 +19,19 @@ interface AuthState {
   isLoading: boolean;
   isBootstrapping: boolean;
   error: string | null;
+  // MFA (#144): when ``login`` gets ``{ mfa_required: true }`` the backend has
+  // set a short-lived, tightly-scoped httpOnly challenge cookie and is waiting
+  // for a second factor. The UI flips to a 6-digit code prompt; ``verifyMfa``
+  // completes the login. This is NEVER persisted (the challenge lives only in
+  // the cookie + this in-memory flag).
+  mfaRequired: boolean;
 
   login: (username: string, password: string) => Promise<boolean>;
+  // Completes an MFA-gated login by posting a TOTP / recovery code to
+  // /auth/mfa/verify. Returns true once the real session is established.
+  verifyMfa: (code: string) => Promise<boolean>;
+  // Abandon an in-progress MFA challenge (e.g. "back to login").
+  cancelMfa: () => void;
   logout: () => Promise<void>;
   // Local-only sibling of ``logout``: clears the in-memory user
   // state without round-tripping ``/auth/logout``. Use when the
@@ -41,9 +52,10 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       isBootstrapping: true,
       error: null,
+      mfaRequired: false,
 
       login: async (username: string, password: string): Promise<boolean> => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true, error: null, mfaRequired: false });
         try {
           const response = await fetch(`${BASE_URL}/v1/auth/login`, {
             method: "POST",
@@ -57,6 +69,18 @@ export const useAuthStore = create<AuthState>()(
             const message =
               (body as { detail?: string }).detail ?? "Invalid credentials";
             set({ isLoading: false, error: message, user: null });
+            return false;
+          }
+
+          // MFA (#144): an enrolled user gets ``{ mfa_required: true }`` instead
+          // of a session. The backend already set the challenge cookie; flip
+          // the UI into the second-factor step and DO NOT hydrate /auth/me yet
+          // (there is no session cookie until verify succeeds).
+          const loginBody = (await response
+            .json()
+            .catch(() => ({}))) as { mfa_required?: boolean };
+          if (loginBody.mfa_required) {
+            set({ isLoading: false, error: null, mfaRequired: true });
             return false;
           }
 
@@ -86,10 +110,55 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
+      verifyMfa: async (code: string): Promise<boolean> => {
+        set({ isLoading: true, error: null });
+        try {
+          const response = await fetch(`${BASE_URL}/v1/auth/mfa/verify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ code }),
+          });
+
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            const message =
+              (body as { detail?: string }).detail ?? "Invalid code";
+            set({ isLoading: false, error: message });
+            return false;
+          }
+
+          // Verify set the real session cookies; hydrate the profile.
+          const meResponse = await fetch(`${BASE_URL}/v1/auth/me`, {
+            credentials: "include",
+          });
+          if (!meResponse.ok) {
+            set({
+              isLoading: false,
+              error: "Failed to load user profile",
+              user: null,
+            });
+            return false;
+          }
+          const user = (await meResponse.json()) as User;
+          set({ user, isLoading: false, error: null, mfaRequired: false });
+          return true;
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "MFA verification failed";
+          set({ isLoading: false, error: message });
+          return false;
+        }
+      },
+
+      cancelMfa: (): void => {
+        set({ mfaRequired: false, error: null });
+      },
+
       logout: async (): Promise<void> => {
         // Clear local state immediately so any concurrent renders see a
         // logged-out store, then ask the backend to clear the cookies.
-        set({ user: null, error: null });
+        set({ user: null, error: null, mfaRequired: false });
         try {
           await fetch(`${BASE_URL}/v1/auth/logout`, {
             method: "POST",
@@ -104,7 +173,7 @@ export const useAuthStore = create<AuthState>()(
         // Local-only cleanup. Used by the 401 handler in api/client
         // — see ``AuthStoreSlice.clearLocalUser`` for why we don't
         // round-trip ``/auth/logout`` from the API client.
-        set({ user: null, error: null });
+        set({ user: null, error: null, mfaRequired: false });
       },
 
       fetchMe: async (): Promise<boolean> => {

@@ -57,6 +57,12 @@ const PlaybookExecutionView = lazy(() =>
 const AuditLedgerPage = lazy(() =>
   import("@/components/audit/AuditLedgerPage").then((m) => ({ default: m.AuditLedgerPage })),
 );
+const TLPPolicyPage = lazy(() =>
+  import("@/components/policies/TLPPolicyPage").then((m) => ({ default: m.TLPPolicyPage })),
+);
+const MfaSettingsPage = lazy(() =>
+  import("@/components/auth/MfaSettingsPage").then((m) => ({ default: m.MfaSettingsPage })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -143,6 +149,14 @@ export const router = createBrowserRouter([
       {
         path: "audit",
         element: lazyRoute(AuditLedgerPage),
+      },
+      {
+        path: "policies",
+        element: lazyRoute(TLPPolicyPage),
+      },
+      {
+        path: "security",
+        element: lazyRoute(MfaSettingsPage),
       },
     ],
   },

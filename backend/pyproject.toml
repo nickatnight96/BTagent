@@ -18,6 +18,15 @@ dependencies = [
     "python-multipart>=0.0.12",
     "python-jose[cryptography]>=3.5.0",
     "bcrypt>=4.0.0",
+    # MFA (#144): TOTP + Fernet secret-at-rest. cryptography is already pulled
+    # in transitively by python-jose[cryptography]; pinned explicitly here
+    # because auth/mfa.py imports cryptography.fernet directly.
+    "pyotp>=2.9.0",
+    "cryptography>=42.0.0",
+    # Generic OIDC SSO (#144 Phase 1b): pure-Python OIDC + JOSE (JWKS / ID-token
+    # signature verification via authlib.jose). Pulls ``cryptography`` (already
+    # pinned above); no system deps.
+    "authlib>=1.3.0",
     # PDF report export (#145) — reportlab ships pure-Python wheels (no system
     # libs), unlike weasyprint/wkhtmltopdf which need cairo/pango/wkhtmltopdf.
     "reportlab>=4.2.0",

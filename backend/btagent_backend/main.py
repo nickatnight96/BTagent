@@ -34,6 +34,16 @@ async def lifespan(app: FastAPI):
     app.state.ws_hub = hub
     logger.info("WebSocket hub initialised")
 
+    # EPIC-7 UC-7.2: forward every refused TLP egress to the event bus as a
+    # real-time ``tlp.violation_attempt`` alert. The shared gate calls the
+    # sink; we bridge it to the WebSocket hub here.
+    from btagent_shared.security.tlp_policy import set_violation_sink
+
+    from btagent_backend.services.tlp_alert_sink import make_tlp_violation_sink
+
+    set_violation_sink(make_tlp_violation_sink(hub))
+    logger.info("TLP violation alerter wired to WebSocket hub")
+
     # Register the live LLM client unless running in mock mode. In dev
     # (BTAGENT_MOCK_LLM defaults to "true") this is skipped and the engine's
     # reasoning nodes use their deterministic mock path. In a real deployment
@@ -71,6 +81,12 @@ async def lifespan(app: FastAPI):
     # Checkpoint running investigations.
     await task_manager.shutdown()
     logger.info("TaskManager shut down")
+
+    # Unwire the TLP violation alerter before tearing down the hub it
+    # publishes through (EPIC-7 UC-7.2).
+    from btagent_shared.security.tlp_policy import clear_violation_sink
+
+    clear_violation_sink()
 
     # Stop WebSocket hub (notifies clients, closes its Redis connection).
     await hub.stop()

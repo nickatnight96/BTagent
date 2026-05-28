@@ -19,6 +19,7 @@ export class Sidebar {
   readonly correlateLink: Locator;
   readonly playbooksLink: Locator;
   readonly auditLink: Locator;
+  readonly policiesLink: Locator;
   readonly settingsLink: Locator;
   readonly collapseToggle: Locator;
 
@@ -35,6 +36,7 @@ export class Sidebar {
     this.correlateLink = page.getByTestId("nav-correlate-link");
     this.playbooksLink = page.getByTestId("nav-playbooks-link");
     this.auditLink = page.getByTestId("nav-audit-link");
+    this.policiesLink = page.getByTestId("nav-policies-link");
     this.settingsLink = page.getByTestId("nav-settings-link");
     this.collapseToggle = page.getByTestId("sidebar-collapse-toggle");
   }
@@ -77,6 +79,11 @@ export class Sidebar {
   async goToAudit(): Promise<void> {
     await this.auditLink.click();
     await this.page.waitForURL("**/audit", { timeout: 5_000 });
+  }
+
+  async goToPolicies(): Promise<void> {
+    await this.policiesLink.click();
+    await this.page.waitForURL("**/policies", { timeout: 5_000 });
   }
 
   async toggleCollapse(): Promise<void> {

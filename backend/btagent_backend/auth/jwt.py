@@ -125,6 +125,48 @@ def create_refresh_token(
     return token, jti, fid
 
 
+# MFA (#144): short-lived challenge token TTL. After a correct password, an
+# MFA-enrolled user gets this instead of a session pair; they have ~5 minutes
+# to complete the second factor at /auth/mfa/verify.
+MFA_CHALLENGE_TTL_MINUTES = 5
+
+
+def create_mfa_challenge_token(
+    user_id: str,
+    username: str,
+    role: str,
+    org_id: str = "org_default",
+) -> tuple[str, str]:
+    """Issue a short-TTL ``type="mfa_challenge"`` token; returns ``(token, jti)``.
+
+    This is NOT a session token. ``get_current_user`` / ``get_ws_user`` reject
+    any token whose ``type`` is not ``"access"``, so a challenge token can never
+    be used to call protected endpoints. Its only valid consumer is
+    ``/auth/mfa/verify``, which checks the type, verifies the second factor,
+    revokes this ``jti`` (single-use), then mints the real pair.
+
+    It carries ``sub``/``username``/``role``/``org_id`` so the verify step can
+    issue a correctly-scoped session pair without re-reading the user row, and
+    its own ``jti`` so it can be revoked the instant it is consumed.
+    """
+    settings = get_settings()
+    now = datetime.now(UTC)
+    expire = now + timedelta(minutes=MFA_CHALLENGE_TTL_MINUTES)
+    jti = str(uuid.uuid4())
+    payload = {
+        "sub": user_id,
+        "username": username,
+        "role": role,
+        "exp": expire,
+        "type": "mfa_challenge",
+        "jti": jti,
+        "org_id": org_id,
+        "iat": int(now.timestamp()),
+    }
+    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return token, jti
+
+
 def create_token_pair(
     user_id: str,
     username: str,

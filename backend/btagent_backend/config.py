@@ -3,7 +3,7 @@
 import logging
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _config_logger = logging.getLogger("btagent.config")
@@ -27,6 +27,44 @@ _DEV_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:3001",
     "http://localhost:8080",
 )
+
+
+class OIDCProviderConfig(BaseModel):
+    """Generic OIDC provider config (#144 Phase 1b).
+
+    One entry per IdP, keyed by the ``{provider}`` path segment used in the SSO
+    routes (``/auth/sso/{provider}/login``). Everything the authorization-code +
+    PKCE flow needs is derived from the issuer's discovery document
+    (``{issuer}/.well-known/openid-configuration``) at request time, so only the
+    client registration + role mapping live here.
+
+    ``client_secret`` follows the ``${secret:...}`` / ``${env:...}`` injection
+    pattern — it is resolved lazily in ``auth/oidc.py`` (never eagerly in
+    config) so an unresolved reference can't break app boot.
+
+    CI SAFETY: this model is only ever populated when an operator explicitly
+    configures a provider. The default ``Settings.oidc_providers`` is an empty
+    dict, and there is deliberately NO validator that fails on emptiness — a
+    backend with no provider boots fine (the SSO routes 404 for unknown
+    providers).
+    """
+
+    # Issuer URL — discovery is fetched from ``{issuer}/.well-known/openid-configuration``.
+    issuer: str
+    client_id: str
+    # ``${secret:...}`` / ``${env:...}`` reference (resolved at request time).
+    client_secret: str
+    # Exact, fully-qualified callback URL registered with the IdP. The callback
+    # route enforces that the configured value matches an allowlist (itself).
+    redirect_uri: str
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "email", "profile"])
+    # ID-token / userinfo claim carrying the user's group/role membership.
+    role_claim: str = "groups"
+    # Maps a value found in ``role_claim`` → a BTagent role. First match wins
+    # (iterated against the claim's value(s)). Anything unmatched → ``analyst``.
+    role_map: dict[str, str] = Field(default_factory=dict)
+    # Role assigned when no ``role_map`` entry matches (or the claim is absent).
+    default_role: str = "analyst"
 
 
 class Settings(BaseSettings):
@@ -60,6 +98,43 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 7
+
+    # MFA (opt-in TOTP, #144). ``mfa_issuer`` labels the authenticator entry.
+    # ``mfa_secret_enc_key`` is the Fernet key used to encrypt TOTP secrets at
+    # rest; it follows the ``${secret:...}`` / env injection pattern.
+    #
+    # CI / test-mode safety: this key is INTENTIONALLY allowed to be empty and
+    # there is deliberately NO model_validator that fails when it is unset —
+    # ``Settings(env="test")`` must construct fine with no key so the backend
+    # boots in CI (where MFA is never exercised). The MFA code path itself
+    # resolves the effective key lazily (see ``auth/mfa.py``):
+    #   * if a key is configured, it is used verbatim;
+    #   * else, in dev/test ONLY, a deterministic key is derived from
+    #     ``jwt_secret`` so the test suite can round-trip without extra config;
+    #   * else (prod, no key) the MFA endpoints raise a clear config error —
+    #     MFA is opt-in, so this only affects users actively enrolling.
+    mfa_issuer: str = "BTagent"
+    mfa_secret_enc_key: str = ""
+
+    # Generic OIDC SSO (#144, Phase 1b). A dict of provider-key → config; the
+    # provider key is the ``{provider}`` path segment in the SSO routes.
+    #
+    # CI / test-mode safety: the default is an EMPTY dict and there is
+    # deliberately NO validator that fails when it is empty. With no provider
+    # configured, ``Settings(env="test")`` constructs and the backend boots
+    # normally; the SSO routes simply return 404 for any unknown/unconfigured
+    # provider, so the existing login/UAT/E2E suites are unaffected.
+    #
+    # Populate from env as JSON, e.g.:
+    #   BTAGENT_OIDC_PROVIDERS='{"okta": {"issuer": "https://acme.okta.com",
+    #     "client_id": "...", "client_secret": "${secret:vault:oidc/okta#secret}",
+    #     "redirect_uri": "https://btagent.example.com/api/v1/auth/sso/okta/callback",
+    #     "role_claim": "groups", "role_map": {"soc-admins": "admin"}}}'
+    oidc_providers: dict[str, OIDCProviderConfig] = Field(default_factory=dict)
+
+    # Frontend root the SSO callback 302-redirects to after establishing the
+    # session. Defaults to "/" (same-origin SPA behind the API host/ingress).
+    frontend_url: str = "/"
 
     @model_validator(mode="after")
     def _validate_jwt_secret(self) -> "Settings":

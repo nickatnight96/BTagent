@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -54,12 +55,45 @@ class UserRow(Base):
     )
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Phase 1b (#144): NULLABLE. SSO/JIT-provisioned users authenticate at the
+    # IdP and have no local password; ``None`` here means "no local credential".
+    # The local-password login path treats a missing hash as "cannot log in
+    # with a password" (see ``api/v1/auth.py::login``).
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="analyst")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("idx_users_org_id", "org_id", "id"),)
+
+
+class SSOIdentityRow(Base):
+    """Links a local ``users`` row to an external IdP identity (#144 Phase 1b).
+
+    The natural key is ``(provider, subject)`` — the IdP-issued ``sub`` claim is
+    stable, while emails/usernames can change. JIT provisioning looks up this
+    pair on every SSO callback: a hit reuses the linked user; a miss
+    find-or-creates a user (by email) and inserts a new row here.
+    """
+
+    __tablename__ = "sso_identity"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "subject", name="uq_sso_identity_provider_subject"),
+        Index("idx_sso_identity_user_id", "user_id"),
+    )
 
 
 class InvestigationRow(Base):
@@ -315,3 +349,37 @@ class OrgConfigRow(Base):
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (Index("idx_org_config_key", "key", unique=True),)
+
+
+class TLPPolicyRow(Base):
+    """A CISO-approved, org-scoped exception to the default-deny egress gate.
+
+    EPIC-7 UC-7.2. Mirrors :class:`btagent_shared.security.tlp_policy.TLPPolicy`:
+    an ``allow`` / ``deny`` / ``downgrade_then_allow`` action with optional
+    match conditions (``egress_kinds`` / ``applies_to_tlp`` stored as JSON
+    string arrays; empty == any) plus governance metadata.
+    """
+
+    __tablename__ = "tlp_policies"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    egress_kinds: Mapped[list] = mapped_column(JSONB, default=list)
+    applies_to_tlp: Mapped[list] = mapped_column(JSONB, default=list)
+    downgrade_to: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    approver_id: Mapped[str] = mapped_column(String(200), default="")
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    __table_args__ = (Index("idx_tlp_policies_org_id", "org_id"),)

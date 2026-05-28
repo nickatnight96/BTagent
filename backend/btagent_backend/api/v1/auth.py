@@ -17,11 +17,14 @@ from btagent_backend.auth.cookies import (
     REFRESH_COOKIE_NAME,
     REFRESH_COOKIE_PATH,
     clear_auth_cookies,
+    clear_mfa_challenge_cookie,
     set_auth_cookies,
+    set_mfa_challenge_cookie,
 )
 from btagent_backend.auth.jwt import (
     TokenPair,
     create_access_token,
+    create_mfa_challenge_token,
     create_refresh_token,
     create_token_pair,
     decode_token,
@@ -38,6 +41,7 @@ from btagent_backend.auth.revocation import (
 )
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import UserRow
+from btagent_backend.db.models_mfa import UserMFARow
 
 logger = logging.getLogger("btagent.auth.api")
 
@@ -103,27 +107,56 @@ class LogoutRequest(BaseModel):
     refresh_token: str | None = None
 
 
-@router.post("/login", response_model=TokenPair)
+@router.post("/login")
 async def login(
     body: LoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ):
-    """Authenticate user and return JWT token pair.
+    """Authenticate user and return JWT token pair (or an MFA challenge).
 
     Phase C1: tokens are *also* placed into httpOnly cookies on the response so
     the browser never exposes them to JavaScript. The JSON body still carries
     them for the rollout window — the frontend will stop reading them in
     Phase C2 and existing mobile/CLI clients keep working in the meantime.
+
+    MFA (#144): opt-in. After the password check we look up the user's
+    ``user_mfa`` row and gate on it **only if ``enabled`` is True**. In that
+    case we DO NOT mint the session pair; instead we mint a short-TTL signed
+    challenge token (``type="mfa_challenge"``), set it as a tightly-scoped
+    httpOnly cookie, and return ``{"mfa_required": true}``. The caller then
+    posts a second factor to ``/auth/mfa/verify`` to obtain the real pair.
+
+    A user with NO MFA row, or a row that exists but is not yet enabled (mid-
+    enrollment), behaves EXACTLY as before — mint + set cookies. All seeded CI
+    users are in this state, so the test/UAT login path is unchanged.
     """
     result = await db.execute(select(UserRow).where(UserRow.username == body.username))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(body.password, user.password_hash):
+    # Phase 1b (#144): ``password_hash`` is nullable — an SSO/JIT-only user has
+    # no local credential and therefore cannot authenticate via this endpoint.
+    # Guard the None case BEFORE ``verify_password`` (which would raise on a
+    # ``None`` hash) and return the same generic 401 so we don't disclose which
+    # usernames are SSO-only.
+    if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
+
+    # MFA gate: ONLY enrolled-and-enabled users get the challenge path. The
+    # lookup is a single PK fetch on ``user_mfa`` and returns None for the
+    # default (no-MFA) user, so the common path is unchanged.
+    mfa_row = await db.get(UserMFARow, user.id)
+    if mfa_row is not None and mfa_row.enabled:
+        challenge_token, _ = create_mfa_challenge_token(
+            user.id, user.username, user.role, org_id=user.org_id
+        )
+        set_mfa_challenge_cookie(response, challenge_token)
+        # Do NOT mint or set the session cookies here — the user is not
+        # authenticated until the second factor succeeds at /auth/mfa/verify.
+        return {"mfa_required": True}
 
     # AUTH-B1: bind the issued tokens to the user's org so per-request authz
     # has tenant context without an extra DB lookup.
@@ -328,6 +361,9 @@ async def logout(
     # AUTH-C1: drop the browser's httpOnly cookies so the next request is
     # unauthenticated even before the access-token's TTL expires.
     clear_auth_cookies(response)
+    # MFA (#144): also clear any lingering challenge cookie (defence in depth —
+    # e.g. a user who abandoned a half-finished MFA login and then logged out).
+    clear_mfa_challenge_cookie(response)
 
     return None
 

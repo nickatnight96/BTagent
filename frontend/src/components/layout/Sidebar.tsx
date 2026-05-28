@@ -14,6 +14,7 @@ import {
   FileSearch,
   Network,
   ScrollText,
+  Lock,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -85,6 +86,12 @@ const navItems: NavItem[] = [
     path: "/audit",
     icon: <ScrollText className="w-5 h-5" />,
     testId: "nav-audit-link",
+  },
+  {
+    label: "TLP Policies",
+    path: "/policies",
+    icon: <Lock className="w-5 h-5" />,
+    testId: "nav-policies-link",
   },
   {
     label: "Settings",
