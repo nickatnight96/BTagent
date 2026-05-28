@@ -1,6 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Keep the existing v3-style theme/config (custom colors, darkMode class,
+   animations) under Tailwind v4 via the @config directive. */
+@config "../tailwind.config.ts";
 
 /* ---------------------------------------------------------------------------
  * Design system token layer (shadcn/ui pattern, BTagent palette)

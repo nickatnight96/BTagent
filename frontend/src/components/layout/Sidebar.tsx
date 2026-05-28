@@ -68,6 +68,12 @@ const navItems: NavItem[] = [
     testId: "nav-knowledge-link",
   },
   {
+    label: "Hunt Triage",
+    path: "/hunt",
+    icon: <Crosshair className="w-5 h-5" />,
+    testId: "nav-hunt-link",
+  },
+  {
     label: "Playbooks",
     path: "/playbooks",
     icon: <Workflow className="w-5 h-5" />,

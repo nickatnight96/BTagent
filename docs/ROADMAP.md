@@ -143,6 +143,47 @@ Enterprise-scale features for large organizations.
 
 ---
 
+## v0.6.0 -- Phase 6: Proactive Threat Hunting
+
+**Status: Planned**
+
+The proactive counterpart to incident response. Where Phases 1--3 react to alerts, Phase 6 hunts before the alert fires. Built on the Hunter plugin foundation ([#99](https://github.com/nickatnight96/BTagent/issues/99)) and the differentiation strategy ([#98](https://github.com/nickatnight96/BTagent/issues/98), Bets 1 and 5), this phase delivers nine agentic hunt workflows spanning the PEAK hunt taxonomy (hypothesis-driven, baseline-driven) and the 2026 threat surface (identity, cloud, agentic-AI).
+
+These are tracked as peer feature issues, not a single epic. The dependency keystone is the shared `HuntFinding` contract ([#119](https://github.com/nickatnight96/BTagent/issues/119)), which every hunt source emits into and which bridges hunting back to the existing investigation pipeline.
+
+> Full engineering design, schemas, and PR sequencing: [Phase 6 Threat Hunting Implementation Design](PHASE6_THREAT_HUNTING_PLAN.md).
+
+### Hypothesis-driven hunting (PEAK)
+- **Hunt Pack Runner** ([#112](https://github.com/nickatnight96/BTagent/issues/112)) -- scheduled Sigma execution, multi-backend transpile (pysigma -> SPL/KQL/EQL/CrowdStrike), per-environment noise-baseline tuning. Requires the arq scheduler ([#101](https://github.com/nickatnight96/BTagent/issues/101) Pattern 4).
+- **Cross-Investigation Pattern Hunter** ([#120](https://github.com/nickatnight96/BTagent/issues/120)) -- walks the closed-investigation corpus in pgvector, surfaces recurring weak signals, and proposes hunts. The hunting expression of closed-loop org memory ([#98](https://github.com/nickatnight96/BTagent/issues/98) Bet 3).
+
+### Baseline-driven hunting (PEAK)
+- **Behavioral Hunter** ([#114](https://github.com/nickatnight96/BTagent/issues/114)) -- Living-off-the-Land detection via command-line embeddings and parent-child anomaly scoring, with LLM intent reasoning. Reuses the existing pgvector substrate; no custom ML training.
+
+### Detection engineering closed loop (Bet 1)
+- **CTI -> Detection pipeline** ([#113](https://github.com/nickatnight96/BTagent/issues/113)) -- CTI-REALM-style: report/STIX -> TTP extraction -> Sigma draft -> telemetry validation -> detection-as-code PR. Human-in-the-loop mandatory.
+- **Detection Validation Agent** ([#118](https://github.com/nickatnight96/BTagent/issues/118)) -- purple-team loop: Atomic Red Team / Caldera emulation -> SIEM observation -> coverage-delta feedback. Closes the loop opened by #112 and #113.
+
+### Domain-specialized hunters (2026 threat surface)
+- **Identity Hunt Agent** ([#116](https://github.com/nickatnight96/BTagent/issues/116)) -- OAuth token abuse, dormant-app reactivation, SaaS supply-chain hunts (Salesloft/Drift/Vercel class). Gated on Okta + Entra ID + Google Workspace connectors ([#100](https://github.com/nickatnight96/BTagent/issues/100) Tier 1).
+- **Cloud Control-Plane Hunter** ([#117](https://github.com/nickatnight96/BTagent/issues/117)) -- STS abuse, IAM persistence, and shadow-agent discovery across AWS/Azure/GCP. Gated on cloud connectors ([#100](https://github.com/nickatnight96/BTagent/issues/100) Tier 1/2).
+- **Agentic-AI Misuse Hunter** ([#121](https://github.com/nickatnight96/BTagent/issues/121)) -- prompt-injection detection, shadow MCP server discovery, and agent-identity drift. The defensive counterpart to the agentic enterprise.
+
+### Triage and pipeline integration
+- **Hunt Triage Agent** ([#119](https://github.com/nickatnight96/BTagent/issues/119)) -- defines the shared `HuntFinding` contract, clusters findings, learns persistent suppressions, and promotes confirmed hits into the existing investigation workflow.
+
+### Sequencing
+```
+[#101 arq scheduler] ──▶ [#112 Hunt Pack Runner] ──┐
+[#119 HuntFinding contract] ──────────────────────┼──▶ all hunt sources emit findings
+                                                   │
+[#100 connectors] ──▶ [#116 Identity] [#117 Cloud] ┘
+[#113 CTI->Detection] ◀──▶ [#118 Validation]  (detection-engineering loop)
+[#98 Bet 3 memory] ──▶ [#120 Cross-Investigation]
+```
+
+---
+
 ## Known Limitations
 
 The following are known limitations in the current release. Several are addressed in the roadmap above.

@@ -42,8 +42,8 @@ PERMISSIONS: dict[str, UserRole] = {
     "mitre:view": UserRole.ANALYST,
     "mitre:tag": UserRole.SENIOR_ANALYST,
     "mitre:seed": UserRole.ADMIN,
-    # Threat hunting (#99 / #105 — analyst-initiated read-only analysis)
-    "hunt:view": UserRole.ANALYST,
+    # Threat hunting (#99 / #105 — analyst-initiated read-only analysis).
+    # ``hunt:view`` is defined once in the Phase-6 hunt-finding block below.
     "hunt:run": UserRole.ANALYST,
     # Audit-grade lineage (#110 UC-7.1 — CISO / auditor / IR director)
     "audit:view": UserRole.SENIOR_ANALYST,
@@ -80,6 +80,15 @@ PERMISSIONS: dict[str, UserRole] = {
     "workflow:edit": UserRole.SENIOR_ANALYST,
     "workflow:publish": UserRole.SENIOR_ANALYST,
     "workflow:deprecate": UserRole.ADMIN,
+    # Proactive threat hunting (Phase 6)
+    # Analysts browse + triage the hunt inbox; suppressing noise and
+    # promoting a finding into a full investigation are senior actions
+    # because they shape what the SOC does (and doesn't) look at.
+    "hunt:view": UserRole.ANALYST,
+    "hunt:create": UserRole.ANALYST,
+    "hunt:triage": UserRole.ANALYST,
+    "hunt:suppress": UserRole.SENIOR_ANALYST,
+    "hunt:promote": UserRole.SENIOR_ANALYST,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,
