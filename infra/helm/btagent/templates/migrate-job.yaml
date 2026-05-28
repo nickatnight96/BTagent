@@ -1,0 +1,72 @@
+{{- if .Values.migrations.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "btagent.fullname" . }}-migrate
+  labels:
+    {{- include "btagent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Run before any Deployment/Service so a fresh cluster boots against a
+    # migrated schema, and an upgrade migrates before new code rolls out.
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Weight 5 (> the config/secret hooks at -5) so the ConfigMap/Secret this
+    # Job pulls env from already exist when it runs, but still before the
+    # default-weight (0) main release resources (the Deployments).
+    "helm.sh/hook-weight": "5"
+    # Delete any prior Job (and its pods) before recreating, so retries start
+    # clean instead of failing on an immutable, already-complete Job object.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  {{- with .Values.migrations.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ . }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "btagent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "btagent.serviceAccountName" . }}
+      restartPolicy: Never
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Image WORKDIR is /app and the backend tree (alembic.ini + migrations/)
+          # lives at /app/backend, so alembic must run from there. The alembic
+          # entrypoint is installed system-wide and is on PATH.
+          command: ["sh", "-c", "cd backend && alembic upgrade head"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "btagent.fullname" . }}-config
+            - secretRef:
+                name: {{ include "btagent.fullname" . }}-secret
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          {{- with .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.extraVolumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

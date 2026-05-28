@@ -4,6 +4,17 @@ metadata:
   name: {{ include "btagent.fullname" . }}-config
   labels:
     {{- include "btagent.labels" . | nindent 4 }}
+  {{- if .Values.migrations.enabled }}
+  annotations:
+    # When the migrate Job is enabled it runs as a pre-install/pre-upgrade hook,
+    # which executes *before* the main release resources. So this ConfigMap must
+    # also be created as a hook (weight -5, ahead of the Job at weight 5) for the
+    # Job's `envFrom` to resolve it on a fresh install. It is recreated each
+    # release and remains in-cluster for the backend Deployment to consume.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+  {{- end }}
 data:
   {{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}
