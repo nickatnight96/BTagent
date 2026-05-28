@@ -128,8 +128,34 @@ Set up automated PostgreSQL backups:
 ```bash
 docker compose -f infra/docker-compose.yml --env-file infra/.env.production up -d
 make db-migrate
-make db-seed
 ```
+
+> **Do not run `make db-seed` in production.** It also inserts a sample
+> investigation and demo users (`analyst1`, `senior1`) with random,
+> unrecoverable passwords. Use the admin bootstrap below instead.
+
+#### Bootstrap the admin user
+
+The first admin account is created from the `BTAGENT_SEED_ADMIN_PASSWORD`
+environment variable. Pick a strong value and run the bootstrap target; the
+password is never printed to logs:
+
+```bash
+export BTAGENT_SEED_ADMIN_PASSWORD="$(openssl rand -base64 24)"   # store this securely
+make db-reset-admin
+```
+
+This command is idempotent: it creates the `admin` user if missing, otherwise
+resets its password — so it doubles as the **password-reset / recovery path**.
+You can target a different user or pass the password explicitly:
+
+```bash
+python infra/scripts/reset-admin-password.py --username admin --password 'NEW_STRONG_PASSWORD'
+```
+
+> If `BTAGENT_SEED_ADMIN_PASSWORD` is unset (and no `--password` is given) in a
+> non-test environment, the command fails loudly rather than creating an
+> account with an unrecoverable random password.
 
 ### 6. Verify
 

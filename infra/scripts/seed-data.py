@@ -3,7 +3,6 @@
 
 import asyncio
 import os
-import secrets
 import sys
 
 # Add project root to path
@@ -15,6 +14,12 @@ from btagent_backend.db.engine import async_session_factory
 from btagent_backend.db.models import UserRow, InvestigationRow
 from btagent_backend.db.models_mitre import MitreTacticRow, MitreTechniqueRow
 from btagent_backend.auth.jwt import hash_password
+from btagent_backend.auth.bootstrap import (
+    SeedPasswordError,
+    is_test_mode,
+    resolve_admin_password,
+    resolve_seed_password,
+)
 from btagent_shared.utils.ids import generate_id
 
 
@@ -86,14 +91,6 @@ async def _seed_mitre_attack(session) -> None:
         ))
 
 
-def _generate_seed_password(username: str = "") -> str:
-    """SEC-002 FIX: Generate a random password for seed users instead of using trivial ones.
-    In CI/test mode (BTAGENT_ENV=test), use deterministic passwords for UAT."""
-    if os.environ.get("BTAGENT_ENV") == "test":
-        return username or "test-password"  # Deterministic for CI UAT
-    return secrets.token_urlsafe(16)
-
-
 async def seed():
     async with async_session_factory() as session:
         # MITRE ATT&CK fixture is independent of user seed and idempotent
@@ -109,10 +106,14 @@ async def seed():
             print("Admin user already exists, skipping seed.")
             return
 
-        # Generate random passwords for each user
-        admin_pw = _generate_seed_password("admin")
-        analyst_pw = _generate_seed_password("analyst1")
-        senior_pw = _generate_seed_password("senior1")
+        # B5 (#139): admin password is recoverable in prod via
+        # BTAGENT_SEED_ADMIN_PASSWORD; fail loudly if it is missing rather
+        # than minting an unrecoverable random password. Sample users stay
+        # random (demo fixtures, not meant for prod login). Test mode keeps
+        # deterministic password==username for CI UAT/E2E.
+        admin_pw = resolve_admin_password(username="admin")
+        analyst_pw = resolve_seed_password("analyst1")
+        senior_pw = resolve_seed_password("senior1")
 
         # Create admin user
         admin = UserRow(
@@ -162,16 +163,22 @@ async def seed():
         await session.commit()
         # SEC-P3-002 FIX: Only print credentials in test mode to avoid leaking
         # random production passwords to stdout/CI logs.
-        if os.environ.get("BTAGENT_ENV") == "test":
+        if is_test_mode():
             print("Seed data created (test mode — deterministic credentials):")
             print(f"  Admin user:    admin / {admin_pw}")
             print(f"  Analyst user:  analyst1 / {analyst_pw}")
             print(f"  Senior user:   senior1 / {senior_pw}")
         else:
             print("Seed data created. Credentials are NOT printed in non-test mode.")
-            print("  Retrieve or reset passwords via the admin CLI.")
+            print("  Admin password was taken from BTAGENT_SEED_ADMIN_PASSWORD.")
+            print("  Reset it later with: make db-reset-admin")
+            print("  (or: python infra/scripts/reset-admin-password.py)")
         print(f"  Investigation: {inv.id} — {inv.title}")
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    try:
+        asyncio.run(seed())
+    except SeedPasswordError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)

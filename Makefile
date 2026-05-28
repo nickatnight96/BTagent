@@ -26,8 +26,11 @@ db-migrate: ## Run Alembic migrations
 db-revision: ## Create new Alembic migration (usage: make db-revision msg="add foo table")
 	cd backend && alembic revision --autogenerate -m "$(msg)"
 
-db-seed: ## Seed database with test data
+db-seed: ## Seed database with test data (dev/test only; not for production)
 	python infra/scripts/seed-data.py
+
+db-reset-admin: ## Create/reset admin password from BTAGENT_SEED_ADMIN_PASSWORD (prod-safe)
+	python infra/scripts/reset-admin-password.py
 
 # ── Testing ──────────────────────────────────────────────────
 test: test-backend test-agents test-frontend ## Run all unit tests
