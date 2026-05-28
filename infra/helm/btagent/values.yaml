@@ -102,6 +102,25 @@ frontendResources:
     cpu: 50m
     memory: 64Mi
 
+# -- Database migrations (alembic upgrade head)
+# Runs as a Helm pre-install/pre-upgrade hook Job before the backend rolls out,
+# using the same backend image and the same config/secret env (for
+# BTAGENT_DATABASE_URL) as the Deployment.
+migrations:
+  enabled: true
+  # Job retries on failure. Kept low so a broken migration fails fast and blocks
+  # the rollout rather than hammering the database.
+  backoffLimit: 1
+  # Hard cap on the Job's total runtime (seconds); leave empty to disable.
+  activeDeadlineSeconds: 600
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
 # -- Horizontal Pod Autoscaler
 autoscaling:
   enabled: true
