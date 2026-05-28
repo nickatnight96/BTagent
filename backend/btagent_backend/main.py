@@ -74,7 +74,9 @@ def create_app() -> FastAPI:
     # requires ``allow_origins`` to be an explicit list — the browser refuses
     # to send cookies when CORS allows ``*``. Fail loudly at startup if the
     # config drifts to a wildcard so the misconfiguration is caught in
-    # staging, not in production.
+    # staging, not in production. (B7/#141: prod additionally requires a
+    # non-localhost explicit allowlist — enforced in ``Settings`` so it fires
+    # at config-load time regardless of how the app is constructed.)
     if "*" in settings.cors_origins:
         raise RuntimeError(
             "BTAGENT_CORS_ORIGINS must be an explicit list (no '*') because "

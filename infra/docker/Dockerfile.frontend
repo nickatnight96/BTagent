@@ -34,15 +34,34 @@ RUN adduser -D -u 1000 btagent && \
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# SPA routing: fallback to index.html
-RUN echo 'server { \
-    listen 80; \
-    root /usr/share/nginx/html; \
-    index index.html; \
-    location / { \
-        try_files $uri $uri/ /index.html; \
-    } \
-}' > /etc/nginx/conf.d/default.conf
+# Hardened SPA server config — security headers are emitted by DEFAULT so the
+# frontend image carries the same posture as the cluster ingress
+# (``infra/nginx/nginx.conf``) and the backend middleware, even when served
+# directly without the ingress in front (B7, #141). The build context is
+# ``frontend/`` so the canonical reference copy at ``infra/nginx/frontend.conf``
+# cannot be COPY'd here — keep the two in sync. Header values are aligned with
+# the Playwright ``@nginx`` specs (X-Frame-Options DENY, nosniff, HSTS,
+# CSP with script-src minus 'unsafe-inline' and a frame-ancestors directive).
+RUN cat > /etc/nginx/conf.d/default.conf <<'NGINX_CONF'
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    add_header X-Frame-Options DENY always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self';" always;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+NGINX_CONF
 
 USER btagent
 

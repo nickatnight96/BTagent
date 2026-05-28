@@ -17,6 +17,17 @@ _INSECURE_JWT_DEFAULTS = frozenset(
     }
 )
 
+# Dev-grade CORS origins. These are the localhost Vite/preview/ingress ports
+# the SPA runs on locally. They are the default ``cors_origins`` value and are
+# fine for dev/test, but in ``prod`` they signal that ``BTAGENT_CORS_ORIGINS``
+# was never configured — see ``Settings._validate_cors_origins``.
+_DEV_CORS_ORIGINS: tuple[str, ...] = (
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://localhost:8080",
+)
+
 
 class Settings(BaseSettings):
     """BTagent backend configuration. Loaded from environment variables."""
@@ -80,12 +91,44 @@ class Settings(BaseSettings):
         return self
 
     # CORS
-    cors_origins: list[str] = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://localhost:8080",
-    ]
+    cors_origins: list[str] = list(_DEV_CORS_ORIGINS)
+
+    @model_validator(mode="after")
+    def _validate_cors_origins(self) -> "Settings":
+        """B7 (#141): hardened CORS is the default for prod.
+
+        In ``prod`` the operator MUST supply an explicit ``BTAGENT_CORS_ORIGINS``
+        allowlist. We fail loudly at startup if it is unset (still the dev
+        localhost defaults), empty, contains a ``*`` wildcard, or lists a
+        localhost origin — any of which would either disable the cookie-auth
+        ``allow_credentials`` flow or expose the API to untrusted browsers.
+
+        Dev/test stay permissive: they keep the localhost defaults untouched,
+        so ``BTAGENT_ENV=test`` (CI) and ``BTAGENT_ENV=dev`` start normally.
+        """
+        if self.env != "prod":
+            return self
+
+        origins = self.cors_origins
+        if not origins:
+            raise ValueError(
+                "CRITICAL: BTAGENT_CORS_ORIGINS must be set to an explicit "
+                "allowlist of your frontend origin(s) in prod, e.g. "
+                '["https://btagent.example.com"].'
+            )
+        if any(o.strip() == "*" for o in origins):
+            raise ValueError(
+                "CRITICAL: BTAGENT_CORS_ORIGINS may not contain '*' in prod — "
+                "wildcard CORS is incompatible with cookie auth "
+                "(allow_credentials=True) and exposes the API to any origin."
+            )
+        if any("localhost" in o or "127.0.0.1" in o for o in origins):
+            raise ValueError(
+                "CRITICAL: BTAGENT_CORS_ORIGINS still lists a localhost origin "
+                "in prod — set it to your real frontend origin(s), e.g. "
+                '["https://btagent.example.com"].'
+            )
+        return self
 
     # Agent defaults
     default_model_provider: str = "anthropic"
