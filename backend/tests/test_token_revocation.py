@@ -21,11 +21,15 @@ from btagent_backend.auth.jwt import (
     create_access_token,
     create_refresh_token,
     create_token_pair,
+    decode_token,
 )
 from btagent_backend.auth.revocation import (
     _reset_for_tests,
+    is_family_revoked,
     is_revoked,
+    is_user_revoked,
     revoke,
+    revoke_user_tokens,
 )
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import UserRow
@@ -155,7 +159,9 @@ async def test_refresh_token_rotation_invalidates_old_refresh(
     client: AsyncClient, sample_user: UserRow
 ):
     """A refresh token can only be redeemed once — re-use returns 401."""
-    refresh_token, _ = create_refresh_token(sample_user.id, sample_user.username, sample_user.role)
+    refresh_token, _, _ = create_refresh_token(
+        sample_user.id, sample_user.username, sample_user.role
+    )
 
     # First redemption: returns a fresh pair.
     first = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
@@ -172,7 +178,9 @@ async def test_refresh_token_rotation_invalidates_old_refresh(
 @pytest.mark.asyncio
 async def test_refresh_returns_new_usable_pair(client: AsyncClient, sample_user: UserRow):
     """The new pair from /refresh is independent and usable."""
-    refresh_token, _ = create_refresh_token(sample_user.id, sample_user.username, sample_user.role)
+    refresh_token, _, _ = create_refresh_token(
+        sample_user.id, sample_user.username, sample_user.role
+    )
 
     resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
     assert resp.status_code == 200
@@ -187,6 +195,157 @@ async def test_refresh_returns_new_usable_pair(client: AsyncClient, sample_user:
         "/api/v1/auth/refresh", json={"refresh_token": new_pair["refresh_token"]}
     )
     assert rot2.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# P142: refresh-token reuse detection → family revocation (theft response)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_refresh_carries_family_id_preserved_across_rotation(
+    client: AsyncClient, sample_user: UserRow
+):
+    """Rotation keeps the same family id (``fid``); the jti rotates."""
+    refresh_token, jti0, fid0 = create_refresh_token(
+        sample_user.id, sample_user.username, sample_user.role
+    )
+
+    resp = await client.post("/api/v1/auth/refresh", json={"refresh_token": refresh_token})
+    assert resp.status_code == 200
+    new_refresh = resp.json()["refresh_token"]
+
+    rotated = decode_token(new_refresh)
+    # New jti, SAME family.
+    assert rotated.jti is not None and rotated.jti != jti0
+    assert rotated.fid == fid0
+
+
+@pytest.mark.asyncio
+async def test_reusing_rotated_refresh_revokes_whole_family(
+    client: AsyncClient, sample_user: UserRow
+):
+    """Replaying a consumed refresh token is treated as theft → family revoked.
+
+    Sequence: R0 -> (rotate) -> R1. Replaying R0 (already consumed) must:
+      1. return 401, and
+      2. revoke the entire family, so the *legitimate* descendant R1 is now
+         also rejected.
+    """
+    r0, _, fid = create_refresh_token(sample_user.id, sample_user.username, sample_user.role)
+
+    # Legit rotation: R0 -> R1.
+    first = await client.post("/api/v1/auth/refresh", json={"refresh_token": r0})
+    assert first.status_code == 200
+    r1 = first.json()["refresh_token"]
+
+    # The family is not revoked yet — R1 is the live token.
+    assert await is_family_revoked(fid) is False
+
+    # Attacker replays the consumed R0 → reuse detected.
+    replay = await client.post("/api/v1/auth/refresh", json={"refresh_token": r0})
+    assert replay.status_code == 401
+
+    # The whole family is now revoked at the storage layer...
+    assert await is_family_revoked(fid) is True
+
+    # ...so even the legitimate descendant R1 is dead.
+    r1_attempt = await client.post("/api/v1/auth/refresh", json={"refresh_token": r1})
+    assert r1_attempt.status_code == 401
+    assert "invalid_token" in r1_attempt.headers.get("www-authenticate", "")
+
+
+# ---------------------------------------------------------------------------
+# P142: admin "revoke this user's sessions" (per-user epoch)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_revoke_user_sessions_rejects_existing_tokens(
+    client: AsyncClient, admin_token: str, sample_user: UserRow
+):
+    """Admin POST /auth/revoke/{user_id} invalidates the target's tokens."""
+    pair = create_token_pair(sample_user.id, sample_user.username, sample_user.role)
+
+    # Pre-revoke: the user's token works.
+    me = await client.get("/api/v1/auth/me", headers=auth_header(pair.access_token))
+    assert me.status_code == 200
+
+    # Admin revokes the user's sessions.
+    resp = await client.post(
+        f"/api/v1/auth/revoke/{sample_user.id}", headers=auth_header(admin_token)
+    )
+    assert resp.status_code == 204
+
+    # The user's access token is now rejected.
+    me_after = await client.get("/api/v1/auth/me", headers=auth_header(pair.access_token))
+    assert me_after.status_code == 401
+    assert "invalid_token" in me_after.headers.get("www-authenticate", "")
+
+    # The user's refresh token is also rejected.
+    refresh_after = await client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": pair.refresh_token}
+    )
+    assert refresh_after.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_admin_revoke_lets_user_log_in_again(
+    client: AsyncClient, admin_token: str, sample_user: UserRow
+):
+    """After a force-logout, a NEW token (later iat) for the same user works."""
+    import time
+
+    # Revoke as of two seconds ago, so a token minted *now* has a strictly
+    # later ``iat`` and survives (this is the "user logs back in" path).
+    await revoke_user_tokens(sample_user.id, ttl_seconds=3600, now=time.time() - 2)
+
+    fresh = create_token_pair(sample_user.id, sample_user.username, sample_user.role)
+    me = await client.get("/api/v1/auth/me", headers=auth_header(fresh.access_token))
+    assert me.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_revoke_user_sessions(
+    client: AsyncClient, analyst_token: str, sample_user: UserRow
+):
+    """An analyst cannot force-logout other users (RBAC: admin only)."""
+    resp = await client.post(
+        f"/api/v1/auth/revoke/{sample_user.id}", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_revoke_unknown_user_returns_404(client: AsyncClient, admin_token: str):
+    """Revoking a non-existent user returns 404."""
+    resp = await client.post(
+        "/api/v1/auth/revoke/usr_does_not_exist", headers=auth_header(admin_token)
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_is_user_revoked_unit_behaviour():
+    """Unit: tokens before the epoch are revoked; at/after are not; legacy is not."""
+    import time
+
+    user_id = "usr_epoch_unit"
+    now = time.time()
+    # Stored epoch = int(now) + 1, so tokens issued in this second or earlier
+    # are revoked; tokens issued a second or more later survive.
+    await revoke_user_tokens(user_id, ttl_seconds=3600, now=now)
+
+    # Issued before the revoke second → revoked.
+    assert await is_user_revoked(user_id, int(now) - 1) is True
+    # Issued in the same second as the revoke → revoked (force-logout catches it).
+    assert await is_user_revoked(user_id, int(now)) is True
+    # Issued comfortably after the epoch → not revoked.
+    assert await is_user_revoked(user_id, int(now) + 5) is False
+    # Legacy token without iat → cannot be compared, not revoked.
+    assert await is_user_revoked(user_id, None) is False
+    # Unknown user → not revoked.
+    assert await is_user_revoked("usr_never", int(now) - 100) is False
 
 
 # ---------------------------------------------------------------------------

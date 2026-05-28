@@ -9,7 +9,7 @@ from jose import JWTError
 from btagent_backend.auth.cookies import ACCESS_COOKIE_NAME
 from btagent_backend.auth.jwt import TokenPayload, decode_token
 from btagent_backend.auth.rbac import has_permission
-from btagent_backend.auth.revocation import is_revoked
+from btagent_backend.auth.revocation import is_revoked, is_user_revoked
 
 logger = logging.getLogger("btagent.auth.middleware")
 
@@ -115,6 +115,17 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has been revoked",
+            headers=_INVALID_TOKEN_HEADERS,
+        )
+
+    # P142: per-user revocation epoch — an admin (or self-service "log out
+    # everywhere") can invalidate *all* of a user's outstanding tokens at once
+    # by bumping their epoch. Any access token issued before that moment is
+    # rejected even if its individual jti was never added to the deny-list.
+    if await is_user_revoked(payload.sub, payload.iat):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session has been revoked",
             headers=_INVALID_TOKEN_HEADERS,
         )
 

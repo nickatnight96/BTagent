@@ -28,7 +28,14 @@ from btagent_backend.auth.jwt import (
     hash_password,
     verify_password,
 )
-from btagent_backend.auth.revocation import is_revoked, revoke
+from btagent_backend.auth.revocation import (
+    is_family_revoked,
+    is_revoked,
+    is_user_revoked,
+    revoke,
+    revoke_family,
+    revoke_user_tokens,
+)
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import UserRow
 
@@ -143,6 +150,17 @@ async def refresh(
     so the token can only be redeemed once. A second attempt with the same
     refresh token returns 401.
 
+    P142 (reuse detection / theft response): refresh tokens carry a family id
+    (``fid``). If a refresh token whose ``jti`` is *already* revoked is
+    presented while its family is still live, that's a replay of a consumed
+    token — a strong signal it was stolen — so the **entire family** is revoked
+    and every descendant refresh token is killed. A new login starts a brand-
+    new family, so the legitimate user can recover by re-authenticating.
+
+    P142 also honours the per-user revocation epoch: an admin force-logout (see
+    ``/auth/revoke``) invalidates refresh tokens issued before the epoch too,
+    not just access tokens.
+
     The OLD access-token's ``jti`` is **also** revoked on every successful
     rotation — otherwise a leaked access token would stay valid until its
     short TTL elapses even though the rotation contract has minted a new
@@ -168,12 +186,40 @@ async def refresh(
     if payload.type != "refresh":
         raise HTTPException(status_code=401, detail="Expected refresh token")
 
-    # If this refresh token has already been used (or admin-revoked), reject.
+    _invalid_token_headers = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
+
+    # P142: if the whole family has already been revoked (prior theft response
+    # or admin action), reject before doing anything else.
+    if payload.fid and await is_family_revoked(payload.fid):
+        raise HTTPException(
+            status_code=401,
+            detail="Refresh token family has been revoked",
+            headers=_invalid_token_headers,
+        )
+
+    # P142: honour an admin force-logout epoch for this user.
+    if await is_user_revoked(payload.sub, payload.iat):
+        raise HTTPException(
+            status_code=401,
+            detail="Session has been revoked",
+            headers=_invalid_token_headers,
+        )
+
+    # If this refresh token has already been used (or admin-revoked), reject —
+    # AND, when it still belongs to a live family, treat the replay as theft and
+    # revoke the entire family so the attacker's rotated descendants die too.
     if payload.jti and await is_revoked(payload.jti):
+        if payload.fid:
+            logger.warning(
+                "Refresh-token reuse detected for user=%s family=%s; revoking family",
+                payload.sub,
+                payload.fid,
+            )
+            await revoke_family(payload.fid, _remaining_ttl(payload.exp))
         raise HTTPException(
             status_code=401,
             detail="Refresh token has been revoked",
-            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            headers=_invalid_token_headers,
         )
 
     # Rotate: revoke the old refresh token's jti before issuing the new pair.
@@ -207,8 +253,15 @@ async def refresh(
     access_token, _ = create_access_token(
         payload.sub, payload.username, payload.role, org_id=payload.org_id
     )
-    new_refresh_token, _ = create_refresh_token(
-        payload.sub, payload.username, payload.role, org_id=payload.org_id
+    # P142: keep the rotated refresh token in the SAME family so a later replay
+    # of any consumed token in this chain can be traced back and the whole
+    # family killed.
+    new_refresh_token, _, _ = create_refresh_token(
+        payload.sub,
+        payload.username,
+        payload.role,
+        org_id=payload.org_id,
+        family_id=payload.fid,
     )
 
     # AUTH-C1: rewrite both cookies on every successful refresh so the
@@ -309,6 +362,46 @@ async def register(
     await db.flush()
 
     return {"id": user.id, "username": user.username, "role": user.role}
+
+
+@router.post("/revoke/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_user_sessions(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Admin-forced revocation of *all* of a user's outstanding sessions (#142).
+
+    RBAC: admin only (``user:edit``). Use this on credential compromise or
+    offboarding — it sets a per-user revocation epoch so every access and
+    refresh token issued before *now* is rejected by ``get_current_user`` /
+    ``/auth/refresh``. The target user can simply log in again to get a fresh
+    session (the new tokens carry a later ``iat`` and are unaffected).
+
+    AUTH-B1: the target must belong to the admin's org — an admin cannot
+    revoke sessions for users in another tenant.
+    """
+    current_user.require_permission("user:edit")
+
+    target = await db.execute(select(UserRow).where(UserRow.id == user_id))
+    target_user = target.scalar_one_or_none()
+    if target_user is None or target_user.org_id != current_user.org_id:
+        # Same 404 for "not found" and "other org" so we don't leak existence
+        # of users in other tenants.
+        raise HTTPException(status_code=404, detail="User not found")
+
+    settings = get_settings()
+    # TTL = the longest a token could still be alive (refresh lifetime). After
+    # that, no token old enough to be caught by the epoch can exist.
+    ttl = settings.refresh_token_ttl_days * 24 * 3600
+    await revoke_user_tokens(user_id, ttl)
+
+    logger.info(
+        "Admin %s revoked all sessions for user %s",
+        current_user.id,
+        user_id,
+    )
+    return None
 
 
 @router.get("/me")
