@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from "@/components/ds/card";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ssoEnabled, startSsoLogin } from "@/api/sso";
 
 /**
  * Login screen — first canonical view on the new design system.
@@ -303,6 +304,36 @@ export function LoginPage() {
                   "Sign in"
                 )}
               </Button>
+
+              {/* SSO (#144): full-page redirect to the backend login endpoint,
+               * which 302s to the IdP. Only rendered when a provider is
+               * configured at build time (VITE_SSO_PROVIDER) so the default
+               * deployment / existing E2E suites are unaffected. */}
+              {ssoEnabled && (
+                <>
+                  <div className="relative my-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-border" />
+                    </div>
+                    <div className="relative flex justify-center text-xs">
+                      <span className="bg-card px-2 text-muted-foreground">
+                        or
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    size="lg"
+                    disabled={isLoading}
+                    onClick={() => startSsoLogin()}
+                    data-testid="login-sso-button"
+                  >
+                    Sign in with SSO
+                  </Button>
+                </>
+              )}
             </form>
             </CardContent>
           </Card>
