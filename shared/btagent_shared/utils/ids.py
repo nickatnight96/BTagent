@@ -22,6 +22,9 @@ PREFIXES = {
     "hfnd": "hfnd",  # Hunt finding
     "hclu": "hclu",  # Hunt finding cluster
     "supp": "supp",  # Suppression rule
+    "bent": "bent",  # Behavioral entity (#114)
+    "bprof": "bprof",  # Behavioral profile (#114)
+    "bout": "bout",  # Behavioral outlier (#114)
 }
 
 
