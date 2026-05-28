@@ -468,7 +468,10 @@ async def sweep_stale_suppressions(
     a separate, heavier pass); the point of the sweep is to force a human
     to re-affirm the rule before it keeps hiding new signal.
     """
-    now = now or _utcnow()
+    # Normalise a caller-supplied `now` to aware-UTC too: the stored
+    # expires_at/reconfirm_at are coerced to aware via _as_aware_utc below, so
+    # a naive `now` would raise "can't compare offset-naive and offset-aware".
+    now = _as_aware_utc(now) or _utcnow()
     rows = (
         (
             await db.execute(

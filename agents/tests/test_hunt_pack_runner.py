@@ -160,3 +160,52 @@ async def test_run_pack_marks_errored_on_transpile_failure():
     assert results[0].findings == []
     # executor never called for an un-transpilable rule
     assert executor.calls == []
+
+
+class _RaisingExecutor:
+    """Executor that always raises (simulates an unreachable SIEM)."""
+
+    async def __call__(self, backend, query, lookback) -> ExecResult:
+        raise RuntimeError("backend unreachable")
+
+
+async def test_run_pack_all_backends_fail_is_errored_and_preserves_baseline():
+    # A transpilable rule whose every backend execution errors must be ERRORED
+    # and must NOT fold a fake zero into the noise baseline.
+    runner = HuntPackRunner(SigmaCompiler(), _RaisingExecutor())
+    pack = _pack()
+    pack.rules[0].noise_baseline.mean_hits = 5.0
+    pack.rules[0].noise_baseline.sample_count = 10
+    schedule = HuntSchedule(pack_id=pack.id, backends=[SiemBackend.SPLUNK])
+
+    results = await runner.run_pack(pack, schedule, run_id="hrun_err")
+    res = results[0]
+    assert res.state == HuntRuleState.ERRORED
+    assert res.findings == []
+    # baseline untouched — not dragged toward 0 by the failed run
+    assert res.updated_baseline.sample_count == 10
+    assert res.updated_baseline.mean_hits == 5.0
+
+
+class _BadHitExecutor:
+    """Returns one malformed hit (bad entity) followed by one good hit."""
+
+    async def __call__(self, backend, query, lookback) -> ExecResult:
+        return ExecResult(
+            count=2,
+            hits=[
+                {"entities": [{"bogus_field": "x"}]},  # invalid HuntEntity -> raises
+                {"summary": "good", "entities": [{"kind": "host", "value": "WS-OK"}]},
+            ],
+        )
+
+
+async def test_run_pack_malformed_hit_is_skipped_not_fatal():
+    runner = HuntPackRunner(SigmaCompiler(), _BadHitExecutor())
+    pack = _pack()
+    schedule = HuntSchedule(pack_id=pack.id, backends=[SiemBackend.SPLUNK])
+
+    results = await runner.run_pack(pack, schedule, run_id="hrun_bad")
+    # the good hit still becomes a finding; the malformed one is dropped
+    assert len(results[0].findings) == 1
+    assert results[0].findings[0].entities[0].value == "WS-OK"

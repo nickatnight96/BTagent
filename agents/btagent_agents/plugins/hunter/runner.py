@@ -151,6 +151,7 @@ class HuntPackRunner:
             )
 
         total_count = 0
+        executed_backends = 0
         findings: list[RecordFindingRequest] = []
         for backend, query in queries.items():
             try:
@@ -159,18 +160,38 @@ class HuntPackRunner:
                 logger.warning("Hunt query failed on %s for rule %s: %s", backend, rule.id, exc)
                 errors[backend] = str(exc)
                 continue
+            executed_backends += 1
             total_count += exec_result.count
             for hit in exec_result.hits:
-                req = self._hit_to_finding(rule, backend, hit, pack, run_id)
+                try:
+                    req = self._hit_to_finding(rule, backend, hit, pack, run_id)
+                except Exception as exc:
+                    # One malformed hit must not abort the whole pack run —
+                    # drop it and keep the findings already collected.
+                    logger.warning(
+                        "Skipping malformed hit on %s for rule %s: %s", backend, rule.id, exc
+                    )
+                    continue
                 if not self._suppressed_by_tuning(rule, req):
                     findings.append(req)
 
+        # If NO backend actually executed (every query errored), this run made
+        # no observation: mark ERRORED and do NOT fold a fake zero into the
+        # noise baseline — otherwise repeated outages drag the rolling mean to
+        # 0 and spuriously trip UNDER_FIRING / collapse the over-firing band.
+        if executed_backends == 0:
+            rule.state = HuntRuleState.ERRORED
+            return RuleRunResult(
+                rule_id=rule.id,
+                state=HuntRuleState.ERRORED,
+                hit_count=0,
+                updated_baseline=rule.noise_baseline,
+                findings=findings,
+                errors=errors,
+            )
+
         state = huntpack_logic.classify_rule_state(rule.noise_baseline, total_count)
         rule.noise_baseline = huntpack_logic.update_baseline(rule.noise_baseline, total_count)
-        # A per-backend execution error doesn't override a meaningful hit
-        # classification; only flag ERRORED when nothing ran.
-        if state == HuntRuleState.CLEAN and len(errors) == len(targets):
-            state = HuntRuleState.ERRORED
         rule.state = state
 
         return RuleRunResult(

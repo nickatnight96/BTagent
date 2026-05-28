@@ -142,7 +142,7 @@ def update_frequency_map(
         return new
 
     if len(new) >= max_entries:
-        # Evict the least-frequent (tie: lex-last).
+        # Evict the least-frequent; ties broken by lexicographically-first key.
         victim = min(new.items(), key=lambda kv: (kv[1], kv[0]))[0]
         del new[victim]
 

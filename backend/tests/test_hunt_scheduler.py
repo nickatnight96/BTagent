@@ -79,3 +79,16 @@ async def test_sweep_expires_and_flags(db_session):
     assert expired.state == "expired"
     assert reconfirm.state == "needs_reconfirm"
     assert fresh.state == "active"
+
+
+async def test_sweep_accepts_naive_now(db_session):
+    # A naive `now` must not raise "can't compare offset-naive and aware".
+    aware_now = datetime.now(UTC)
+    expired = await _add_rule(db_session, expires_at=aware_now - timedelta(hours=1))
+
+    naive_now = aware_now.replace(tzinfo=None)
+    counts = await svc.sweep_stale_suppressions(db_session, now=naive_now)
+
+    assert counts["expired"] == 1
+    await db_session.refresh(expired)
+    assert expired.state == "expired"

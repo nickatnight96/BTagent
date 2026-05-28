@@ -299,10 +299,13 @@ async def promote_outlier(
     elif outlier.intent_label == IntentLabel.SUSPICIOUS.value:
         severity = "medium"
 
+    # canonical_id can be up to 512 chars; RecordFindingRequest.title caps at
+    # 300, so truncate to avoid a ValidationError aborting promotion.
+    title = f"Behavioral outlier on {entity.kind}:{entity.canonical_id}"[:300]
     req = RecordFindingRequest(
         source="behavioral",
         domain="behavioral",
-        title=f"Behavioral outlier on {entity.kind}:{entity.canonical_id}",
+        title=title,
         description=outlier.intent_rationale or outlier.raw_event_excerpt or "",
         severity=severity,
         confidence=min(1.0, outlier.cosine_distance),

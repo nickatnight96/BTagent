@@ -333,3 +333,33 @@ async def test_stale_entities_returns_only_unseen(db_session):
     stale_ids = {e.id for e in result}
     assert stale.id in stale_ids
     assert fresh.id not in stale_ids
+
+
+async def test_promote_outlier_truncates_long_title(db_session):
+    # A long canonical_id must not blow past RecordFindingRequest.title (300).
+    long_id = "svc-" + "a" * 500
+    entity = await svc.upsert_entity(
+        db_session, org_id=DEFAULT_ORG_ID, kind=EntityKind.SERVICE_PRINCIPAL, canonical_id=long_id
+    )
+    now = datetime.now(UTC)
+    await svc.build_baseline(
+        db_session,
+        entity=entity,
+        profile_type=ProfileType.CMDLINE_EMBEDDING,
+        vectors=[[1.0, 0.0]],
+        pattern_keys=["common"],
+        window_start=now - timedelta(days=30),
+        window_end=now,
+    )
+    out = await svc.detect_outlier(
+        db_session,
+        entity=entity,
+        profile_type=ProfileType.CMDLINE_EMBEDDING,
+        event_id="evt_long",
+        event_vector=[0.0, 1.0],
+        event_pattern_key="rare",
+    )
+    assert out is not None
+    # Must not raise a ValidationError on the 300-char title cap.
+    finding_id = await svc.promote_outlier(db_session, outlier_id=out.id)
+    assert finding_id.startswith("hfnd_")
