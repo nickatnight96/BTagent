@@ -44,7 +44,8 @@ MINIO_ROOT_PASSWORD=${BTAGENT_S3_SECRET_KEY}
 ANTHROPIC_API_KEY=sk-ant-...
 BTAGENT_OPENAI_API_KEY=sk-...
 
-# CORS (restrict to your domain)
+# CORS — REQUIRED in prod. The backend refuses to start (B7) if this is
+# unset, a wildcard ("*"), or still pointing at a localhost origin.
 BTAGENT_CORS_ORIGINS=["https://btagent.example.com"]
 
 # Observability
@@ -80,7 +81,18 @@ cp your-key.pem infra/nginx/ssl/key.pem
 
 ### 3. Nginx Production Configuration
 
-Replace the development nginx config with a production version. Key additions:
+> **Hardened by default (B7):** The shipped frontend image
+> (`infra/docker/Dockerfile.frontend`) and the cluster ingress
+> (`infra/nginx/nginx.conf`) already emit the security headers below
+> — HSTS, CSP (with `frame-ancestors`), `X-Frame-Options`,
+> `X-Content-Type-Options`, and `Referrer-Policy` — out of the box. The
+> backend's `SecurityHeadersMiddleware` sets the same baseline so the
+> posture holds even without an nginx in front. The only step that
+> remains manual is TLS termination (certs + the HTTPS `server` block).
+> The Playwright `@nginx` security specs pin these header values.
+
+The remaining production-specific work is adding TLS termination and the
+HTTP→HTTPS redirect:
 
 ```nginx
 server {
@@ -509,7 +521,7 @@ Complete list of all `BTAGENT_*` environment variables:
 | `BTAGENT_S3_SECRET_KEY` | `minioadmin` | Yes (prod) | S3 secret key |
 | `BTAGENT_S3_BUCKET` | `btagent-evidence` | No | Evidence bucket name |
 | `BTAGENT_S3_REGION` | `us-east-1` | No | S3 region |
-| `BTAGENT_CORS_ORIGINS` | `["http://localhost:5173","http://localhost:3000"]` | Yes (prod) | Allowed CORS origins |
+| `BTAGENT_CORS_ORIGINS` | `["http://localhost:5173","http://localhost:3000"]` | Yes (prod) | Allowed CORS origins. In prod the backend fails to start if unset, `*`, or a localhost origin (B7). |
 | `BTAGENT_DEFAULT_MODEL_PROVIDER` | `anthropic` | No | Preferred LLM provider |
 | `BTAGENT_DEFAULT_MODEL_ID` | `claude-sonnet-4-20250514` | No | Default model ID |
 | `BTAGENT_MOCK_CONNECTORS` | `false` | No | Use mock SIEM/CTI connectors |
