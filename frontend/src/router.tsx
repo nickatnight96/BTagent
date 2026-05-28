@@ -11,6 +11,7 @@ import { HuntTriagePage } from "@/components/hunt/HuntTriagePage";
 import { PlaybookList } from "@/components/playbooks/PlaybookList";
 import { HuntPackagePage } from "@/components/hunts/HuntPackagePage";
 import { AuditLedgerPage } from "@/components/audit/AuditLedgerPage";
+import { TLPPolicyPage } from "@/components/policies/TLPPolicyPage";
 import { CorrelationPage } from "@/components/correlation/CorrelationPage";
 import { PlaybookBuilder } from "@/components/playbooks/PlaybookBuilder";
 import { PlaybookExecutionView } from "@/components/playbooks/PlaybookExecutionView";
@@ -51,6 +52,10 @@ export const router = createBrowserRouter([
       {
         path: "audit",
         element: <AuditLedgerPage />,
+      },
+      {
+        path: "policies",
+        element: <TLPPolicyPage />,
       },
       {
         path: "mitre",
