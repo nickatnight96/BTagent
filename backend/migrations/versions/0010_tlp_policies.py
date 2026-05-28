@@ -10,8 +10,8 @@ admin / CISO (``policy:manage``).
 Carries ``org_id`` (FK → organizations) so tenant scoping is present from
 day one, matching the workflows / hunt-findings tables.
 
-Revision ID: 0009_tlp_policies
-Revises: 0008_hunt_findings
+Revision ID: 0010_tlp_policies
+Revises: 0009_behavioral
 Create Date: 2026-05-28
 """
 
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision: str = "0009_tlp_policies"
-down_revision: str | None = "0008_hunt_findings"
+revision: str = "0010_tlp_policies"
+down_revision: str | None = "0009_behavioral"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
