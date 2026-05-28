@@ -13,12 +13,36 @@ from btagent_shared.security.tlp import (
     TLPViolation,
     assert_tlp_allows_egress,
 )
+from btagent_shared.security.tlp_policy import (
+    PolicyDecision,
+    TLPPolicy,
+    TLPPolicyAction,
+    TLPViolationEvent,
+    ViolationSink,
+    clear_violation_sink,
+    emit_violation,
+    evaluate_egress_policy,
+    get_violation_sink,
+    set_violation_sink,
+    tlp_rank,
+)
 
 __all__ = [
     "EgressKind",
     "OCSF_MAPS",
     "OCSFFieldMap",
+    "PolicyDecision",
+    "TLPPolicy",
+    "TLPPolicyAction",
     "TLPViolation",
+    "TLPViolationEvent",
+    "ViolationSink",
     "assert_tlp_allows_egress",
+    "clear_violation_sink",
+    "emit_violation",
+    "evaluate_egress_policy",
     "get_map",
+    "get_violation_sink",
+    "set_violation_sink",
+    "tlp_rank",
 ]
