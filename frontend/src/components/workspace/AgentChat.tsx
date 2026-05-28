@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useAgentStore } from "@/stores/agentStore";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/components/ds/button";
 import type { ChatMessage, ToolCallInfo, HITLCheckpoint } from "@/types/investigation";
 
 // -- Tool Call Card (collapsible) --
@@ -33,34 +33,34 @@ function ToolCallCard({ toolCall }: ToolCallCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const statusIcon = {
-    pending: <Clock className="w-3.5 h-3.5 text-slate-400" />,
+    pending: <Clock className="w-3.5 h-3.5 text-muted-foreground" />,
     running: <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" />,
     completed: <CheckCircle className="w-3.5 h-3.5 text-green-400" />,
-    error: <AlertTriangle className="w-3.5 h-3.5 text-red-400" />,
+    error: <AlertTriangle className="w-3.5 h-3.5 text-destructive" />,
   };
 
   return (
     <div
-      className="bg-slate-800/50 border border-slate-700/40 rounded-md my-1.5 text-xs overflow-hidden"
+      className="bg-accent/50 border border-border/40 rounded-md my-1.5 text-xs overflow-hidden"
       data-testid={`agent-chat-tool-call-${toolCall.id}`}
     >
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-slate-800 transition-colors text-left"
+        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-accent transition-colors text-left"
         aria-expanded={expanded}
         data-testid={`agent-chat-tool-call-${toolCall.id}-toggle`}
       >
         {expanded ? (
-          <ChevronDown className="w-3 h-3 text-slate-500 shrink-0" aria-hidden="true" />
+          <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" aria-hidden="true" />
         ) : (
-          <ChevronRight className="w-3 h-3 text-slate-500 shrink-0" aria-hidden="true" />
+          <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" aria-hidden="true" />
         )}
         {statusIcon[toolCall.status]}
-        <span className="font-mono text-slate-300 font-medium">
+        <span className="font-mono text-foreground font-medium">
           {toolCall.name}
         </span>
         {toolCall.duration_ms !== undefined && (
-          <span className="text-slate-500 ml-auto">
+          <span className="text-muted-foreground ml-auto">
             {toolCall.duration_ms}ms
           </span>
         )}
@@ -69,20 +69,20 @@ function ToolCallCard({ toolCall }: ToolCallCardProps) {
         <div className="px-3 pb-2 space-y-2">
           {Object.keys(toolCall.arguments).length > 0 && (
             <div>
-              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
                 Arguments
               </span>
-              <pre className="mt-1 text-slate-400 font-mono text-[11px] bg-slate-900/50 rounded p-2 overflow-x-auto max-h-32">
+              <pre className="mt-1 text-muted-foreground font-mono text-[11px] bg-card/50 rounded p-2 overflow-x-auto max-h-32">
                 {JSON.stringify(toolCall.arguments, null, 2)}
               </pre>
             </div>
           )}
           {toolCall.result && (
             <div>
-              <span className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
                 Result
               </span>
-              <pre className="mt-1 text-slate-400 font-mono text-[11px] bg-slate-900/50 rounded p-2 overflow-x-auto max-h-48">
+              <pre className="mt-1 text-muted-foreground font-mono text-[11px] bg-card/50 rounded p-2 overflow-x-auto max-h-48">
                 {toolCall.result}
               </pre>
             </div>
@@ -114,17 +114,17 @@ function HITLCard({ checkpoint, onRespond }: HITLCardProps) {
           Approval Required
         </span>
       </div>
-      <p className="text-sm text-slate-300 mb-2">{checkpoint.prompt}</p>
+      <p className="text-sm text-foreground mb-2">{checkpoint.prompt}</p>
       {checkpoint.action && (
-        <div className="bg-slate-800/50 rounded-md p-3 mb-3 text-xs font-mono text-slate-400">
+        <div className="bg-accent/50 rounded-md p-3 mb-3 text-xs font-mono text-muted-foreground">
           <div>
-            Action: <span className="text-slate-200">{checkpoint.action.action_type ?? "unknown"}</span>
+            Action: <span className="text-foreground">{checkpoint.action.action_type ?? "unknown"}</span>
           </div>
           <div>
-            Target: <span className="text-slate-200">{checkpoint.action.target ?? "unknown"}</span>
+            Target: <span className="text-foreground">{checkpoint.action.target ?? "unknown"}</span>
           </div>
           <div>
-            Reason: <span className="text-slate-200">{checkpoint.action.reason ?? ""}</span>
+            Reason: <span className="text-foreground">{checkpoint.action.reason ?? ""}</span>
           </div>
         </div>
       )}
@@ -132,7 +132,7 @@ function HITLCard({ checkpoint, onRespond }: HITLCardProps) {
         placeholder="Optional comment..."
         value={comment}
         onChange={(e) => setComment(e.target.value)}
-        className="w-full bg-slate-800 border border-slate-600/50 rounded-md px-3 py-2 text-sm text-slate-200 placeholder-slate-500 mb-3 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+        className="w-full bg-accent border border-border/50 rounded-md px-3 py-2 text-sm text-foreground placeholder-slate-500 mb-3 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500/50"
         rows={2}
         aria-label="Approval comment"
         data-testid={`agent-chat-hitl-${checkpoint.id}-comment-input`}
@@ -146,7 +146,7 @@ function HITLCard({ checkpoint, onRespond }: HITLCardProps) {
           Approve
         </Button>
         <Button
-          variant="danger"
+          variant="destructive"
           size="sm"
           onClick={() => onRespond(checkpoint.id, false, comment || undefined)}
           data-testid={`agent-chat-hitl-${checkpoint.id}-reject-button`}
@@ -182,16 +182,16 @@ function MessageBubble({ message }: MessageBubbleProps) {
         className={clsx(
           "w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5",
           isUser
-            ? "bg-blue-600/30 border border-blue-500/30"
+            ? "bg-primary/30 border border-primary/30"
             : isSystem
               ? "bg-amber-600/30 border border-amber-500/30"
-              : "bg-slate-700 border border-slate-600",
+              : "bg-muted border border-border",
         )}
       >
         {isUser ? (
-          <User className="w-3.5 h-3.5 text-blue-400" aria-hidden="true" />
+          <User className="w-3.5 h-3.5 text-primary" aria-hidden="true" />
         ) : (
-          <Bot className="w-3.5 h-3.5 text-slate-300" aria-hidden="true" />
+          <Bot className="w-3.5 h-3.5 text-foreground" aria-hidden="true" />
         )}
       </div>
 
@@ -200,10 +200,10 @@ function MessageBubble({ message }: MessageBubbleProps) {
         className={clsx(
           "max-w-[80%] rounded-xl px-4 py-2.5 text-sm leading-relaxed",
           isUser
-            ? "bg-blue-600/20 border border-blue-500/20 text-slate-100"
+            ? "bg-primary/20 border border-primary/20 text-foreground"
             : isSystem
               ? "bg-amber-500/10 border border-amber-500/20 text-amber-200"
-              : "bg-slate-800/80 border border-slate-700/40 text-slate-200",
+              : "bg-accent/80 border border-border/40 text-foreground",
           !isUser && "font-mono text-[13px]",
         )}
       >
@@ -310,17 +310,17 @@ export function AgentChat({ investigationId }: AgentChatProps) {
             data-testid="agent-chat-loading"
           >
             <Loader2
-              className="w-6 h-6 text-slate-500 animate-spin"
+              className="w-6 h-6 text-muted-foreground animate-spin"
               aria-label="Loading chat history"
             />
           </div>
         ) : displayMessages.length === 0 ? (
           <div
-            className="flex flex-col items-center justify-center h-full text-slate-500"
+            className="flex flex-col items-center justify-center h-full text-muted-foreground"
             data-testid="agent-chat-empty"
           >
-            <Bot className="w-10 h-10 mb-3 text-slate-600" aria-hidden="true" />
-            <p className="text-sm font-medium text-slate-400">
+            <Bot className="w-10 h-10 mb-3 text-muted-foreground/60" aria-hidden="true" />
+            <p className="text-sm font-medium text-muted-foreground">
               Investigation Agent
             </p>
             <p className="text-xs mt-1">
@@ -348,16 +348,16 @@ export function AgentChat({ investigationId }: AgentChatProps) {
             className="flex items-center gap-3 animate-slide-in"
             data-testid="agent-chat-thinking"
           >
-            <div className="w-7 h-7 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center">
-              <Bot className="w-3.5 h-3.5 text-slate-300" aria-hidden="true" />
+            <div className="w-7 h-7 rounded-full bg-muted border border-border flex items-center justify-center">
+              <Bot className="w-3.5 h-3.5 text-foreground" aria-hidden="true" />
             </div>
-            <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700/40 rounded-xl px-4 py-3">
+            <div className="flex items-center gap-2 bg-accent/80 border border-border/40 rounded-xl px-4 py-3">
               <div className="flex gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:0ms]" />
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:150ms]" />
                 <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce [animation-delay:300ms]" />
               </div>
-              <span className="text-xs text-slate-500 ml-1">Thinking...</span>
+              <span className="text-xs text-muted-foreground ml-1">Thinking...</span>
             </div>
           </div>
         )}
@@ -366,7 +366,7 @@ export function AgentChat({ investigationId }: AgentChatProps) {
       </div>
 
       {/* Input bar */}
-      <div className="shrink-0 border-t border-slate-700/50 p-4 bg-slate-900/50">
+      <div className="shrink-0 border-t border-border/50 p-4 bg-card/50">
         <form
           onSubmit={handleSend}
           className="flex items-end gap-3"
@@ -379,7 +379,7 @@ export function AgentChat({ investigationId }: AgentChatProps) {
             onKeyDown={handleKeyDown}
             placeholder="Send a message to the agent..."
             rows={1}
-            className="flex-1 bg-slate-800 border border-slate-600/50 rounded-lg px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-colors max-h-32 overflow-y-auto"
+            className="flex-1 bg-accent border border-border/50 rounded-lg px-4 py-2.5 text-sm text-foreground placeholder-slate-500 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-primary/50 transition-colors max-h-32 overflow-y-auto"
             style={{
               minHeight: "40px",
               height: "auto",
@@ -389,7 +389,7 @@ export function AgentChat({ investigationId }: AgentChatProps) {
           />
           <Button
             type="submit"
-            size="md"
+            
             disabled={!inputValue.trim() || isStreaming}
             className="shrink-0"
             aria-label="Send message"

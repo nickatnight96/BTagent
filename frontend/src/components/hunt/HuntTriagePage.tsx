@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Crosshair, ShieldOff, ArrowUpRight, RefreshCw, Eye, EyeOff } from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
-import { SeverityBadge } from "@/components/ui/Badge";
+import { SeverityBadge } from "@/components/ds/severity-badge";
 import type { HuntFinding, HuntFindingCluster } from "@/types/hunt";
 import { useHuntStore, groupFindingsByCluster } from "@/stores/huntStore";
 import { SuppressModal } from "./SuppressModal";

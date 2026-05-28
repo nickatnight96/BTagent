@@ -1,9 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Search, Filter, Loader2, AlertTriangle } from "lucide-react";
+import {
+  Plus,
+  Search as SearchIcon,
+  Filter,
+  Loader2,
+  AlertTriangle,
+} from "lucide-react";
 import { useInvestigationStore } from "@/stores/investigationStore";
 import { InvestigationStatus } from "@/types/config";
 import { Header } from "@/components/layout/Header";
-import { Button } from "@/components/ui/Button";
+import { Button } from "@/components/ds/button";
+import { Input } from "@/components/ds/input";
+import { cn } from "@/lib/utils";
 import { InvestigationCard } from "./InvestigationCard";
 import { NewInvestigationModal } from "./NewInvestigationModal";
 
@@ -56,31 +64,32 @@ export function InvestigationList() {
     <>
       <Header title="PunchList" />
 
-      <div className="flex-1 overflow-y-auto p-6" data-testid="investigation-list">
+      <div
+        className="flex-1 overflow-y-auto p-6"
+        data-testid="investigation-list"
+      >
         {/* Toolbar */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3 flex-1 w-full md:w-auto">
-            {/* Search */}
             <div className="relative flex-1 max-w-md">
-              <Search
-                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500"
+              <SearchIcon
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground"
                 aria-hidden="true"
               />
-              <input
+              <Input
                 type="text"
                 placeholder="Search investigations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 aria-label="Search investigations"
                 data-testid="investigation-list-search-input"
-                className="w-full bg-slate-900 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 transition-colors"
+                className="pl-10"
               />
             </div>
 
-            {/* Refresh */}
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={handleRefresh}
               aria-label="Refresh investigation list"
               data-testid="investigation-list-refresh-button"
@@ -89,40 +98,45 @@ export function InvestigationList() {
             </Button>
           </div>
 
-          {/* New Investigation */}
           <Button
             onClick={() => setShowNewModal(true)}
-            size="md"
             data-testid="investigation-list-new-button"
           >
-            <Plus className="w-4 h-4" aria-hidden="true" />
+            <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
             New Investigation
           </Button>
         </div>
 
-        {/* Status filter tabs */}
+        {/* Status filter tabs (custom pill row instead of Tabs for now —
+         * preserves keyboard/aria behaviour of the existing component) */}
         <div
           className="flex items-center gap-1 mb-6 overflow-x-auto pb-2"
           role="tablist"
           aria-label="Filter by status"
           data-testid="investigation-list-filters"
         >
-          {statusFilters.map((filter) => (
-            <button
-              key={filter.value}
-              onClick={() => setStatusFilter(filter.value)}
-              role="tab"
-              aria-selected={statusFilter === filter.value}
-              data-testid={`investigation-list-filter-${filter.value || "all"}`}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                statusFilter === filter.value
-                  ? "bg-blue-600/20 text-blue-400 border border-blue-500/30"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-transparent"
-              }`}
-            >
-              {filter.label}
-            </button>
-          ))}
+          {statusFilters.map((filter) => {
+            const active = statusFilter === filter.value;
+            return (
+              <button
+                key={filter.value}
+                onClick={() => setStatusFilter(filter.value)}
+                role="tab"
+                aria-selected={active}
+                data-testid={`investigation-list-filter-${
+                  filter.value || "all"
+                }`}
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors border",
+                  active
+                    ? "bg-primary/10 text-primary border-primary/30"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent border-transparent"
+                )}
+              >
+                {filter.label}
+              </button>
+            );
+          })}
         </div>
 
         {/* Content */}
@@ -132,18 +146,18 @@ export function InvestigationList() {
             data-testid="investigation-list-loading"
           >
             <Loader2
-              className="w-8 h-8 text-slate-500 animate-spin"
+              className="w-8 h-8 text-muted-foreground animate-spin"
               aria-label="Loading investigations"
             />
           </div>
         ) : error ? (
           <div
-            className="flex flex-col items-center justify-center py-20 text-slate-400"
+            className="flex flex-col items-center justify-center py-20 text-muted-foreground"
             role="alert"
             data-testid="investigation-list-error"
           >
             <AlertTriangle
-              className="w-10 h-10 text-amber-500 mb-3"
+              className="w-10 h-10 text-severity-medium mb-3"
               aria-hidden="true"
             />
             <p className="text-sm">{error}</p>
@@ -159,17 +173,17 @@ export function InvestigationList() {
           </div>
         ) : filteredInvestigations.length === 0 ? (
           <div
-            className="flex flex-col items-center justify-center py-20 text-slate-400"
+            className="flex flex-col items-center justify-center py-20 text-muted-foreground"
             data-testid="investigation-list-empty"
           >
-            <Search
-              className="w-10 h-10 text-slate-600 mb-3"
+            <SearchIcon
+              className="w-10 h-10 text-muted-foreground/50 mb-3"
               aria-hidden="true"
             />
-            <p className="text-sm font-medium text-slate-300">
+            <p className="text-sm font-medium text-foreground">
               No investigations found
             </p>
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {searchQuery || statusFilter
                 ? "Try adjusting your filters"
                 : "Create your first investigation to get started"}
@@ -181,7 +195,7 @@ export function InvestigationList() {
                 className="mt-4"
                 data-testid="investigation-list-empty-new-button"
               >
-                <Plus className="w-4 h-4" aria-hidden="true" />
+                <Plus className="w-4 h-4 mr-2" aria-hidden="true" />
                 New Investigation
               </Button>
             )}
@@ -201,7 +215,6 @@ export function InvestigationList() {
         )}
       </div>
 
-      {/* New Investigation Modal */}
       <NewInvestigationModal open={showNewModal} onOpenChange={setShowNewModal} />
     </>
   );

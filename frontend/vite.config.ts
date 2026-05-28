@@ -22,4 +22,19 @@ export default defineConfig({
       },
     },
   },
+  // ``vite preview`` (used by the E2E job to serve the prod bundle) needs its
+  // own proxy block — it does not reliably inherit ``server.proxy`` across
+  // Vite versions. Mirror the dev proxy so the served SPA reaches the backend.
+  preview: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:8000",
+        changeOrigin: true,
+      },
+      "/ws": {
+        target: "ws://localhost:8000",
+        ws: true,
+      },
+    },
+  },
 });

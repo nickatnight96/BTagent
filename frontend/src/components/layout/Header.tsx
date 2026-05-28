@@ -1,10 +1,12 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut, User, Menu } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { useUIStore } from "@/stores/uiStore";
-import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ds/badge";
+import { Button } from "@/components/ds/button";
+import { Avatar, AvatarFallback } from "@/components/ds/avatar";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 interface HeaderProps {
   title: string;
@@ -20,47 +22,56 @@ export function Header({ title }: HeaderProps) {
     navigate("/login", { replace: true });
   }, [logout, navigate]);
 
+  const initials = (user?.username ?? "")
+    .split(/[\s._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? "")
+    .join("") || "U";
+
   return (
     <header
-      className="flex items-center justify-between h-16 px-6 bg-slate-900/80 backdrop-blur-sm border-b border-slate-700/50 shrink-0"
+      className="flex items-center justify-between h-16 px-6 bg-card/80 backdrop-blur-sm border-b border-border shrink-0"
       data-testid="header"
     >
       <div className="flex items-center gap-4">
         {/* Mobile menu toggle */}
-        <button
+        <Button
+          variant="ghost"
+          size="icon"
           onClick={toggleSidebar}
-          className="md:hidden text-slate-400 hover:text-slate-200 p-1"
+          className="md:hidden"
           aria-label="Toggle navigation menu"
           data-testid="header-menu-toggle"
         >
           <Menu className="w-5 h-5" />
-        </button>
+        </Button>
 
         <h1
-          className="text-lg font-semibold text-slate-100"
+          className="text-lg font-semibold text-foreground"
           data-testid="header-title"
         >
           {title}
         </h1>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2">
+        <ThemeToggle />
         {user && (
           <div className="flex items-center gap-3" data-testid="header-user">
             {/* User info */}
             <div className="hidden sm:flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center">
-                <User className="w-4 h-4 text-slate-300" aria-hidden="true" />
-              </div>
-              <div className="text-sm">
-                <span
-                  className="text-slate-200 font-medium"
-                  data-testid="header-user-name"
-                >
-                  {user.username}
-                </span>
-              </div>
+              <Avatar className="h-8 w-8">
+                <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+              </Avatar>
+              <span
+                className="text-sm text-foreground font-medium"
+                data-testid="header-user-name"
+              >
+                {user.username}
+              </span>
               <Badge
+                variant="secondary"
                 className="text-[10px] uppercase tracking-wider"
                 data-testid="header-user-role"
               >
@@ -73,11 +84,11 @@ export function Header({ title }: HeaderProps) {
               variant="ghost"
               size="sm"
               onClick={handleLogout}
-              className="text-slate-400 hover:text-red-400"
+              className="text-muted-foreground hover:text-destructive"
               aria-label="Sign out"
               data-testid="header-logout-button"
             >
-              <LogOut className="w-4 h-4" aria-hidden="true" />
+              <LogOut className="w-4 h-4 sm:mr-2" aria-hidden="true" />
               <span className="hidden sm:inline">Logout</span>
             </Button>
           </div>
