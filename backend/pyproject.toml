@@ -57,6 +57,11 @@ dev = [
 saml = [
     "pysaml2>=7.5.0",
     "defusedxml>=0.7.1",
+    # pysaml2 imports ``OpenSSL.crypto``; pyOpenSSL < 24.3.0 references
+    # ``X509_V_FLAG_NOTIFY_POLICY`` at class-definition time, a constant removed
+    # in OpenSSL 3.4 (present on older distros, GONE on current CI runners) — so
+    # an unpinned resolve crashes on import there. 24.3.0 dropped the reference.
+    "pyOpenSSL>=24.3.0",
 ]
 
 [build-system]
