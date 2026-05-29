@@ -46,14 +46,6 @@ const INTENTS: TypedIntent[] = [
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
 
-const SEV_VARIANT: Record<string, "critical" | "high" | "medium" | "low" | "info"> = {
-  critical: "critical",
-  high: "high",
-  medium: "medium",
-  low: "low",
-  info: "info",
-};
-
 const CATEGORY_VARIANT: Record<string, "destructive" | "medium" | "secondary"> = {
   contain: "destructive",
   investigate: "medium",
