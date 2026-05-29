@@ -49,6 +49,20 @@ dev = [
     "ruff>=0.15.10",
     "aiosqlite>=0.20.0",
 ]
+# SAML 2.0 SSO (#170) — optional extra. Pulls pysaml2 (which shells out to the
+# ``xmlsec1`` binary; the SAML-enabled Docker image + the ``saml-tests`` CI job
+# install ``libxmlsec1-dev``/``libxml2-dev``). The default slim image and
+# ``backend-tests`` job deliberately do NOT install this, and ``auth/saml.py``
+# lazy-imports pysaml2 so the core boots without it.
+saml = [
+    "pysaml2>=7.5.0",
+    "defusedxml>=0.7.1",
+    # pysaml2 imports ``OpenSSL.crypto``; pyOpenSSL < 24.3.0 references
+    # ``X509_V_FLAG_NOTIFY_POLICY`` at class-definition time, a constant removed
+    # in OpenSSL 3.4 (present on older distros, GONE on current CI runners) — so
+    # an unpinned resolve crashes on import there. 24.3.0 dropped the reference.
+    "pyOpenSSL>=24.3.0",
+]
 
 [build-system]
 requires = ["hatchling"]
