@@ -142,3 +142,68 @@ class WorkflowVersionListResponse(BaseModel):
 
     items: list[WorkflowVersionResponse]
     total: int
+
+
+# --------------------------------------------------------------------------- #
+# Execution / run history (Phase 2 — workflow run API)
+# --------------------------------------------------------------------------- #
+
+
+class WorkflowRunStatus(StrEnum):
+    """Terminal (or, for the async follow-up, transitional) state of a run.
+
+    The synchronous v1 API only ever persists the three terminal states;
+    ``PENDING`` / ``RUNNING`` are reserved for the async/checkpoint path.
+
+    * ``SUCCEEDED`` — the executor walked to a terminal leaf without error.
+    * ``FAILED`` — a structural or node error stopped the walk.
+    * ``PAUSED`` — a HITL gate suspended the run pending human approval
+      (resume is a later sprint).
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    PAUSED = "paused"
+
+
+class RunWorkflowRequest(BaseModel):
+    """Body for ``POST /workflows/{id}/versions/{n}/run``.
+
+    ``trigger_payload`` is the workflow's input arguments — it flows into
+    the entry node and is referenceable from any step's ``{{ ... }}``
+    templates throughout the graph.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trigger_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorkflowRunResponse(BaseModel):
+    """A single execution record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    workflow_id: str
+    version_id: str
+    version_number: int
+    org_id: str
+    triggered_by: str | None
+    status: WorkflowRunStatus
+    trigger_payload: dict[str, Any]
+    outputs: dict[str, Any]
+    final_output: dict[str, Any] | None
+    nodes_executed: list[str]
+    error: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class WorkflowRunListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[WorkflowRunResponse]
+    total: int

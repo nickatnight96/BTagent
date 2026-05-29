@@ -14,10 +14,14 @@ import logging
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
+    RunWorkflowRequest,
     UpdateWorkflowRequest,
     UpdateWorkflowVersionRequest,
     WorkflowListResponse,
     WorkflowResponse,
+    WorkflowRunListResponse,
+    WorkflowRunResponse,
+    WorkflowRunStatus,
     WorkflowVersionListResponse,
     WorkflowVersionResponse,
     WorkflowVersionState,
@@ -26,8 +30,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
-from btagent_backend.db.models_workflow import WorkflowRow, WorkflowVersionRow
-from btagent_backend.services import workflow_service
+from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow, WorkflowVersionRow
+from btagent_backend.services import workflow_run_service, workflow_service
+from btagent_backend.services.workflow_run_service import WorkflowNotExecutable
 
 logger = logging.getLogger("btagent.api.workflows")
 
@@ -91,6 +96,25 @@ async def _load_version_scoped(
     if version is None:
         raise HTTPException(status_code=404, detail="Workflow version not found")
     return version
+
+
+def _to_run_response(row: WorkflowRunRow) -> WorkflowRunResponse:
+    return WorkflowRunResponse(
+        id=row.id,
+        workflow_id=row.workflow_id,
+        version_id=row.version_id,
+        version_number=row.version_number,
+        org_id=row.org_id,
+        triggered_by=row.triggered_by,
+        status=WorkflowRunStatus(row.status),
+        trigger_payload=row.trigger_payload or {},
+        outputs=row.outputs or {},
+        final_output=row.final_output,
+        nodes_executed=row.nodes_executed or [],
+        error=row.error,
+        created_at=row.created_at,
+        completed_at=row.completed_at,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -294,3 +318,79 @@ async def deprecate_version(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return _to_version_response(version)
+
+
+# --------------------------------------------------------------------------- #
+# Execution + run history
+# --------------------------------------------------------------------------- #
+
+
+@router.post(
+    "/{workflow_id}/versions/{version_number}/run",
+    response_model=WorkflowRunResponse,
+    status_code=201,
+)
+async def run_version(
+    workflow_id: str,
+    version_number: int,
+    body: RunWorkflowRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Execute a workflow version and persist a run record (UC: run API).
+
+    Runs synchronously and returns the terminal run (``succeeded`` /
+    ``failed`` / ``paused``). A 201 is returned even for a ``failed`` run:
+    the execution attempt produced a durable record. 422 is reserved for
+    the case where the version isn't a runnable graph at all (empty /
+    malformed definition).
+    """
+    user.require_permission("workflow:run")
+    wf = await _load_workflow_scoped(db, workflow_id, user)
+    version = await _load_version_scoped(db, wf, version_number)
+    try:
+        run = await workflow_run_service.execute_version(
+            db,
+            workflow=wf,
+            version=version,
+            trigger_payload=body.trigger_payload,
+            triggered_by=user.id,
+        )
+    except WorkflowNotExecutable as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return _to_run_response(run)
+
+
+@router.get("/{workflow_id}/runs", response_model=WorkflowRunListResponse)
+async def list_runs(
+    workflow_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """List execution history for a workflow (newest first)."""
+    user.require_permission("workflow:view")
+    wf = await _load_workflow_scoped(db, workflow_id, user)
+    rows, total = await workflow_run_service.list_runs(
+        db, workflow_id=wf.id, page=page, page_size=page_size
+    )
+    return WorkflowRunListResponse(items=[_to_run_response(r) for r in rows], total=total)
+
+
+@router.get("/{workflow_id}/runs/{run_id}", response_model=WorkflowRunResponse)
+async def get_run(
+    workflow_id: str,
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Fetch a single run record."""
+    user.require_permission("workflow:view")
+    wf = await _load_workflow_scoped(db, workflow_id, user)
+    run = await workflow_run_service.get_run(db, run_id=run_id)
+    # 404 (not 403) on cross-workflow / cross-tenant access — same posture
+    # as the workflow IDOR mitigation above.
+    if run is None or run.workflow_id != wf.id or run.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    return _to_run_response(run)
