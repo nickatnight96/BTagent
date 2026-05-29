@@ -82,6 +82,12 @@ PERMISSIONS: dict[str, UserRole] = {
     "workflow:edit": UserRole.SENIOR_ANALYST,
     "workflow:publish": UserRole.SENIOR_ANALYST,
     "workflow:deprecate": UserRole.ADMIN,
+    # Running a workflow version is an analyst capability (per the redesign:
+    # analysts consume/run, senior analysts author). v1 execution is
+    # middleware-free and only resolves backend-registered reasoning/data
+    # nodes (advisory/read-only) — integration nodes that would call out
+    # aren't registered, so a run can't execute an unexpected side effect.
+    "workflow:run": UserRole.ANALYST,
     # Proactive threat hunting (Phase 6)
     # Analysts browse + triage the hunt inbox; suppressing noise and
     # promoting a finding into a full investigation are senior actions
