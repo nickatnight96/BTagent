@@ -17,6 +17,7 @@ from btagent_backend.api.v1.playbooks import router as playbooks_router
 from btagent_backend.api.v1.reports import router as reports_router
 from btagent_backend.api.v1.sso import router as sso_router
 from btagent_backend.api.v1.tlp_policies import router as tlp_policies_router
+from btagent_backend.api.v1.triage import router as triage_router
 from btagent_backend.api.v1.webhooks import router as webhooks_router
 from btagent_backend.api.v1.workflows import router as workflows_router
 
@@ -35,6 +36,7 @@ api_v1_router.include_router(playbooks_router)
 api_v1_router.include_router(reports_router)
 api_v1_router.include_router(sso_router)
 api_v1_router.include_router(tlp_policies_router)
+api_v1_router.include_router(triage_router)
 api_v1_router.include_router(webhooks_router)
 api_v1_router.include_router(workflows_router)
 

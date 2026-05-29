@@ -86,6 +86,10 @@ PERMISSIONS: dict[str, UserRole] = {
     # Hunt package + correlation workbench (UC-1.2 / UC-2.2): read-only
     # engine-backed pivots and advisory triage — analysts run these directly.
     "hunt:run": UserRole.ANALYST,
+    # Alert triage (EPIC-3 UC-3.1): read-only auto-classification of an
+    # alert into a reviewed case. Tier 1-2 analysts run it directly; the
+    # node executes nothing, so this is a plain analyst capability.
+    "triage:run": UserRole.ANALYST,
     # Audit ledger (UC-7.1): read-only forensics surface over the SHA-256
     # hash-chain audit log. Senior analysts consume the ledger + lineage for
     # IR/forensics; CSV export for external auditors is admin-only.
