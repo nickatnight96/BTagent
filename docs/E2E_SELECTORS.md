@@ -102,6 +102,25 @@ These are the words tests will reach for first. Stay consistent:
   <textarea data-testid="agent-chat-input" />
   <button data-testid="agent-chat-send-button">Send</button>
 </div>
+
+<!-- SSO account linking (#169) — admin-only surface. The nav item is
+     rendered only for admins. -->
+<button data-testid="nav-sso-identities-link">SSO Linking</button>
+<div data-testid="sso-identities">
+  <div data-testid="sso-identities-error" role="alert">{message}</div>
+  <input data-testid="sso-identities-user-input" />
+  <button data-testid="sso-identities-load-button">Load identities</button>
+  <div data-testid="sso-identities-link-form">
+    <input data-testid="sso-identities-provider-input" />
+    <input data-testid="sso-identities-subject-input" />
+    <input data-testid="sso-identities-email-input" />
+    <button data-testid="sso-identities-link-button">Link identity</button>
+  </div>
+  <table data-testid="sso-identities-table">
+    <!-- One unlink button per linked identity -->
+    <button data-testid={`sso-identities-unlink-${identity.id}`} />
+  </table>
+</div>
 ```
 
 ## Aria-labels
