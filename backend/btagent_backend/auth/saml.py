@@ -95,6 +95,7 @@ def _load_saml() -> None:
         from saml2 import BINDING_HTTP_POST, BINDING_HTTP_REDIRECT
         from saml2.client import Saml2Client
         from saml2.config import SPConfig
+        from saml2.metadata import entity_descriptor
         from saml2.sigver import get_xmlsec_binary
     except ImportError as exc:  # pragma: no cover - exercised via the 503 path
         raise SAMLNotInstalledError(
@@ -107,6 +108,7 @@ def _load_saml() -> None:
         BINDING_HTTP_REDIRECT=BINDING_HTTP_REDIRECT,
         Saml2Client=Saml2Client,
         SPConfig=SPConfig,
+        entity_descriptor=entity_descriptor,
         get_xmlsec_binary=get_xmlsec_binary,
     )
     _saml_loaded = True
@@ -203,11 +205,16 @@ async def fetch_metadata(provider_key: str, cfg: SAMLProviderConfig) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _sp_config_dict(cfg: SAMLProviderConfig, idp_metadata_xml: str) -> dict:
-    """Build the pysaml2 SPConfig dict for ``cfg`` against the IdP metadata."""
+def _sp_config_dict(cfg: SAMLProviderConfig, idp_metadata_xml: str | None) -> dict:
+    """Build the pysaml2 SPConfig dict for ``cfg``.
+
+    ``idp_metadata_xml`` is required for the login/ACS flows (the SP needs the
+    IdP cert to validate signatures); it is ``None`` only for SP-metadata
+    *generation*, which describes ourselves and needs no IdP.
+    """
     BINDING_HTTP_POST = _saml["BINDING_HTTP_POST"]
     get_xmlsec_binary = _saml["get_xmlsec_binary"]
-    return {
+    conf: dict = {
         "entityid": cfg.sp_entity_id,
         "service": {
             "sp": {
@@ -224,11 +231,27 @@ def _sp_config_dict(cfg: SAMLProviderConfig, idp_metadata_xml: str) -> dict:
                 "name_id_format": cfg.name_id_format,
             },
         },
-        "metadata": {"inline": [idp_metadata_xml]},
         "xmlsec_binary": get_xmlsec_binary(),
         # IdPs vary wildly in which attributes they emit; don't reject unknowns.
         "allow_unknown_attributes": True,
     }
+    if idp_metadata_xml is not None:
+        conf["metadata"] = {"inline": [idp_metadata_xml]}
+    return conf
+
+
+def generate_sp_metadata(cfg: SAMLProviderConfig) -> str:
+    """Return this SP's ``EntityDescriptor`` XML (served at ``/metadata``).
+
+    Operators register this with the IdP. It describes our ACS endpoint +
+    AssertionsSigned posture and needs no IdP metadata.
+    """
+    _load_saml()
+    SPConfig = _saml["SPConfig"]
+    entity_descriptor = _saml["entity_descriptor"]
+    conf = SPConfig()
+    conf.load(_sp_config_dict(cfg, None))
+    return entity_descriptor(conf).to_string().decode()
 
 
 def _build_client(cfg: SAMLProviderConfig, idp_metadata_xml: str):
