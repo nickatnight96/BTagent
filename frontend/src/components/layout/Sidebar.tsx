@@ -16,6 +16,7 @@ import {
   ScrollText,
   Lock,
   ShieldAlert,
+  Siren,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -81,6 +82,12 @@ const navItems: NavItem[] = [
     path: "/triage",
     icon: <ShieldAlert className="w-5 h-5" />,
     testId: "nav-triage-link",
+  },
+  {
+    label: "Response Plan",
+    path: "/response-plan",
+    icon: <Siren className="w-5 h-5" />,
+    testId: "nav-response-plan-link",
   },
   {
     label: "Playbooks",

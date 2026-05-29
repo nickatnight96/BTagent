@@ -90,6 +90,12 @@ PERMISSIONS: dict[str, UserRole] = {
     # alert into a reviewed case. Tier 1-2 analysts run it directly; the
     # node executes nothing, so this is a plain analyst capability.
     "triage:run": UserRole.ANALYST,
+    # Response playbook (EPIC-3 UC-3.2): generate a dual-path containment plan
+    # (proposal only — nothing executes). Parallel to ``containment:propose``:
+    # proposing a plan is an analyst capability; approving/executing the
+    # destructive steps is gated separately (``containment:approve`` /
+    # ``containment:execute`` = incident_commander).
+    "response:plan": UserRole.ANALYST,
     # Audit ledger (UC-7.1): read-only forensics surface over the SHA-256
     # hash-chain audit log. Senior analysts consume the ledger + lineage for
     # IR/forensics; CSV export for external auditors is admin-only.
