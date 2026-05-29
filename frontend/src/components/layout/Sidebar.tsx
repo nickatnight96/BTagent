@@ -15,6 +15,7 @@ import {
   Network,
   ScrollText,
   Lock,
+  ShieldAlert,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,12 @@ const navItems: NavItem[] = [
     path: "/correlate",
     icon: <Network className="w-5 h-5" />,
     testId: "nav-correlate-link",
+  },
+  {
+    label: "Alert Triage",
+    path: "/triage",
+    icon: <ShieldAlert className="w-5 h-5" />,
+    testId: "nav-triage-link",
   },
   {
     label: "Playbooks",

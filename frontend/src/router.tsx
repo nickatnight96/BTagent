@@ -43,6 +43,11 @@ const CorrelationPage = lazy(() =>
     default: m.CorrelationPage,
   })),
 );
+const AlertTriagePage = lazy(() =>
+  import("@/components/triage/AlertTriagePage").then((m) => ({
+    default: m.AlertTriagePage,
+  })),
+);
 const PlaybookList = lazy(() =>
   import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
 );
@@ -129,6 +134,10 @@ export const router = createBrowserRouter([
       {
         path: "correlate",
         element: lazyRoute(CorrelationPage),
+      },
+      {
+        path: "triage",
+        element: lazyRoute(AlertTriagePage),
       },
       {
         path: "playbooks",

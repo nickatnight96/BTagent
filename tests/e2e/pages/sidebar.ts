@@ -17,6 +17,7 @@ export class Sidebar {
   readonly knowledgeLink: Locator;
   readonly huntsLink: Locator;
   readonly correlateLink: Locator;
+  readonly triageLink: Locator;
   readonly playbooksLink: Locator;
   readonly auditLink: Locator;
   readonly policiesLink: Locator;
@@ -34,6 +35,7 @@ export class Sidebar {
     this.knowledgeLink = page.getByTestId("nav-knowledge-link");
     this.huntsLink = page.getByTestId("nav-hunts-link");
     this.correlateLink = page.getByTestId("nav-correlate-link");
+    this.triageLink = page.getByTestId("nav-triage-link");
     this.playbooksLink = page.getByTestId("nav-playbooks-link");
     this.auditLink = page.getByTestId("nav-audit-link");
     this.policiesLink = page.getByTestId("nav-policies-link");
@@ -69,6 +71,11 @@ export class Sidebar {
   async goToCorrelate(): Promise<void> {
     await this.correlateLink.click();
     await this.page.waitForURL("**/correlate", { timeout: 5_000 });
+  }
+
+  async goToTriage(): Promise<void> {
+    await this.triageLink.click();
+    await this.page.waitForURL("**/triage", { timeout: 5_000 });
   }
 
   async goToPlaybooks(): Promise<void> {
