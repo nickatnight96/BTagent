@@ -197,6 +197,9 @@ class WorkflowRunResponse(BaseModel):
     outputs: dict[str, Any]
     final_output: dict[str, Any] | None
     nodes_executed: list[str]
+    # Hash-linked audit trail (one entry per successful node run). Each
+    # entry is the JSON form of an engine ``EvidenceRecord``.
+    evidence_chain: list[dict[str, Any]] = Field(default_factory=list)
     error: str | None
     created_at: datetime
     completed_at: datetime | None

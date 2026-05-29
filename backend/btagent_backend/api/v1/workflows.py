@@ -111,6 +111,7 @@ def _to_run_response(row: WorkflowRunRow) -> WorkflowRunResponse:
         outputs=row.outputs or {},
         final_output=row.final_output,
         nodes_executed=row.nodes_executed or [],
+        evidence_chain=row.evidence_chain or [],
         error=row.error,
         created_at=row.created_at,
         completed_at=row.completed_at,
