@@ -91,6 +91,7 @@ async def test_advisory_run_records_evidence_chain(db_session: AsyncSession, sam
         version=version,
         trigger_payload={"payload": {"foo": "bar"}},
         triggered_by=sample_user.id,
+        active_tlp=TLP.GREEN,
     )
     assert run.status == WorkflowRunStatus.SUCCEEDED.value
     assert run.nodes_executed == ["t1"]

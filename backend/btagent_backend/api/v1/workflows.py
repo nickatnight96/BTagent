@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 
+from btagent_shared.types.config import TLP
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
@@ -345,6 +346,12 @@ async def run_version(
     the execution attempt produced a durable record. 422 is reserved for
     the case where the version isn't a runnable graph at all (empty /
     malformed definition).
+
+    **TLP fail-closed:** when ``body.active_tlp`` is omitted we default to
+    ``TLP.RED`` (most restrictive) so an unconfigured caller cannot bypass
+    the per-capability egress gate by silence. Callers triggering a run
+    from a classified investigation must pass that investigation's
+    classification on the request body.
     """
     user.require_permission("workflow:run")
     wf = await _load_workflow_scoped(db, workflow_id, user)
@@ -356,6 +363,7 @@ async def run_version(
             version=version,
             trigger_payload=body.trigger_payload,
             triggered_by=user.id,
+            active_tlp=body.active_tlp if body.active_tlp is not None else TLP.RED,
         )
     except WorkflowNotExecutable as exc:
         raise HTTPException(status_code=422, detail=str(exc))

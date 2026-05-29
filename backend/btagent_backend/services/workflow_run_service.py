@@ -152,7 +152,7 @@ async def execute_version(
     version: WorkflowVersionRow,
     trigger_payload: dict[str, Any],
     triggered_by: str | None,
-    active_tlp: TLP = TLP.GREEN,
+    active_tlp: TLP,
     agent_autonomy: AutonomyLevel = AutonomyLevel.L2_SUPERVISED,
     integration_autonomy: IntegrationAutonomy | None = None,
 ) -> WorkflowRunRow:
@@ -163,10 +163,16 @@ async def execute_version(
     raised — they're captured on the persisted row as ``status=failed``
     so the analyst gets a durable, queryable record of the failure.
 
-    ``active_tlp`` / ``agent_autonomy`` / ``integration_autonomy`` carry
-    the run's security posture into the middleware chain. Defaults are
-    the standard supervised analyst run (TLP:GREEN, L2 agent); production
-    callers (e.g. an investigation that's classified) should override.
+    ``active_tlp`` is **required** and carries the run's classification
+    context into the middleware chain. A default would silently weaken
+    the TLP egress check: a workflow on a TLP:AMBER_STRICT investigation
+    that calls an AMBER-only cloud lookup must be refused, not run under
+    an inferred GREEN. Callers must pass the classification of the
+    triggering context (the API route defaults to TLP:RED — fail-closed
+    — when the request body doesn't specify it).
+    ``agent_autonomy`` / ``integration_autonomy`` default to the
+    standard supervised analyst posture (L2 agent + the
+    :class:`IntegrationAutonomy` defaults).
     """
     wf = _load_workflow(version)  # may raise WorkflowNotExecutable (pre-flight)
 
