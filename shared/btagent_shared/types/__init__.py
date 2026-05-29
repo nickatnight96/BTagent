@@ -98,6 +98,12 @@ from btagent_shared.types.query_ir import (
     QueryCondition,
     QueryIR,
 )
+from btagent_shared.types.response import (
+    ResponseAction,
+    ResponseActionType,
+    ResponseCategory,
+    ResponsePlan,
+)
 from btagent_shared.types.retrohunt import RetroHuntReport, Sighting
 from btagent_shared.types.triage import (
     Alert,
@@ -153,6 +159,11 @@ __all__ = [
     "TriageDisposition",
     "TriageResult",
     "TypedIntent",
+    # Response-plan types (EPIC-3 UC-3.2)
+    "ResponseAction",
+    "ResponseActionType",
+    "ResponseCategory",
+    "ResponsePlan",
     # Playbook types
     "ActionStep",
     "DecisionStep",

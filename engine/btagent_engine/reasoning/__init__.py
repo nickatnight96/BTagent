@@ -53,6 +53,11 @@ from btagent_engine.reasoning.query_translate import (
     QueryTranslateOutput,
     TranslateMode,
 )
+from btagent_engine.reasoning.response_plan import (
+    ResponsePlanInput,
+    ResponsePlanNode,
+    ResponsePlanOutput,
+)
 from btagent_engine.reasoning.retro_hunt import (
     RetroHuntInput,
     RetroHuntNode,
@@ -89,4 +94,7 @@ __all__ = [
     "QueryTranslateNode",
     "QueryTranslateOutput",
     "TranslateMode",
+    "ResponsePlanInput",
+    "ResponsePlanNode",
+    "ResponsePlanOutput",
 ]
