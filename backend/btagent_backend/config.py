@@ -67,6 +67,70 @@ class OIDCProviderConfig(BaseModel):
     default_role: str = "analyst"
 
 
+class SAMLProviderConfig(BaseModel):
+    """Generic SAML 2.0 IdP config (#170, Phase 2).
+
+    One entry per IdP, keyed by the ``{provider}`` path segment used in the SAML
+    routes (``/auth/saml/{provider}/login``). The SP is configured here; the IdP
+    side is either auto-discovered from ``idp_metadata_url`` (preferred) or
+    specified manually via ``idp_entity_id`` + ``sso_url`` + ``x509cert``.
+
+    ``x509cert`` follows the ``${secret:...}`` / ``${env:...}`` injection pattern
+    — it is resolved lazily in ``auth/saml.py`` (never eagerly in config) so an
+    unresolved reference can't break app boot.
+
+    CI SAFETY: like ``OIDCProviderConfig``, this model is only ever populated
+    when an operator explicitly configures a provider. ``Settings.saml_providers``
+    defaults to an empty dict, so a backend with no SAML provider boots fine and
+    the SAML routes 404 for unknown providers. The per-provider validator below
+    runs ONLY on populated entries, so it never fires on the empty default.
+
+    Trust model: a SAML assertion has no ``email_verified`` analogue, so a
+    validly-*signed* assertion carrying an email attribute is treated as
+    verified (the signature is the IdP's non-repudiation guarantee). The
+    no-silent-link-to-password-account gate in ``_jit_provision`` still applies.
+    """
+
+    # --- IdP side: metadata URL (preferred) OR manual entity_id/sso_url/cert ---
+    idp_metadata_url: str | None = None
+    idp_entity_id: str | None = None
+    sso_url: str | None = None
+    # IdP signing certificate (PEM or base64 DER). ``${secret:...}`` ref allowed;
+    # resolved lazily at request time in ``auth/saml.py``.
+    x509cert: str | None = None
+
+    # --- SP side ---
+    # Our SP EntityID — MUST equal the assertion's AudienceRestriction/Audience.
+    sp_entity_id: str
+    # Absolute Assertion Consumer Service URL: .../auth/saml/{provider}/acs
+    acs_url: str
+    name_id_format: str = "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"
+
+    # --- attribute mapping ---
+    # SAML attribute Name carrying email; if None, email is derived from NameID.
+    email_attr: str | None = None
+    # SAML attribute Name carrying role/group membership (may be multi-valued).
+    role_attr: str = "Role"
+    role_map: dict[str, str] = Field(default_factory=dict)
+    default_role: str = "analyst"
+
+    # --- validation knobs ---
+    # Clock-skew tolerance (seconds) for NotBefore / NotOnOrAfter conditions.
+    assertion_skew_seconds: int = 60
+    # IdP metadata cache TTL (seconds).
+    metadata_ttl_seconds: int = 3600
+
+    @model_validator(mode="after")
+    def _validate_idp(self) -> "SAMLProviderConfig":
+        if not self.idp_metadata_url and not (
+            self.idp_entity_id and self.sso_url and self.x509cert
+        ):
+            raise ValueError(
+                "SAML provider needs idp_metadata_url OR (idp_entity_id + sso_url + x509cert)"
+            )
+        return self
+
+
 class Settings(BaseSettings):
     """BTagent backend configuration. Loaded from environment variables."""
 
@@ -131,6 +195,23 @@ class Settings(BaseSettings):
     #     "redirect_uri": "https://btagent.example.com/api/v1/auth/sso/okta/callback",
     #     "role_claim": "groups", "role_map": {"soc-admins": "admin"}}}'
     oidc_providers: dict[str, OIDCProviderConfig] = Field(default_factory=dict)
+
+    # Generic SAML 2.0 SSO (#170, Phase 2). Same shape + CI-safety contract as
+    # ``oidc_providers``: an EMPTY default dict, no validator that fails on
+    # emptiness, so test/CI boot is unaffected and unknown providers 404.
+    #
+    # SAML support is an OPTIONAL ``backend[saml]`` extra (pysaml2 + the xmlsec
+    # system libs); ``auth/saml.py`` lazy-imports it, so this config and app
+    # boot cost nothing on the slim image. A SAML route hit on an image without
+    # the extra returns 503.
+    #
+    # Populate from env as JSON, e.g.:
+    #   BTAGENT_SAML_PROVIDERS='{"okta": {
+    #     "idp_metadata_url": "https://acme.okta.com/app/abc/sso/saml/metadata",
+    #     "sp_entity_id": "https://btagent.example.com",
+    #     "acs_url": "https://btagent.example.com/api/v1/auth/saml/okta/acs",
+    #     "role_attr": "Role", "role_map": {"soc-admins": "admin"}}}'
+    saml_providers: dict[str, SAMLProviderConfig] = Field(default_factory=dict)
 
     # Frontend root the SSO callback 302-redirects to after establishing the
     # session. Defaults to "/" (same-origin SPA behind the API host/ingress).

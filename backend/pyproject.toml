@@ -49,6 +49,15 @@ dev = [
     "ruff>=0.15.10",
     "aiosqlite>=0.20.0",
 ]
+# SAML 2.0 SSO (#170) — optional extra. Pulls pysaml2 (which shells out to the
+# ``xmlsec1`` binary; the SAML-enabled Docker image + the ``saml-tests`` CI job
+# install ``libxmlsec1-dev``/``libxml2-dev``). The default slim image and
+# ``backend-tests`` job deliberately do NOT install this, and ``auth/saml.py``
+# lazy-imports pysaml2 so the core boots without it.
+saml = [
+    "pysaml2>=7.5.0",
+    "defusedxml>=0.7.1",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -319,36 +319,25 @@ async def verify_id_token(
 def map_role(provider: OIDCProviderConfig, claims: dict) -> str:
     """Map the configured ``role_claim`` value(s) → a BTagent role.
 
-    The claim may be a string or a list of strings (e.g. ``groups``). The first
-    value that has an entry in ``role_map`` wins; if none match (or the claim is
-    absent), ``provider.default_role`` (``analyst`` by default) is returned.
-
-    The result is validated against the BTagent ``UserRole`` enum — an
-    unrecognised mapped value falls back to ``default_role`` so a typo'd
-    ``role_map`` can never grant an invalid/elevated role.
+    The claim may be a string or a list of strings (e.g. ``groups``). The
+    actual resolution + ``UserRole`` validation lives in the shared
+    ``_role_map.resolve_role`` helper (also used by the SAML layer) so both SSO
+    protocols share identical, security-sensitive semantics.
     """
-    from btagent_shared.types.enums import UserRole
-
-    valid_roles = {r.value for r in UserRole}
-
-    def _coerce(role: str) -> str:
-        return role if role in valid_roles else provider.default_role
+    from btagent_backend.auth._role_map import resolve_role
 
     raw = claims.get(provider.role_claim)
     if raw is None:
-        return _coerce(provider.default_role)
-
-    values: list[str] = []
-    if isinstance(raw, str):
+        values: list[str] = []
+    elif isinstance(raw, str):
         values = [raw]
     elif isinstance(raw, (list, tuple)):
         values = [str(v) for v in raw]
     else:
         values = [str(raw)]
 
-    for value in values:
-        mapped = provider.role_map.get(value)
-        if mapped is not None:
-            return _coerce(mapped)
-
-    return _coerce(provider.default_role)
+    return resolve_role(
+        role_map=provider.role_map,
+        default_role=provider.default_role,
+        candidate_values=values,
+    )

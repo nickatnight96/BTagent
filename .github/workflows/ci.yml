@@ -205,6 +205,54 @@ jobs:
           path: coverage-*.xml
           retention-days: 7
 
+  # ── SAML Tests (optional backend[saml] extra) ────────
+  # Isolated job so the xmlsec system libs + pysaml2 never touch the slim
+  # ``backend-tests`` job (which runs test_saml.py too, but only its no-xmlsec
+  # "layer A" — the signed-assertion "layer B" auto-skips when pysaml2 is
+  # absent). Here we install the extra + the libs and run the FULL suite.
+  saml-tests:
+    name: SAML Tests
+    runs-on: ubuntu-latest
+    needs: [backend-tests]
+    env:
+      BTAGENT_ENV: test
+      BTAGENT_JWT_SECRET: ci-test-secret-not-for-production
+      BTAGENT_DATABASE_URL: sqlite+aiosqlite://
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install xmlsec system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxmlsec1-dev libxml2-dev libxmlsec1-openssl pkg-config xmlsec1
+
+      - name: Restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies (with the saml extra)
+        run: |
+          # test_saml.py only needs btagent_backend (config + auth), which
+          # depends on shared + engine — install those, then backend[dev,saml].
+          uv pip install --system -e shared/
+          uv pip install --system -e engine/
+          uv pip install --system -e "backend/[dev,saml]"
+
+      - name: Run SAML tests (full crypto suite)
+        run: pytest backend/tests/test_saml.py -v
+
   # ── Agent Evaluation ─────────────────────────────────
   agent-eval:
     name: Agent Evaluation
