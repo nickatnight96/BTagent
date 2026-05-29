@@ -53,6 +53,11 @@ const ResponsePlanPage = lazy(() =>
     default: m.ResponsePlanPage,
   })),
 );
+const BulkMitigationPage = lazy(() =>
+  import("@/components/mitigation/BulkMitigationPage").then((m) => ({
+    default: m.BulkMitigationPage,
+  })),
+);
 const PlaybookList = lazy(() =>
   import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
 );
@@ -147,6 +152,10 @@ export const router = createBrowserRouter([
       {
         path: "response-plan",
         element: lazyRoute(ResponsePlanPage),
+      },
+      {
+        path: "mitigation",
+        element: lazyRoute(BulkMitigationPage),
       },
       {
         path: "playbooks",

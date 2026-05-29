@@ -16,6 +16,12 @@ from btagent_engine.reasoning.alert_triage import (
     AlertTriageNode,
     AlertTriageOutput,
 )
+from btagent_engine.reasoning.bulk_mitigation import (
+    BulkMitigationInput,
+    BulkMitigationNode,
+    BulkMitigationOutput,
+    IOCRef,
+)
 from btagent_engine.reasoning.hunt_package import (
     HuntPackageInput,
     HuntPackageNode,
@@ -68,6 +74,10 @@ __all__ = [
     "AlertTriageInput",
     "AlertTriageNode",
     "AlertTriageOutput",
+    "BulkMitigationInput",
+    "BulkMitigationNode",
+    "BulkMitigationOutput",
+    "IOCRef",
     "HuntPackageInput",
     "HuntPackageNode",
     "HuntPackageOutput",

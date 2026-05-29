@@ -76,6 +76,11 @@ from btagent_shared.types.knowledge import (
     QueryResponse,
     SearchResult,
 )
+from btagent_shared.types.mitigation import (
+    MitigationAction,
+    MitigationDecision,
+    MitigationPlan,
+)
 from btagent_shared.types.playbook import (
     ActionStep,
     DecisionStep,
@@ -164,6 +169,10 @@ __all__ = [
     "ResponseActionType",
     "ResponseCategory",
     "ResponsePlan",
+    # Bulk-mitigation types (EPIC-3 UC-3.3)
+    "MitigationAction",
+    "MitigationDecision",
+    "MitigationPlan",
     # Playbook types
     "ActionStep",
     "DecisionStep",

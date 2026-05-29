@@ -96,6 +96,12 @@ PERMISSIONS: dict[str, UserRole] = {
     # destructive steps is gated separately (``containment:approve`` /
     # ``containment:execute`` = incident_commander).
     "response:plan": UserRole.ANALYST,
+    # Bulk IOC block & mitigation (EPIC-3 UC-3.3): generate a per-tool
+    # block plan (proposal only — allowlist-screened, validated, every block
+    # flagged for approval). Same posture as ``response:plan`` /
+    # ``containment:propose``: planning is an analyst capability; approving and
+    # executing the destructive blocks are gated separately.
+    "mitigation:plan": UserRole.ANALYST,
     # Audit ledger (UC-7.1): read-only forensics surface over the SHA-256
     # hash-chain audit log. Senior analysts consume the ledger + lineage for
     # IR/forensics; CSV export for external auditors is admin-only.
