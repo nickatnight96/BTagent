@@ -39,19 +39,22 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.api.deps import get_db
+from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.auth import oidc
 from btagent_backend.auth.cookies import _is_secure, set_auth_cookies
 from btagent_backend.auth.jwt import create_token_pair
 from btagent_backend.config import OIDCProviderConfig, get_settings
 from btagent_backend.db.models import SSOIdentityRow, UserRow
+from btagent_backend.services.audit_trail import AuditTrail
 
 logger = logging.getLogger("btagent.auth.sso")
 
@@ -378,3 +381,183 @@ def _derive_username(email: str | None, subject: str) -> str:
     base = (email.split("@", 1)[0] if email else subject) or subject
     base = base[:80]
     return f"{base}-{secrets.token_hex(3)}"
+
+
+# ---------------------------------------------------------------------------
+# Admin-driven account linking (#169)
+# ---------------------------------------------------------------------------
+#
+# The OIDC callback (``_jit_provision``) deliberately REFUSES (409) to auto-link
+# a verified IdP email to an existing **local-password** account — that closes
+# an account-takeover vector (a misconfigured IdP asserting a victim's email
+# must not silently capture their credentialed account). The cost is that a
+# user with a pre-existing password account has no self-serve path to start
+# logging in via SSO. These admin endpoints supply the *explicit, authorized,
+# audited* override: an operator binds a known ``(provider, subject)`` to a
+# chosen ``UserRow``. Because the operator vouches for the mapping, the
+# verified-email gate that constrains JIT does not apply here.
+#
+# Once linked, the next SSO callback hits step 1 of ``_jit_provision`` (lookup
+# by ``(provider, subject)``) and returns the linked user directly — bypassing
+# the 409. The user's ``password_hash`` is left intact, so they retain local
+# login alongside SSO.
+
+
+class LinkSSOIdentityRequest(BaseModel):
+    """Bind an existing user to an IdP ``(provider, subject)`` identity."""
+
+    user_id: str
+    provider: str
+    subject: str
+    email: str | None = None
+
+
+class SSOIdentityResponse(BaseModel):
+    id: str
+    user_id: str
+    provider: str
+    subject: str
+    email: str | None
+    created_at: datetime
+
+    @classmethod
+    def from_row(cls, row: SSOIdentityRow) -> SSOIdentityResponse:
+        return cls(
+            id=row.id,
+            user_id=row.user_id,
+            provider=row.provider,
+            subject=row.subject,
+            email=row.email,
+            created_at=row.created_at,
+        )
+
+
+@router.post(
+    "/identities",
+    response_model=SSOIdentityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def link_sso_identity(
+    body: LinkSSOIdentityRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> SSOIdentityResponse:
+    """Link an existing account to an IdP identity (admin only, audited).
+
+    Validates that the provider is configured (404), the target user exists
+    (404), and the ``(provider, subject)`` pair is not already linked (409).
+    The action is recorded on the SHA-256 audit chain.
+    """
+    user.require_permission("sso:link")
+
+    # Provider must be a configured SSO provider — you can't link to an IdP the
+    # platform doesn't know how to authenticate against. Reuses the same 404 as
+    # the login/callback routes.
+    _get_provider(body.provider)
+
+    target = await db.get(UserRow, body.user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    existing = await db.execute(
+        select(SSOIdentityRow).where(
+            SSOIdentityRow.provider == body.provider,
+            SSOIdentityRow.subject == body.subject,
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This IdP identity is already linked to an account",
+        )
+
+    identity = SSOIdentityRow(
+        id=generate_id("sso"),
+        user_id=target.id,
+        provider=body.provider,
+        subject=body.subject,
+        email=body.email,
+    )
+    db.add(identity)
+    await db.flush()
+
+    await AuditTrail(db).record(
+        actor=user.username,
+        category=AuditCategory.AUTHORIZATION,
+        action="sso.identity.link",
+        resource=f"user:{target.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "provider": body.provider,
+            "subject": body.subject,
+            "identity_id": identity.id,
+            "target_username": target.username,
+        },
+    )
+    await db.commit()
+    logger.info(
+        "SSO identity %s linked user=%s provider=%s by admin=%s",
+        identity.id,
+        target.id,
+        body.provider,
+        user.username,
+    )
+    return SSOIdentityResponse.from_row(identity)
+
+
+@router.get("/identities", response_model=list[SSOIdentityResponse])
+async def list_sso_identities(
+    user_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[SSOIdentityResponse]:
+    """List SSO identities, optionally filtered to one user (admin only).
+
+    Backs the admin UI that shows which IdP identities are bound to an account.
+    """
+    user.require_permission("sso:link")
+    query = select(SSOIdentityRow).order_by(SSOIdentityRow.created_at.desc())
+    if user_id is not None:
+        query = query.where(SSOIdentityRow.user_id == user_id)
+    rows = (await db.execute(query)).scalars().all()
+    return [SSOIdentityResponse.from_row(r) for r in rows]
+
+
+@router.delete("/identities/{identity_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unlink_sso_identity(
+    identity_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Unlink an IdP identity (admin only, audited). 404 if it doesn't exist.
+
+    After unlinking, the next SSO login for that ``(provider, subject)`` falls
+    back to JIT — which again refuses to silently bind to a password account.
+    """
+    user.require_permission("sso:unlink")
+
+    identity = await db.get(SSOIdentityRow, identity_id)
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO identity not found")
+
+    await AuditTrail(db).record(
+        actor=user.username,
+        category=AuditCategory.AUTHORIZATION,
+        action="sso.identity.unlink",
+        resource=f"user:{identity.user_id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "provider": identity.provider,
+            "subject": identity.subject,
+            "identity_id": identity.id,
+        },
+    )
+    await db.delete(identity)
+    await db.commit()
+    logger.info(
+        "SSO identity %s unlinked (user=%s provider=%s) by admin=%s",
+        identity_id,
+        identity.user_id,
+        identity.provider,
+        user.username,
+    )

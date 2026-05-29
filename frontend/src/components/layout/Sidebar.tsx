@@ -18,8 +18,11 @@ import {
   ShieldAlert,
   Siren,
   ShieldBan,
+  KeyRound,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
+import { useAuthStore } from "@/stores/authStore";
+import { UserRole } from "@/types/config";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -27,6 +30,8 @@ interface NavItem {
   path: string;
   icon: React.ReactNode;
   testId: string;
+  /** When set, only users with this role (admin) see the item. */
+  adminOnly?: boolean;
 }
 
 const navItems: NavItem[] = [
@@ -115,6 +120,13 @@ const navItems: NavItem[] = [
     testId: "nav-policies-link",
   },
   {
+    label: "SSO Linking",
+    path: "/sso-identities",
+    icon: <KeyRound className="w-5 h-5" />,
+    testId: "nav-sso-identities-link",
+    adminOnly: true,
+  },
+  {
     label: "Settings",
     path: "/settings",
     icon: <Settings className="w-5 h-5" />,
@@ -126,11 +138,18 @@ export function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { sidebarOpen, toggleSidebar } = useUIStore();
+  const role = useAuthStore((s) => s.user?.role);
 
   const isActive = (path: string) => {
     if (path === "/") return location.pathname === "/";
     return location.pathname.startsWith(path);
   };
+
+  // Admin-only surfaces (e.g. SSO account linking) are hidden from the nav for
+  // everyone else; the routes themselves remain server-RBAC-protected.
+  const visibleNavItems = navItems.filter(
+    (item) => !item.adminOnly || role === UserRole.ADMIN
+  );
 
   return (
     <aside
@@ -161,7 +180,7 @@ export function Sidebar() {
         className="flex-1 px-2 py-4 space-y-1 overflow-y-auto"
         aria-label="Primary"
       >
-        {navItems.map((item) => {
+        {visibleNavItems.map((item) => {
           const active = isActive(item.path);
           return (
             <button

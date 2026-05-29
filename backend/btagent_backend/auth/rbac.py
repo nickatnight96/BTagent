@@ -36,6 +36,14 @@ PERMISSIONS: dict[str, UserRole] = {
     "user:create": UserRole.ADMIN,
     "user:edit": UserRole.ADMIN,
     "user:delete": UserRole.ADMIN,
+    # SSO account linking (#169) — operator-driven, audited binding of an
+    # existing local account to an IdP ``(provider, subject)`` identity. The
+    # OIDC callback deliberately 409s rather than auto-linking a password
+    # account (takeover defense); these perms gate the explicit admin override.
+    # Admin-only: linking changes who can authenticate as that user, so it
+    # carries the same weight as ``user:edit``/``user:delete``.
+    "sso:link": UserRole.ADMIN,
+    "sso:unlink": UserRole.ADMIN,
     # Webhooks
     "webhook:manage": UserRole.ADMIN,
     # MITRE ATT&CK
