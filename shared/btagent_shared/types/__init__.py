@@ -76,6 +76,11 @@ from btagent_shared.types.knowledge import (
     QueryResponse,
     SearchResult,
 )
+from btagent_shared.types.mitigation import (
+    MitigationAction,
+    MitigationDecision,
+    MitigationPlan,
+)
 from btagent_shared.types.playbook import (
     ActionStep,
     DecisionStep,
@@ -98,7 +103,20 @@ from btagent_shared.types.query_ir import (
     QueryCondition,
     QueryIR,
 )
+from btagent_shared.types.response import (
+    ResponseAction,
+    ResponseActionType,
+    ResponseCategory,
+    ResponsePlan,
+)
 from btagent_shared.types.retrohunt import RetroHuntReport, Sighting
+from btagent_shared.types.triage import (
+    Alert,
+    NextStep,
+    TriageDisposition,
+    TriageResult,
+    TypedIntent,
+)
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
@@ -140,6 +158,21 @@ __all__ = [
     "TLP",
     "TimelineEntry",
     "UserRole",
+    # Alert-triage types (EPIC-3 UC-3.1)
+    "Alert",
+    "NextStep",
+    "TriageDisposition",
+    "TriageResult",
+    "TypedIntent",
+    # Response-plan types (EPIC-3 UC-3.2)
+    "ResponseAction",
+    "ResponseActionType",
+    "ResponseCategory",
+    "ResponsePlan",
+    # Bulk-mitigation types (EPIC-3 UC-3.3)
+    "MitigationAction",
+    "MitigationDecision",
+    "MitigationPlan",
     # Playbook types
     "ActionStep",
     "DecisionStep",

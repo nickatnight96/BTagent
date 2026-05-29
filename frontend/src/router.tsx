@@ -43,6 +43,21 @@ const CorrelationPage = lazy(() =>
     default: m.CorrelationPage,
   })),
 );
+const AlertTriagePage = lazy(() =>
+  import("@/components/triage/AlertTriagePage").then((m) => ({
+    default: m.AlertTriagePage,
+  })),
+);
+const ResponsePlanPage = lazy(() =>
+  import("@/components/response/ResponsePlanPage").then((m) => ({
+    default: m.ResponsePlanPage,
+  })),
+);
+const BulkMitigationPage = lazy(() =>
+  import("@/components/mitigation/BulkMitigationPage").then((m) => ({
+    default: m.BulkMitigationPage,
+  })),
+);
 const PlaybookList = lazy(() =>
   import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
 );
@@ -132,6 +147,18 @@ export const router = createBrowserRouter([
       {
         path: "correlate",
         element: lazyRoute(CorrelationPage),
+      },
+      {
+        path: "triage",
+        element: lazyRoute(AlertTriagePage),
+      },
+      {
+        path: "response-plan",
+        element: lazyRoute(ResponsePlanPage),
+      },
+      {
+        path: "mitigation",
+        element: lazyRoute(BulkMitigationPage),
       },
       {
         path: "playbooks",

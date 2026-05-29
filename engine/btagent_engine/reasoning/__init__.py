@@ -11,6 +11,17 @@ Coming with Phase B of #99:
     description into SPL/KQL/EQL/Sigma queries).
 """
 
+from btagent_engine.reasoning.alert_triage import (
+    AlertTriageInput,
+    AlertTriageNode,
+    AlertTriageOutput,
+)
+from btagent_engine.reasoning.bulk_mitigation import (
+    BulkMitigationInput,
+    BulkMitigationNode,
+    BulkMitigationOutput,
+    IOCRef,
+)
 from btagent_engine.reasoning.hunt_package import (
     HuntPackageInput,
     HuntPackageNode,
@@ -48,6 +59,11 @@ from btagent_engine.reasoning.query_translate import (
     QueryTranslateOutput,
     TranslateMode,
 )
+from btagent_engine.reasoning.response_plan import (
+    ResponsePlanInput,
+    ResponsePlanNode,
+    ResponsePlanOutput,
+)
 from btagent_engine.reasoning.retro_hunt import (
     RetroHuntInput,
     RetroHuntNode,
@@ -55,6 +71,13 @@ from btagent_engine.reasoning.retro_hunt import (
 )
 
 __all__ = [
+    "AlertTriageInput",
+    "AlertTriageNode",
+    "AlertTriageOutput",
+    "BulkMitigationInput",
+    "BulkMitigationNode",
+    "BulkMitigationOutput",
+    "IOCRef",
     "HuntPackageInput",
     "HuntPackageNode",
     "HuntPackageOutput",
@@ -81,4 +104,7 @@ __all__ = [
     "QueryTranslateNode",
     "QueryTranslateOutput",
     "TranslateMode",
+    "ResponsePlanInput",
+    "ResponsePlanNode",
+    "ResponsePlanOutput",
 ]

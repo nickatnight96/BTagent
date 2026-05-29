@@ -15,6 +15,9 @@ import {
   Network,
   ScrollText,
   Lock,
+  ShieldAlert,
+  Siren,
+  ShieldBan,
   KeyRound,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
@@ -79,6 +82,24 @@ const navItems: NavItem[] = [
     path: "/correlate",
     icon: <Network className="w-5 h-5" />,
     testId: "nav-correlate-link",
+  },
+  {
+    label: "Alert Triage",
+    path: "/triage",
+    icon: <ShieldAlert className="w-5 h-5" />,
+    testId: "nav-triage-link",
+  },
+  {
+    label: "Response Plan",
+    path: "/response-plan",
+    icon: <Siren className="w-5 h-5" />,
+    testId: "nav-response-plan-link",
+  },
+  {
+    label: "Bulk Mitigation",
+    path: "/mitigation",
+    icon: <ShieldBan className="w-5 h-5" />,
+    testId: "nav-mitigation-link",
   },
   {
     label: "Playbooks",
