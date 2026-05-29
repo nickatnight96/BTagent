@@ -20,6 +20,7 @@ export class Sidebar {
   readonly playbooksLink: Locator;
   readonly auditLink: Locator;
   readonly policiesLink: Locator;
+  readonly ssoIdentitiesLink: Locator;
   readonly settingsLink: Locator;
   readonly collapseToggle: Locator;
 
@@ -37,6 +38,7 @@ export class Sidebar {
     this.playbooksLink = page.getByTestId("nav-playbooks-link");
     this.auditLink = page.getByTestId("nav-audit-link");
     this.policiesLink = page.getByTestId("nav-policies-link");
+    this.ssoIdentitiesLink = page.getByTestId("nav-sso-identities-link");
     this.settingsLink = page.getByTestId("nav-settings-link");
     this.collapseToggle = page.getByTestId("sidebar-collapse-toggle");
   }
@@ -84,6 +86,13 @@ export class Sidebar {
   async goToPolicies(): Promise<void> {
     await this.policiesLink.click();
     await this.page.waitForURL("**/policies", { timeout: 5_000 });
+  }
+
+  // Admin-only nav item (#169). Non-admins never see this link, so only call
+  // it from an admin context.
+  async goToSsoIdentities(): Promise<void> {
+    await this.ssoIdentitiesLink.click();
+    await this.page.waitForURL("**/sso-identities", { timeout: 5_000 });
   }
 
   async toggleCollapse(): Promise<void> {

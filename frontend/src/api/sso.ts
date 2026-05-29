@@ -16,6 +16,8 @@
  * documented behaviour.
  */
 
+import api from "./client";
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 /**
@@ -37,4 +39,53 @@ export function startSsoLogin(provider: string | null = ssoProvider): void {
   window.location.assign(
     `${BASE_URL}/v1/auth/sso/${encodeURIComponent(provider)}/login`
   );
+}
+
+/**
+ * Admin-driven SSO account linking (#169).
+ *
+ * The OIDC callback deliberately refuses (409) to auto-link a verified IdP
+ * email to an existing local-password account (account-takeover defense),
+ * leaving such users with no self-serve path to SSO. These admin-only
+ * endpoints supply the explicit, audited override: an operator binds a known
+ * ``(provider, subject)`` to a chosen user. All three are gated by
+ * ``sso:link`` / ``sso:unlink`` server-side and recorded on the audit chain.
+ */
+
+/** A persisted IdP identity bound to a local user. */
+export interface SSOIdentity {
+  id: string;
+  user_id: string;
+  provider: string;
+  subject: string;
+  email: string | null;
+  created_at: string;
+}
+
+/** Payload to link an existing user to an IdP ``(provider, subject)``. */
+export interface LinkSSOIdentity {
+  user_id: string;
+  provider: string;
+  subject: string;
+  email?: string | null;
+}
+
+/** List SSO identities, optionally filtered to a single user. */
+export async function listSSOIdentities(
+  userId?: string
+): Promise<SSOIdentity[]> {
+  const qs = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
+  return api.get<SSOIdentity[]>(`/v1/auth/sso/identities${qs}`);
+}
+
+/** Link an existing account to an IdP identity. */
+export async function linkSSOIdentity(
+  body: LinkSSOIdentity
+): Promise<SSOIdentity> {
+  return api.post<SSOIdentity>("/v1/auth/sso/identities", body);
+}
+
+/** Unlink an IdP identity. */
+export async function unlinkSSOIdentity(id: string): Promise<void> {
+  await api.delete(`/v1/auth/sso/identities/${encodeURIComponent(id)}`);
 }
