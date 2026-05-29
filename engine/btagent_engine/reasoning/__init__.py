@@ -11,6 +11,11 @@ Coming with Phase B of #99:
     description into SPL/KQL/EQL/Sigma queries).
 """
 
+from btagent_engine.reasoning.alert_triage import (
+    AlertTriageInput,
+    AlertTriageNode,
+    AlertTriageOutput,
+)
 from btagent_engine.reasoning.hunt_package import (
     HuntPackageInput,
     HuntPackageNode,
@@ -55,6 +60,9 @@ from btagent_engine.reasoning.retro_hunt import (
 )
 
 __all__ = [
+    "AlertTriageInput",
+    "AlertTriageNode",
+    "AlertTriageOutput",
     "HuntPackageInput",
     "HuntPackageNode",
     "HuntPackageOutput",

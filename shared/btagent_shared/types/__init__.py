@@ -99,6 +99,13 @@ from btagent_shared.types.query_ir import (
     QueryIR,
 )
 from btagent_shared.types.retrohunt import RetroHuntReport, Sighting
+from btagent_shared.types.triage import (
+    Alert,
+    NextStep,
+    TriageDisposition,
+    TriageResult,
+    TypedIntent,
+)
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
@@ -140,6 +147,12 @@ __all__ = [
     "TLP",
     "TimelineEntry",
     "UserRole",
+    # Alert-triage types (EPIC-3 UC-3.1)
+    "Alert",
+    "NextStep",
+    "TriageDisposition",
+    "TriageResult",
+    "TypedIntent",
     # Playbook types
     "ActionStep",
     "DecisionStep",
