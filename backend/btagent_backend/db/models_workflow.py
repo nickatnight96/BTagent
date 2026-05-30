@@ -145,6 +145,9 @@ class WorkflowRunRow(Base):
     final_output: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # In-order step ids the executor ran (replay / audit trail).
     nodes_executed: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Hash-linked audit trail per successful node run (one entry per step).
+    # Each entry mirrors :class:`EvidenceRecord.model_dump(mode="json")`.
+    evidence_chain: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False

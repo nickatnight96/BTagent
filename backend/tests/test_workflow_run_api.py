@@ -31,6 +31,24 @@ BAD_NODE_DEF: dict[str, Any] = {
     "edges": [],
 }
 
+# trigger -> GreyNoise (capability tlp_egress=AMBER). Used to exercise the
+# fail-closed default: when the request body omits ``active_tlp`` the route
+# defaults to TLP.RED, which is stricter than AMBER, so ConnectorPolicy refuses.
+GN_DEF: dict[str, Any] = {
+    "name": "gn-wf",
+    "version": "1.0",
+    "nodes": [
+        {"step_id": "t1", "node_id": "trigger.manual", "name": "start", "config": {}},
+        {
+            "step_id": "gn",
+            "node_id": "integration.greynoise.lookup_ip",
+            "name": "lookup",
+            "config": {"ip": "185.220.101.42"},
+        },
+    ],
+    "edges": [{"source": "t1", "target": "gn", "label": "next"}],
+}
+
 
 async def _create_workflow(client: AsyncClient, admin_token: str, definition: dict) -> str:
     resp = await client.post(
@@ -130,3 +148,42 @@ async def test_get_run_unknown_is_404(client: AsyncClient, admin_token: str, ana
         f"/api/v1/workflows/{wf_id}/runs/wfrun_nope", headers=auth_header(analyst_token)
     )
     assert resp.status_code == 404
+
+
+async def test_run_omitting_active_tlp_fails_closed(
+    client: AsyncClient, admin_token: str, analyst_token: str
+):
+    """Codex-flagged regression guard: omitting active_tlp must NOT default to
+    GREEN. The route fails closed at TLP.RED, so an AMBER-only cloud lookup
+    is refused by ConnectorPolicyMiddleware instead of silently running."""
+    wf_id = await _create_workflow(client, admin_token, GN_DEF)
+    resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/run",
+        json={"trigger_payload": {}},  # NOTE: no active_tlp
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 201, resp.text
+    run = resp.json()
+    assert run["status"] == "failed"
+    assert "Connector policy violation" in (run["error"] or "")
+    assert "tlp_egress" in (run["error"] or "")
+
+
+async def test_run_explicit_active_tlp_amber_allows_amber_capability(
+    client: AsyncClient, admin_token: str, analyst_token: str
+):
+    """Explicit active_tlp=AMBER lets a tlp_egress=AMBER capability past the
+    policy gate. (The node itself is in mock-mode and may then succeed or
+    raise; the point of this test is the gate decision, not the node body.)
+    """
+    wf_id = await _create_workflow(client, admin_token, GN_DEF)
+    resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/run",
+        json={"trigger_payload": {}, "active_tlp": "amber"},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 201, resp.text
+    run = resp.json()
+    # Either succeeded (mock mode) or failed for a NON-policy reason. The
+    # decisive bit is that we did NOT get a connector-policy refusal.
+    assert "Connector policy violation" not in (run["error"] or "")

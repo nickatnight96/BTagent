@@ -47,6 +47,7 @@ from btagent_engine.compiler.steps import (
 )
 from btagent_engine.compiler.workflow import Workflow, WorkflowNode
 from btagent_engine.middleware.base import Middleware, Runner
+from btagent_engine.middleware.connector_policy import PendingHITLApproval
 from btagent_engine.middleware.hitl import HITLPause
 from btagent_engine.node import Node, NodeContext, NodeRegistry
 from btagent_engine.runtime.conditions import (
@@ -121,24 +122,34 @@ class WorkflowPaused(Exception):
     """Raised when a workflow stops because a node requires human approval.
 
     Carries the partial :class:`WorkflowState` of nodes already completed
-    plus the originating :class:`HITLPause` so the orchestrator (Sprint 3)
-    can build a checkpoint record without having to re-derive autonomy
-    levels.
+    plus the originating pause exception so the orchestrator can build a
+    checkpoint record without having to re-derive policy details. The
+    ``cause`` is one of the engine's pause exception types -- today either
+    :class:`HITLMiddleware`'s :class:`HITLPause` (autonomy-policy-driven)
+    or :class:`ConnectorPolicyMiddleware`'s :class:`PendingHITLApproval`
+    (manifest-driven). Future pause-class exceptions need only carry
+    enough state for the orchestrator to render an approval card.
     """
 
     def __init__(
         self,
         node_id: str,
         state: WorkflowState,
-        cause: HITLPause,
+        cause: Exception,
     ) -> None:
         self.node_id = node_id
         self.state = state
         self.cause = cause
-        super().__init__(
-            f"Workflow paused at node {node_id!r} pending approval "
-            f"(required={cause.required_level.value}, agent={cause.agent_level.value})"
-        )
+        # HITLPause carries autonomy levels; PendingHITLApproval doesn't.
+        # Build a message that's helpful in both cases without forcing the
+        # call site to know which kind it caught.
+        required = getattr(cause, "required_level", None)
+        agent = getattr(cause, "agent_level", None)
+        if required is not None and agent is not None:
+            detail = f"required={required.value}, agent={agent.value}"
+        else:
+            detail = str(cause) or type(cause).__name__
+        super().__init__(f"Workflow paused at node {node_id!r} pending approval ({detail})")
 
 
 # --------------------------------------------------------------------------- #
@@ -341,6 +352,18 @@ class WorkflowExecutor:
                 state=state,
                 cause=pause,
             ) from pause
+        except PendingHITLApproval as pending:
+            # ConnectorPolicyMiddleware raises a different pause exception
+            # than HITLMiddleware, but the executor's contract is the same:
+            # the run is suspended pending analyst approval. Translate to
+            # the shared :class:`WorkflowPaused` envelope so callers see one
+            # pause type regardless of which middleware raised it. The
+            # original cause is preserved on ``.cause`` for diagnostics.
+            raise WorkflowPaused(
+                node_id=wf_node.step_id,
+                state=state,
+                cause=pending,
+            ) from pending
         except WorkflowExecutionError:
             # Already a workflow-shaped failure (e.g. nested executor call);
             # propagate as-is so we don't double-wrap.

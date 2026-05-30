@@ -18,6 +18,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from btagent_shared.types.config import TLP
+
 
 class WorkflowVersionState(StrEnum):
     """Lifecycle state of a single :class:`WorkflowVersion` row.
@@ -174,11 +176,25 @@ class RunWorkflowRequest(BaseModel):
     ``trigger_payload`` is the workflow's input arguments — it flows into
     the entry node and is referenceable from any step's ``{{ ... }}``
     templates throughout the graph.
+
+    ``active_tlp`` is the classification context the run executes under.
+    It drives :class:`ConnectorPolicyMiddleware`'s TLP egress check —
+    e.g. a capability declared ``tlp_egress=AMBER`` can only run when
+    the active context is AMBER or lower. **Fail-closed default:** if a
+    caller omits this field the route defaults it to ``TLP.RED`` so
+    AMBER-only cloud lookups (GreyNoise, VirusTotal, …) are refused
+    rather than silently allowed under an inferred GREEN. Callers
+    triggering a run from a classified investigation must pass the
+    investigation's classification here.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     trigger_payload: dict[str, Any] = Field(default_factory=dict)
+    active_tlp: TLP | None = Field(
+        default=None,
+        description="Classification context for the run; omit to fail-closed at TLP.RED.",
+    )
 
 
 class WorkflowRunResponse(BaseModel):
@@ -197,6 +213,9 @@ class WorkflowRunResponse(BaseModel):
     outputs: dict[str, Any]
     final_output: dict[str, Any] | None
     nodes_executed: list[str]
+    # Hash-linked audit trail (one entry per successful node run). Each
+    # entry is the JSON form of an engine ``EvidenceRecord``.
+    evidence_chain: list[dict[str, Any]] = Field(default_factory=list)
     error: str | None
     created_at: datetime
     completed_at: datetime | None
