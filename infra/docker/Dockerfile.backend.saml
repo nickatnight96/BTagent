@@ -1,0 +1,74 @@
+# BTagent backend — SAML-enabled variant (#170)
+#
+# Identical to ``Dockerfile.backend`` EXCEPT it installs the optional
+# ``backend[saml]`` extra (pysaml2) plus the ``xmlsec1`` system binary +
+# libxml2/libxmlsec1 dev libs that pysaml2 shells out to. The default slim
+# image deliberately ships neither — SAML SSO routes there return 503 — so this
+# variant is built + deployed only where SAML is configured.
+#
+# Build:  docker build -f infra/docker/Dockerfile.backend.saml -t btagent-backend:saml .
+#
+# Supply chain: base image pinned via build-arg, same contract as the slim image.
+ARG BASE_IMAGE=python:3.12-slim-bookworm
+ARG BASE_IMAGE_DIGEST=
+
+# Stage 1: Build (installs backend[saml] — needs the xmlsec dev libs to build).
+FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}} AS builder
+
+WORKDIR /app
+
+# xmlsec/libxml2 dev headers so pysaml2's deps compile against them.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libxmlsec1-dev libxml2-dev libxmlsec1-openssl pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+# Workspace packages, dependency order: shared -> engine -> agents -> backend.
+# (Same as Dockerfile.backend; the ONLY delta is ``backend[saml]`` below.)
+COPY shared/pyproject.toml shared/
+COPY shared/btagent_shared/ shared/btagent_shared/
+RUN cd shared && uv pip install --system -e .
+
+COPY engine/pyproject.toml engine/
+COPY engine/btagent_engine/ engine/btagent_engine/
+RUN cd engine && uv pip install --system -e .
+
+COPY agents/pyproject.toml agents/
+COPY agents/btagent_agents/ agents/btagent_agents/
+RUN cd agents && uv pip install --system -e .
+
+COPY backend/pyproject.toml backend/
+COPY backend/btagent_backend/ backend/btagent_backend/
+COPY backend/alembic.ini backend/
+COPY backend/migrations/ backend/migrations/
+# The delta from the slim image: install the SAML extra (pysaml2, defusedxml,
+# pyOpenSSL>=24.3.0).
+RUN cd backend && uv pip install --system -e ".[saml]"
+
+# Stage 2: Production (needs the xmlsec1 binary + runtime libs at request time).
+FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}}
+
+# Runtime xmlsec1 binary + shared libs (NOT the -dev headers).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xmlsec1 libxmlsec1-openssl libxml2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Security: non-root user
+RUN useradd --create-home --shell /bin/bash --uid 1000 btagent
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+COPY --from=builder /app/ /app/
+
+RUN chown -R btagent:btagent /app
+
+USER btagent
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD python -c "import httpx; r = httpx.get('http://localhost:8000/health'); r.raise_for_status()"
+
+CMD ["uvicorn", "btagent_backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
