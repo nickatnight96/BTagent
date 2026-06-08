@@ -97,8 +97,13 @@ export function WorkflowDetail() {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [versions, setVersions] = useState<WorkflowVersion[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
+  const [runsTotal, setRunsTotal] = useState(0);
+  const [runsPage, setRunsPage] = useState(1);
+  const [loadingMoreRuns, setLoadingMoreRuns] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const RUNS_PAGE_SIZE = 50;
 
   const [launchOpen, setLaunchOpen] = useState(false);
   const [investigations, setInvestigations] = useState<Investigation[]>([]);
@@ -117,17 +122,37 @@ export function WorkflowDetail() {
       const [wf, vs, rs] = await Promise.all([
         getWorkflow(id),
         listVersions(id),
-        listRuns(id, { page_size: 50 }),
+        listRuns(id, { page: 1, page_size: RUNS_PAGE_SIZE }),
       ]);
       setWorkflow(wf);
       setVersions(vs.items);
       setRuns(rs.items);
+      setRunsTotal(rs.total);
+      setRunsPage(1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load workflow");
     } finally {
       setLoading(false);
     }
   }, [id]);
+
+  // Load-more pagination for runs (addresses the codex P2 finding: workflows
+  // with >50 runs previously had no UI affordance to reach older history).
+  const loadMoreRuns = useCallback(async () => {
+    if (!id || loadingMoreRuns || runs.length >= runsTotal) return;
+    setLoadingMoreRuns(true);
+    try {
+      const next = runsPage + 1;
+      const resp = await listRuns(id, { page: next, page_size: RUNS_PAGE_SIZE });
+      setRuns((prev) => [...prev, ...resp.items]);
+      setRunsTotal(resp.total);
+      setRunsPage(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load more runs");
+    } finally {
+      setLoadingMoreRuns(false);
+    }
+  }, [id, loadingMoreRuns, runs.length, runsTotal, runsPage]);
 
   useEffect(() => {
     void load();
@@ -356,6 +381,33 @@ export function WorkflowDetail() {
                   );
                 })}
               </ul>
+            )}
+            {runs.length > 0 && (
+              <div
+                className="mt-3 flex items-center justify-between text-xs text-muted-foreground"
+                data-testid="workflow-runs-pagination"
+              >
+                <span>
+                  Showing {runs.length} of {runsTotal}
+                </span>
+                {runs.length < runsTotal && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={loadMoreRuns}
+                    disabled={loadingMoreRuns}
+                    data-testid="workflow-runs-load-more"
+                  >
+                    {loadingMoreRuns ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Loading…
+                      </>
+                    ) : (
+                      "Load more"
+                    )}
+                  </Button>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>

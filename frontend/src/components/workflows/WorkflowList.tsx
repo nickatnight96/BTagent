@@ -37,10 +37,15 @@ function formatRelativeTime(dateStr: string | null): string {
   return date.toLocaleDateString();
 }
 
+const PAGE_SIZE = 50;
+
 export function WorkflowList() {
   const navigate = useNavigate();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -49,18 +54,41 @@ export function WorkflowList() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
+  // Initial load: replaces the visible workflows + resets pagination.
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const resp = await listWorkflows({ page_size: 100 });
+      const resp = await listWorkflows({ page: 1, page_size: PAGE_SIZE });
       setWorkflows(resp.items);
+      setTotal(resp.total);
+      setPage(1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load workflows");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // Load-more pagination: addresses the codex P2 finding that orgs with >50
+  // workflows previously had no way to reach pages 2+. Appends; doesn't
+  // reset the list.
+  const loadMore = useCallback(async () => {
+    if (loadingMore || workflows.length >= total) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const next = page + 1;
+      const resp = await listWorkflows({ page: next, page_size: PAGE_SIZE });
+      setWorkflows((prev) => [...prev, ...resp.items]);
+      setTotal(resp.total);
+      setPage(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load more workflows");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, workflows.length, total, page]);
 
   useEffect(() => {
     void load();
@@ -162,6 +190,34 @@ export function WorkflowList() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+        )}
+
+        {!loading && workflows.length > 0 && (
+          <div
+            className="flex items-center justify-between text-xs text-muted-foreground"
+            data-testid="workflow-list-pagination"
+          >
+            <span>
+              Showing {workflows.length} of {total}
+            </span>
+            {workflows.length < total && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={loadMore}
+                disabled={loadingMore}
+                data-testid="workflow-list-load-more"
+              >
+                {loadingMore ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Loading…
+                  </>
+                ) : (
+                  "Load more"
+                )}
+              </Button>
+            )}
           </div>
         )}
       </div>
