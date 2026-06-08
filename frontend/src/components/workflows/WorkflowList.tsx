@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Loader2, Workflow as WorkflowIcon, Plus, Clock } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
@@ -37,6 +38,7 @@ function formatRelativeTime(dateStr: string | null): string {
 }
 
 export function WorkflowList() {
+  const navigate = useNavigate();
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +128,21 @@ export function WorkflowList() {
         {!loading && workflows.length > 0 && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {workflows.map((wf) => (
-              <Card key={wf.id} data-testid="workflow-card" data-workflow-id={wf.id}>
+              <Card
+                key={wf.id}
+                data-testid="workflow-card"
+                data-workflow-id={wf.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => navigate(`/workflows/${wf.id}`)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate(`/workflows/${wf.id}`);
+                  }
+                }}
+                className="cursor-pointer hover:border-primary/40 transition-colors"
+              >
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
                     <WorkflowIcon className="w-4 h-4 text-primary shrink-0" />

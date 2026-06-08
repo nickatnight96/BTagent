@@ -61,6 +61,9 @@ const BulkMitigationPage = lazy(() =>
 const WorkflowList = lazy(() =>
   import("@/components/workflows/WorkflowList").then((m) => ({ default: m.WorkflowList })),
 );
+const WorkflowDetail = lazy(() =>
+  import("@/components/workflows/WorkflowDetail").then((m) => ({ default: m.WorkflowDetail })),
+);
 const PlaybookList = lazy(() =>
   import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
 );
@@ -166,6 +169,10 @@ export const router = createBrowserRouter([
       {
         path: "workflows",
         element: lazyRoute(WorkflowList),
+      },
+      {
+        path: "workflows/:id",
+        element: lazyRoute(WorkflowDetail),
       },
       {
         path: "playbooks",
