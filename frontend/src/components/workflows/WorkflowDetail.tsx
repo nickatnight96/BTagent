@@ -7,6 +7,7 @@ import {
   Eye,
   Loader2,
   Pause,
+  Pencil,
   Play,
   RefreshCw,
   ShieldCheck,
@@ -308,19 +309,37 @@ export function WorkflowDetail() {
                         Published {formatRelativeTime(v.published_at)}
                       </span>
                     )}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="ml-auto"
-                      onClick={() =>
-                        navigate(`/workflows/${id}/versions/${v.version_number}/canvas`)
-                      }
-                      data-testid="workflow-version-canvas-link"
-                      data-version-number={v.version_number}
-                    >
-                      <Eye className="w-4 h-4 mr-1.5" />
-                      View canvas
-                    </Button>
+                    <div className="ml-auto flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          navigate(`/workflows/${id}/versions/${v.version_number}/canvas`)
+                        }
+                        data-testid="workflow-version-canvas-link"
+                        data-version-number={v.version_number}
+                      >
+                        <Eye className="w-4 h-4 mr-1.5" />
+                        View
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          navigate(`/workflows/${id}/versions/${v.version_number}/edit`)
+                        }
+                        data-testid="workflow-version-edit-link"
+                        data-version-number={v.version_number}
+                        title={
+                          v.state === "draft"
+                            ? "Edit this draft in place"
+                            : "Saving will fork a new draft from this version"
+                        }
+                      >
+                        <Pencil className="w-4 h-4 mr-1.5" />
+                        {v.state === "draft" ? "Edit" : "Fork & edit"}
+                      </Button>
+                    </div>
                   </li>
                 ))}
               </ul>

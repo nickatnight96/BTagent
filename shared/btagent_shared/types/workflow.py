@@ -242,3 +242,40 @@ class WorkflowRunListResponse(BaseModel):
 
     items: list[WorkflowRunResponse]
     total: int
+
+
+# --------------------------------------------------------------------------- #
+# Node catalog (drives the canvas authoring palette)
+# --------------------------------------------------------------------------- #
+
+
+class NodeCatalogEntry(BaseModel):
+    """One entry in the canvas-palette node catalog.
+
+    Mirrors :class:`btagent_engine.node.NodeMeta` -- one item per Node class
+    registered on the backend's ``NodeRegistry``. The canvas palette renders
+    one card per entry so the analyst drags a real, resolvable ``node_id``
+    onto the graph (no drift between a frontend hardcoded list and the
+    backend registry).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., description="NodeRegistry id, e.g. 'integration.greynoise.lookup_ip'.")
+    name: str = Field(..., description="Human-readable canvas label.")
+    version: str
+    category: str = Field(
+        ...,
+        description=(
+            "Node category enum value: trigger / integration / reasoning / "
+            "knowledge / decision / data / output."
+        ),
+    )
+    description: str = ""
+
+
+class NodeCatalogResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[NodeCatalogEntry]
+    total: int

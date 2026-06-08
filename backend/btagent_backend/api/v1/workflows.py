@@ -15,6 +15,8 @@ from btagent_shared.types.config import TLP
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
+    NodeCatalogEntry,
+    NodeCatalogResponse,
     RunWorkflowRequest,
     UpdateWorkflowRequest,
     UpdateWorkflowVersionRequest,
@@ -121,6 +123,44 @@ def _to_run_response(row: WorkflowRunRow) -> WorkflowRunResponse:
         created_at=row.created_at,
         completed_at=row.completed_at,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Node catalog (drives the canvas authoring palette)
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/node-catalog", response_model=NodeCatalogResponse)
+async def node_catalog(
+    user: CurrentUser = Depends(get_current_user),
+) -> NodeCatalogResponse:
+    """Enumerate every Node class registered in this backend process.
+
+    The canvas palette renders one card per entry so the analyst can drag a
+    real, resolvable node id onto the graph -- avoiding the drift between a
+    frontend-side hardcoded catalog and the actual NodeRegistry.
+
+    Registered nodes come from importing ``btagent_engine.{triggers, reasoning,
+    data, integrations}`` -- which the run service already does at import time
+    so the catalog is automatically populated whenever the workflows API is
+    mounted.
+    """
+    user.require_permission("workflow:view")
+    from btagent_engine.node import NodeRegistry
+
+    items: list[NodeCatalogEntry] = []
+    for node_id, node_cls in sorted(NodeRegistry.all().items()):
+        meta = node_cls.meta
+        items.append(
+            NodeCatalogEntry(
+                id=meta.id,
+                name=meta.name,
+                version=meta.version,
+                category=meta.category.value,
+                description=meta.description,
+            )
+        )
+    return NodeCatalogResponse(items=items, total=len(items))
 
 
 # --------------------------------------------------------------------------- #

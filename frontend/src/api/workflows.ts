@@ -216,6 +216,36 @@ export async function deprecateVersion(
 }
 
 // --------------------------------------------------------------------------- //
+// Node catalog (canvas palette)
+// --------------------------------------------------------------------------- //
+
+export type NodeCategory =
+  | "trigger"
+  | "integration"
+  | "reasoning"
+  | "knowledge"
+  | "decision"
+  | "data"
+  | "output";
+
+export interface NodeCatalogEntry {
+  id: string;
+  name: string;
+  version: string;
+  category: NodeCategory | string;
+  description: string;
+}
+
+export interface NodeCatalogResponse {
+  items: NodeCatalogEntry[];
+  total: number;
+}
+
+export async function getNodeCatalog(): Promise<NodeCatalogResponse> {
+  return api.get<NodeCatalogResponse>("/v1/workflows/node-catalog");
+}
+
+// --------------------------------------------------------------------------- //
 // Execution + run history
 // --------------------------------------------------------------------------- //
 

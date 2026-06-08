@@ -120,6 +120,8 @@ from btagent_shared.types.triage import (
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
+    NodeCatalogEntry,
+    NodeCatalogResponse,
     RunWorkflowRequest,
     UpdateWorkflowRequest,
     UpdateWorkflowVersionRequest,
@@ -195,6 +197,8 @@ __all__ = [
     # Workflow CRUD types (Phase 2 v1)
     "CreateWorkflowRequest",
     "CreateWorkflowVersionRequest",
+    "NodeCatalogEntry",
+    "NodeCatalogResponse",
     "RunWorkflowRequest",
     "UpdateWorkflowRequest",
     "UpdateWorkflowVersionRequest",
