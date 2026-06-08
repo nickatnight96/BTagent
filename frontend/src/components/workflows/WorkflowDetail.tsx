@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock,
+  Eye,
   Loader2,
   Pause,
   Play,
@@ -282,6 +283,19 @@ export function WorkflowDetail() {
                         Published {formatRelativeTime(v.published_at)}
                       </span>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto"
+                      onClick={() =>
+                        navigate(`/workflows/${id}/versions/${v.version_number}/canvas`)
+                      }
+                      data-testid="workflow-version-canvas-link"
+                      data-version-number={v.version_number}
+                    >
+                      <Eye className="w-4 h-4 mr-1.5" />
+                      View canvas
+                    </Button>
                   </li>
                 ))}
               </ul>

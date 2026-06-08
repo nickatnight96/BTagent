@@ -64,6 +64,9 @@ const WorkflowList = lazy(() =>
 const WorkflowDetail = lazy(() =>
   import("@/components/workflows/WorkflowDetail").then((m) => ({ default: m.WorkflowDetail })),
 );
+const WorkflowCanvas = lazy(() =>
+  import("@/components/workflows/WorkflowCanvas").then((m) => ({ default: m.WorkflowCanvas })),
+);
 const PlaybookList = lazy(() =>
   import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
 );
@@ -173,6 +176,10 @@ export const router = createBrowserRouter([
       {
         path: "workflows/:id",
         element: lazyRoute(WorkflowDetail),
+      },
+      {
+        path: "workflows/:id/versions/:version/canvas",
+        element: lazyRoute(WorkflowCanvas),
       },
       {
         path: "playbooks",
