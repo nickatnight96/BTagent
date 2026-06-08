@@ -84,11 +84,14 @@ test.describe("Workflow detail (Phase 4 slice B)", () => {
     await analystPage.getByTestId("launch-submit").click();
 
     // The run appears with status=succeeded (advisory-tier echo trigger runs sync).
+    // ``data-run-status`` lives on the <li data-testid="workflow-run-row"> itself,
+    // not on a descendant, so ``.filter({ has: ... })`` would not match; query
+    // the attribute on the row element directly.
     const runs = analystPage.getByTestId("workflow-runs");
     await expect(runs).toBeVisible({ timeout: 20_000 });
-    const succeededRun = analystPage
-      .getByTestId("workflow-run-row")
-      .filter({ has: analystPage.locator('[data-run-status="succeeded"]') });
+    const succeededRun = analystPage.locator(
+      '[data-testid="workflow-run-row"][data-run-status="succeeded"]',
+    );
     await expect(succeededRun.first()).toBeVisible({ timeout: 20_000 });
   });
 });

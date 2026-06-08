@@ -53,9 +53,11 @@ test.describe("Workflow editor (Phase 4 slice D)", () => {
 
     // Palette is populated from /workflows/node-catalog -- expect the
     // manual trigger to be present (the catalog import chain registers it).
-    const manualPaletteItem = seniorPage
-      .getByTestId("palette-item")
-      .filter({ has: seniorPage.locator('[data-node-id="trigger.manual"]') });
+    // ``data-node-id`` lives on the palette item element itself (not a
+    // descendant), so query the attribute on the testid element directly.
+    const manualPaletteItem = seniorPage.locator(
+      '[data-testid="palette-item"][data-node-id="trigger.manual"]',
+    );
     await expect(manualPaletteItem.first()).toBeVisible({ timeout: 10_000 });
 
     // ReactFlow rendered the seeded "t1" trigger node.

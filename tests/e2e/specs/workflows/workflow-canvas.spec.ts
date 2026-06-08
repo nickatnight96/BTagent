@@ -44,12 +44,13 @@ test.describe("Workflow canvas (Phase 4 slice C, read-only)", () => {
     await analystPage.goto(`/workflows/${wfId}`);
     await analystPage.getByTestId("workflow-detail").waitFor({ state: "visible", timeout: 10_000 });
 
-    // Click the "View canvas" affordance on v1.
-    const canvasLink = analystPage
-      .getByTestId("workflow-version-canvas-link")
-      .filter({ has: analystPage.locator('[data-version-number="1"]') })
-      .first()
-      .or(analystPage.getByTestId("workflow-version-canvas-link").first());
+    // Click the "View canvas" affordance on v1. ``data-version-number`` lives
+    // on the button element itself, so query it directly via the compound
+    // selector rather than ``.filter({ has: ... })`` (which expects a
+    // descendant).
+    const canvasLink = analystPage.locator(
+      '[data-testid="workflow-version-canvas-link"][data-version-number="1"]',
+    );
     await canvasLink.click();
     await analystPage.waitForURL(`**/workflows/${wfId}/versions/1/canvas`, {
       timeout: 5_000,
