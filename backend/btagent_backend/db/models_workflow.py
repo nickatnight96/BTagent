@@ -135,6 +135,14 @@ class WorkflowRunRow(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Originating investigation, when the run was launched from one. Drives
+    # active-TLP inheritance at the API layer and lets the analyst pivot
+    # from a run row back to the investigation. NULL for ad-hoc launches.
+    investigation_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("investigations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     # ``pending`` / ``running`` / ``succeeded`` / ``failed`` / ``paused`` —
     # see :class:`btagent_shared.types.workflow.WorkflowRunStatus`.
     status: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -159,4 +167,5 @@ class WorkflowRunRow(Base):
         Index("idx_wfr_org_id", "org_id"),
         Index("idx_wfr_status", "status"),
         Index("idx_wfr_created_at", "created_at"),
+        Index("idx_wfr_investigation_id", "investigation_id"),
     )

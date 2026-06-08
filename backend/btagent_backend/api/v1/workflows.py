@@ -28,9 +28,12 @@ from btagent_shared.types.workflow import (
     WorkflowVersionState,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.auth.scoping import assert_can_access_investigation
+from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow, WorkflowVersionRow
 from btagent_backend.services import workflow_run_service, workflow_service
 from btagent_backend.services.workflow_run_service import WorkflowNotExecutable
@@ -107,6 +110,7 @@ def _to_run_response(row: WorkflowRunRow) -> WorkflowRunResponse:
         version_number=row.version_number,
         org_id=row.org_id,
         triggered_by=row.triggered_by,
+        investigation_id=row.investigation_id,
         status=WorkflowRunStatus(row.status),
         trigger_payload=row.trigger_payload or {},
         outputs=row.outputs or {},
@@ -347,15 +351,44 @@ async def run_version(
     the case where the version isn't a runnable graph at all (empty /
     malformed definition).
 
-    **TLP fail-closed:** when ``body.active_tlp`` is omitted we default to
-    ``TLP.RED`` (most restrictive) so an unconfigured caller cannot bypass
-    the per-capability egress gate by silence. Callers triggering a run
-    from a classified investigation must pass that investigation's
-    classification on the request body.
+    **active_tlp precedence (fail-closed):**
+
+    1. ``body.active_tlp`` if set (explicit override; tests / cross-context).
+    2. else the originating investigation's ``tlp_level`` if
+       ``body.investigation_id`` is set and accessible to the caller.
+    3. else :data:`TLP.RED` — most restrictive, so an unconfigured caller
+       cannot bypass the per-capability egress gate by silence.
+
+    ``investigation_id`` is org-scoped via :func:`assert_can_access_investigation`:
+    cross-tenant references 404 (no leak of inv-existence) and the link
+    is persisted on the run row so analysts can pivot back to the
+    originating investigation from run history.
     """
     user.require_permission("workflow:run")
     wf = await _load_workflow_scoped(db, workflow_id, user)
     version = await _load_version_scoped(db, wf, version_number)
+
+    investigation: InvestigationRow | None = None
+    if body.investigation_id is not None:
+        inv_result = await db.execute(
+            select(InvestigationRow).where(InvestigationRow.id == body.investigation_id)
+        )
+        investigation = inv_result.scalar_one_or_none()
+        # 404 on miss OR cross-org. Same posture as the workflow/run scoping
+        # helpers (no leak of which investigations exist in other tenants).
+        if investigation is None or investigation.org_id != user.org_id:
+            raise HTTPException(status_code=404, detail="Investigation not found")
+        # Belt-and-braces: also run the role-aware access check the rest of
+        # the API uses, which 404s consistently on cross-role denials.
+        assert_can_access_investigation(user, investigation)
+
+    if body.active_tlp is not None:
+        resolved_tlp = body.active_tlp
+    elif investigation is not None:
+        resolved_tlp = TLP(investigation.tlp_level)
+    else:
+        resolved_tlp = TLP.RED  # fail closed
+
     try:
         run = await workflow_run_service.execute_version(
             db,
@@ -363,7 +396,8 @@ async def run_version(
             version=version,
             trigger_payload=body.trigger_payload,
             triggered_by=user.id,
-            active_tlp=body.active_tlp if body.active_tlp is not None else TLP.RED,
+            active_tlp=resolved_tlp,
+            investigation_id=investigation.id if investigation is not None else None,
         )
     except WorkflowNotExecutable as exc:
         raise HTTPException(status_code=422, detail=str(exc))

@@ -2,11 +2,42 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
+from btagent_shared.types.enums import InvestigationStatus, Severity
+from btagent_shared.utils.ids import generate_id
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, OrganizationRow
 from tests.helpers import auth_header
+
+
+async def _make_investigation(
+    db_session: AsyncSession, *, tlp_level: str, owner_id: str, org_id: str = DEFAULT_ORG_ID
+) -> InvestigationRow:
+    """Create an investigation directly via the DB session.
+
+    The TLP-binding tests need TLPs other than the default GREEN that the
+    shared ``sample_investigation`` fixture sets, so we build per-test.
+    """
+    inv = InvestigationRow(
+        id=generate_id("inv"),
+        org_id=org_id,
+        title=f"TLP-binding test ({tlp_level})",
+        description="",
+        status=InvestigationStatus.INVESTIGATING.value,
+        severity=Severity.HIGH.value,
+        tlp_level=tlp_level,
+        assigned_to=owner_id,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    db_session.add(inv)
+    await db_session.commit()
+    return inv
+
 
 # A minimal one-node workflow: a manual trigger that echoes its payload.
 # ``trigger.manual`` is registered by the engine triggers package, which the
@@ -187,3 +218,102 @@ async def test_run_explicit_active_tlp_amber_allows_amber_capability(
     # Either succeeded (mock mode) or failed for a NON-policy reason. The
     # decisive bit is that we did NOT get a connector-policy refusal.
     assert "Connector policy violation" not in (run["error"] or "")
+
+
+# --------------------------------------------------------------------------- #
+# investigation_id binding — active_tlp precedence + persistence
+# --------------------------------------------------------------------------- #
+
+
+async def test_run_inherits_active_tlp_from_investigation(
+    client: AsyncClient,
+    admin_token: str,
+    analyst_token: str,
+    db_session: AsyncSession,
+    sample_user,
+):
+    """investigation_id alone => use investigation.tlp_level.
+
+    The investigation is AMBER_STRICT (stricter than the AMBER cap on the
+    GreyNoise capability) so ConnectorPolicy must refuse, proving the run
+    actually picked up the investigation's classification rather than
+    defaulting to RED or GREEN.
+    """
+    inv = await _make_investigation(db_session, tlp_level="amber_strict", owner_id=sample_user.id)
+    wf_id = await _create_workflow(client, admin_token, GN_DEF)
+    resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/run",
+        json={"trigger_payload": {}, "investigation_id": inv.id},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 201, resp.text
+    run = resp.json()
+    assert run["status"] == "failed"
+    assert "Connector policy violation" in (run["error"] or "")
+    # Investigation linkage persisted on the row + surfaced in the response.
+    assert run["investigation_id"] == inv.id
+
+
+async def test_run_active_tlp_overrides_investigation_classification(
+    client: AsyncClient,
+    admin_token: str,
+    analyst_token: str,
+    db_session: AsyncSession,
+    sample_user,
+):
+    """Body.active_tlp wins over investigation.tlp_level.
+
+    Investigation pinned RED (would refuse AMBER cap); body explicitly
+    promotes the run to AMBER, which must let the GreyNoise capability past.
+    """
+    inv = await _make_investigation(db_session, tlp_level="red", owner_id=sample_user.id)
+    wf_id = await _create_workflow(client, admin_token, GN_DEF)
+    resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/run",
+        json={"trigger_payload": {}, "investigation_id": inv.id, "active_tlp": "amber"},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 201, resp.text
+    run = resp.json()
+    assert "Connector policy violation" not in (run["error"] or "")
+    # Linkage still persisted even though the override determined the gate.
+    assert run["investigation_id"] == inv.id
+
+
+async def test_run_unknown_investigation_is_404(
+    client: AsyncClient, admin_token: str, analyst_token: str
+):
+    """Unknown investigation id => 404 (same posture as workflows-IDOR)."""
+    wf_id = await _create_workflow(client, admin_token, ECHO_DEF)
+    resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/run",
+        json={"trigger_payload": {}, "investigation_id": "inv_nope"},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 404
+
+
+async def test_run_cross_org_investigation_is_404(
+    client: AsyncClient,
+    admin_token: str,
+    analyst_token: str,
+    db_session: AsyncSession,
+    sample_user,
+):
+    """Investigation in another org => 404, not 403 (no leak of existence)."""
+    other_org = OrganizationRow(id="org_other_tenant", name="Other Tenant")
+    db_session.add(other_org)
+    await db_session.commit()
+    other_org_inv = await _make_investigation(
+        db_session,
+        tlp_level="green",
+        owner_id=sample_user.id,
+        org_id=other_org.id,
+    )
+    wf_id = await _create_workflow(client, admin_token, ECHO_DEF)
+    resp = await client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/run",
+        json={"trigger_payload": {}, "investigation_id": other_org_inv.id},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 404

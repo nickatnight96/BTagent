@@ -193,7 +193,21 @@ class RunWorkflowRequest(BaseModel):
     trigger_payload: dict[str, Any] = Field(default_factory=dict)
     active_tlp: TLP | None = Field(
         default=None,
-        description="Classification context for the run; omit to fail-closed at TLP.RED.",
+        description=(
+            "Classification context for the run. Precedence: this field "
+            "(if set) -> the originating investigation's tlp_level (if "
+            "``investigation_id`` is set) -> TLP.RED (fail-closed)."
+        ),
+    )
+    investigation_id: str | None = Field(
+        default=None,
+        description=(
+            "Originating investigation. When set, the run inherits the "
+            "investigation's classification (unless ``active_tlp`` is also "
+            "set, which wins), and the link is persisted on the run row so "
+            "the analyst can pivot from history back to the investigation. "
+            "The route org-scopes this id: cross-tenant lookups return 404."
+        ),
     )
 
 
@@ -208,6 +222,8 @@ class WorkflowRunResponse(BaseModel):
     version_number: int
     org_id: str
     triggered_by: str | None
+    # Investigation the run was launched from, or null for an ad-hoc launch.
+    investigation_id: str | None = None
     status: WorkflowRunStatus
     trigger_payload: dict[str, Any]
     outputs: dict[str, Any]

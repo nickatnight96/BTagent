@@ -153,6 +153,7 @@ async def execute_version(
     trigger_payload: dict[str, Any],
     triggered_by: str | None,
     active_tlp: TLP,
+    investigation_id: str | None = None,
     agent_autonomy: AutonomyLevel = AutonomyLevel.L2_SUPERVISED,
     integration_autonomy: IntegrationAutonomy | None = None,
 ) -> WorkflowRunRow:
@@ -180,6 +181,7 @@ async def execute_version(
     ctx = NodeContext(
         run_id=run_id,
         workflow_run_id=run_id,
+        investigation_id=investigation_id,
         org_id=workflow.org_id,
         user_id=triggered_by,
         tlp_level=active_tlp.value,
@@ -232,6 +234,7 @@ async def execute_version(
         version_number=version.version_number,
         org_id=workflow.org_id,
         triggered_by=triggered_by,
+        investigation_id=investigation_id,
         status=status.value,
         trigger_payload=dict(trigger_payload),
         outputs=outputs,
