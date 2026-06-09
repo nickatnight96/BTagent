@@ -133,14 +133,22 @@ async def _run_capture(
     integration_autonomy: IntegrationAutonomy,
     resume_state: WorkflowState | None = None,
     approved_steps: set[str] | None = None,
+    prior_evidence: list[EvidenceRecord] | None = None,
 ) -> _Outcome:
     """Run the executor once and capture a persist-ready :class:`_Outcome`.
 
     Never raises on an engine failure -- a paused or failed run is a
     recorded outcome, not an exception, so create + resume both get a
     durable row.
+
+    ``prior_evidence`` is the audit chain accumulated before this attempt
+    (only populated by a resume). Seeding it into the evidence-chain
+    middleware means new records link to the prior tail's ``link_hash``
+    instead of restarting at ``GENESIS``, preserving the tamper-evident
+    chain across resume cycles. The middleware appends in place, so the
+    outcome carries the full (prior + new) chain back out.
     """
-    evidence_records: list[EvidenceRecord] = []
+    evidence_records: list[EvidenceRecord] = list(prior_evidence or [])
     middlewares = _build_middleware_chain(
         active_tlp=active_tlp,
         agent_autonomy=agent_autonomy,
@@ -365,8 +373,30 @@ async def resume_run(
     ``succeeded`` / ``failed`` / ``paused`` (if a *later* gate trips), with
     ``approved_steps`` accumulating across resume cycles.
 
+    Concurrency: the run row is locked with ``SELECT ... FOR UPDATE`` before
+    the status check, so two approvers calling resume simultaneously can't
+    both pass the in-memory check and double-fire the approved integration
+    node. The second arrival waits for the first to flush, then sees the
+    no-longer-paused status and 409s. SQLite (test backend) treats
+    ``with_for_update()`` as a no-op, which is fine because aiosqlite is
+    single-writer anyway.
+
+    Failure preservation: if the resumed execution fails (e.g. the connector
+    TLP check rejects the approved action), the prior checkpoint outputs,
+    nodes_executed, and evidence chain are RETAINED on the row -- only the
+    status and error are updated, so the audit trail of what completed
+    before the pause isn't erased.
+
     Raises :class:`RunNotResumable` (→ 409) when the run isn't paused.
     """
+    # Concurrency guard: lock the row, then re-read its status. If a sibling
+    # resume already terminated it (status != paused) we 409 before doing any
+    # work -- crucially, before invoking the engine, so the approved
+    # integration node executes at most once across racing approvers.
+    locked = await db.execute(
+        select(WorkflowRunRow).where(WorkflowRunRow.id == run.id).with_for_update()
+    )
+    run = locked.scalar_one()
     if run.status != WorkflowRunStatus.PAUSED.value or not run.paused_node_id:
         raise RunNotResumable(f"Run {run.id} is {run.status!r}; only a paused run can be resumed.")
 
@@ -375,6 +405,12 @@ async def resume_run(
     # Accumulate approvals: every previously-approved step plus the one the
     # caller is approving now (the node the run is currently paused at).
     approved = set(run.approved_steps or []) | {run.paused_node_id}
+    # Rehydrate the prior audit chain so new records link to its tail instead
+    # of restarting at GENESIS (preserves the tamper-evident chain).
+    prior_evidence = [EvidenceRecord.model_validate(entry) for entry in (run.evidence_chain or [])]
+    # Snapshot the pre-resume checkpoint so a failed attempt preserves it.
+    prior_outputs = dict(run.outputs or {})
+    prior_nodes_executed = list(run.nodes_executed or [])
 
     active_tlp = TLP(run.active_tlp) if run.active_tlp else TLP.RED
     ctx = NodeContext(
@@ -395,25 +431,45 @@ async def resume_run(
         integration_autonomy=integration_autonomy or IntegrationAutonomy(),
         resume_state=resume_state,
         approved_steps=approved,
+        prior_evidence=prior_evidence,
     )
 
-    # Update the existing row in place.
+    # Update the existing row in place. For a failed outcome retain the
+    # prior checkpoint so the row still records what completed before the
+    # pause; the executor doesn't return partial state on a structural
+    # failure mid-walk, so overwriting with empty fields would erase the
+    # only trail of what actually happened.
     run.status = outcome.status.value
-    run.outputs = outcome.outputs
-    run.final_output = outcome.final_output
-    run.nodes_executed = outcome.nodes_executed
-    run.evidence_chain = outcome.evidence_chain
+    if outcome.status == WorkflowRunStatus.FAILED:
+        run.outputs = prior_outputs
+        run.nodes_executed = prior_nodes_executed
+        run.final_output = None
+        # Keep the prior evidence chain; new records (if any) the middleware
+        # appended before the failure also flow back via outcome.evidence_chain
+        # since _run_capture seeded it with prior_evidence -- but on a failure
+        # outcome the engine may have raised mid-step so the appended set may
+        # be empty. Either way, outcome.evidence_chain is "prior + any new"
+        # so it strictly supersedes the prior chain and is what we persist.
+        run.evidence_chain = outcome.evidence_chain or [
+            r.model_dump(mode="json") for r in prior_evidence
+        ]
+    else:
+        run.outputs = outcome.outputs
+        run.final_output = outcome.final_output
+        run.nodes_executed = outcome.nodes_executed
+        run.evidence_chain = outcome.evidence_chain
     run.error = outcome.error
     run.paused_node_id = outcome.paused_node_id  # next pause node, or None
     run.approved_steps = sorted(approved)
     run.completed_at = _utcnow()
     await db.flush()
     logger.info(
-        "WorkflowRun %s resumed by %s: status=%s steps=%d approved=%d (org=%s)",
+        "WorkflowRun %s resumed by %s: status=%s steps=%d evidence=%d approved=%d (org=%s)",
         run.id,
         approver_id,
         outcome.status.value,
-        len(outcome.nodes_executed),
+        len(run.nodes_executed),
+        len(run.evidence_chain),
         len(approved),
         workflow.org_id,
     )
