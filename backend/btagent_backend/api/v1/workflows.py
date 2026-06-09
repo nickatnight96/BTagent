@@ -38,7 +38,10 @@ from btagent_backend.auth.scoping import assert_can_access_investigation
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow, WorkflowVersionRow
 from btagent_backend.services import workflow_run_service, workflow_service
-from btagent_backend.services.workflow_run_service import WorkflowNotExecutable
+from btagent_backend.services.workflow_run_service import (
+    RunNotResumable,
+    WorkflowNotExecutable,
+)
 
 logger = logging.getLogger("btagent.api.workflows")
 
@@ -114,6 +117,8 @@ def _to_run_response(row: WorkflowRunRow) -> WorkflowRunResponse:
         triggered_by=row.triggered_by,
         investigation_id=row.investigation_id,
         status=WorkflowRunStatus(row.status),
+        paused_node_id=row.paused_node_id,
+        approved_steps=row.approved_steps or [],
         trigger_payload=row.trigger_payload or {},
         outputs=row.outputs or {},
         final_output=row.final_output,
@@ -476,4 +481,39 @@ async def get_run(
     # as the workflow IDOR mitigation above.
     if run is None or run.workflow_id != wf.id or run.org_id != user.org_id:
         raise HTTPException(status_code=404, detail="Workflow run not found")
+    return _to_run_response(run)
+
+
+@router.post("/{workflow_id}/runs/{run_id}/resume", response_model=WorkflowRunResponse)
+async def resume_run(
+    workflow_id: str,
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Approve a paused run's gate and resume execution (HITL approval).
+
+    Gated by ``hitl:approve`` (senior_analyst): resuming approves the
+    destructive/integration step the run paused at, so it carries the same
+    weight as approving a containment action. Completed steps are reused
+    (not re-run); the run row is updated in place and transitions to
+    ``succeeded`` / ``failed`` / ``paused`` (if a later gate trips). 409 if
+    the run isn't paused; 404 on cross-workflow / cross-tenant access.
+    """
+    user.require_permission("hitl:approve")
+    wf = await _load_workflow_scoped(db, workflow_id, user)
+    run = await workflow_run_service.get_run(db, run_id=run_id)
+    if run is None or run.workflow_id != wf.id or run.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Workflow run not found")
+    version = await _load_version_scoped(db, wf, run.version_number)
+    try:
+        run = await workflow_run_service.resume_run(
+            db,
+            workflow=wf,
+            version=version,
+            run=run,
+            approver_id=user.id,
+        )
+    except RunNotResumable as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return _to_run_response(run)

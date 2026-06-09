@@ -225,6 +225,11 @@ class WorkflowRunResponse(BaseModel):
     # Investigation the run was launched from, or null for an ad-hoc launch.
     investigation_id: str | None = None
     status: WorkflowRunStatus
+    # When status=paused, the step id awaiting approval (the node a resume
+    # would approve); null on terminal runs.
+    paused_node_id: str | None = None
+    # Step ids approved across resume cycles (gate bypassed on resume).
+    approved_steps: list[str] = Field(default_factory=list)
     trigger_payload: dict[str, Any]
     outputs: dict[str, Any]
     final_output: dict[str, Any] | None
