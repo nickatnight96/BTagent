@@ -66,7 +66,7 @@ from btagent_shared.types.config import TLP, AutonomyLevel, IntegrationAutonomy
 from btagent_shared.types.workflow import WorkflowRunStatus
 from btagent_shared.utils.ids import generate_id
 from pydantic import BaseModel, ConfigDict, ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow, WorkflowVersionRow
@@ -373,13 +373,16 @@ async def resume_run(
     ``succeeded`` / ``failed`` / ``paused`` (if a *later* gate trips), with
     ``approved_steps`` accumulating across resume cycles.
 
-    Concurrency: the run row is locked with ``SELECT ... FOR UPDATE`` before
-    the status check, so two approvers calling resume simultaneously can't
-    both pass the in-memory check and double-fire the approved integration
-    node. The second arrival waits for the first to flush, then sees the
-    no-longer-paused status and 409s. SQLite (test backend) treats
-    ``with_for_update()`` as a no-op, which is fine because aiosqlite is
-    single-writer anyway.
+    Concurrency: the run is *atomically claimed* with a single conditional
+    UPDATE (``paused`` → ``running``) and committed before invoking the
+    engine. The commit makes the claim durable + visible to siblings, so a
+    second approver arriving concurrently finds ``rowcount=0`` on its claim
+    UPDATE and 409s without ever touching ``_run_capture`` — the approved
+    integration node therefore fires at most once across racing approvers.
+    This pattern is portable across Postgres, MySQL and SQLite (the previous
+    ``SELECT ... FOR UPDATE`` was a no-op on aiosqlite and let both racers
+    pass the in-memory status check, double-firing the destructive action;
+    Codex flagged this on PR #189).
 
     Failure preservation: if the resumed execution fails (e.g. the connector
     TLP check rejects the approved action), the prior checkpoint outputs,
@@ -389,16 +392,29 @@ async def resume_run(
 
     Raises :class:`RunNotResumable` (→ 409) when the run isn't paused.
     """
-    # Concurrency guard: lock the row, then re-read its status. If a sibling
-    # resume already terminated it (status != paused) we 409 before doing any
-    # work -- crucially, before invoking the engine, so the approved
-    # integration node executes at most once across racing approvers.
-    locked = await db.execute(
-        select(WorkflowRunRow).where(WorkflowRunRow.id == run.id).with_for_update()
+    # Atomic claim: single conditional UPDATE flips paused -> running; only
+    # one racer can match. Commit immediately so the claim is durable +
+    # visible to a sibling resume call before the engine runs (which yields
+    # control on every await). Any subsequent ORM op auto-begins a fresh
+    # transaction for the rest of the work.
+    claim = await db.execute(
+        update(WorkflowRunRow)
+        .where(
+            WorkflowRunRow.id == run.id,
+            WorkflowRunRow.status == WorkflowRunStatus.PAUSED.value,
+        )
+        .values(status=WorkflowRunStatus.RUNNING.value)
     )
-    run = locked.scalar_one()
-    if run.status != WorkflowRunStatus.PAUSED.value or not run.paused_node_id:
-        raise RunNotResumable(f"Run {run.id} is {run.status!r}; only a paused run can be resumed.")
+    await db.commit()
+    if claim.rowcount != 1:
+        raise RunNotResumable(f"Run {run.id} is no longer paused; cannot resume.")
+    # The in-memory ORM instance is now stale -- refresh so subsequent reads
+    # (paused_node_id, evidence_chain, etc.) see the just-committed row.
+    await db.refresh(run)
+    if not run.paused_node_id:
+        # Defensive: a paused row must always carry the paused_node_id. If
+        # this fires it's a data-integrity bug, not a race.
+        raise RunNotResumable(f"Run {run.id} has no paused_node_id; cannot resume.")
 
     wf = _load_workflow(version)
     resume_state = _rehydrate_state(run)

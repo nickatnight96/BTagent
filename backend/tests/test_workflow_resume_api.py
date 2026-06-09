@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from httpx import AsyncClient
@@ -124,3 +125,50 @@ async def test_resume_unknown_run_is_404(client: AsyncClient, admin_token: str):
         headers=auth_header(admin_token),
     )
     assert resp.status_code == 404
+
+
+async def test_concurrent_resumes_serialize_to_exactly_one_winner(
+    client: AsyncClient, admin_token: str, analyst_token: str
+):
+    """Two approvers resuming the same paused run concurrently MUST NOT
+    both execute the approved integration node (Codex PR #189 P1).
+
+    The implementation guards this with ``SELECT ... FOR UPDATE`` on the
+    run row inside ``resume_run`` -- the second arrival blocks until the
+    first commits, then sees ``status != "paused"`` and 409s without ever
+    invoking the engine. On the test SQLite backend ``with_for_update()``
+    is a no-op, but aiosqlite is single-writer at the connection layer,
+    so the same serialisation invariant holds: exactly one POST returns
+    200 and the run's ``nodes_executed`` records the integration step
+    exactly once -- no double-fire of the destructive side effect.
+    """
+    wf_id = await _seed(client, admin_token, PAUSING_DEF)
+    run = await _run(client, analyst_token, wf_id)
+    assert run["status"] == "paused"
+    run_id = run["id"]
+
+    a, b = await asyncio.gather(
+        client.post(
+            f"/api/v1/workflows/{wf_id}/runs/{run_id}/resume",
+            headers=auth_header(admin_token),
+        ),
+        client.post(
+            f"/api/v1/workflows/{wf_id}/runs/{run_id}/resume",
+            headers=auth_header(admin_token),
+        ),
+    )
+
+    statuses = sorted([a.status_code, b.status_code])
+    assert statuses == [200, 409], (
+        f"expected exactly one winner (200) and one 409; got {statuses}. "
+        f"a={a.status_code}/{a.text!r} b={b.status_code}/{b.text!r}"
+    )
+
+    winner = a if a.status_code == 200 else b
+    final = winner.json()
+    assert final["status"] == "succeeded"
+    # The integration node ran exactly once across the two racing approvers.
+    assert final["nodes_executed"].count("iso") == 1
+    assert final["nodes_executed"] == ["t1", "iso"]
+    # And ``approved_steps`` reflects exactly one approval, not two duplicates.
+    assert final["approved_steps"] == ["iso"]
