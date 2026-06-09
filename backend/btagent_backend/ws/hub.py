@@ -6,7 +6,8 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from btagent_shared.types.events import EventEnvelope
+from btagent_shared.security import TLPViolation, assert_tlp_allows_egress
+from btagent_shared.types.events import EventEnvelope, EventType
 from fastapi import WebSocket, WebSocketDisconnect
 from redis.asyncio import Redis
 from starlette.websockets import WebSocketState
@@ -231,7 +232,43 @@ class WebSocketHub:
         """Publish an event into Redis pub/sub for fan-out.
 
         Returns the number of subscribers that received the message.
+
+        TLP egress gate: the WebSocket/Redis broadcast is the ``event_emit``
+        egress channel, so this is the single chokepoint where the gate
+        belongs (rather than in the workflow executor's middleware chain,
+        which would refuse classified runs even when they never emit). A
+        TLP:RED-classified event — or any event whose payload embeds a
+        ``tlp:red`` tag — is **dropped, not broadcast**: RED data must not
+        leave the enclave to a browser. The classification context is read
+        from ``envelope.data`` (which carries ``tlp`` / ``tlp_level`` +
+        ``org_id`` on the emitting paths). Publishing is fire-and-forget, so
+        a blocked event is logged + dropped rather than raised back to the
+        emitter.
         """
+        # The TLP-violation alert is governance metadata *about* a blocked
+        # RED egress — its ``data.tlp`` describes the violation, it doesn't
+        # carry RED payload. It must reach the analyst surface precisely when
+        # RED was blocked, and gating it would self-trigger (block -> emit
+        # another violation -> block -> ...). Exempt it.
+        if envelope.type != EventType.TLP_VIOLATION_ATTEMPT:
+            org_id = envelope.data.get("org_id") if isinstance(envelope.data, dict) else None
+            try:
+                assert_tlp_allows_egress(
+                    envelope.model_dump(mode="json"),
+                    "event_emit",
+                    classification_ctx=(envelope.data if isinstance(envelope.data, dict) else None),
+                    org_id=org_id,
+                )
+            except TLPViolation:
+                # Already logged + a tlp.violation_attempt event emitted by
+                # the gate. Drop the broadcast.
+                logger.warning(
+                    "Dropping TLP-restricted event %s (type=%s) from event_emit broadcast",
+                    envelope.id,
+                    envelope.type.value,
+                )
+                return 0
+
         if not self._redis:
             logger.warning("Hub not started; dropping event %s", envelope.id)
             return 0
