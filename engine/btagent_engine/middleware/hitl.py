@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from btagent_shared.types.config import AutonomyLevel, IntegrationAutonomy
 
-from btagent_engine.middleware.base import Middleware
+from btagent_engine.middleware.base import Middleware, step_is_approved
 from btagent_engine.node import NodeCategory
 
 if TYPE_CHECKING:
@@ -171,6 +171,11 @@ class HITLMiddleware(Middleware):
         ctx: NodeContext,
     ) -> None:
         if node.meta.category != NodeCategory.INTEGRATION:
+            return
+        # Resume bypass: a step a human just approved skips its gate for this
+        # execution. The executor stamps ``current_step_id`` before each node
+        # and seeds ``approved_steps`` from the resume request.
+        if step_is_approved(ctx):
             return
         if not requires_approval(
             node.meta.id,

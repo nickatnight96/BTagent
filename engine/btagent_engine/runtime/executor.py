@@ -186,6 +186,9 @@ class WorkflowExecutor:
         workflow: Workflow,
         initial_input: BaseModel | dict[str, Any] | None,
         ctx: NodeContext,
+        *,
+        resume_state: WorkflowState | None = None,
+        approved_steps: set[str] | None = None,
     ) -> WorkflowRunResult:
         """Execute *workflow* end-to-end.
 
@@ -193,21 +196,55 @@ class WorkflowExecutor:
         :class:`WorkflowPaused` if a HITL middleware suspends execution
         (the caller is expected to checkpoint and resume), and
         :class:`WorkflowExecutionError` on any structural failure.
+
+        **Resume contract.** When *resume_state* is supplied (rehydrated from
+        a paused run's checkpoint), every step already in
+        ``resume_state.nodes_executed`` is treated as *complete*: the walk
+        reuses its stored output and routes forward without re-running it.
+        This is what keeps a resume from re-firing the side effects of
+        integration nodes that already executed before the pause. The walk
+        still starts from the entry node so edge routing is honoured -- it
+        just short-circuits the completed prefix until it reaches the node
+        that paused.
+
+        *approved_steps* are step ids whose HITL / connector-policy gate is
+        bypassed for this execution -- i.e. the steps a human just approved.
+        The gate middlewares read this from ``ctx.metadata['approved_steps']``
+        and skip the pause when the executor-set ``ctx.metadata`` current
+        step id is in the set.
         """
-        state = WorkflowState()
-        entry_id = self._find_entry_id(workflow)
-        # Stash the initial input on state metadata so its keys remain
-        # in scope for ``{{ ... }}`` rendering at every step, not just
-        # the entry step. The trigger payload is the workflow's
-        # "input arguments" -- a fan-out branch deep in the graph still
-        # needs to reference ``{{ alert_text }}`` even though its
-        # immediate upstream is a SIEM result, not the trigger.
-        if isinstance(initial_input, dict):
-            state.metadata["trigger_payload"] = dict(initial_input)
-        elif isinstance(initial_input, BaseModel):
-            state.metadata["trigger_payload"] = initial_input.model_dump()
+        if resume_state is not None:
+            state = resume_state
+            # Snapshot the completed prefix now: the walk appends to
+            # nodes_executed as it (re)visits, so we need the original set
+            # to know what to skip.
+            state.metadata["_completed_steps"] = set(resume_state.nodes_executed)
+            if "trigger_payload" not in state.metadata:
+                state.metadata["trigger_payload"] = (
+                    dict(initial_input) if isinstance(initial_input, dict) else {}
+                )
         else:
-            state.metadata["trigger_payload"] = {}
+            state = WorkflowState()
+            state.metadata["_completed_steps"] = set()
+            # Stash the initial input on state metadata so its keys remain
+            # in scope for ``{{ ... }}`` rendering at every step, not just
+            # the entry step. The trigger payload is the workflow's
+            # "input arguments" -- a fan-out branch deep in the graph still
+            # needs to reference ``{{ alert_text }}`` even though its
+            # immediate upstream is a SIEM result, not the trigger.
+            if isinstance(initial_input, dict):
+                state.metadata["trigger_payload"] = dict(initial_input)
+            elif isinstance(initial_input, BaseModel):
+                state.metadata["trigger_payload"] = initial_input.model_dump()
+            else:
+                state.metadata["trigger_payload"] = {}
+
+        # Approved steps are read by the HITL / ConnectorPolicy middlewares
+        # off ctx.metadata. Mutating the dict is fine even though NodeContext
+        # is frozen -- frozen blocks field reassignment, not dict mutation.
+        ctx.metadata["approved_steps"] = set(approved_steps or set())
+
+        entry_id = self._find_entry_id(workflow)
         # Initial input flows into the entry node verbatim. Treating it as
         # the synthetic "previous output" lets the standard input-build
         # logic merge it with the entry node's static config.
@@ -263,6 +300,24 @@ class WorkflowExecutor:
                     reason="unknown step",
                 )
 
+            # Resume fast-path: a step completed in a prior run is reused, not
+            # re-executed. This is what stops a resume from re-firing the side
+            # effects of integration nodes that already ran before the pause.
+            # We route forward from the stored output using the same per-kind
+            # routing as a freshly-executed node.
+            completed: set[str] = state.metadata.get("_completed_steps") or set()
+            if current_id in completed and current_id in state.outputs:
+                reused = state.outputs[current_id]
+                last_output = reused
+                carried_payload = reused
+                if wf_node.node_id == _DECISION_NODE_ID:
+                    current_id = self._next_decision_step(workflow, wf_node, reused)
+                elif wf_node.node_id == _PARALLEL_NODE_ID:
+                    current_id = self._next_parallel_step(workflow, wf_node)
+                else:
+                    current_id = self._next_step(workflow, wf_node, reused)
+                continue
+
             # Pass-through structural nodes (compiler.join, compiler.end)
             # do not execute -- they exist as graph anchors only.
             if wf_node.node_id in _PASSTHROUGH_NODE_IDS:
@@ -304,6 +359,11 @@ class WorkflowExecutor:
             # whenever the condition is empty / unset.
             if wf_node.node_id == _DECISION_NODE_ID:
                 node_input = self._apply_condition(wf_node, node_input, state)
+
+            # Tell the gate middlewares which step is about to run so they can
+            # honour ``approved_steps`` (a human-approved step skips its HITL /
+            # connector-policy pause this execution).
+            ctx.metadata["current_step_id"] = wf_node.step_id
 
             output = await self._execute_node(
                 node=node_instance,

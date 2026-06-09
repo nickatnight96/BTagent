@@ -28,7 +28,7 @@ docstring for details:
   references.
 """
 
-from btagent_engine.middleware.base import Middleware, Runner
+from btagent_engine.middleware.base import Middleware, Runner, step_is_approved
 from btagent_engine.middleware.classification import ClassificationMiddleware
 from btagent_engine.middleware.connector_policy import (
     CAPABILITY_ID_KEY,
@@ -99,4 +99,5 @@ __all__ = [
     "ScopeEnforcementMiddleware",
     "ScopeViolation",
     "requires_approval",
+    "step_is_approved",
 ]
