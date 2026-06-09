@@ -84,6 +84,10 @@ export interface WorkflowRun {
   triggered_by: string | null;
   investigation_id: string | null;
   status: WorkflowRunStatus;
+  /** When paused, the step id awaiting approval. */
+  paused_node_id: string | null;
+  /** Step ids approved across resume cycles. */
+  approved_steps: string[];
   trigger_payload: Record<string, unknown>;
   outputs: Record<string, unknown>;
   final_output: Record<string, unknown> | null;
@@ -275,4 +279,9 @@ export async function listRuns(
 
 export async function getRun(workflowId: string, runId: string): Promise<WorkflowRun> {
   return api.get<WorkflowRun>(`/v1/workflows/${workflowId}/runs/${runId}`);
+}
+
+/** Approve a paused run's gate and resume it (requires hitl:approve). */
+export async function resumeRun(workflowId: string, runId: string): Promise<WorkflowRun> {
+  return api.post<WorkflowRun>(`/v1/workflows/${workflowId}/runs/${runId}/resume`);
 }
