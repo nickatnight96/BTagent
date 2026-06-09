@@ -18,6 +18,7 @@ import {
   ShieldAlert,
   Siren,
   ShieldBan,
+  GitBranch,
   KeyRound,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
@@ -100,6 +101,12 @@ const navItems: NavItem[] = [
     path: "/mitigation",
     icon: <ShieldBan className="w-5 h-5" />,
     testId: "nav-mitigation-link",
+  },
+  {
+    label: "Workflows",
+    path: "/workflows",
+    icon: <GitBranch className="w-5 h-5" />,
+    testId: "nav-workflows-link",
   },
   {
     label: "Playbooks",

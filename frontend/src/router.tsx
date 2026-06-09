@@ -58,6 +58,18 @@ const BulkMitigationPage = lazy(() =>
     default: m.BulkMitigationPage,
   })),
 );
+const WorkflowList = lazy(() =>
+  import("@/components/workflows/WorkflowList").then((m) => ({ default: m.WorkflowList })),
+);
+const WorkflowDetail = lazy(() =>
+  import("@/components/workflows/WorkflowDetail").then((m) => ({ default: m.WorkflowDetail })),
+);
+const WorkflowCanvas = lazy(() =>
+  import("@/components/workflows/WorkflowCanvas").then((m) => ({ default: m.WorkflowCanvas })),
+);
+const WorkflowEditor = lazy(() =>
+  import("@/components/workflows/WorkflowEditor").then((m) => ({ default: m.WorkflowEditor })),
+);
 const PlaybookList = lazy(() =>
   import("@/components/playbooks/PlaybookList").then((m) => ({ default: m.PlaybookList })),
 );
@@ -159,6 +171,22 @@ export const router = createBrowserRouter([
       {
         path: "mitigation",
         element: lazyRoute(BulkMitigationPage),
+      },
+      {
+        path: "workflows",
+        element: lazyRoute(WorkflowList),
+      },
+      {
+        path: "workflows/:id",
+        element: lazyRoute(WorkflowDetail),
+      },
+      {
+        path: "workflows/:id/versions/:version/canvas",
+        element: lazyRoute(WorkflowCanvas),
+      },
+      {
+        path: "workflows/:id/versions/:version/edit",
+        element: lazyRoute(WorkflowEditor),
       },
       {
         path: "playbooks",

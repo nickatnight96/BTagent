@@ -41,13 +41,31 @@ function computeDepths(adj: Map<string, string[]>, roots: string[]): Map<string,
   const queue = [...roots];
   for (const r of roots) depths.set(r, 0);
 
+  // Cycle guard: in a DAG the longest path has at most ``nodes - 1`` edges
+  // so no node's depth can exceed that. If a relax pushes depth past
+  // ``adj.size`` we're walking a cycle (e.g. ``A -> B -> A``); cap the depth
+  // and refuse to re-enqueue rather than looping forever. The layout output
+  // is still well-defined: cycle nodes land at the cap row.
+  //
+  // Without this guard, the workflow canvas freezes the browser tab when a
+  // user opens a draft whose definition contains a cycle -- and the version
+  // API accepts arbitrary dicts as ``definition`` so this can happen with
+  // any draft.
+  const MAX_DEPTH = Math.max(1, adj.size);
+
   while (queue.length > 0) {
     const current = queue.shift()!;
     const depth = depths.get(current) ?? 0;
     for (const child of adj.get(current) ?? []) {
+      const next = depth + 1;
+      if (next > MAX_DEPTH) {
+        // Cycle reached -- pin the child at the cap and don't re-enqueue.
+        if (!depths.has(child)) depths.set(child, MAX_DEPTH);
+        continue;
+      }
       const existing = depths.get(child);
-      if (existing === undefined || existing < depth + 1) {
-        depths.set(child, depth + 1);
+      if (existing === undefined || existing < next) {
+        depths.set(child, next);
         queue.push(child);
       }
     }
