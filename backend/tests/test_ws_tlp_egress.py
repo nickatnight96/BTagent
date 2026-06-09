@@ -1,9 +1,17 @@
 """Tests for the TLP egress gate on the WebSocket broadcast path.
 
-The hub's ``publish`` is the ``event_emit`` egress chokepoint: a TLP:RED
-classified event (or one whose payload embeds a ``tlp:red`` tag) must be
-dropped, not broadcast to browser subscribers. The ``tlp.violation_attempt``
-alert is exempt so analysts still see the block.
+The gate runs at two points:
+
+* :meth:`WebSocketHub.publish` -- send side, defence-in-depth so RED data
+  never reaches Redis when the publisher is in-process.
+* :meth:`WebSocketHub._dispatch` -- receive/fan-out side, the *primary*
+  chokepoint that also catches direct-to-Redis publishers like
+  ``RedisEmitter`` (used by ``task_manager`` and the legacy agent hooks).
+  Without the dispatch-side gate, those publishers bypass the broadcast
+  enforcement entirely.
+
+The ``tlp.violation_attempt`` alert is exempt on both paths so analysts
+still see the block.
 """
 
 from __future__ import annotations
@@ -94,3 +102,123 @@ async def test_amber_strict_event_is_allowed():
     count = await hub.publish(env)
     assert count == 2
     assert fake_redis.publish.await_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Dispatch-side gate: catches direct-to-Redis publishers like RedisEmitter
+# that bypass ``publish()`` entirely. This is the primary chokepoint --
+# without it, a RED-tagged event from task_manager or a legacy agent hook
+# reaches subscribers.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_drops_red_classified_event():
+    """Simulates the RedisEmitter path: event lands on Redis, hub receives.
+
+    Before the dispatch gate, this would reach ``_enqueue`` and broadcast
+    to every subscribed client.
+    """
+    hub, _ = _hub_with_fake_redis()
+    enqueued: list[tuple[object, str]] = []
+
+    async def fake_enqueue(client, payload, *, critical):  # noqa: ARG001
+        enqueued.append((client, payload))
+
+    hub._enqueue = fake_enqueue  # type: ignore[assignment]
+
+    env = EventEnvelope(
+        type=EventType.OUTPUT,
+        investigation_id="inv_1",
+        data={"tlp": "red", "text": "secret-from-redis-emitter"},
+    )
+    raw = env.model_dump_json()
+    await hub._dispatch(f"btagent:events:investigation:{env.investigation_id}", raw)
+    assert enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_drops_red_nested_payload():
+    hub, _ = _hub_with_fake_redis()
+    enqueued: list[tuple[object, str]] = []
+
+    async def fake_enqueue(client, payload, *, critical):  # noqa: ARG001
+        enqueued.append((client, payload))
+
+    hub._enqueue = fake_enqueue  # type: ignore[assignment]
+
+    env = EventEnvelope(
+        type=EventType.IOC_ENRICHED,
+        investigation_id="inv_1",
+        data={"ioc": {"value": "1.2.3.4", "enrichment": {"tlp_level": "red"}}},
+    )
+    raw = env.model_dump_json()
+    await hub._dispatch(f"btagent:events:investigation:{env.investigation_id}", raw)
+    assert enqueued == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_exempts_violation_alert_event():
+    """The violation alert must reach subscribers even though data.tlp=red."""
+    from btagent_backend.auth.middleware import CurrentUser
+    from btagent_backend.ws.hub import ConnectedClient
+
+    hub, _ = _hub_with_fake_redis()
+    enqueued: list[tuple[object, str]] = []
+
+    async def fake_enqueue(client, payload, *, critical):  # noqa: ARG001
+        enqueued.append((client, payload))
+
+    hub._enqueue = fake_enqueue  # type: ignore[assignment]
+
+    # Register a fake client on the global channel so dispatch has somewhere
+    # to deliver.
+    from unittest.mock import MagicMock
+
+    fake_user = MagicMock(spec=CurrentUser)
+    fake_user.id = "usr_test"
+    client = ConnectedClient(ws=MagicMock(), user=fake_user)
+    hub._global_clients.add(client)
+
+    env = EventEnvelope(
+        type=EventType.TLP_VIOLATION_ATTEMPT,
+        investigation_id="system",
+        data={"tlp": "red", "egress_kind": "event_emit", "reason": "blocked"},
+    )
+    raw = env.model_dump_json()
+    # Use the actual global-channel name the hub publishes on.
+    from btagent_backend.ws.protocol import global_channel
+
+    await hub._dispatch(global_channel(), raw)
+    assert len(enqueued) == 1
+    assert enqueued[0][0] is client
+
+
+@pytest.mark.asyncio
+async def test_dispatch_passes_green_event():
+    from btagent_backend.auth.middleware import CurrentUser
+    from btagent_backend.ws.hub import ConnectedClient
+    from btagent_backend.ws.protocol import global_channel
+
+    hub, _ = _hub_with_fake_redis()
+    enqueued: list[tuple[object, str]] = []
+
+    async def fake_enqueue(client, payload, *, critical):  # noqa: ARG001
+        enqueued.append((client, payload))
+
+    hub._enqueue = fake_enqueue  # type: ignore[assignment]
+
+    from unittest.mock import MagicMock
+
+    fake_user = MagicMock(spec=CurrentUser)
+    fake_user.id = "usr_test"
+    client = ConnectedClient(ws=MagicMock(), user=fake_user)
+    hub._global_clients.add(client)
+
+    env = EventEnvelope(
+        type=EventType.OUTPUT,
+        investigation_id="inv_1",
+        data={"tlp": "green", "text": "hello"},
+    )
+    await hub._dispatch(global_channel(), env.model_dump_json())
+    assert len(enqueued) == 1
