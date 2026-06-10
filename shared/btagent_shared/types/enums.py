@@ -69,6 +69,9 @@ class AuditCategory(StrEnum):
     CONFIG_CHANGE = "config_change"
     AGENT_ACTION = "agent_action"
     DATA_ACCESS = "data_access"
+    # Workflow CRUD lifecycle transitions (publish / deprecate /
+    # auto_deprecate / delete) — Phase 2 v2 workflow store.
+    WORKFLOW = "workflow"
 
 
 class AuditOutcome(StrEnum):

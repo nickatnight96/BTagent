@@ -249,6 +249,26 @@ async def update_workflow(
     return _to_workflow_response(wf)
 
 
+@router.delete("/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workflow(
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Soft-delete a workflow (admin only, audited).
+
+    Stamps ``deleted_at`` rather than removing rows: versions and run
+    history stay in the DB as an audit trail, but the workflow — and
+    everything nested under it — 404s through the API from here on.
+    Deleting an already-deleted (or unknown / cross-tenant) workflow is a
+    404, same IDOR posture as every other workflow route.
+    """
+    user.require_permission("workflow:delete")
+    wf = await _load_workflow_scoped(db, workflow_id, user)
+    await workflow_service.soft_delete_workflow(db, workflow=wf, actor=user.username)
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # Version CRUD
 # --------------------------------------------------------------------------- #
@@ -257,15 +277,20 @@ async def update_workflow(
 @router.get("/{workflow_id}/versions", response_model=WorkflowVersionListResponse)
 async def list_versions(
     workflow_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
+    """List a workflow's versions, oldest-first (paginated like /workflows)."""
     user.require_permission("workflow:view")
     wf = await _load_workflow_scoped(db, workflow_id, user)
-    rows = await workflow_service.list_versions(db, workflow_id=wf.id)
+    rows, total = await workflow_service.list_versions(
+        db, workflow_id=wf.id, page=page, page_size=page_size
+    )
     return WorkflowVersionListResponse(
         items=[_to_version_response(r) for r in rows],
-        total=len(rows),
+        total=total,
     )
 
 
@@ -298,16 +323,21 @@ async def create_version(
 ):
     """Stage a new draft version of the workflow.
 
-    Auto-assigned ``version_number = max(existing) + 1``.
+    Auto-assigned ``version_number = max(existing) + 1``. Concurrent
+    writers racing onto the same number are retried once inside the
+    service; a second collision surfaces as 409.
     """
     user.require_permission("workflow:edit")
     wf = await _load_workflow_scoped(db, workflow_id, user)
-    version = await workflow_service.create_version(
-        db,
-        workflow=wf,
-        definition=body.definition,
-        created_by=user.id,
-    )
+    try:
+        version = await workflow_service.create_version(
+            db,
+            workflow=wf,
+            definition=body.definition,
+            created_by=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return _to_version_response(version)
 
 
@@ -350,12 +380,17 @@ async def publish_version(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Promote a draft → published. Auto-deprecates the prior published version."""
+    """Promote a draft → published. Auto-deprecates the prior published version.
+
+    The definition is validated against the engine ``Workflow`` model at
+    this gate (and only here — drafts stay loose); a malformed definition
+    is a 409 carrying the validation message.
+    """
     user.require_permission("workflow:publish")
     wf = await _load_workflow_scoped(db, workflow_id, user)
     version = await _load_version_scoped(db, wf, version_number)
     try:
-        version = await workflow_service.publish_version(db, version=version)
+        version = await workflow_service.publish_version(db, version=version, actor=user.username)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return _to_version_response(version)
@@ -376,7 +411,7 @@ async def deprecate_version(
     wf = await _load_workflow_scoped(db, workflow_id, user)
     version = await _load_version_scoped(db, wf, version_number)
     try:
-        version = await workflow_service.deprecate_version(db, version=version)
+        version = await workflow_service.deprecate_version(db, version=version, actor=user.username)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return _to_version_response(version)
