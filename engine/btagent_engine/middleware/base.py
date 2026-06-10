@@ -37,6 +37,20 @@ if TYPE_CHECKING:
     from btagent_engine.node import Node, NodeContext
 
 
+def step_is_approved(ctx: NodeContext) -> bool:
+    """True if the step about to run was explicitly approved for this run.
+
+    Gate middlewares (HITL, ConnectorPolicy) call this to honour a resume:
+    the :class:`~btagent_engine.runtime.executor.WorkflowExecutor` stamps
+    ``ctx.metadata['current_step_id']`` before each node and seeds
+    ``ctx.metadata['approved_steps']`` from the resume request, so a step a
+    human just approved skips its pause exactly once (this execution).
+    """
+    current = ctx.metadata.get("current_step_id")
+    approved = ctx.metadata.get("approved_steps") or set()
+    return current is not None and current in approved
+
+
 class Middleware:
     """Base class for cross-cutting concerns wrapped around node execution.
 

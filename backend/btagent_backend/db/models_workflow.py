@@ -146,6 +146,16 @@ class WorkflowRunRow(Base):
     # ``pending`` / ``running`` / ``succeeded`` / ``failed`` / ``paused`` —
     # see :class:`btagent_shared.types.workflow.WorkflowRunStatus`.
     status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Classification context the run executed under (drives ConnectorPolicy
+    # TLP gating). Persisted so a resume reuses the same posture. Nullable for
+    # rows created before the resume feature landed.
+    active_tlp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # When status=paused, the step id the run is paused at (the node awaiting
+    # approval). Cleared when the run reaches a terminal state.
+    paused_node_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Step ids a human has approved across resume cycles; their HITL /
+    # connector-policy gate is bypassed on subsequent executions.
+    approved_steps: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     trigger_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     # Per-step output map (step_id -> JSON of that node's output model).
     outputs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

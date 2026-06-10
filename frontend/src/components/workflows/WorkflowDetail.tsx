@@ -39,6 +39,7 @@ import {
   getWorkflow,
   listRuns,
   listVersions,
+  resumeRun,
   runVersion,
   type RunWorkflowRequest,
   type TLP,
@@ -103,6 +104,7 @@ export function WorkflowDetail() {
   const [loadingMoreRuns, setLoadingMoreRuns] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resumingId, setResumingId] = useState<string | null>(null);
 
   const RUNS_PAGE_SIZE = 50;
 
@@ -154,6 +156,26 @@ export function WorkflowDetail() {
       setLoadingMoreRuns(false);
     }
   }, [id, loadingMoreRuns, runs.length, runsTotal, runsPage]);
+
+  // Approve the paused step and resume the run (requires hitl:approve). The
+  // run row is updated in place server-side; we just reload to reflect the
+  // new status (succeeded / failed / paused-again at a later gate).
+  const handleResume = useCallback(
+    async (runId: string) => {
+      if (!id) return;
+      setResumingId(runId);
+      setError(null);
+      try {
+        await resumeRun(id, runId);
+        await load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Resume failed");
+      } finally {
+        setResumingId(null);
+      }
+    },
+    [id, load],
+  );
 
   useEffect(() => {
     void load();
@@ -392,9 +414,42 @@ export function WorkflowDetail() {
                       <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
                         <span>{r.nodes_executed.length} step(s) executed</span>
                         <span>{r.evidence_chain.length} evidence record(s)</span>
+                        {r.approved_steps.length > 0 && (
+                          <span>{r.approved_steps.length} approved</span>
+                        )}
                       </div>
                       {r.error && (
                         <p className="text-xs text-destructive break-words">{r.error}</p>
+                      )}
+                      {r.status === "paused" && (
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                          <span className="text-xs text-muted-foreground">
+                            Awaiting approval at{" "}
+                            <span className="font-mono text-foreground">
+                              {r.paused_node_id ?? "?"}
+                            </span>
+                          </span>
+                          <Button
+                            size="sm"
+                            className="ml-auto"
+                            onClick={() => handleResume(r.id)}
+                            disabled={resumingId === r.id}
+                            data-testid="workflow-run-resume"
+                            data-run-id={r.id}
+                          >
+                            {resumingId === r.id ? (
+                              <>
+                                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                                Resuming…
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-4 h-4 mr-1.5" />
+                                Approve &amp; resume
+                              </>
+                            )}
+                          </Button>
+                        </div>
                       )}
                     </li>
                   );

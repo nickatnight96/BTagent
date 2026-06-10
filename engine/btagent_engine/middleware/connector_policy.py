@@ -47,7 +47,7 @@ from btagent_shared.types.connector import (
     StreamCapability,
 )
 
-from btagent_engine.middleware.base import Middleware
+from btagent_engine.middleware.base import Middleware, step_is_approved
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -189,8 +189,11 @@ class ConnectorPolicyMiddleware(Middleware):
                 f"context is {active.value} — refusing execution."
             )
 
-        # 2. HITL gate
-        if capability.hitl_required:
+        # 2. HITL gate. A resume that explicitly approved this step bypasses
+        # the pause -- but the TLP check above is NOT bypassed: approval is
+        # consent to run a destructive action, not licence to violate an
+        # egress-classification policy.
+        if capability.hitl_required and not step_is_approved(ctx):
             raise PendingHITLApproval(capability_id=capability.id, connector_name=manifest.name)
 
         # 3. Record cost class + capability metadata for downstream
