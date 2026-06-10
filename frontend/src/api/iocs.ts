@@ -20,9 +20,9 @@ interface ListIOCsParams extends IOCFilter {
   sort_dir?: "asc" | "desc";
 }
 
-function buildQuery(params: Record<string, unknown>): string {
+function buildQuery(params: object): string {
   const searchParams = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
+  for (const [key, value] of Object.entries(params) as [string, unknown][]) {
     if (value !== undefined && value !== null && value !== "") {
       searchParams.set(key, String(value));
     }
@@ -99,7 +99,7 @@ export async function importCSV(
 export async function exportIOCs(
   options: ExportOptions,
 ): Promise<Blob> {
-  const endpoint = `/v1/iocs/export${buildQuery(options as unknown as Record<string, unknown>)}`;
+  const endpoint = `/v1/iocs/export${buildQuery(options)}`;
   const response = await fetch(
     `${import.meta.env.VITE_API_BASE_URL ?? "/api"}${endpoint}`,
     {

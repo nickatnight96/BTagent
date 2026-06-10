@@ -45,7 +45,7 @@ const tabs: { id: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
 export function InvestigationWorkspace() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { currentInvestigation, fetchInvestigation, updateStatus, updateCost } =
+  const { currentInvestigation, updateStatus, updateCost } =
     useInvestigationStore();
   const { activePanel, setActivePanel } = useUIStore();
   const { appendStreamChunk, finalizeStreamMessage, addCheckpoint } =
