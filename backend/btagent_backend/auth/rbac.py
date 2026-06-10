@@ -82,6 +82,10 @@ PERMISSIONS: dict[str, UserRole] = {
     "workflow:edit": UserRole.SENIOR_ANALYST,
     "workflow:publish": UserRole.SENIOR_ANALYST,
     "workflow:deprecate": UserRole.ADMIN,
+    # Soft-delete hides the whole workflow (including a possibly-published
+    # version and its run history) from the API — strictly more destructive
+    # than deprecate-without-replacement, so it carries the same admin gate.
+    "workflow:delete": UserRole.ADMIN,
     # Running a workflow version is an analyst capability (per the redesign:
     # analysts consume/run, senior analysts author). v1 execution is
     # middleware-free and only resolves backend-registered reasoning/data

@@ -53,10 +53,15 @@ class WorkflowRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+    # Soft-delete marker (Phase 2 v2). NULL = live. Set rows are filtered out
+    # of every API read path (list/get/versions/runs) but the row — and its
+    # version/run children — stays in the DB as an audit trail.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("idx_workflows_org_id", "org_id"),
         Index("idx_workflows_created_at", "created_at"),
+        Index("idx_workflows_deleted_at", "deleted_at"),
     )
 
 
