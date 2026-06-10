@@ -156,6 +156,15 @@ async def node_catalog(
     items: list[NodeCatalogEntry] = []
     for node_id, node_cls in sorted(NodeRegistry.all().items()):
         meta = node_cls.meta
+        # JSON Schema of the node's input model -- drives the editor's typed
+        # config form. Defensive: a schema-generation failure on one node
+        # must not take down the whole palette, so fall back to {} (the
+        # editor then offers raw-JSON editing only for that node).
+        try:
+            input_schema = node_cls.input_schema.model_json_schema()
+        except Exception:
+            logger.exception("input_schema JSON-schema generation failed for %s", node_id)
+            input_schema = {}
         items.append(
             NodeCatalogEntry(
                 id=meta.id,
@@ -163,6 +172,7 @@ async def node_catalog(
                 version=meta.version,
                 category=meta.category.value,
                 description=meta.description,
+                input_schema=input_schema,
             )
         )
     return NodeCatalogResponse(items=items, total=len(items))

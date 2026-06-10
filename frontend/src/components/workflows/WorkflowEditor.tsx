@@ -39,6 +39,12 @@ import {
   type WorkflowVersion,
 } from "@/api/workflows";
 import { autoLayout } from "@/utils/playbook-graph";
+import {
+  formUsable,
+  parseConfigObject,
+  type JsonSchemaObject,
+} from "@/utils/schema-form";
+import { SchemaConfigForm } from "./SchemaConfigForm";
 
 /**
  * Workflow authoring canvas (Phase 4, slice D).
@@ -50,12 +56,14 @@ import { autoLayout } from "@/utils/playbook-graph";
  *     The new version is what the redirect lands on so the analyst can keep
  *     editing.
  *
- * Editor v1 -- deliberate scope:
+ * Editor scope:
  *   - Drag-from-palette + drop on canvas; connect edges; delete selected
  *     node(s) or edge(s) via Delete/Backspace or the trash button.
- *   - Per-node config editor is a raw JSON textarea. A per-node-class typed
- *     form generator (one entry per ``input_schema``) is a separate slice
- *     because every engine Node has its own pydantic schema.
+ *   - Per-node config editor is schema-driven: a typed form generated from
+ *     the node's ``input_schema`` (served by the catalog), with a raw-JSON
+ *     textarea as the escape hatch (toggle in the panel). Nodes without a
+ *     renderable schema — or configs that aren't valid JSON objects — fall
+ *     back to JSON-only.
  *   - No live compiler validation; you find shape errors when you launch a
  *     run from the detail page.
  */
@@ -547,6 +555,11 @@ export function WorkflowEditor() {
               {selectedNode ? (
                 <NodeConfigPanel
                   node={selectedNode}
+                  catalogEntry={
+                    catalog.find(
+                      (c) => c.id === (selectedNode.data as FlowNodeData).catalogId,
+                    ) ?? null
+                  }
                   onNameChange={onPanelNameChange}
                   onStepIdChange={onPanelStepIdChange}
                   onConfigChange={onPanelConfigChange}
@@ -611,6 +624,7 @@ function PaletteSection({ category, items, onDragStart }: PaletteSectionProps) {
 
 interface NodeConfigPanelProps {
   node: Node;
+  catalogEntry: NodeCatalogEntry | null;
   onNameChange: (label: string) => void;
   onStepIdChange: (id: string) => void;
   onConfigChange: (json: string) => void;
@@ -619,6 +633,7 @@ interface NodeConfigPanelProps {
 
 function NodeConfigPanel({
   node,
+  catalogEntry,
   onNameChange,
   onStepIdChange,
   onConfigChange,
@@ -630,6 +645,20 @@ function NodeConfigPanel({
   useEffect(() => {
     setStepIdDraft(node.id);
   }, [node.id]);
+
+  // ----- config editing mode (typed form vs raw JSON) -----
+  const inputSchema = (catalogEntry?.input_schema ?? {}) as JsonSchemaObject;
+  const schemaUsable = useMemo(() => formUsable(inputSchema), [inputSchema]);
+  const parsedConfig = useMemo(() => parseConfigObject(data.configJson), [data.configJson]);
+  // Form mode needs both a renderable schema AND parsable JSON to edit;
+  // otherwise the raw textarea is the only safe surface.
+  const formAvailable = schemaUsable && parsedConfig !== null;
+  const [preferJson, setPreferJson] = useState(false);
+  // Re-evaluate the preference when a different node is selected.
+  useEffect(() => {
+    setPreferJson(false);
+  }, [node.id]);
+  const showForm = formAvailable && !preferJson;
 
   return (
     <div className="p-4 space-y-3" data-testid="workflow-editor-config-form">
@@ -670,18 +699,53 @@ function NodeConfigPanel({
         />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="node-config">Config (JSON)</Label>
-        <Textarea
-          id="node-config"
-          value={data.configJson}
-          onChange={(e) => onConfigChange(e.target.value)}
-          rows={10}
-          className="font-mono text-xs"
-          data-testid="workflow-editor-config-json"
-        />
-        <p className="text-xs text-muted-foreground">
-          Raw config. Validated against the node's input_schema only at run time.
-        </p>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="node-config">Config</Label>
+          {formAvailable && (
+            <div className="flex rounded-md border border-border overflow-hidden text-xs">
+              <button
+                type="button"
+                className={`px-2 py-1 ${showForm ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setPreferJson(false)}
+                data-testid="workflow-editor-config-mode-form"
+              >
+                Form
+              </button>
+              <button
+                type="button"
+                className={`px-2 py-1 border-l border-border ${!showForm ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setPreferJson(true)}
+                data-testid="workflow-editor-config-mode-json"
+              >
+                JSON
+              </button>
+            </div>
+          )}
+        </div>
+
+        {showForm && parsedConfig !== null ? (
+          <SchemaConfigForm
+            schema={inputSchema}
+            config={parsedConfig}
+            onConfigChange={(next) => onConfigChange(JSON.stringify(next, null, 2))}
+          />
+        ) : (
+          <>
+            <Textarea
+              id="node-config"
+              value={data.configJson}
+              onChange={(e) => onConfigChange(e.target.value)}
+              rows={10}
+              className="font-mono text-xs"
+              data-testid="workflow-editor-config-json"
+            />
+            <p className="text-xs text-muted-foreground">
+              {schemaUsable && parsedConfig === null
+                ? "Invalid JSON — fix it here to re-enable the form view."
+                : "Raw config. Validated against the node's input_schema only at run time."}
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
