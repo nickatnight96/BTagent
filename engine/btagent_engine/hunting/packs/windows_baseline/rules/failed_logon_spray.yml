@@ -1,0 +1,29 @@
+title: Failed Network Logon Spray Candidate
+id: 5b1f3a0e-9c4d-4f3a-8b6e-2d9c7e1a4f04
+status: test
+description: >
+  Surfaces failed network logons (4625, LogonType 3) as raw material for
+  password-spray triage. The spray decision (many users, one source, short
+  window) is made downstream by triage clustering — this rule deliberately
+  stays a flat selection so it transpiles to every backend (Sigma
+  pipe-aggregations are deprecated and per-field substatus codes are not
+  mapped on all backend pipelines).
+references:
+  - https://attack.mitre.org/techniques/T1110/003/
+author: BTagent
+date: 2026-06-10
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4625
+    LogonType: 3
+  condition: selection
+falsepositives:
+  - Service accounts with expired credentials retrying on a loop
+  - Single fat-fingered logons; require downstream clustering before escalation
+level: medium
+tags:
+  - attack.credential-access
+  - attack.t1110.003

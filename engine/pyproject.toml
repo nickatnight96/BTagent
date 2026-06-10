@@ -6,6 +6,14 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.12.0",
     "pyyaml>=6.0.0",
+    # Hunt Pack Runner (#112): Sigma -> multi-backend transpile
+    # (btagent_engine.hunting.transpile; imported lazily). Pins match
+    # agents/pyproject.toml.
+    "pysigma>=0.11.0",
+    "pysigma-backend-splunk>=1.0.0",
+    "pysigma-backend-elasticsearch>=1.0.0",
+    "pysigma-backend-kusto>=0.4.0",
+    "pysigma-backend-crowdstrike>=1.0.0",
     "btagent-shared",
 ]
 

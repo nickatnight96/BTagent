@@ -1,0 +1,30 @@
+# Windows baseline hunt pack — example pack shipped with the engine (#112).
+# Loaded by btagent_engine.hunting.load_builtin_pack("windows_baseline").
+id: hpack_01KTSKZRHHTVFPY55TZ2G47D4J
+name: Windows Baseline Hunts
+version: 1.0.0
+description: >
+  Starter Sigma pack covering common Windows initial-compromise tradecraft:
+  encoded PowerShell, LOLBin downloads (certutil), mshta remote script
+  execution, and failed-logon spray candidates. All rules are SigmaHQ-style
+  flat-selection detections that transpile to all four connected backends.
+
+rules:
+  - file: encoded_powershell.yml
+    enabled: true
+    notes: >
+      Noisy in orgs whose CI/CD bootstraps agents via -EncodedCommand;
+      tune on runner host prefix before promoting hits.
+  - file: certutil_remote_download.yml
+    enabled: true
+    notes: >
+      Legitimate certificate-cache refreshes rarely include a URL; near-zero
+      baseline expected outside patch windows.
+  - file: mshta_remote_script.yml
+    enabled: true
+  - file: failed_logon_spray.yml
+    enabled: true
+    notes: >
+      Candidate signal only — a single 4625 network logon is benign; the
+      spray decision belongs to downstream triage clustering. Expect a steady
+      baseline in any org with internet-facing RDP.

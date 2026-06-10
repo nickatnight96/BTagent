@@ -1,0 +1,32 @@
+title: Encoded PowerShell Command Line
+id: 5b1f3a0e-9c4d-4f3a-8b6e-2d9c7e1a4f01
+status: test
+description: >
+  Detects PowerShell started with an encoded command (-enc / -EncodedCommand),
+  a staple of staged loaders and post-exploitation frameworks.
+references:
+  - https://attack.mitre.org/techniques/T1059/001/
+author: BTagent
+date: 2026-06-10
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+  selection_cli:
+    CommandLine|contains:
+      - ' -enc '
+      - ' -EncodedCommand '
+      - ' -e JAB'
+  condition: selection_img and selection_cli
+falsepositives:
+  - Administration scripts and CI bootstrap agents that legitimately use encoded commands
+level: high
+tags:
+  - attack.execution
+  - attack.t1059.001
+  - attack.defense-evasion
+  - attack.t1027
