@@ -269,46 +269,6 @@ export function nodesToYAML(nodes: Node[], edges: Edge[]): string {
 // YAML string -> Nodes/Edges
 // ---------------------------------------------------------------------------
 
-/** Minimal YAML-like parser for playbook structure. */
-function parseSimpleYaml(yaml: string): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  const lines = yaml.split("\n");
-
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i]!;
-    const trimmed = line.trimStart();
-
-    // Skip empty lines and comments
-    if (!trimmed || trimmed.startsWith("#")) {
-      i++;
-      continue;
-    }
-
-    const colonIdx = trimmed.indexOf(":");
-    if (colonIdx === -1) {
-      i++;
-      continue;
-    }
-
-    const key = trimmed.substring(0, colonIdx).trim();
-    const value = trimmed.substring(colonIdx + 1).trim();
-
-    if (value === "" || value === "{}") {
-      // Could be a nested object - for simplicity store as string
-      result[key] = value === "{}" ? {} : "";
-    } else {
-      // Remove quotes if present
-      const unquoted = value.replace(/^["']|["']$/g, "");
-      result[key] = unquoted;
-    }
-
-    i++;
-  }
-
-  return result;
-}
-
 interface ParsedStep {
   id: string;
   type: string;

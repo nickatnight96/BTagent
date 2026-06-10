@@ -40,7 +40,7 @@ function parseCSVPreview(text: string): ImportPreviewRow[] {
     .filter((l) => l.trim());
   if (lines.length === 0) return [];
 
-  const firstLine = lines[0].toLowerCase();
+  const firstLine = (lines[0] ?? "").toLowerCase();
   const hasHeader =
     firstLine.includes("type") ||
     firstLine.includes("value") ||

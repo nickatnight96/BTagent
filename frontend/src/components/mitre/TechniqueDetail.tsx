@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   X,
   ExternalLink,
@@ -40,7 +40,7 @@ function ConfidenceHistogram({ data }: { data: number[] }) {
     const b = [0, 0, 0, 0, 0]; // 0-20, 20-40, 40-60, 60-80, 80-100
     for (const val of data) {
       const idx = Math.min(Math.floor(val * 5), 4);
-      b[idx]++;
+      b[idx] = (b[idx] ?? 0) + 1;
     }
     return b;
   }, [data]);
@@ -87,8 +87,9 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
     let count = 0;
     for (const tactics of Object.values(tacticCoverage)) {
       const techCoverage = tactics as Record<string, number>;
-      if (techCoverage[technique.id]) {
-        count += techCoverage[technique.id];
+      const techCount = techCoverage[technique.id];
+      if (techCount) {
+        count += techCount;
       }
     }
     // Simulate confidence distribution for the histogram
@@ -111,8 +112,9 @@ export function TechniqueDetail({ technique, onClose }: TechniqueDetailProps) {
     const refs: Array<{ tactic: string; count: number }> = [];
     for (const [tactic, techniques] of Object.entries(tacticCoverage)) {
       const techCoverage = techniques as Record<string, number>;
-      if (techCoverage[technique.id]) {
-        refs.push({ tactic, count: techCoverage[technique.id] });
+      const techCount = techCoverage[technique.id];
+      if (techCount) {
+        refs.push({ tactic, count: techCount });
       }
     }
     return refs;

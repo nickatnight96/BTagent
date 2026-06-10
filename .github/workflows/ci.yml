@@ -405,8 +405,8 @@ jobs:
           # entirely because of the ``&&``, leaving an empty ``dist/``
           # — vite preview would launch but serve 404 on ``/``, and
           # the curl probe in the next step timed out for 30 s).
-          # ``npm run typecheck`` still runs ``tsc -b`` and the
-          # ``Frontend`` job tracks the remaining 21 type errors.
+          # ``npm run typecheck`` still runs ``tsc -b``; type errors are
+          # gated by the required Type check step in the ``Frontend`` job.
           npm run build
 
       - name: Cache Playwright browser binary
@@ -706,20 +706,15 @@ jobs:
         run: npm install
 
       - name: Type check
-        # ADVISORY (continue-on-error) until the 21 pre-existing tsc errors
-        # tracked since the audit are fixed in a dedicated frontend-cleanup
-        # pass: vite-env.d.ts gaps (now partially fixed), ReactFlow type
-        # drift, unused imports, `noUncheckedIndexedAccess` violations, and
-        # the WebSocket-client private-access leak from the cookie-auth
-        # migration. Job log still surfaces the errors for visibility.
-        continue-on-error: true
+        # REQUIRED: the pre-existing tsc errors (ReactFlow type drift, unused
+        # imports, `noUncheckedIndexedAccess` violations, the WebSocket-client
+        # private-access leak) were fixed in the chore/ts-zero-errors cleanup
+        # pass, so type checking now gates the build.
         run: npx tsc --noEmit
 
       - name: Build
-        # Same posture as Type check above -- the build invokes tsc, so it
-        # fails on the same 21 errors. Promote to required once the
-        # cleanup pass lands.
-        continue-on-error: true
+        # REQUIRED: build invokes tsc (``tsc -b && vite build``); gated on
+        # zero type errors same as the Type check step above.
         run: npm run build:strict
 
   # ── Build & Push Docker Images ───────────────────────────

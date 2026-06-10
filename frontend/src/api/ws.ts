@@ -41,10 +41,13 @@ export class WebSocketClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionalClose = false;
 
-  private onEvent: OnEventCallback;
-  private onConnect: OnConnectCallback;
-  private onDisconnect: OnDisconnectCallback;
-  private onError: OnErrorCallback;
+  // Callbacks are public so consumers can (re)assign handlers after
+  // construction — e.g. the investigation workspace swaps `onEvent` per
+  // mounted investigation and detaches it on unmount.
+  onEvent: OnEventCallback;
+  onConnect: OnConnectCallback;
+  onDisconnect: OnDisconnectCallback;
+  onError: OnErrorCallback;
 
   constructor(options: WebSocketClientOptions = {}) {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";

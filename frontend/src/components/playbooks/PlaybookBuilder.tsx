@@ -109,7 +109,7 @@ function defaultNodeData(type: string): Record<string, unknown> {
 // Connection validation
 // ---------------------------------------------------------------------------
 
-function isValidConnection(connection: Connection, nodes: Node[]): boolean {
+function isValidConnection(connection: Connection | Edge, nodes: Node[]): boolean {
   const sourceNode = nodes.find((n) => n.id === connection.source);
   const targetNode = nodes.find((n) => n.id === connection.target);
 
@@ -148,7 +148,6 @@ export function PlaybookBuilder() {
     setBuilderNodes,
     setBuilderEdges,
     setSelectedNode,
-    selectedNodeId,
     loadPlaybook,
     savePlaybook,
     currentPlaybook,
@@ -205,7 +204,7 @@ export function PlaybookBuilder() {
           data: {
             label: step.name,
             ...step.config,
-            ...(step as Record<string, unknown>),
+            ...step,
           },
         };
       });

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from "react";
 import {
   Play,
-  Square,
   AlertCircle,
   Search,
   Shield,

@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import type { Node, Edge } from "@xyflow/react";
-import type { Playbook, PlaybookExecution, CreatePlaybookRequest } from "@/types/playbook";
+import { StepType, TriggerType, OnFailure } from "@/types/playbook";
+import type {
+  Playbook,
+  PlaybookExecution,
+  PlaybookStep,
+  CreatePlaybookRequest,
+} from "@/types/playbook";
 import {
   listPlaybooks,
   getPlaybook,
@@ -102,7 +108,7 @@ export const usePlaybookStore = create<PlaybookState>((set, get) => ({
   },
 
   savePlaybook: async (id) => {
-    const { builderNodes, builderEdges, currentPlaybook } = get();
+    const { builderNodes, currentPlaybook } = get();
     if (!currentPlaybook) return;
 
     set({ isLoading: true, error: null });
@@ -110,14 +116,19 @@ export const usePlaybookStore = create<PlaybookState>((set, get) => ({
       // Convert React Flow nodes/edges back to playbook steps
       const steps = builderNodes
         .filter((n) => n.type !== "trigger")
-        .map((n) => ({
+        .map((n): PlaybookStep => ({
           id: n.id,
-          type: n.type === "hitlGate" ? "hitl_gate" : n.type === "parallelFork" ? "parallel_fork" : (n.type ?? "action"),
+          type:
+            n.type === "hitlGate"
+              ? StepType.HITL_GATE
+              : n.type === "parallelFork"
+                ? StepType.PARALLEL_FORK
+                : ((n.type ?? "action") as StepType),
           name: String((n.data as Record<string, unknown>).label ?? n.id),
           description: "",
           config: {},
           next_step: null,
-          on_failure: "abort",
+          on_failure: OnFailure.ABORT,
           ...(n.data as Record<string, unknown>),
         }));
 
@@ -128,7 +139,7 @@ export const usePlaybookStore = create<PlaybookState>((set, get) => ({
         name: currentPlaybook.name,
         description: currentPlaybook.description,
         trigger: {
-          type: (triggerData?.triggerType as string) ?? "manual",
+          type: (triggerData?.triggerType as TriggerType) ?? TriggerType.MANUAL,
           parameters: (triggerData?.parameters as Record<string, unknown>) ?? {},
         },
         steps,
