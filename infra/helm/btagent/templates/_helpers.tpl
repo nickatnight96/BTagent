@@ -59,6 +59,15 @@ app.kubernetes.io/component: frontend
 {{- end }}
 
 {{/*
+Selector labels (scheduler).
+*/}}
+{{- define "btagent.schedulerSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "btagent.name" . }}-scheduler
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: scheduler
+{{- end }}
+
+{{/*
 Create the name of the service account to use.
 */}}
 {{- define "btagent.serviceAccountName" -}}
