@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ds/input";
 import { Label } from "@/components/ds/label";
 import { NativeSelect } from "@/components/ds/native-select";
 import { Textarea } from "@/components/ds/textarea";
 import {
   applyFieldInput,
+  coerceInput,
   extraConfigKeys,
   extractFields,
   valueToInput,
@@ -22,6 +23,11 @@ import {
  * marked but never enforced (config is a partial overlay; upstream payload
  * may supply them). Clearing a field removes its key so engine defaults
  * apply.
+ *
+ * Numeric and JSON fields buffer keystrokes in a local draft and commit on
+ * blur: committing numerics per keystroke would collapse intermediate
+ * states ("0." → 0, "0.50" → 0.5 mid-typing), and committing JSON per
+ * keystroke would reject every intermediate unparsable state.
  */
 
 interface SchemaConfigFormProps {
@@ -65,11 +71,36 @@ interface SchemaFieldRowProps {
 
 function SchemaFieldRow({ field, value, onInput }: SchemaFieldRowProps) {
   const inputId = `schema-field-${field.name}`;
-  const text = valueToInput(value, field.kind);
+  const committed = valueToInput(value, field.kind);
+  // Draft buffer for blur-committed kinds (numeric + json). null = not
+  // editing; the committed value renders. Reset when the underlying value
+  // changes from outside (e.g. an edit made in the raw JSON view).
+  const [draft, setDraft] = useState<string | null>(null);
+  const [jsonError, setJsonError] = useState(false);
+  useEffect(() => {
+    setDraft(null);
+    setJsonError(false);
+  }, [committed]);
+
   const placeholder =
     field.defaultValue !== undefined
       ? `default: ${String(field.defaultValue)}`
       : field.example;
+
+  const commitDraft = (raw: string) => {
+    if (field.kind === "json") {
+      const result = coerceInput("json", raw);
+      if (result.error) {
+        // Keep the broken text visible + flag it; the previous valid
+        // value stays in the config (nothing is silently overwritten).
+        setJsonError(true);
+        return;
+      }
+      setJsonError(false);
+    }
+    onInput(raw);
+    setDraft(null);
+  };
 
   return (
     <div className="space-y-1.5" data-testid={`schema-field-${field.name}`}>
@@ -86,7 +117,7 @@ function SchemaFieldRow({ field, value, onInput }: SchemaFieldRowProps) {
       </Label>
 
       {field.kind === "enum" && (
-        <NativeSelect id={inputId} value={text} onChange={(e) => onInput(e.target.value)}>
+        <NativeSelect id={inputId} value={committed} onChange={(e) => onInput(e.target.value)}>
           <option value="">(unset)</option>
           {(field.enumOptions ?? []).map((opt) => (
             <option key={opt} value={opt}>
@@ -97,41 +128,62 @@ function SchemaFieldRow({ field, value, onInput }: SchemaFieldRowProps) {
       )}
 
       {field.kind === "boolean" && (
-        <NativeSelect id={inputId} value={text} onChange={(e) => onInput(e.target.value)}>
+        <NativeSelect id={inputId} value={committed} onChange={(e) => onInput(e.target.value)}>
           <option value="">(unset)</option>
           <option value="true">true</option>
           <option value="false">false</option>
         </NativeSelect>
       )}
 
-      {(field.kind === "string" || field.kind === "integer" || field.kind === "number") && (
+      {field.kind === "string" && (
         <Input
           id={inputId}
-          value={text}
+          value={committed}
           placeholder={placeholder}
-          // Deliberately type="text" even for numerics: config values may be
-          // "{{ trigger.payload.x }}" template strings, which a number input
-          // would reject. Coercion to number happens in coerceInput.
-          inputMode={field.kind === "string" ? undefined : "decimal"}
           onChange={(e) => onInput(e.target.value)}
         />
       )}
 
-      {field.kind === "json" && (
-        <Textarea
+      {(field.kind === "integer" || field.kind === "number") && (
+        <Input
           id={inputId}
-          // Uncontrolled while typing (intermediate states are unparsable);
-          // the key remounts it whenever the committed value changes so an
-          // external config edit (e.g. JSON view) still propagates in.
-          key={`${field.name}:${text}`}
-          defaultValue={text}
-          placeholder={placeholder ?? "{ }"}
-          rows={3}
-          className="font-mono text-xs"
-          // json fields commit on blur: committing per keystroke would
-          // reject every intermediate (unparsable) state while typing.
-          onBlur={(e) => onInput(e.target.value)}
+          // Deliberately type="text": values may be "{{ template }}"
+          // strings, which a number input would reject. Coercion to a
+          // number happens on blur so intermediate states like "0." or
+          // "0.50" survive while typing.
+          value={draft ?? committed}
+          placeholder={placeholder}
+          inputMode="decimal"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft !== null) commitDraft(draft);
+          }}
         />
+      )}
+
+      {field.kind === "json" && (
+        <>
+          <Textarea
+            id={inputId}
+            value={draft ?? committed}
+            placeholder={placeholder ?? "{ }"}
+            rows={3}
+            className={`font-mono text-xs ${jsonError ? "border-destructive" : ""}`}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              if (draft !== null) commitDraft(draft);
+            }}
+          />
+          {jsonError && (
+            <p
+              className="text-xs text-destructive"
+              role="alert"
+              data-testid={`schema-field-${field.name}-error`}
+            >
+              Invalid JSON — this field's change is not saved until fixed.
+            </p>
+          )}
+        </>
       )}
 
       {field.description && (

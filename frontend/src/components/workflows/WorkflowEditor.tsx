@@ -725,6 +725,9 @@ function NodeConfigPanel({
 
         {showForm && parsedConfig !== null ? (
           <SchemaConfigForm
+            // Remount per node so field drafts (numeric/json blur buffers)
+            // never leak across node selection.
+            key={node.id}
             schema={inputSchema}
             config={parsedConfig}
             onConfigChange={(next) => onConfigChange(JSON.stringify(next, null, 2))}
