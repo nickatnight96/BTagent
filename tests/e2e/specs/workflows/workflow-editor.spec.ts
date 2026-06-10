@@ -71,7 +71,7 @@ test.describe("Workflow editor (Phase 4 slice D)", () => {
     await expect(save).toBeEnabled();
   });
 
-  test("clicking a node opens the config panel with JSON config + step id", async ({
+  test("clicking a node opens the config panel with schema form + JSON toggle", async ({
     seniorPage,
   }) => {
     const name = `E2E WF-editor-cfg ${Date.now()}`;
@@ -84,10 +84,22 @@ test.describe("Workflow editor (Phase 4 slice D)", () => {
     // Click the ReactFlow-rendered node.
     await seniorPage.locator(".react-flow__node").first().click();
 
-    // Config form is populated with the seeded step id "t1" and a JSON
-    // textarea (initial value is "{}" for the seeded config).
+    // Config panel is populated with the seeded step id "t1".
     await expect(seniorPage.getByTestId("workflow-editor-config-form")).toBeVisible();
     await expect(seniorPage.getByTestId("workflow-editor-step-id")).toHaveValue("t1");
+
+    // trigger.manual has a renderable input_schema (a "payload" object
+    // field), so the typed form is the default config view…
+    await expect(seniorPage.getByTestId("schema-config-form")).toBeVisible();
+    await expect(seniorPage.getByTestId("schema-field-payload")).toBeVisible();
+
+    // …and the raw JSON textarea is reachable via the JSON toggle.
+    await seniorPage.getByTestId("workflow-editor-config-mode-json").click();
     await expect(seniorPage.getByTestId("workflow-editor-config-json")).toBeVisible();
+    await expect(seniorPage.getByTestId("workflow-editor-config-json")).toHaveValue("{}");
+
+    // Toggling back restores the form.
+    await seniorPage.getByTestId("workflow-editor-config-mode-form").click();
+    await expect(seniorPage.getByTestId("schema-config-form")).toBeVisible();
   });
 });

@@ -280,6 +280,10 @@ class NodeCatalogEntry(BaseModel):
         ),
     )
     description: str = ""
+    # JSON Schema of the node's pydantic input model
+    # (``Node.input_schema.model_json_schema()``). Drives the editor's typed
+    # config form; ``{}`` when a node has no configurable input.
+    input_schema: dict[str, Any] = Field(default_factory=dict)
 
 
 class NodeCatalogResponse(BaseModel):

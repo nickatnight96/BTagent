@@ -241,6 +241,8 @@ export interface NodeCatalogEntry {
   version: string;
   category: NodeCategory | string;
   description: string;
+  /** JSON Schema of the node's pydantic input model; {} when none. */
+  input_schema: Record<string, unknown>;
 }
 
 export interface NodeCatalogResponse {
