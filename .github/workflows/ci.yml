@@ -251,7 +251,7 @@ jobs:
           uv pip install --system -e "backend/[dev,saml]"
 
       - name: Run SAML tests (full crypto suite)
-        run: pytest backend/tests/test_saml.py -v
+        run: pytest backend/tests/test_saml.py backend/tests/test_saml_routes.py -v
 
   # ── Agent Evaluation ─────────────────────────────────
   agent-eval:
