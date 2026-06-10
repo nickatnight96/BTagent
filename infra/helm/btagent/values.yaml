@@ -177,6 +177,27 @@ secretEnv:
   BTAGENT_S3_ACCESS_KEY: ""
   BTAGENT_S3_SECRET_KEY: ""
 
+# -- Scheduler (arq worker)
+# Mirrors the `scheduler` service in docker-compose.yml. Uses the backend image
+# with `arq btagent_backend.scheduler.worker.WorkerSettings` as its command.
+#
+# replicaCount is intentionally fixed at 1 and should not be raised without
+# first adding distributed-lock / cron-leader-election support: arq cron jobs
+# do not deduplicate across worker instances, so running >1 replica causes
+# scheduled hunts (suppression sweeps, baseline builds) to fire multiple times
+# per interval — a silent correctness failure.
+scheduler:
+  enabled: true
+  # Must stay at 1 — see comment above.
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
 # -- Extra volumes for read-only root filesystem (tmp, cache)
 extraVolumes:
   - name: tmp
