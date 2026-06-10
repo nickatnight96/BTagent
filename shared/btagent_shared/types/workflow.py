@@ -230,6 +230,9 @@ class WorkflowRunResponse(BaseModel):
     paused_node_id: str | None = None
     # Step ids approved across resume cycles (gate bypassed on resume).
     approved_steps: list[str] = Field(default_factory=list)
+    # Agent autonomy the run executed under ("L0".."L4"), inherited from the
+    # originating investigation; null on rows predating autonomy snapshotting.
+    agent_autonomy: str | None = None
     trigger_payload: dict[str, Any]
     outputs: dict[str, Any]
     final_output: dict[str, Any] | None

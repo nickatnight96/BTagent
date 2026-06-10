@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from btagent_shared.types.config import TLP
+from btagent_shared.types.config import TLP, AutonomyLevel
 from btagent_shared.types.enums import (
     ContainmentStatus,
     InvestigationStatus,
@@ -24,6 +24,9 @@ class Investigation(BaseModel):
     status: InvestigationStatus = InvestigationStatus.PENDING
     severity: Severity = Severity.MEDIUM
     tlp_level: TLP = TLP.GREEN
+    # HITL autonomy posture for agent work under this investigation;
+    # inherited by workflow runs launched from it.
+    autonomy_level: AutonomyLevel = AutonomyLevel.L2_SUPERVISED
     assigned_to: str | None = None
     template: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)

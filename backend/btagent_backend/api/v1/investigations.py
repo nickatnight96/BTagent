@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from btagent_shared.types.config import TLP
+from btagent_shared.types.config import TLP, AutonomyLevel
 from btagent_shared.types.enums import InvestigationStatus, Severity
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -43,6 +43,11 @@ class CreateInvestigationRequest(BaseModel):
     description: str = ""
     severity: Severity = Severity.MEDIUM
     tlp_level: TLP = TLP.GREEN
+    # HITL autonomy posture for agent work under this investigation. L3/L4
+    # reduce human oversight, so setting them requires ``hitl:approve``
+    # (senior_analyst+) -- the same permission that approves the gates they
+    # would bypass.
+    autonomy_level: AutonomyLevel = AutonomyLevel.L2_SUPERVISED
     template: str | None = None
 
 
@@ -54,6 +59,7 @@ class InvestigationResponse(BaseModel):
     status: str
     severity: str
     tlp_level: str
+    autonomy_level: str
     assigned_to: str | None
     template: str | None
     created_at: str | None
@@ -77,6 +83,7 @@ def _to_response(row: InvestigationRow) -> InvestigationResponse:
         status=row.status,
         severity=row.severity,
         tlp_level=row.tlp_level,
+        autonomy_level=row.autonomy_level,
         assigned_to=row.assigned_to,
         template=row.template,
         created_at=row.created_at.isoformat() if row.created_at else None,
@@ -94,11 +101,18 @@ async def create_investigation(
 ):
     """Create a new investigation and start the agent."""
     user.require_permission("investigation:create")
+    # L3/L4 let the agent execute integration actions with reduced human
+    # oversight -- gate them behind the same permission that approves the
+    # HITL checkpoints they would skip. L0-L2 (equal or more oversight than
+    # the default) stay open to any investigation creator.
+    if body.autonomy_level in (AutonomyLevel.L3_AUTONOMOUS, AutonomyLevel.L4_FULL_AUTO):
+        user.require_permission("hitl:approve")
     task_manager = _get_task_manager(request)
 
     config = {
         "severity": body.severity.value,
         "tlp_level": body.tlp_level.value,
+        "autonomy_level": body.autonomy_level.value,
         "template": body.template,
     }
 
@@ -111,6 +125,7 @@ async def create_investigation(
         description=body.description,
         severity=body.severity.value,
         tlp_level=body.tlp_level.value,
+        autonomy_level=body.autonomy_level.value,
         template=body.template,
         assigned_to=user.id,
         org_id=user.org_id,

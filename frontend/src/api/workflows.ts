@@ -88,6 +88,9 @@ export interface WorkflowRun {
   paused_node_id: string | null;
   /** Step ids approved across resume cycles. */
   approved_steps: string[];
+  /** Agent autonomy the run executed under ("L0".."L4"), inherited from
+   *  the originating investigation; null on pre-inheritance rows. */
+  agent_autonomy: string | null;
   trigger_payload: Record<string, unknown>;
   outputs: Record<string, unknown>;
   final_output: Record<string, unknown> | null;
