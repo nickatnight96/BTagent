@@ -9,7 +9,7 @@
 # Build:  docker build -f infra/docker/Dockerfile.backend.saml -t btagent-backend:saml .
 #
 # Supply chain: base image pinned via build-arg, same contract as the slim image.
-ARG BASE_IMAGE=python:3.12-slim-bookworm
+ARG BASE_IMAGE=python:3.14-slim-bookworm
 ARG BASE_IMAGE_DIGEST=
 
 # Stage 1: Build (installs backend[saml] — needs the xmlsec dev libs to build).
@@ -58,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd --create-home --shell /bin/bash --uid 1000 btagent
 WORKDIR /app
 
-COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY --from=builder /usr/local/lib/python3.14/site-packages/ /usr/local/lib/python3.14/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY --from=builder /app/ /app/
 

@@ -5,11 +5,11 @@
 # tag, which still floats on patch releases. To fully lock, set
 # ``BASE_IMAGE_DIGEST`` in CI to the output of:
 #
-#     docker pull python:3.12-slim-bookworm
-#     docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim-bookworm
+#     docker pull python:3.14-slim-bookworm
+#     docker inspect --format='{{index .RepoDigests 0}}' python:3.14-slim-bookworm
 #
 # and pass it as ``--build-arg BASE_IMAGE_DIGEST=sha256:...``.
-ARG BASE_IMAGE=python:3.12-slim-bookworm
+ARG BASE_IMAGE=python:3.14-slim-bookworm
 ARG BASE_IMAGE_DIGEST=
 
 # Stage 1: Build
@@ -61,7 +61,7 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 btagent
 WORKDIR /app
 
 # Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
+COPY --from=builder /usr/local/lib/python3.14/site-packages/ /usr/local/lib/python3.14/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY --from=builder /app/ /app/
 
