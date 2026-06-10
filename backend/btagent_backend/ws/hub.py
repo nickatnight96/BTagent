@@ -6,7 +6,8 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-from btagent_shared.types.events import EventEnvelope
+from btagent_shared.security import TLPViolation, assert_tlp_allows_egress
+from btagent_shared.types.events import EventEnvelope, EventType
 from fastapi import WebSocket, WebSocketDisconnect
 from redis.asyncio import Redis
 from starlette.websockets import WebSocketState
@@ -231,7 +232,19 @@ class WebSocketHub:
         """Publish an event into Redis pub/sub for fan-out.
 
         Returns the number of subscribers that received the message.
+
+        TLP egress gate: applied here (send side) as defence-in-depth so
+        RED data never even reaches Redis when the publisher is in-process
+        (e.g. the ``tlp_alert_sink``). The primary chokepoint is
+        :meth:`_dispatch` (receive side), which also catches events that
+        were published directly to Redis by other clients of the channel
+        such as ``RedisEmitter`` (used by ``task_manager`` and the legacy
+        agent hooks). Publishing is fire-and-forget, so a blocked event is
+        logged + dropped rather than raised back to the emitter.
         """
+        if self._should_drop_for_tlp(envelope, where="publish"):
+            return 0
+
         if not self._redis:
             logger.warning("Hub not started; dropping event %s", envelope.id)
             return 0
@@ -241,6 +254,43 @@ class WebSocketHub:
         count = await self._redis.publish(channel, payload)
         count += await self._redis.publish(global_channel(), payload)
         return count
+
+    def _should_drop_for_tlp(self, envelope: EventEnvelope, *, where: str) -> bool:
+        """Return True if *envelope* should be dropped on the ``event_emit`` egress.
+
+        Called from both :meth:`publish` (send side) and :meth:`_dispatch`
+        (receive/fan-out side) so direct-to-Redis publishers like
+        ``RedisEmitter`` are also gated — without that, the primary agent
+        event path bypasses the broadcast chokepoint entirely.
+
+        The TLP-violation alert event is exempt: its ``data.tlp`` is
+        ``"red"`` because it describes a blocked egress, but it's
+        governance metadata, not RED payload, and it must reach the analyst
+        surface precisely when RED was refused. Gating it would
+        self-trigger (block -> emit violation -> block -> ...).
+        """
+        if envelope.type == EventType.TLP_VIOLATION_ATTEMPT:
+            return False
+
+        org_id = envelope.data.get("org_id") if isinstance(envelope.data, dict) else None
+        try:
+            assert_tlp_allows_egress(
+                envelope.model_dump(mode="json"),
+                "event_emit",
+                classification_ctx=(envelope.data if isinstance(envelope.data, dict) else None),
+                org_id=org_id,
+            )
+        except TLPViolation:
+            # Already logged + a tlp.violation_attempt event emitted by
+            # the shared gate.
+            logger.warning(
+                "Dropping TLP-restricted event %s (type=%s) at %s",
+                envelope.id,
+                envelope.type.value,
+                where,
+            )
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # Internal: Redis pub/sub listener
@@ -276,11 +326,21 @@ class WebSocketHub:
             logger.exception("Redis pub/sub listener crashed")
 
     async def _dispatch(self, channel: str, raw_json: str) -> None:
-        """Route a Redis message to the appropriate WebSocket clients."""
+        """Route a Redis message to the appropriate WebSocket clients.
+
+        TLP egress gate (primary chokepoint): every event reaching a
+        client passes through here, regardless of publisher. ``RedisEmitter``
+        (and any other direct-to-Redis publisher) bypasses :meth:`publish`,
+        so without this check a RED-tagged event from ``task_manager`` or a
+        legacy agent hook would still reach subscribers.
+        """
         try:
             envelope = EventEnvelope.model_validate_json(raw_json)
         except Exception:
             logger.warning("Ignoring unparsable event on channel %s", channel)
+            return
+
+        if self._should_drop_for_tlp(envelope, where=f"dispatch({channel})"):
             return
 
         critical = is_critical(envelope)
