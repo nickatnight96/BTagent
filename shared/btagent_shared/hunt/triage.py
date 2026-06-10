@@ -98,6 +98,25 @@ def cluster_reduction(findings: Sequence[HuntFinding]) -> float:
     return 1.0 - (num_clusters / len(findings))
 
 
+def match_for_cluster(findings: Sequence[HuntFinding]) -> SuppressionMatch:
+    """Derive the default suppression criteria for a cluster of findings.
+
+    A cluster groups findings sharing domain + technique set + entity
+    *shape* (see :func:`finding_signature`), so the pattern-level match is
+    ``domain AND technique overlap`` — deliberately *not* the concrete
+    entity/observable values, which differ per member (that's why they
+    clustered). This way the rule keeps suppressing the recurring pattern
+    on hosts/users it hasn't seen yet. Callers still gate the result via
+    :func:`is_overbroad` before persisting.
+    """
+    if not findings:
+        return SuppressionMatch()
+    return SuppressionMatch(
+        domain=findings[0].domain,
+        technique_ids=union_techniques(findings),
+    )
+
+
 def suppression_matches(match: SuppressionMatch, finding: HuntFinding) -> bool:
     """Does ``finding`` match the suppression criteria?
 
