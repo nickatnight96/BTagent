@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from btagent_shared.types.config import TLP
+from btagent_shared.types.config import TLP, AutonomyLevel
 from btagent_shared.types.workflow import (
     CreateWorkflowRequest,
     CreateWorkflowVersionRequest,
@@ -119,6 +119,7 @@ def _to_run_response(row: WorkflowRunRow) -> WorkflowRunResponse:
         status=WorkflowRunStatus(row.status),
         paused_node_id=row.paused_node_id,
         approved_steps=row.approved_steps or [],
+        agent_autonomy=row.agent_autonomy,
         trigger_payload=row.trigger_payload or {},
         outputs=row.outputs or {},
         final_output=row.final_output,
@@ -434,6 +435,17 @@ async def run_version(
     else:
         resolved_tlp = TLP.RED  # fail closed
 
+    # Autonomy inheritance: a run launched from an investigation executes
+    # under that investigation's HITL posture; ad-hoc launches stay at the
+    # supervised L2 default. Deliberately NO request-body override — the
+    # investigation's autonomy is permission-gated at investigation-create
+    # (L3/L4 need hitl:approve), and a body override here would let any
+    # workflow:run caller skip HITL gates by self-declaring L4.
+    if investigation is not None:
+        resolved_autonomy = AutonomyLevel(investigation.autonomy_level)
+    else:
+        resolved_autonomy = AutonomyLevel.L2_SUPERVISED
+
     try:
         run = await workflow_run_service.execute_version(
             db,
@@ -442,6 +454,7 @@ async def run_version(
             trigger_payload=body.trigger_payload,
             triggered_by=user.id,
             active_tlp=resolved_tlp,
+            agent_autonomy=resolved_autonomy,
             investigation_id=investigation.id if investigation is not None else None,
         )
     except WorkflowNotExecutable as exc:

@@ -320,6 +320,7 @@ async def execute_version(
         # Persisted so a resume can faithfully rebuild the run's posture +
         # checkpoint without re-deriving them.
         active_tlp=active_tlp.value,
+        agent_autonomy=agent_autonomy.value,
         paused_node_id=outcome.paused_node_id,
         approved_steps=[],
         trigger_payload=dict(trigger_payload),
@@ -361,7 +362,6 @@ async def resume_run(
     version: WorkflowVersionRow,
     run: WorkflowRunRow,
     approver_id: str | None,
-    agent_autonomy: AutonomyLevel = AutonomyLevel.L2_SUPERVISED,
     integration_autonomy: IntegrationAutonomy | None = None,
 ) -> WorkflowRunRow:
     """Resume a paused run: approve the paused step and continue execution.
@@ -372,6 +372,13 @@ async def resume_run(
     run row is **updated in place**: it transitions ``paused`` →
     ``succeeded`` / ``failed`` / ``paused`` (if a *later* gate trips), with
     ``approved_steps`` accumulating across resume cycles.
+
+    Posture rehydration: ``active_tlp`` *and* ``agent_autonomy`` are read
+    from the run row (snapshotted at create time), so a resume executes
+    under exactly the posture the run started with -- a caller can't widen
+    or narrow autonomy mid-run, and an investigation's later autonomy edits
+    don't retroactively change in-flight runs. Rows that predate autonomy
+    snapshotting fall back to L2 (the previous hardcoded default).
 
     Concurrency: the run is *atomically claimed* with a single conditional
     UPDATE (``paused`` → ``running``) and committed before invoking the
@@ -429,6 +436,11 @@ async def resume_run(
     prior_nodes_executed = list(run.nodes_executed or [])
 
     active_tlp = TLP(run.active_tlp) if run.active_tlp else TLP.RED
+    # Pre-snapshot rows (before migration 0018) resumed under the hardcoded
+    # L2 default; keep that exact behaviour for them.
+    agent_autonomy = (
+        AutonomyLevel(run.agent_autonomy) if run.agent_autonomy else AutonomyLevel.L2_SUPERVISED
+    )
     ctx = NodeContext(
         run_id=run.id,
         workflow_run_id=run.id,

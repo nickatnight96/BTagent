@@ -113,6 +113,9 @@ class InvestigationRow(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
     severity: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
     tlp_level: Mapped[str] = mapped_column(String(20), nullable=False, default="green")
+    # HITL autonomy posture for agent work under this investigation
+    # ("L0".."L4"). Inherited by workflow runs linked to the investigation.
+    autonomy_level: Mapped[str] = mapped_column(String(8), nullable=False, default="L2")
     assigned_to: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

@@ -150,6 +150,11 @@ class WorkflowRunRow(Base):
     # TLP gating). Persisted so a resume reuses the same posture. Nullable for
     # rows created before the resume feature landed.
     active_tlp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Agent autonomy the run executed under ("L0".."L4", drives the HITL
+    # gate). Inherited from the originating investigation at create time and
+    # persisted so a resume reuses the same posture. Nullable for rows
+    # created before autonomy inheritance landed (treated as L2).
+    agent_autonomy: Mapped[str | None] = mapped_column(String(8), nullable=True)
     # When status=paused, the step id the run is paused at (the node awaiting
     # approval). Cleared when the run reaches a terminal state.
     paused_node_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
