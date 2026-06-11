@@ -157,6 +157,22 @@ async def _upsert_cluster_for(
     cluster.severity = triage.max_severity(members).value
     cluster.technique_ids = triage.union_techniques(members)
     cluster.updated_at = now
+
+    # Codex #199: if a new finding arrives for a cluster previously marked
+    # PROMOTED or SUPPRESSED, the new signal must not be silently absorbed
+    # into an "already handled" aggregate state. Reopen to CLUSTERED so it
+    # surfaces for triage again. PROMOTED reopens because the prior
+    # promotion's investigation still exists (preserved in audit) but a
+    # NEW finding warrants its own analyst decision. SUPPRESSED only
+    # reaches here when ``_active_suppressions`` produced no match — i.e.
+    # the rule that originally suppressed the cluster has expired or been
+    # withdrawn; reopen so the lapsed suppression isn't a permanent blind
+    # spot.
+    if cluster.state in (
+        HuntFindingState.PROMOTED.value,
+        HuntFindingState.SUPPRESSED.value,
+    ):
+        cluster.state = HuntFindingState.CLUSTERED.value
     return cluster
 
 

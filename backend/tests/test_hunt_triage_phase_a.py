@@ -395,3 +395,76 @@ async def test_cross_org_actions_404(client, analyst_token, org_b_admin_token):
 
     r = await client.post(f"/api/v1/hunt/clusters/{cluster_id}/promote", json={}, headers=hdrs)
     assert r.status_code == 404, r.text
+
+
+# --------------------------------------------------------------------------- #
+# Codex #199: cluster reopens on new ingest into a terminal-state aggregate
+# --------------------------------------------------------------------------- #
+
+
+async def _cluster_state(db_session: AsyncSession, cluster_id: str) -> str:
+    """Read a cluster's state directly from the DB (no GET-by-id route)."""
+    row = await svc.get_cluster(db_session, cluster_id)
+    assert row is not None, f"cluster {cluster_id} not found"
+    return row.state
+
+
+async def test_new_finding_reopens_promoted_cluster(
+    client, analyst_token, admin_token, db_session: AsyncSession
+):
+    """A cluster that's already PROMOTED must reopen when a fresh finding
+    with the same signature arrives — otherwise the new signal gets
+    silently treated as already-handled."""
+    a = await _post_finding(client, analyst_token, _finding_body("T1486.901", "WS-RE-A"))
+    cluster_id = a["cluster_id"]
+    promo = await client.post(
+        f"/api/v1/hunt/clusters/{cluster_id}/promote",
+        json={"title": "ransomware sweep"},
+        headers=auth_header(admin_token),
+    )
+    assert promo.status_code == 201, promo.text
+    assert await _cluster_state(db_session, cluster_id) == "promoted"
+
+    # New finding with the SAME signature (technique + entity-shape).
+    b = await _post_finding(client, analyst_token, _finding_body("T1486.901", "WS-RE-B"))
+    assert b["cluster_id"] == cluster_id
+    # New finding itself is not auto-promoted.
+    assert b["state"] != "promoted"
+    # Cluster is reopened so it surfaces for triage again.
+    assert await _cluster_state(db_session, cluster_id) == "clustered"
+
+
+async def test_new_finding_reopens_suppressed_cluster_after_rule_expires(
+    client, analyst_token, admin_token, db_session: AsyncSession
+):
+    """When the rule that suppressed a cluster has expired, a fresh
+    matching finding bypasses ``_active_suppressions`` — and must drag the
+    cluster out of SUPPRESSED so the lapsed rule isn't a permanent blind
+    spot."""
+    a = await _post_finding(client, analyst_token, _finding_body("T1059.901", "WS-EXP-A"))
+    cluster_id = a["cluster_id"]
+    resp = await client.post(
+        f"/api/v1/hunt/clusters/{cluster_id}/suppress",
+        json={"name": "tuned", "reason": "noise sweep 2026-06"},
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 201, resp.text
+    assert await _cluster_state(db_session, cluster_id) == "suppressed"
+
+    # Expire the suppression rule (simulates a sweep-cron lag while the
+    # TTL has already lapsed in wall clock).
+    rule_id = resp.json()["id"]
+    rule_row = (
+        await db_session.execute(
+            select(SuppressionRuleRow).where(SuppressionRuleRow.id == rule_id)
+        )
+    ).scalar_one()
+    rule_row.expires_at = datetime.now(UTC) - timedelta(hours=1)
+    await db_session.commit()
+
+    # Fresh finding with the same signature — would have been suppressed
+    # while the rule was active; now it is not, and the cluster reopens.
+    b = await _post_finding(client, analyst_token, _finding_body("T1059.901", "WS-EXP-B"))
+    assert b["cluster_id"] == cluster_id
+    assert b["state"] != "suppressed"
+    assert await _cluster_state(db_session, cluster_id) == "clustered"
