@@ -82,7 +82,13 @@ class HuntFindingRow(Base):
     )
 
     __table_args__ = (
-        Index("idx_hunt_findings_org_id", "org_id"),
+        # Composite hot-path indexes (migration 0020): every inbox read
+        # filters on org_id and either sorts by created_at or filters by
+        # state, so the composites serve filter + sort/filter in one scan
+        # (same rationale as 0010_perf_indexes). The single-column org_id
+        # index is gone — it's a left-prefix of both composites.
+        Index("idx_hunt_findings_org_created", "org_id", "created_at"),
+        Index("idx_hunt_findings_org_state", "org_id", "state"),
         Index("idx_hunt_findings_state", "state"),
         Index("idx_hunt_findings_signature", "signature"),
         Index("idx_hunt_findings_cluster_id", "cluster_id"),

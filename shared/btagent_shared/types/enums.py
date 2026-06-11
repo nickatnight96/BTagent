@@ -72,6 +72,10 @@ class AuditCategory(StrEnum):
     # Workflow CRUD lifecycle transitions (publish / deprecate /
     # auto_deprecate / delete) — Phase 2 v2 workflow store.
     WORKFLOW = "workflow"
+    # Hunt triage lifecycle actions (suppress / promote) — Phase 6 (#119).
+    # Suppressing shapes what the SOC stops looking at and promoting spawns
+    # an investigation, so both must land on the hash-chain ledger.
+    HUNT = "hunt"
 
 
 class AuditOutcome(StrEnum):

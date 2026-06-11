@@ -17,9 +17,11 @@ from btagent_shared.types.hunt_finding import (
     HuntFinding,
     HuntFindingCluster,
     HuntFindingClusterListResponse,
+    PromoteClusterRequest,
     PromoteFindingsRequest,
     PromoteFindingsResponse,
     RecordFindingRequest,
+    SuppressClusterRequest,
     SuppressionListResponse,
     SuppressionRule,
 )
@@ -84,6 +86,16 @@ async def _load_finding_scoped(
     row = await svc.get_finding(db, finding_id)
     if row is None or row.org_id != user.org_id:
         raise HTTPException(status_code=404, detail="Hunt finding not found")
+    return row
+
+
+async def _load_cluster_scoped(
+    db: AsyncSession, cluster_id: str, user: CurrentUser
+) -> HuntFindingClusterRow:
+    """Fetch a cluster; 404 if missing or cross-tenant (IDOR-safe)."""
+    row = await svc.get_cluster(db, cluster_id)
+    if row is None or row.org_id != user.org_id:
+        raise HTTPException(status_code=404, detail="Hunt finding cluster not found")
     return row
 
 
@@ -183,11 +195,15 @@ async def suppress_finding(
             reason=body.reason,
             match=body.match,
             created_by=user.id,
+            actor=user.username,
+            target=f"hunt_finding:{row.id}",
             expires_in_hours=body.expires_in_hours,
             reconfirm_in_hours=body.reconfirm_in_hours,
         )
     except svc.OverbroadSuppressionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return _suppression_response(rule)
 
 
@@ -206,9 +222,76 @@ async def promote_findings(
             finding_ids=body.finding_ids,
             title=body.title,
             assigned_to=user.id,
+            actor=user.username,
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    return PromoteFindingsResponse(investigation_id=inv.id, promoted_finding_ids=promoted)
+
+
+# --------------------------------------------------------------------------- #
+# Cluster-level actions
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/clusters/{cluster_id}/suppress", response_model=SuppressionRule, status_code=201)
+async def suppress_cluster(
+    cluster_id: str,
+    body: SuppressClusterRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Bulk-suppress a cluster (one rule covering the cluster's pattern).
+
+    Omitting ``match`` derives the criteria from the cluster's pattern
+    (domain + technique set); 400 if an explicit match doesn't apply to any
+    member, 409 if the rule would be over-broad.
+    """
+    user.require_permission("hunt:suppress")
+    cluster = await _load_cluster_scoped(db, cluster_id, user)
+    try:
+        rule, _count = await svc.suppress_cluster(
+            db,
+            org_id=user.org_id,
+            cluster=cluster,
+            name=body.name,
+            reason=body.reason,
+            match=body.match,
+            created_by=user.id,
+            actor=user.username,
+            expires_in_hours=body.expires_in_hours,
+            reconfirm_in_hours=body.reconfirm_in_hours,
+        )
+    except svc.OverbroadSuppressionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _suppression_response(rule)
+
+
+@router.post(
+    "/clusters/{cluster_id}/promote", response_model=PromoteFindingsResponse, status_code=201
+)
+async def promote_cluster(
+    cluster_id: str,
+    body: PromoteClusterRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Escalate a cluster's eligible members into a single investigation."""
+    user.require_permission("hunt:promote")
+    cluster = await _load_cluster_scoped(db, cluster_id, user)
+    try:
+        inv, promoted = await svc.promote_cluster(
+            db,
+            org_id=user.org_id,
+            cluster=cluster,
+            title=body.title,
+            assigned_to=user.id,
+            actor=user.username,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return PromoteFindingsResponse(investigation_id=inv.id, promoted_finding_ids=promoted)
 
 
@@ -246,9 +329,12 @@ async def create_suppression(
             reason=body.reason,
             match=body.match,
             created_by=user.id,
+            actor=user.username,
             expires_in_hours=body.expires_in_hours,
             reconfirm_in_hours=body.reconfirm_in_hours,
         )
     except svc.OverbroadSuppressionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return _suppression_response(rule)

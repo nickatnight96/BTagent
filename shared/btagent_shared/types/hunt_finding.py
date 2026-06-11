@@ -196,6 +196,31 @@ class PromoteFindingsRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
 
 
+class SuppressClusterRequest(BaseModel):
+    """Body for ``POST /hunt/clusters/{id}/suppress`` — bulk-suppress a cluster.
+
+    ``match`` is optional: when omitted, the service derives the criteria
+    from the cluster's pattern (domain + technique set) so future findings
+    of the same shape are suppressed too, not just the current members.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=200)
+    reason: str = Field(..., min_length=1, max_length=2048)
+    match: SuppressionMatch | None = None
+    expires_in_hours: int | None = Field(default=None, ge=1, le=8760)
+    reconfirm_in_hours: int | None = Field(default=None, ge=1, le=8760)
+
+
+class PromoteClusterRequest(BaseModel):
+    """Body for ``POST /hunt/clusters/{id}/promote`` — escalate a whole cluster."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+
+
 # --------------------------------------------------------------------------- #
 # Response payloads
 # --------------------------------------------------------------------------- #

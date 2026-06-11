@@ -10,7 +10,9 @@ The clustering + suppression *decisions* are made by the dependency-free
 pure logic in :mod:`btagent_shared.hunt.triage`; this module is the
 side-effectful shell that loads rows, calls that logic, and writes back.
 Per the codebase convention, the service never commits and never emits
-events — the route layer / agent hook owns those.
+events — the route layer / agent hook owns those. Suppress / promote *are*
+audited here (category ``hunt``), matching the workflow_service idiom of
+recording lifecycle transitions next to the mutation they describe.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from btagent_shared.hunt import triage
-from btagent_shared.types.enums import Severity
+from btagent_shared.types.enums import AuditCategory, AuditOutcome, Severity
 from btagent_shared.types.hunt import (
     HuntFindingState,
     SuppressionState,
@@ -41,6 +43,7 @@ from btagent_backend.db.models_hunt import (
     HuntFindingRow,
     SuppressionRuleRow,
 )
+from btagent_backend.services.audit_trail import AuditTrail
 
 logger = logging.getLogger("btagent.services.hunt_triage")
 
@@ -154,6 +157,22 @@ async def _upsert_cluster_for(
     cluster.severity = triage.max_severity(members).value
     cluster.technique_ids = triage.union_techniques(members)
     cluster.updated_at = now
+
+    # Codex #199: if a new finding arrives for a cluster previously marked
+    # PROMOTED or SUPPRESSED, the new signal must not be silently absorbed
+    # into an "already handled" aggregate state. Reopen to CLUSTERED so it
+    # surfaces for triage again. PROMOTED reopens because the prior
+    # promotion's investigation still exists (preserved in audit) but a
+    # NEW finding warrants its own analyst decision. SUPPRESSED only
+    # reaches here when ``_active_suppressions`` produced no match — i.e.
+    # the rule that originally suppressed the cluster has expired or been
+    # withdrawn; reopen so the lapsed suppression isn't a permanent blind
+    # spot.
+    if cluster.state in (
+        HuntFindingState.PROMOTED.value,
+        HuntFindingState.SUPPRESSED.value,
+    ):
+        cluster.state = HuntFindingState.CLUSTERED.value
     return cluster
 
 
@@ -172,13 +191,27 @@ async def _cluster_members(db: AsyncSession, *, cluster_id: str) -> list[HuntFin
 
 
 async def _active_suppressions(db: AsyncSession, *, org_id: str) -> list[SuppressionRuleRow]:
+    """Rules that may suppress a new finding: ``ACTIVE`` *and* not yet expired.
+
+    The state flip to ``EXPIRED`` happens in :func:`sweep_stale_suppressions`
+    (a cron), so a rule can sit past its ``expires_at`` while still marked
+    ``ACTIVE``. Expiry is checked here at ingest time so a lapsed rule never
+    hides a new finding just because the sweep hasn't run yet.
+    """
     rows = await db.execute(
         select(SuppressionRuleRow).where(
             SuppressionRuleRow.org_id == org_id,
             SuppressionRuleRow.state == SuppressionState.ACTIVE.value,
         )
     )
-    return list(rows.scalars().all())
+    now = _utcnow()
+    active: list[SuppressionRuleRow] = []
+    for rule in rows.scalars().all():
+        expires_at = _as_aware_utc(rule.expires_at)
+        if expires_at is not None and expires_at <= now:
+            continue
+        active.append(rule)
+    return active
 
 
 async def _apply_suppressions_to(
@@ -365,17 +398,26 @@ async def create_suppression(
     reason: str,
     match: SuppressionMatch,
     created_by: str | None,
+    actor: str | None = None,
+    target: str | None = None,
     expires_in_hours: int | None = None,
     reconfirm_in_hours: int | None = None,
 ) -> tuple[SuppressionRuleRow, int]:
     """Create a suppression rule and apply it to existing matching findings.
 
-    Guards against over-broad rules (see
+    A non-blank ``reason`` (the analyst's rationale) is mandatory — every
+    suppression must be defensible on the audit ledger; raises
+    :class:`ValueError` otherwise. Guards against over-broad rules (see
     :func:`btagent_shared.hunt.triage.is_overbroad`) by sampling recent
     findings; raises :class:`OverbroadSuppressionError` if the rule would
-    match too large / too diverse a slice. Returns the rule and the count
+    match too large / too diverse a slice. Records the action on the
+    hash-chain audit log (category ``hunt`` / action ``suppress``;
+    ``actor`` defaults to ``created_by``). Returns the rule and the count
     of findings it suppressed on creation.
     """
+    if not reason or not reason.strip():
+        raise ValueError("Suppression rationale (reason) is required and must not be blank")
+
     sample_rows = (
         (
             await db.execute(
@@ -444,6 +486,23 @@ async def create_suppression(
             frow.suppressed_by = rule.id
             suppressed += 1
     rule.match_count = suppressed
+
+    await AuditTrail(db).record(
+        actor=actor or created_by or "system",
+        category=AuditCategory.HUNT,
+        action="suppress",
+        resource=f"suppression:{rule.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": org_id,
+            "name": name,
+            "reason": reason,
+            "match": match.model_dump(mode="json"),
+            "suppressed_count": suppressed,
+            "target": target,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        },
+    )
     await db.flush()
     return rule, suppressed
 
@@ -512,12 +571,15 @@ async def promote_to_investigation(
     finding_ids: list[str],
     title: str | None,
     assigned_to: str | None,
+    actor: str | None = None,
 ) -> tuple[InvestigationRow, list[str]]:
     """Escalate one or more findings into a new investigation.
 
     Seeds the investigation with the union of the findings' observables,
     technique mapping, and evidence provenance, and flips each finding to
-    ``PROMOTED`` with a back-reference. Raises :class:`ValueError` if no
+    ``PROMOTED`` with a back-reference. Records the escalation on the
+    hash-chain audit log (category ``hunt`` / action ``promote``; ``actor``
+    defaults to ``assigned_to``). Raises :class:`ValueError` if no
     in-scope findings are resolved (route surfaces 404).
     """
     rows = (
@@ -567,6 +629,138 @@ async def promote_to_investigation(
     for r in rows:
         r.state = HuntFindingState.PROMOTED.value
         r.investigation_id = inv.id
+
+    await AuditTrail(db).record(
+        actor=actor or assigned_to or "system",
+        category=AuditCategory.HUNT,
+        action="promote",
+        resource=f"investigation:{inv.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": org_id,
+            "title": inv_title,
+            "severity": severity.value,
+            "hunt_finding_ids": [r.id for r in rows],
+            "mitre_techniques": techniques,
+        },
+    )
     await db.flush()
 
     return inv, [r.id for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Public API — cluster-level actions
+# --------------------------------------------------------------------------- #
+
+
+async def get_cluster(db: AsyncSession, cluster_id: str) -> HuntFindingClusterRow | None:
+    result = await db.execute(
+        select(HuntFindingClusterRow).where(HuntFindingClusterRow.id == cluster_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def suppress_cluster(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    cluster: HuntFindingClusterRow,
+    name: str,
+    reason: str,
+    match: SuppressionMatch | None,
+    created_by: str | None,
+    actor: str | None = None,
+    expires_in_hours: int | None = None,
+    reconfirm_in_hours: int | None = None,
+) -> tuple[SuppressionRuleRow, int]:
+    """Bulk-suppress a cluster: one rule covering the cluster's pattern.
+
+    When ``match`` is omitted it is derived from the members (domain +
+    technique set — see :func:`btagent_shared.hunt.triage.match_for_cluster`)
+    so the rule keeps suppressing the recurring pattern, not just today's
+    members. The supplied/derived match must apply to the cluster's members
+    (:class:`ValueError` otherwise — guards pasting the wrong criteria), and
+    the usual over-broad gate applies. The cluster row itself is flipped to
+    ``SUPPRESSED`` when every member is suppressed.
+    """
+    members = await _cluster_members(db, cluster_id=cluster.id)
+    if match is None:
+        match = triage.match_for_cluster(members)
+    elif members and not any(triage.suppression_matches(match, m) for m in members):
+        raise ValueError("Suppression match does not apply to any finding in the cluster")
+
+    rule, suppressed = await create_suppression(
+        db,
+        org_id=org_id,
+        name=name,
+        reason=reason,
+        match=match,
+        created_by=created_by,
+        actor=actor,
+        target=f"hunt_cluster:{cluster.id}",
+        expires_in_hours=expires_in_hours,
+        reconfirm_in_hours=reconfirm_in_hours,
+    )
+
+    member_rows = (
+        (await db.execute(select(HuntFindingRow).where(HuntFindingRow.cluster_id == cluster.id)))
+        .scalars()
+        .all()
+    )
+    if member_rows and all(
+        m.state in (HuntFindingState.SUPPRESSED.value, HuntFindingState.DISMISSED.value)
+        for m in member_rows
+    ):
+        cluster.state = HuntFindingState.SUPPRESSED.value
+        cluster.updated_at = _utcnow()
+    await db.flush()
+    return rule, suppressed
+
+
+async def promote_cluster(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    cluster: HuntFindingClusterRow,
+    title: str | None,
+    assigned_to: str | None,
+    actor: str | None = None,
+) -> tuple[InvestigationRow, list[str]]:
+    """Escalate a cluster's non-terminal members into one investigation.
+
+    Members already ``PROMOTED`` or ``DISMISSED`` are left alone; everything
+    else (including suppressed members — promoting a cluster is an explicit
+    human override) rides into the new investigation. Raises
+    :class:`ValueError` if the cluster has no promotable members.
+    """
+    member_rows = (
+        (
+            await db.execute(
+                select(HuntFindingRow).where(
+                    HuntFindingRow.cluster_id == cluster.id,
+                    HuntFindingRow.org_id == org_id,
+                    HuntFindingRow.state.not_in(
+                        [HuntFindingState.PROMOTED.value, HuntFindingState.DISMISSED.value]
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not member_rows:
+        raise ValueError("Cluster has no findings eligible for promotion")
+
+    inv, promoted = await promote_to_investigation(
+        db,
+        org_id=org_id,
+        finding_ids=[m.id for m in member_rows],
+        title=title or f"Hunt promotion: {cluster.title}",
+        assigned_to=assigned_to,
+        actor=actor,
+    )
+    cluster.state = HuntFindingState.PROMOTED.value
+    cluster.updated_at = _utcnow()
+    await db.flush()
+    return inv, promoted
