@@ -160,3 +160,36 @@ def test_backend_specific_unmapped_field_is_unsupported_only_there():
 def test_unknown_backend_raises_value_error():
     with pytest.raises(ValueError, match="unknown backend"):
         transpile(_yaml("encoded_powershell.yml"), "qradar")  # type: ignore[arg-type]
+
+
+# --- backend init failure isolation (Codex #198 P2) -----------------------
+
+
+def test_transpile_wraps_backend_init_failure_in_sigma_transpile_error(monkeypatch):
+    """A backend factory that fails to initialise (e.g. missing pySigma
+    plugin) must surface as ``SigmaTranspileError`` so the per-rule catch
+    in the pack runner isolates it instead of killing the whole pack."""
+    import importlib
+
+    transpile_mod = importlib.import_module("btagent_engine.hunting.transpile")
+    SigmaTranspileError = transpile_mod.SigmaTranspileError
+    transpile = transpile_mod.transpile
+
+    def _boom() -> object:
+        raise RuntimeError("missing plugin")
+
+    monkeypatch.setitem(transpile_mod._BACKEND_FACTORIES, "splunk", _boom)
+    # Force a re-init by busting the cache for this backend.
+    transpile_mod._backend_cache.pop("splunk", None)
+
+    rule_yaml = (
+        "title: x\n"
+        "logsource: {category: process_creation, product: windows}\n"
+        "detection:\n"
+        "  selection: {Image|endswith: 'a.exe'}\n"
+        "  condition: selection\n"
+    )
+
+    with pytest.raises(SigmaTranspileError) as exc_info:
+        transpile(rule_yaml, "splunk")
+    assert "backend init failed" in str(exc_info.value)

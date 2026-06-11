@@ -170,3 +170,59 @@ def test_load_pack_duplicate_rule_ids_raises(tmp_path):
 )
 def test_extract_techniques(tags, expected):
     assert extract_techniques(tags) == expected
+
+
+# --- deterministic IDs (Codex #198 P2) -------------------------------------
+
+
+def test_load_pack_assigns_deterministic_ids_when_manifest_omits(tmp_path: Path) -> None:
+    """A pack.yaml without ``id`` and a rule without ``id`` must yield the
+    same pack/rule IDs across reloads — otherwise scheduled runs treat the
+    same versioned pack as new entities every cycle, breaking persisted
+    finding + noise-baseline correlation."""
+    pack_dir = tmp_path / "stable_ids"
+    (pack_dir / "rules").mkdir(parents=True)
+    (pack_dir / "pack.yaml").write_text(
+        "name: stable-ids\nversion: 1.0.0\nrules:\n  - file: r1.yml\n"
+    )
+    # Rule has no 'id' key — exercises the deterministic-rule-id branch.
+    (pack_dir / "rules" / "r1.yml").write_text(
+        "title: An anonymous rule\n"
+        "logsource: {category: process_creation, product: windows}\n"
+        "detection:\n"
+        "  selection: {Image|endswith: 'powershell.exe'}\n"
+        "  condition: selection\n"
+        "level: medium\n"
+    )
+
+    a = load_pack(pack_dir)
+    b = load_pack(pack_dir)
+
+    assert a.id == b.id, "pack id must be stable across reloads"
+    assert a.rules[0].id == b.rules[0].id, "rule id must be stable across reloads"
+    assert a.id.startswith("hpack_")
+    assert a.rules[0].id.startswith("hrule_")
+
+
+def test_load_pack_deterministic_id_varies_by_version(tmp_path: Path) -> None:
+    """Same name, different version → different pack id (so a re-versioned
+    pack doesn't collide with its predecessor's persisted findings)."""
+
+    def _make(version: str) -> Path:
+        d = tmp_path / f"v{version.replace('.', '_')}"
+        (d / "rules").mkdir(parents=True)
+        (d / "pack.yaml").write_text(
+            f"name: stable-ids\nversion: {version}\nrules:\n  - file: r1.yml\n"
+        )
+        (d / "rules" / "r1.yml").write_text(
+            "title: r1\n"
+            "logsource: {category: process_creation, product: windows}\n"
+            "detection:\n"
+            "  selection: {Image|endswith: 'cmd.exe'}\n"
+            "  condition: selection\n"
+        )
+        return d
+
+    p1 = load_pack(_make("1.0.0"))
+    p2 = load_pack(_make("2.0.0"))
+    assert p1.id != p2.id

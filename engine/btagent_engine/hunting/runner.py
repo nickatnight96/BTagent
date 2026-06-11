@@ -302,10 +302,23 @@ async def _run_elastic(
     index = _ELASTIC_INDEX_BY_CATEGORY.get(
         rule.logsource.get("category", ""), _ELASTIC_DEFAULT_INDEX
     )
+    # Codex #198: without an @timestamp filter the query scans the whole index;
+    # the size cap then fills with arbitrary documents, hiding recent matches
+    # and emitting historical events as if they were fresh hunt findings.
+    # Compose: query_string AND @timestamp >= now-{lookback_hours}h, then sort
+    # newest-first so the size cap (max_hits) keeps the most-recent matches.
+    bounded_query = {
+        "bool": {
+            "filter": [
+                {"query_string": {"query": query}},
+                {"range": {"@timestamp": {"gte": f"now-{lookback_hours}h"}}},
+            ]
+        }
+    }
     out = await ElasticSearchNode().run(
         ElasticSearchInput(
             index=index,
-            query={"query_string": {"query": query}},
+            query=bounded_query,
             size=max_hits,
         ),
         ctx,

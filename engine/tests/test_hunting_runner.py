@@ -266,3 +266,60 @@ async def test_builtin_pack_runs_end_to_end_on_mocks():
     cs_hits = [h for h in result.all_hits if h.backend == "crowdstrike"]
     assert cs_hits
     assert all(h.severity in set(Severity) for h in cs_hits)
+
+
+# --- Elastic lookback wiring (Codex #198 P1) ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_elastic_query_carries_lookback_timestamp_filter(monkeypatch):
+    """The Elastic search must bound results by ``@timestamp >= now-{Nh}``.
+
+    Without this, a 24-hour hunt scans the whole index and the ``size`` cap
+    fills with arbitrary documents — emitting historical events as fresh
+    findings and distorting noise baselines.
+    """
+    import btagent_engine.hunting.runner as runner
+
+    captured: dict[str, object] = {}
+
+    class _FakeNode:
+        async def run(self, inp, _ctx):  # noqa: ANN001
+            captured["query"] = inp.query
+            captured["size"] = inp.size
+
+            class _Out:
+                hits: list[dict] = []  # noqa: RUF012
+
+            return _Out()
+
+    monkeypatch.setattr(runner, "ElasticSearchNode", _FakeNode)
+
+    rule = HuntPackRule(
+        id="hrule_x",
+        title="x",
+        file="x.yml",
+        sigma_yaml="title: x\n",
+        logsource={"category": "process_creation", "product": "windows"},
+        mitre_techniques=["T1059"],
+        severity=Severity.MEDIUM,
+        enabled=True,
+    )
+    await runner._run_elastic(
+        query='process.command_line: "powershell"',
+        rule=rule,
+        ctx=_ctx(),
+        lookback_hours=24,
+        max_hits=50,
+    )
+
+    q = captured["query"]
+    assert isinstance(q, dict)
+    assert "bool" in q and "filter" in q["bool"]
+    filters = q["bool"]["filter"]
+    # Both the query_string AND the @timestamp range must be present.
+    assert any("query_string" in f for f in filters)
+    assert any(
+        "range" in f and f["range"].get("@timestamp", {}).get("gte") == "now-24h" for f in filters
+    ), f"expected @timestamp gte now-24h in filters; got {filters!r}"
+    assert captured["size"] == 50

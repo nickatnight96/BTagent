@@ -32,13 +32,13 @@ runtime state owned by the runner / integration layer, not the pack bundle.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 from btagent_shared.types.enums import Severity
-from btagent_shared.utils.ids import generate_id
 from pydantic import BaseModel, ConfigDict, Field
 
 # ``attack.t1059`` / ``attack.t1059.001`` style SigmaHQ tags -> technique ids.
@@ -138,7 +138,21 @@ def _parse_rule_file(path: Path) -> tuple[dict[str, Any], str]:
     return parsed, raw
 
 
-def _rule_from_file(path: Path, meta: dict[str, Any]) -> HuntPackRule:
+def _deterministic_id(prefix: str, *parts: str) -> str:
+    """Derive a stable ID from input parts.
+
+    Codex #198: when pack.yaml or a rule omits an explicit ``id``, the old
+    code stamped a fresh ULID on every load, so the scheduler treated the
+    same versioned pack/rule as a new entity on every reload — findings
+    and noise baselines couldn't be correlated across runs. Now we hash a
+    stable tuple of inputs (pack name + version, or pack id + rule
+    filename + sigma_yaml SHA) so the IDs survive reloads.
+    """
+    digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:24]
+    return f"{prefix}_{digest}"
+
+
+def _rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPackRule:
     parsed, raw = _parse_rule_file(path)
 
     logsource_raw = parsed.get("logsource") or {}
@@ -155,8 +169,12 @@ def _rule_from_file(path: Path, meta: dict[str, Any]) -> HuntPackRule:
 
     level = str(parsed.get("level") or "").strip().lower()
 
+    rule_id = str(parsed.get("id") or "").strip() or _deterministic_id(
+        "hrule", pack_id, path.name, raw
+    )
+
     return HuntPackRule(
-        id=str(parsed.get("id") or generate_id("hrule")),
+        id=rule_id,
         title=str(parsed["title"]),
         file=path.name,
         sigma_yaml=raw,
@@ -208,7 +226,18 @@ def load_pack(pack_dir: Path | str) -> HuntPack:
     if missing:
         raise PackLoadError(f"pack.yaml references missing rule files: {missing}")
 
-    rules = [_rule_from_file(path, meta_by_file.get(path.name, {})) for path in rule_paths]
+    # Codex #198: derive the pack id from (name, version) when absent so
+    # repeated loads of the same versioned pack produce the same id.
+    pack_name = str(manifest.get("name") or pack_dir.name)
+    pack_version = str(manifest.get("version") or "0.0.0")
+    pack_id = str(manifest.get("id") or "").strip() or _deterministic_id(
+        "hpack", pack_name, pack_version
+    )
+
+    rules = [
+        _rule_from_file(path, meta_by_file.get(path.name, {}), pack_id=pack_id)
+        for path in rule_paths
+    ]
 
     seen: set[str] = set()
     dupes = sorted({r.id for r in rules if r.id in seen or seen.add(r.id)})  # type: ignore[func-returns-value]
@@ -217,9 +246,9 @@ def load_pack(pack_dir: Path | str) -> HuntPack:
 
     try:
         return HuntPack(
-            id=str(manifest.get("id") or generate_id("hpack")),
-            name=str(manifest.get("name") or pack_dir.name),
-            version=str(manifest.get("version") or "0.0.0"),
+            id=pack_id,
+            name=pack_name,
+            version=pack_version,
             description=str(manifest.get("description") or ""),
             rules=rules,
         )

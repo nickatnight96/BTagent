@@ -110,7 +110,16 @@ def _get_backend(backend: str) -> PySigmaBackend:
     with _backend_cache_lock:
         instance = _backend_cache.get(backend)
         if instance is None:
-            instance = factory()
+            # Codex #198: backend factory failures (missing plugin, pipeline
+            # init error) used to escape transpile()'s except blocks and
+            # therefore _run_rule_on_backend()'s SigmaTranspileError catch,
+            # killing the whole pack instead of being recorded per rule.
+            # Wrap as SigmaTranspileError so per-rule isolation holds. The
+            # ValueError above stays raw (programmer error, not runtime).
+            try:
+                instance = factory()
+            except Exception as exc:
+                raise SigmaTranspileError(backend, f"backend init failed: {exc}") from exc
             _backend_cache[backend] = instance
         return instance
 
