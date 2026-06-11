@@ -1,0 +1,29 @@
+title: Certutil Remote File Download
+id: 5b1f3a0e-9c4d-4f3a-8b6e-2d9c7e1a4f02
+status: test
+description: >
+  Detects certutil.exe abused as a LOLBin downloader (urlcache / verifyctl
+  with a URL on the command line) to pull second-stage payloads.
+references:
+  - https://lolbas-project.github.io/lolbas/Binaries/Certutil/
+author: BTagent
+date: 2026-06-10
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith: '\certutil.exe'
+  selection_flags:
+    CommandLine|contains:
+      - 'urlcache'
+      - 'verifyctl'
+  selection_url:
+    CommandLine|contains: 'http'
+  condition: selection_img and selection_flags and selection_url
+falsepositives:
+  - Rare legitimate certificate cache refreshes referencing an HTTP CRL/AIA URL
+level: medium
+tags:
+  - attack.command-and-control
+  - attack.t1105

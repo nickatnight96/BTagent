@@ -1,0 +1,30 @@
+title: Mshta Executing Remote Script
+id: 5b1f3a0e-9c4d-4f3a-8b6e-2d9c7e1a4f03
+status: test
+description: >
+  Detects mshta.exe launched with a remote URL or inline javascript/vbscript
+  protocol handler — a signed-binary proxy-execution technique used to run
+  attacker-hosted HTA payloads.
+references:
+  - https://attack.mitre.org/techniques/T1218/005/
+author: BTagent
+date: 2026-06-10
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith: '\mshta.exe'
+  selection_cli:
+    CommandLine|contains:
+      - 'http://'
+      - 'https://'
+      - 'javascript:'
+      - 'vbscript:'
+  condition: selection_img and selection_cli
+falsepositives:
+  - Legacy intranet HTA line-of-business applications
+level: medium
+tags:
+  - attack.defense-evasion
+  - attack.t1218.005
