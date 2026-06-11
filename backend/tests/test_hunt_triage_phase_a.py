@@ -455,9 +455,7 @@ async def test_new_finding_reopens_suppressed_cluster_after_rule_expires(
     # TTL has already lapsed in wall clock).
     rule_id = resp.json()["id"]
     rule_row = (
-        await db_session.execute(
-            select(SuppressionRuleRow).where(SuppressionRuleRow.id == rule_id)
-        )
+        await db_session.execute(select(SuppressionRuleRow).where(SuppressionRuleRow.id == rule_id))
     ).scalar_one()
     rule_row.expires_at = datetime.now(UTC) - timedelta(hours=1)
     await db_session.commit()
