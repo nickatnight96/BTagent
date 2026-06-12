@@ -112,6 +112,107 @@ async def test_event_search_raises_in_non_mock_mode(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# LogScale predicate matcher (Codex P1 fix)
+# ---------------------------------------------------------------------------
+
+# Real transpiled query shapes emitted by pySigma LogScaleBackend +
+# crowdstrike_falcon_pipeline for the windows_baseline pack rules.
+_ENCODED_PS_QUERY = (
+    "event_platform=/^Win$/i "
+    "#event_simpleName=/^ProcessRollup2$/i or "
+    "#event_simpleName=/^SyntheticProcessRollup2$/i "
+    "ImageFileName=/\\\\powershell\\.exe$/i "
+    "CommandLine=/ -enc /i"
+)
+_CERTUTIL_QUERY = (
+    "event_platform=/^Win$/i "
+    "#event_simpleName=/^ProcessRollup2$/i or "
+    "#event_simpleName=/^SyntheticProcessRollup2$/i "
+    "ImageFileName=/\\\\certutil\\.exe$/i "
+    "CommandLine=/urlcache/i or CommandLine=/verifyctl/i "
+    "CommandLine=/http/i"
+)
+_LOGON_FAILED_QUERY = "#event_simpleName=/^UserLogonFailed/"
+
+
+async def test_encoded_powershell_query_returns_only_its_matching_event():
+    """The encoded-powershell LogScale query should hit event 1 (powershell.exe + -enc)
+    and filter out the certutil LOLBin event and the background-noise event."""
+    out = await Runner().execute(
+        CrowdStrikeEventSearchNode(),
+        CrowdStrikeEventSearchInput(query=_ENCODED_PS_QUERY, lookback_hours=24),
+        _ctx(),
+    )
+    assert out.count == 1, f"expected 1 hit for encoded-powershell query, got {out.count}"
+    event = out.events[0]
+    assert "powershell.exe" in event["ImageFileName"].lower()
+    assert "-enc" in event["CommandLine"]
+
+
+async def test_certutil_query_returns_only_its_matching_event():
+    """The certutil-remote-download LogScale query should hit event 2 (certutil + urlcache + http)
+    and filter out the powershell event and the background-noise event."""
+    out = await Runner().execute(
+        CrowdStrikeEventSearchNode(),
+        CrowdStrikeEventSearchInput(query=_CERTUTIL_QUERY, lookback_hours=24),
+        _ctx(),
+    )
+    assert out.count == 1, f"expected 1 hit for certutil query, got {out.count}"
+    event = out.events[0]
+    assert "certutil.exe" in event["ImageFileName"].lower()
+    assert "urlcache" in event["CommandLine"].lower()
+    assert "http" in event["CommandLine"].lower()
+
+
+async def test_unrelated_query_returns_empty():
+    """A LogScale query for UserLogonFailed events should return [] — none of the
+    ProcessRollup2 fixtures satisfy that predicate."""
+    out = await Runner().execute(
+        CrowdStrikeEventSearchNode(),
+        CrowdStrikeEventSearchInput(query=_LOGON_FAILED_QUERY, lookback_hours=24),
+        _ctx(),
+    )
+    assert out.count == 0, f"expected 0 hits for logon-failed query, got {out.count}"
+    assert out.events == []
+
+
+async def test_nonempty_unparseable_query_returns_empty():
+    """A nonempty query with zero parseable predicate tokens must return [] —
+    not silently match every fixture (the pre-P1 bug)."""
+    out = await Runner().execute(
+        CrowdStrikeEventSearchNode(),
+        # Parenthesised expression with no extractable field=value tokens
+        CrowdStrikeEventSearchInput(query="(((())))", lookback_hours=24),
+        _ctx(),
+    )
+    assert out.count == 0, (
+        f"unparseable query should return 0 events, got {out.count}: {out.events}"
+    )
+
+
+async def test_event_search_query_differentiation_by_field():
+    """Different well-formed queries return different (non-identical) fixture subsets,
+    proving that the mock evaluates predicates rather than always returning the same pool."""
+    ps_out = await Runner().execute(
+        CrowdStrikeEventSearchNode(),
+        CrowdStrikeEventSearchInput(query=_ENCODED_PS_QUERY, lookback_hours=24),
+        _ctx(),
+    )
+    cert_out = await Runner().execute(
+        CrowdStrikeEventSearchNode(),
+        CrowdStrikeEventSearchInput(query=_CERTUTIL_QUERY, lookback_hours=24),
+        _ctx(),
+    )
+    # The two queries must return disjoint event sets.
+    ps_ids = {e["TargetProcessId"] for e in ps_out.events}
+    cert_ids = {e["TargetProcessId"] for e in cert_out.events}
+    assert ps_ids != cert_ids, "encoded-powershell and certutil queries returned identical events"
+    assert ps_ids.isdisjoint(cert_ids), (
+        f"queries should match different events; overlap: {ps_ids & cert_ids}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # list_detections
 # ---------------------------------------------------------------------------
 

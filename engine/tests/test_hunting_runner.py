@@ -299,6 +299,103 @@ async def test_builtin_pack_runs_end_to_end_on_mocks():
     assert all(h.severity in set(Severity) for h in cs_hits)
 
 
+# --- CrowdStrike per-rule hit differentiation (Codex P1 fix) ---------------
+
+
+async def test_crowdstrike_different_rules_return_different_events():
+    """Different pack rules must produce different (non-identical) CrowdStrike hit sets.
+
+    Pre-P1 bug: the mock ignored input.query and returned the same timestamp-filtered
+    pool for every rule, causing unrelated rules (powershell-enc, certutil, logon-spray)
+    to emit identical SigmaHit objects and corrupt hunt-pack aggregates.
+
+    Post-fix: the LogScale predicate matcher evaluates each transpiled query against
+    the fixture pool — encoded-powershell matches only event 1, certutil matches only
+    event 2, and logon-spray (EventID=4625) matches none.
+    """
+    pack = load_builtin_pack("windows_baseline")
+    result = await run_pack(pack, ["crowdstrike"], _ctx())
+
+    assert result.error_count == 0
+
+    # Build a per-rule-id → list[SigmaHit] map for CrowdStrike.
+    cs_hits_by_rule: dict[str, list] = {}
+    for rule_result in result.rule_results:
+        for br in rule_result.backend_results:
+            if br.backend == "crowdstrike":
+                cs_hits_by_rule[rule_result.rule_id] = list(br.hits)
+
+    # Locate the encoded-powershell and certutil rule results.
+    ps_rule_id = next(
+        (
+            rid
+            for rid, hits in cs_hits_by_rule.items()
+            if any(
+                "powershell" in h.summary.lower()
+                or any("powershell" in e.value.lower() for e in h.entities)
+                for h in hits
+            )
+        ),
+        None,
+    )
+    cert_rule_id = next(
+        (
+            rid
+            for rid, hits in cs_hits_by_rule.items()
+            if any("certutil" in h.summary.lower() for h in hits)
+        ),
+        None,
+    )
+
+    # At minimum, at least one rule must have produced CS hits.
+    rules_with_hits = {rid for rid, hits in cs_hits_by_rule.items() if hits}
+    assert rules_with_hits, "no CrowdStrike hits at all from builtin pack"
+
+    # Rules with hits must be a proper subset — not all four rules match fixtures.
+    all_rule_ids = set(cs_hits_by_rule.keys())
+    assert rules_with_hits != all_rule_ids, (
+        "ALL pack rules returned CrowdStrike hits — predicate filtering not active"
+    )
+
+    # Verify the hit sets are pairwise distinct (no identical raw events across rules).
+    hit_sets = [
+        frozenset(h.raw.get("TargetProcessId", "") for h in hits)
+        for hits in cs_hits_by_rule.values()
+        if hits
+    ]
+    if len(hit_sets) >= 2:
+        # At least two non-empty rule results must differ.
+        first, *rest = hit_sets
+        assert any(first != s for s in rest), (
+            "all non-empty CrowdStrike rule results returned identical event sets"
+        )
+
+
+async def test_crowdstrike_logon_spray_returns_no_hits():
+    """The failed-logon-spray rule (EventID=4625 LogonType=3) must return zero
+    CrowdStrike hits because none of the ProcessRollup2 fixtures carry those fields."""
+    pack = load_builtin_pack("windows_baseline")
+    result = await run_pack(pack, ["crowdstrike"], _ctx())
+
+    by_rule = {r.rule_id: r for r in result.rule_results}
+    # The spray rule is identified by its Sigma id or title keyword.
+    spray_rule = next(
+        (
+            r
+            for r in result.rule_results
+            if "logon" in r.rule_title.lower() or "spray" in r.rule_title.lower()
+        ),
+        None,
+    )
+    if spray_rule is None:
+        pytest.skip("failed-logon-spray rule not found in builtin pack")
+
+    cs_spray = next(b for b in spray_rule.backend_results if b.backend == "crowdstrike")
+    assert cs_spray.hit_count == 0, (
+        f"logon-spray rule returned unexpected CrowdStrike hits: {cs_spray.hits}"
+    )
+
+
 # --- Elastic lookback wiring (Codex #198 P1) ------------------------------
 
 
