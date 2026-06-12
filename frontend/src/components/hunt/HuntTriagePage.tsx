@@ -35,11 +35,8 @@ function useCanTriage(): boolean {
   const role = useAuthStore((s) => s.user?.role);
   return (
     role === UserRole.ADMIN ||
-    // The UserRole enum in config.ts only has admin/analyst/viewer, but the
-    // backend registers "senior_analyst" and "incident_commander" roles too.
-    // Until the frontend enum is extended we cast and compare the raw string.
-    (role as string) === "senior_analyst" ||
-    (role as string) === "incident_commander"
+    role === UserRole.SENIOR_ANALYST ||
+    role === UserRole.INCIDENT_COMMANDER
   );
 }
 
