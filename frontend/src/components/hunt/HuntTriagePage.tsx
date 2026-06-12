@@ -1,71 +1,202 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Crosshair, ShieldOff, ArrowUpRight, RefreshCw, Eye, EyeOff } from "lucide-react";
+import {
+  Crosshair,
+  ShieldOff,
+  ArrowUpRight,
+  RefreshCw,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+} from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
+import { UserRole } from "@/types/config";
 import { SeverityBadge } from "@/components/ds/severity-badge";
 import type { HuntFinding, HuntFindingCluster } from "@/types/hunt";
-import { useHuntStore, groupFindingsByCluster } from "@/stores/huntStore";
-import { SuppressModal } from "./SuppressModal";
+import { useHuntStore, groupFindingsByCluster, type InboxTab } from "@/stores/huntStore";
+import { useAuthStore } from "@/stores/authStore";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
+import { Button } from "@/components/ds/button";
+import { Card, CardContent } from "@/components/ds/card";
+import { SuppressModal, type SuppressModalTarget } from "./SuppressModal";
+import { PromoteModal, type PromoteModalTarget } from "./PromoteModal";
+import { getWSClient } from "@/api/ws";
+import { EventType } from "@/types/events";
+
+// --------------------------------------------------------------------------- //
+// RBAC
+// --------------------------------------------------------------------------- //
+
+/**
+ * Returns true if the user has the senior_analyst, incident_commander, or admin
+ * role — the roles that hold hunt:suppress / hunt:promote permissions.
+ */
+function useCanTriage(): boolean {
+  const role = useAuthStore((s) => s.user?.role);
+  return (
+    role === UserRole.ADMIN ||
+    role === UserRole.SENIOR_ANALYST ||
+    role === UserRole.INCIDENT_COMMANDER
+  );
+}
 
 function sev(s: string): ConfigSeverity {
   return s as ConfigSeverity;
 }
+
+// --------------------------------------------------------------------------- //
+// Cluster card
+// --------------------------------------------------------------------------- //
 
 function ClusterCard({
   cluster,
   findings,
   selected,
   onToggle,
-  onSuppress,
+  onSuppressFinding,
+  onPromoteFinding,
+  onSuppressCluster,
+  onPromoteCluster,
+  canTriage,
 }: {
   cluster: HuntFindingCluster;
   findings: HuntFinding[];
   selected: string[];
   onToggle: (id: string) => void;
-  onSuppress: (f: HuntFinding) => void;
+  onSuppressFinding: (f: HuntFinding) => void;
+  onPromoteFinding: (f: HuntFinding) => void;
+  onSuppressCluster: (c: HuntFindingCluster) => void;
+  onPromoteCluster: (c: HuntFindingCluster) => void;
+  canTriage: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+
+  const suppressedCount = findings.filter((f) => f.state === "suppressed").length;
+  const promotedCount = findings.filter((f) => f.state === "promoted").length;
 
   return (
     <div
       className="rounded-lg border border-slate-700/50 bg-slate-800/40"
       data-testid="hunt-cluster-card"
+      data-cluster-id={cluster.id}
     >
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <SeverityBadge severity={sev(cluster.severity)} />
-          <span className="truncate text-sm font-medium text-slate-100">{cluster.title}</span>
-        </div>
-        <div className="flex items-center gap-3 shrink-0">
-          <div className="flex flex-wrap gap-1">
-            {cluster.technique_ids.slice(0, 4).map((t) => (
-              <span
-                key={t}
-                className="px-1.5 py-0.5 rounded text-[11px] bg-blue-500/10 text-blue-300 border border-blue-500/20"
-              >
-                {t}
-              </span>
-            ))}
-          </div>
-          <span className="text-xs text-slate-400" data-testid="hunt-cluster-count">
-            {cluster.finding_count} finding{cluster.finding_count === 1 ? "" : "s"}
-          </span>
-        </div>
-      </button>
+      {/* Cluster header row */}
+      <div className="flex w-full items-start gap-3 px-4 py-3">
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex items-center gap-2 text-muted-foreground hover:text-foreground mt-0.5 shrink-0"
+          aria-label={expanded ? "Collapse cluster" : "Expand cluster"}
+          data-testid="hunt-cluster-expand"
+        >
+          {expanded ? (
+            <ChevronDown className="w-4 h-4" />
+          ) : (
+            <ChevronRight className="w-4 h-4" />
+          )}
+        </button>
 
+        <div className="flex flex-1 items-start justify-between gap-3 min-w-0">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="flex flex-wrap items-center gap-3 min-w-0 text-left"
+          >
+            <SeverityBadge severity={sev(cluster.severity)} data-testid="hunt-cluster-severity" />
+            <span className="text-sm font-medium text-slate-100 min-w-0 break-words">
+              {cluster.title}
+            </span>
+          </button>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Technique chips */}
+            <div className="flex flex-wrap gap-1">
+              {cluster.technique_ids.slice(0, 4).map((t) => (
+                <span
+                  key={t}
+                  className="px-1.5 py-0.5 rounded text-[11px] bg-blue-500/10 text-blue-300 border border-blue-500/20"
+                  data-testid="hunt-technique-chip"
+                >
+                  {t}
+                </span>
+              ))}
+              {cluster.technique_ids.length > 4 && (
+                <span className="px-1.5 py-0.5 rounded text-[11px] text-slate-500">
+                  +{cluster.technique_ids.length - 4}
+                </span>
+              )}
+            </div>
+
+            {/* Finding count */}
+            <span className="text-xs text-slate-400" data-testid="hunt-cluster-count">
+              {cluster.finding_count} finding{cluster.finding_count === 1 ? "" : "s"}
+            </span>
+
+            {/* State badge */}
+            <span
+              className={[
+                "px-2 py-0.5 rounded-full text-[11px] font-medium border",
+                cluster.state === "suppressed"
+                  ? "bg-amber-500/10 text-amber-300 border-amber-500/20"
+                  : cluster.state === "promoted"
+                    ? "bg-blue-500/10 text-blue-300 border-blue-500/20"
+                    : "bg-slate-700/50 text-slate-400 border-slate-600/30",
+              ].join(" ")}
+              data-testid="hunt-cluster-state"
+            >
+              {cluster.state}
+            </span>
+
+            {/* Cluster-level actions (senior only) */}
+            {canTriage && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onSuppressCluster(cluster)}
+                  className="h-7 px-2 text-xs text-slate-400 hover:text-amber-300"
+                  data-testid="hunt-cluster-suppress"
+                >
+                  <ShieldOff className="w-3.5 h-3.5 mr-1" />
+                  Suppress
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onPromoteCluster(cluster)}
+                  className="h-7 px-2 text-xs text-slate-400 hover:text-blue-300"
+                  data-testid="hunt-cluster-promote"
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5 mr-1" />
+                  Promote
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Summary line when collapsed */}
+      {!expanded && (suppressedCount > 0 || promotedCount > 0) && (
+        <p className="px-10 pb-2 text-xs text-slate-500">
+          {suppressedCount > 0 && `${suppressedCount} suppressed`}
+          {suppressedCount > 0 && promotedCount > 0 && " · "}
+          {promotedCount > 0 && `${promotedCount} promoted`}
+        </p>
+      )}
+
+      {/* Member findings */}
       {expanded && (
         <div className="border-t border-slate-700/50">
           {findings.length === 0 && (
-            <p className="px-4 py-3 text-xs text-slate-500">No visible findings in this cluster.</p>
+            <p className="px-10 py-3 text-xs text-slate-500">
+              No visible findings in this cluster.
+            </p>
           )}
           {findings.map((f) => (
             <div
               key={f.id}
-              className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-800 last:border-0"
+              className="flex items-center justify-between gap-3 px-10 py-2.5 border-b border-slate-800 last:border-0"
               data-testid="hunt-finding-row"
+              data-finding-id={f.id}
             >
               <div className="flex items-center gap-3 min-w-0">
                 <input
@@ -83,18 +214,43 @@ function ClusterCard({
                   </p>
                 </div>
               </div>
+
               <div className="flex items-center gap-2 shrink-0">
                 {f.state === "suppressed" && (
                   <span className="text-[11px] text-amber-400">suppressed</span>
                 )}
-                <button
-                  onClick={() => onSuppress(f)}
-                  className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-amber-300"
-                  data-testid="hunt-finding-suppress"
-                >
-                  <ShieldOff className="w-3.5 h-3.5" />
-                  Suppress
-                </button>
+                {f.state === "promoted" && f.investigation_id && (
+                  <a
+                    href={`/investigations/${f.investigation_id}`}
+                    className="text-[11px] text-blue-400 underline hover:text-blue-300"
+                    data-testid="hunt-finding-investigation-link"
+                  >
+                    investigation
+                  </a>
+                )}
+
+                {canTriage && (
+                  <>
+                    <button
+                      onClick={() => onSuppressFinding(f)}
+                      disabled={f.state === "suppressed"}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-amber-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-testid="hunt-finding-suppress"
+                    >
+                      <ShieldOff className="w-3.5 h-3.5" />
+                      Suppress
+                    </button>
+                    <button
+                      onClick={() => onPromoteFinding(f)}
+                      disabled={f.state === "promoted"}
+                      className="flex items-center gap-1 px-2 py-1 text-xs text-slate-400 hover:text-blue-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                      data-testid="hunt-finding-promote"
+                    >
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                      Promote
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -104,141 +260,341 @@ function ClusterCard({
   );
 }
 
+// --------------------------------------------------------------------------- //
+// Pagination
+// --------------------------------------------------------------------------- //
+
+function Pagination({
+  page,
+  totalClusters,
+  pageSize,
+  onPage,
+}: {
+  page: number;
+  totalClusters: number;
+  pageSize: number;
+  onPage: (p: number) => void;
+}) {
+  const totalPages = Math.ceil(totalClusters / pageSize) || 1;
+  if (totalPages <= 1) return null;
+  return (
+    <div
+      className="flex items-center justify-between text-xs text-muted-foreground pt-2"
+      data-testid="hunt-triage-pagination"
+    >
+      <span>
+        Page {page} of {totalPages} ({totalClusters} clusters)
+      </span>
+      <div className="flex gap-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+          data-testid="hunt-triage-prev"
+        >
+          Prev
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={page >= totalPages}
+          onClick={() => onPage(page + 1)}
+          data-testid="hunt-triage-next"
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// Main page
+// --------------------------------------------------------------------------- //
+
+const POLL_INTERVAL_MS = 30_000;
+
+/** Tab labels; each maps 1:1 onto the server-side state filter. */
+const TABS: { id: InboxTab; label: string }[] = [
+  { id: "active", label: "Active" },
+  { id: "suppressed", label: "Suppressed" },
+  { id: "promoted", label: "Promoted" },
+];
+
 export function HuntTriagePage() {
   const navigate = useNavigate();
+  const canTriage = useCanTriage();
+
   const {
     clusters,
     findings,
     totalClusters,
     totalFindings,
-    includeSuppressed,
+    activeTab,
+    page,
+    pageSize,
     isLoading,
     isMutating,
     error,
     selectedFindingIds,
     fetchInbox,
-    toggleIncludeSuppressed,
+    setTab,
+    setPage,
     toggleSelected,
     clearSelection,
-    promote,
   } = useHuntStore();
 
-  const [suppressTarget, setSuppressTarget] = useState<HuntFinding | null>(null);
+  const [suppressTarget, setSuppressTarget] = useState<SuppressModalTarget | null>(null);
+  const [promoteTarget, setPromoteTarget] = useState<PromoteModalTarget | null>(null);
+
+  // ----- Initial load + re-fetch when tab changes -----
+  // A single effect keyed on `activeTab` covers both cases: mounting triggers it
+  // with the initial tab value, and switching tabs triggers it again.
+  useEffect(() => {
+    void fetchInbox({ page: 1 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // ----- WS live-refresh / polling fallback -----
+  // The global WS client dispatches ALL event types on the same connection
+  // (scoped by investigation_id for investigation events; HUNT_FINDING_* events
+  // don't carry an investigation_id so the eventStore won't forward them).
+  // We subscribe directly to the WS client for HUNT_FINDING_* events and
+  // throttle refetches to avoid hammering the API when a burst arrives.
+  const refetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimerRef.current) return;
+    refetchTimerRef.current = setTimeout(() => {
+      refetchTimerRef.current = null;
+      void fetchInbox();
+    }, 1000); // 1 s debounce after burst
+  }, [fetchInbox]);
 
   useEffect(() => {
-    void fetchInbox();
-  }, [fetchInbox]);
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+    try {
+      const ws = getWSClient();
+      const prev = ws.onEvent;
+      ws.onEvent = (ev) => {
+        prev(ev);
+        if (
+          ev.type === EventType.HUNT_FINDING_CREATED ||
+          ev.type === EventType.HUNT_FINDING_UPDATED ||
+          ev.type === EventType.HUNT_FINDING_SUPPRESSED ||
+          ev.type === EventType.HUNT_FINDING_PROMOTED
+        ) {
+          scheduleRefetch();
+        }
+      };
+
+      // Fallback: if the page gains focus after an absence, also refetch.
+      const handleFocus = () => scheduleRefetch();
+      window.addEventListener("visibilitychange", handleFocus);
+
+      // Regardless of WS connectivity, poll every 30 s as a safety net.
+      pollTimer = setInterval(() => {
+        if (document.visibilityState === "visible") {
+          scheduleRefetch();
+        }
+      }, POLL_INTERVAL_MS);
+
+      return () => {
+        ws.onEvent = prev;
+        window.removeEventListener("visibilitychange", handleFocus);
+        if (pollTimer) clearInterval(pollTimer);
+        if (refetchTimerRef.current) {
+          clearTimeout(refetchTimerRef.current);
+          refetchTimerRef.current = null;
+        }
+      };
+    } catch {
+      // WS unavailable (SSR, test env, etc.) — polling only
+      pollTimer = setInterval(() => scheduleRefetch(), POLL_INTERVAL_MS);
+      return () => {
+        if (pollTimer) clearInterval(pollTimer);
+      };
+    }
+  }, [scheduleRefetch]);
 
   const byCluster = useMemo(() => groupFindingsByCluster(findings), [findings]);
 
-  const handlePromote = async () => {
+  // ----- Tab handling -----
+  const handleTabChange = (value: string) => {
+    setTab(value as InboxTab);
+  };
+
+  // ----- Promote action bar (bulk) -----
+  const handleBulkPromote = async () => {
     if (selectedFindingIds.length === 0) return;
-    const invId = await promote(selectedFindingIds);
+    const invId = await useHuntStore.getState().promote(selectedFindingIds);
     navigate(`/investigations/${invId}`);
   };
 
+  // Tab filtering is server-side (state= param, applied before pagination in
+  // PR #202), so the returned clusters ARE the current tab's page and
+  // totalClusters is exact for the tab — no client-side re-filtering.
+  const filteredClusters = clusters;
+
   return (
     <div className="flex flex-col h-full" data-testid="hunt-triage">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700/50">
+      {/* ---- Header ---- */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border">
         <div className="flex items-center gap-3">
           <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-rose-600/20 border border-rose-500/30">
             <Crosshair className="w-4 h-4 text-rose-400" aria-hidden="true" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-slate-100">Hunt Triage</h1>
-            <p className="text-sm text-slate-400">
-              {totalClusters} cluster{totalClusters === 1 ? "" : "s"} · {totalFindings} finding
-              {totalFindings === 1 ? "" : "s"}
+            <h1 className="text-lg font-semibold text-foreground">Hunt Triage</h1>
+            <p className="text-sm text-muted-foreground">
+              {totalClusters} cluster{totalClusters === 1 ? "" : "s"} ·{" "}
+              {totalFindings} finding{totalFindings === 1 ? "" : "s"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => void toggleIncludeSuppressed()}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-slate-100 border border-slate-700 rounded-lg"
-            data-testid="hunt-toggle-suppressed"
-          >
-            {includeSuppressed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            {includeSuppressed ? "Hide suppressed" : "Show suppressed"}
-          </button>
-          <button
-            onClick={() => void fetchInbox()}
-            className="flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-slate-100 border border-slate-700 rounded-lg"
-            data-testid="hunt-refresh"
-          >
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => void fetchInbox()}
+          disabled={isLoading}
+          data-testid="hunt-refresh"
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
             <RefreshCw className="w-4 h-4" />
-            Refresh
-          </button>
-        </div>
+          )}
+          <span className="ml-2 hidden sm:inline">Refresh</span>
+        </Button>
       </div>
 
-      {/* Content */}
+      {/* ---- State filter tabs ---- */}
+      <div className="px-6 pt-4 border-b border-border">
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
+          <TabsList data-testid="hunt-triage-tabs">
+            {TABS.map((t) => (
+              <TabsTrigger
+                key={t.id}
+                value={t.id}
+                data-testid={`hunt-tab-${t.id}`}
+              >
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {/* ---- RBAC notice for plain analysts ---- */}
+      {!canTriage && (
+        <div
+          className="mx-6 mt-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400"
+          data-testid="hunt-rbac-notice"
+        >
+          Suppress and promote actions require the <strong>senior_analyst</strong> role or
+          higher.
+        </div>
+      )}
+
+      {/* ---- Content ---- */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-3">
           {error && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300">
+            <div
+              className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"
+              role="alert"
+              data-testid="hunt-triage-error"
+            >
               {error}
             </div>
           )}
 
           {isLoading && clusters.length === 0 && (
-            <p className="text-sm text-slate-500">Loading hunt inbox…</p>
-          )}
-
-          {!isLoading && clusters.length === 0 && (
-            <div className="rounded-lg border border-slate-700/50 bg-slate-800/40 px-6 py-12 text-center">
-              <Crosshair className="mx-auto mb-3 h-8 w-8 text-slate-600" />
-              <p className="text-sm text-slate-400">No hunt findings yet.</p>
-              <p className="text-xs text-slate-500">
-                Findings from hunt packs, behavioral and identity hunts will cluster here.
-              </p>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading hunt inbox…
             </div>
           )}
 
-          {clusters.map((c) => (
+          {!isLoading && filteredClusters.length === 0 && (
+            <Card>
+              <CardContent className="py-12 text-center text-muted-foreground">
+                <Crosshair className="mx-auto mb-3 h-8 w-8 opacity-30" />
+                <p className="text-sm">
+                  {activeTab === "active" && "No active hunt findings."}
+                  {activeTab === "suppressed" && "No suppressed findings."}
+                  {activeTab === "promoted" && "No promoted findings."}
+                </p>
+                {activeTab === "active" && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Findings from hunt packs, behavioral and identity hunts will cluster here.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {filteredClusters.map((c) => (
             <ClusterCard
               key={c.id}
               cluster={c}
               findings={byCluster[c.id] ?? []}
               selected={selectedFindingIds}
               onToggle={toggleSelected}
-              onSuppress={setSuppressTarget}
+              onSuppressFinding={(f) => setSuppressTarget({ kind: "finding", finding: f })}
+              onPromoteFinding={(f) => setPromoteTarget({ kind: "finding", finding: f })}
+              onSuppressCluster={(cl) => setSuppressTarget({ kind: "cluster", cluster: cl })}
+              onPromoteCluster={(cl) => setPromoteTarget({ kind: "cluster", cluster: cl })}
+              canTriage={canTriage}
             />
           ))}
+
+          <Pagination
+            page={page}
+            totalClusters={totalClusters}
+            pageSize={pageSize}
+            onPage={setPage}
+          />
         </div>
       </div>
 
-      {/* Promote action bar */}
-      {selectedFindingIds.length > 0 && (
+      {/* ---- Bulk promote action bar ---- */}
+      {selectedFindingIds.length > 0 && canTriage && (
         <div
-          className="flex items-center justify-between gap-4 px-6 py-3 border-t border-slate-700/50 bg-slate-900"
+          className="flex items-center justify-between gap-4 px-6 py-3 border-t border-border bg-background"
           data-testid="hunt-promote-bar"
         >
-          <span className="text-sm text-slate-300">
-            {selectedFindingIds.length} finding{selectedFindingIds.length === 1 ? "" : "s"} selected
+          <span className="text-sm text-muted-foreground">
+            {selectedFindingIds.length} finding
+            {selectedFindingIds.length === 1 ? "" : "s"} selected
           </span>
           <div className="flex items-center gap-2">
-            <button
-              onClick={clearSelection}
-              className="px-3 py-2 text-sm text-slate-400 hover:text-slate-200"
-            >
+            <Button variant="ghost" size="sm" onClick={clearSelection}>
               Clear
-            </button>
-            <button
-              onClick={() => void handlePromote()}
+            </Button>
+            <Button
+              onClick={() => { void handleBulkPromote(); }}
               disabled={isMutating}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
               data-testid="hunt-promote-submit"
             >
-              <ArrowUpRight className="w-4 h-4" />
+              <ArrowUpRight className="w-4 h-4 mr-2" />
               Promote to investigation
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
-      <SuppressModal finding={suppressTarget} onClose={() => setSuppressTarget(null)} />
+      {/* ---- Modals ---- */}
+      <SuppressModal
+        target={suppressTarget}
+        onClose={() => setSuppressTarget(null)}
+      />
+      <PromoteModal
+        target={promoteTarget}
+        onClose={() => setPromoteTarget(null)}
+      />
     </div>
   );
 }

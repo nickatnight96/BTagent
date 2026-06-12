@@ -31,6 +31,12 @@ export enum EventType {
   // System
   HEARTBEAT = "heartbeat",
   ERROR = "error",
+
+  // Hunt triage (Phase 6 #119)
+  HUNT_FINDING_CREATED = "hunt_finding_created",
+  HUNT_FINDING_UPDATED = "hunt_finding_updated",
+  HUNT_FINDING_SUPPRESSED = "hunt_finding_suppressed",
+  HUNT_FINDING_PROMOTED = "hunt_finding_promoted",
 }
 
 export interface AgentEvent {

@@ -26,6 +26,10 @@ export enum InvestigationStatus {
 
 export enum UserRole {
   ADMIN = "admin",
+  // Matches the backend RBAC registry (auth/rbac.py):
+  // analyst < senior_analyst < incident_commander < admin.
+  INCIDENT_COMMANDER = "incident_commander",
+  SENIOR_ANALYST = "senior_analyst",
   ANALYST = "analyst",
   VIEWER = "viewer",
 }
