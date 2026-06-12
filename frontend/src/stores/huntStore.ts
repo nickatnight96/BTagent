@@ -27,7 +27,6 @@ interface HuntState {
   suppressions: SuppressionRule[];
   totalClusters: number;
   totalFindings: number;
-  includeSuppressed: boolean;
   activeTab: InboxTab;
   page: number;
   pageSize: number;
@@ -43,7 +42,6 @@ interface HuntState {
   fetchSuppressions: () => Promise<void>;
   setTab: (tab: InboxTab) => void;
   setPage: (page: number) => void;
-  toggleIncludeSuppressed: () => Promise<void>;
   toggleSelected: (findingId: string) => void;
   clearSelection: () => void;
   suppress: (findingId: string, body: CreateSuppressionRequest) => Promise<void>;
@@ -81,7 +79,6 @@ export const useHuntStore = create<HuntState>((set, get) => ({
   suppressions: [],
   totalClusters: 0,
   totalFindings: 0,
-  includeSuppressed: false,
   activeTab: "active",
   page: 1,
   pageSize: 50,
@@ -93,12 +90,16 @@ export const useHuntStore = create<HuntState>((set, get) => ({
   selectedFindingIds: [],
 
   fetchInbox: async (opts) => {
-    const { includeSuppressed, page: currentPage, pageSize } = get();
+    const { activeTab, page: currentPage, pageSize } = get();
     const page = opts?.page ?? currentPage;
     set({ isLoading: true, error: null });
     try {
+      // Server-side state filter (PR #202): the predicate applies BEFORE
+      // pagination, so tab totals and pages are exact. The explicit
+      // suppressed/promoted states also return those members verbatim, so
+      // include_suppressed is no longer needed here.
       const resp = await listFindings({
-        include_suppressed: includeSuppressed,
+        state: activeTab,
         page,
         page_size: pageSize,
       });
@@ -127,8 +128,9 @@ export const useHuntStore = create<HuntState>((set, get) => ({
   },
 
   setTab: (tab) => {
-    const includeSuppressed = tab === "suppressed";
-    set({ activeTab: tab, includeSuppressed, page: 1 });
+    // The tab maps 1:1 onto the server-side state filter; fetchInbox reads
+    // activeTab directly, so no separate include flag is needed.
+    set({ activeTab: tab, page: 1 });
   },
 
   setPage: (page) => {
@@ -136,10 +138,6 @@ export const useHuntStore = create<HuntState>((set, get) => ({
     void get().fetchInbox({ page });
   },
 
-  toggleIncludeSuppressed: async () => {
-    set({ includeSuppressed: !get().includeSuppressed });
-    await get().fetchInbox();
-  },
 
   toggleSelected: (findingId) => {
     const current = get().selectedFindingIds;

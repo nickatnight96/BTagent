@@ -143,7 +143,16 @@ test.describe("Hunt Triage Inbox (Phase-B)", () => {
   test("suppress a cluster with rationale removes it from the Active tab", async ({
     seniorPage,
   }) => {
-    const tag = `E2E-hunt-${Date.now()}`;
+    const now = Date.now();
+    const tag = `E2E-hunt-${now}`;
+    // UNIQUE technique per invocation: suppression rules persist in the
+    // shared DB and match on (domain, technique). With a fixed technique,
+    // attempt 1's rule suppresses every retry's freshly seeded findings
+    // PRE-INSERT — the card never renders and the retry times out waiting
+    // for it (the exact CI failure this fixes). A per-run technique also
+    // gives each attempt a fresh cluster (the signature includes the
+    // technique), so a retry can't pick up attempt 1's suppressed cluster.
+    const technique = `T1${String(now).slice(-4)}.${(now % 900) + 100}`;
 
     // Seed decoy findings FIRST so the target cluster's 2 findings represent
     // only 2/(DECOY_COUNT+2) ≈ 25% of recent findings — safely below the
@@ -157,8 +166,8 @@ test.describe("Hunt Triage Inbox (Phase-B)", () => {
       domain: "sigma",
       title: `${tag} Encoded PS on jump host`,
       severity: "high",
-      technique_ids: ["T1059.001"],
-      entities: [{ kind: "host", value: "jump01.corp" }],
+      technique_ids: [technique],
+      entities: [{ kind: "host", value: `jump01-${now}.corp` }],
     });
 
     const fid2 = await seedFinding(seniorPage, {
@@ -166,8 +175,8 @@ test.describe("Hunt Triage Inbox (Phase-B)", () => {
       domain: "sigma",
       title: `${tag} Encoded PS on DC`,
       severity: "high",
-      technique_ids: ["T1059.001"],
-      entities: [{ kind: "host", value: "dc01.corp" }],
+      technique_ids: [technique],
+      entities: [{ kind: "host", value: `dc01-${now}.corp` }],
     });
 
     // Verify the cluster was created

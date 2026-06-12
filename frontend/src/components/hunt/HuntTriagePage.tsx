@@ -315,7 +315,7 @@ function Pagination({
 
 const POLL_INTERVAL_MS = 30_000;
 
-/** Tab labels and the includeSuppressed flag that backs each. */
+/** Tab labels; each maps 1:1 onto the server-side state filter. */
 const TABS: { id: InboxTab; label: string }[] = [
   { id: "active", label: "Active" },
   { id: "suppressed", label: "Suppressed" },
@@ -433,21 +433,10 @@ export function HuntTriagePage() {
     navigate(`/investigations/${invId}`);
   };
 
-  // ----- Filter clusters for the current tab -----
-  const filteredClusters = useMemo(() => {
-    if (activeTab === "active") {
-      return clusters.filter(
-        (c) => c.state !== "suppressed" && c.state !== "promoted",
-      );
-    }
-    if (activeTab === "suppressed") {
-      return clusters.filter((c) => c.state === "suppressed");
-    }
-    if (activeTab === "promoted") {
-      return clusters.filter((c) => c.state === "promoted");
-    }
-    return clusters;
-  }, [clusters, activeTab]);
+  // Tab filtering is server-side (state= param, applied before pagination in
+  // PR #202), so the returned clusters ARE the current tab's page and
+  // totalClusters is exact for the tab — no client-side re-filtering.
+  const filteredClusters = clusters;
 
   return (
     <div className="flex flex-col h-full" data-testid="hunt-triage">

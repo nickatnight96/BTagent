@@ -134,7 +134,6 @@ describe("HuntTriagePage", () => {
       isMutating: false,
       error: null,
       selectedFindingIds: [],
-      includeSuppressed: false,
       activeTab: "active",
       page: 1,
       pageSize: 50,
