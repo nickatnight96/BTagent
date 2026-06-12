@@ -163,3 +163,50 @@ class SuppressionRuleRow(Base):
         Index("idx_suppression_rules_state", "state"),
         Index("idx_suppression_rules_reconfirm_at", "reconfirm_at"),
     )
+
+
+class HuntPackRunRow(Base):
+    """History of one scheduled (or ad-hoc) hunt-pack execution (#112).
+
+    Records *what ran and how it landed* — the substrate the future noise
+    baselines (#112) read to learn per-rule hit volumes. One row per
+    ``run_pack`` invocation: pack identity + version, the backends queried,
+    a per-rule hit/error rollup (``rule_stats`` JSON), how many findings the
+    run created in the #119 store, and a terminal status.
+    """
+
+    __tablename__ = "hunt_pack_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # The engine runner's transient ``hrun_`` run id (PackRunResult.run_id) so
+    # findings emitted by this run (which carry it in ``evidence.source_run_id``)
+    # can be correlated back to this history row.
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    pack_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    pack_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    pack_version: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    # ``SigmaBackendName`` values the run targeted.
+    backends: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Per-rule rollup: ``{rule_id: {"title", "hits", "errors"}}``.
+    rule_stats: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    findings_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # ``completed`` (clean run) | ``failed`` (run itself raised before finishing).
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="completed")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # The history list is org-scoped and newest-first.
+        Index("idx_hunt_pack_runs_org_started", "org_id", "started_at"),
+        Index("idx_hunt_pack_runs_pack_id", "pack_id"),
+    )

@@ -25,6 +25,8 @@ PREFIXES = {
     "bent": "bent",  # Behavioral entity (#114)
     "bprof": "bprof",  # Behavioral profile (#114)
     "bout": "bout",  # Behavioral outlier (#114)
+    "hrun": "hrun",  # Hunt pack run (engine transient run id, #112)
+    "hpkrun": "hpkrun",  # Persisted hunt pack-run history row (#112 integration)
 }
 
 

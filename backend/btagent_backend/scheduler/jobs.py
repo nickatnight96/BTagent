@@ -41,6 +41,45 @@ async def stale_suppression_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     return result
 
 
+async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
+    """Run the enabled builtin hunt packs and land hits in the inbox (#112).
+
+    The cron entry point for the Phase-6 integration slice: loads the enabled
+    builtin packs, runs them through the engine runner against the configured
+    backends, converts each :class:`SigmaHit` into a ``HuntFinding`` (so active
+    suppressions apply pre-insert), and records a pack-run history row per pack.
+
+    Org scope: v1 ingests into the **default org** — scheduled runs have no
+    per-org pack store yet (see ``hunt_pack_run_service.DEFAULT_BUILTIN_PACKS``).
+
+    Overlap guard: registered with arq's ``unique=True`` cron (a Redis lock on
+    the scheduled instant), so a slow run can't be double-started by another
+    worker firing the same cron tick. The thin shell here owns the single
+    commit; the decision logic is in :mod:`hunt_pack_run_service`.
+    """
+    # Lazy import: the engine pulls pysigma, only present in the worker image.
+    from btagent_backend.services import hunt_pack_run_service
+
+    settings = get_settings()
+    async with async_session_factory() as session:
+        run_rows = await hunt_pack_run_service.run_pack_and_ingest(
+            session,
+            org_id=DEFAULT_ORG_ID,
+            lookback_hours=settings.hunt_scheduler_lookback_hours,
+            max_hits_per_query=settings.hunt_scheduler_max_hits_per_query,
+        )
+        await session.commit()
+
+    counts = {
+        "packs_run": len(run_rows),
+        "findings_created": sum(r.findings_created for r in run_rows),
+        "hits": sum(r.hit_count for r in run_rows),
+        "failed_packs": sum(1 for r in run_rows if r.status == "failed"),
+    }
+    logger.info("scheduled_hunt_pack_run: %s", counts)
+    return counts
+
+
 async def run_hunt_pack(
     ctx: dict[str, Any],
     *,

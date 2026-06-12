@@ -291,6 +291,19 @@ class Settings(BaseSettings):
     default_model_id: str = "claude-sonnet-4-20250514"
     mock_connectors: bool = False
 
+    # Proactive threat hunting scheduler (#112 integration). The arq worker
+    # runs the enabled builtin hunt packs on this cadence and lands their hits
+    # in the #119 triage inbox; the stale-suppression sweep (#119) runs on its
+    # own cadence. All overridable via ``BTAGENT_HUNT_*`` env vars.
+    #   BTAGENT_HUNT_SCHEDULER_INTERVAL_HOURS=4
+    #   BTAGENT_HUNT_SCHEDULER_BACKENDS='["splunk","sentinel"]'
+    hunt_scheduler_interval_hours: int = 4
+    hunt_scheduler_backends: list[str] = Field(default_factory=lambda: ["splunk"])
+    hunt_scheduler_lookback_hours: int = 24
+    hunt_scheduler_max_hits_per_query: int = 100
+    # The stale-suppression sweep cadence (minutes past each hour it fires on).
+    hunt_suppression_sweep_minute: int = 0
+
     # Embedding / Knowledge Base
     embedding_provider: str = "openai"  # openai | ollama
     embedding_model: str = "text-embedding-3-small"

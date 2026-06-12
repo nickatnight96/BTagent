@@ -17,6 +17,8 @@ from btagent_shared.types.hunt_finding import (
     HuntFinding,
     HuntFindingCluster,
     HuntFindingClusterListResponse,
+    HuntPackRun,
+    HuntPackRunListResponse,
     PromoteClusterRequest,
     PromoteFindingsRequest,
     PromoteFindingsResponse,
@@ -32,8 +34,10 @@ from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models_hunt import (
     HuntFindingClusterRow,
     HuntFindingRow,
+    HuntPackRunRow,
     SuppressionRuleRow,
 )
+from btagent_backend.services import hunt_pack_run_service
 from btagent_backend.services import hunt_triage_service as svc
 
 logger = logging.getLogger("btagent.api.hunt_findings")
@@ -60,6 +64,26 @@ def _cluster_response(row: HuntFindingClusterRow) -> HuntFindingCluster:
         representative_finding_id=row.representative_finding_id,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _pack_run_response(row: HuntPackRunRow) -> HuntPackRun:
+    return HuntPackRun(
+        id=row.id,
+        org_id=row.org_id,
+        run_id=row.run_id,
+        pack_id=row.pack_id,
+        pack_name=row.pack_name,
+        pack_version=row.pack_version,
+        backends=list(row.backends or []),
+        rule_stats=dict(row.rule_stats or {}),
+        hit_count=row.hit_count,
+        error_count=row.error_count,
+        findings_created=row.findings_created,
+        status=row.status,
+        error=row.error,
+        started_at=row.started_at,
+        completed_at=row.completed_at,
     )
 
 
@@ -310,6 +334,29 @@ async def list_suppressions(
     return SuppressionListResponse(
         items=[_suppression_response(r) for r in rows],
         total=len(rows),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Pack-run history
+# --------------------------------------------------------------------------- #
+
+
+@router.get("/pack-runs", response_model=HuntPackRunListResponse)
+async def list_pack_runs(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Org-scoped history of scheduled / ad-hoc hunt-pack runs (#112)."""
+    user.require_permission("hunt:view")
+    rows, total = await hunt_pack_run_service.list_pack_runs(
+        db, org_id=user.org_id, page=page, page_size=page_size
+    )
+    return HuntPackRunListResponse(
+        items=[_pack_run_response(r) for r in rows],
+        total=total,
     )
 
 

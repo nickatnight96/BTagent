@@ -17,7 +17,11 @@ from arq import cron
 from arq.connections import RedisSettings
 
 from btagent_backend.config import get_settings
-from btagent_backend.scheduler.jobs import run_hunt_pack, stale_suppression_sweep
+from btagent_backend.scheduler.jobs import (
+    run_hunt_pack,
+    scheduled_hunt_pack_run,
+    stale_suppression_sweep,
+)
 
 logger = logging.getLogger("btagent.scheduler.worker")
 
@@ -25,6 +29,20 @@ logger = logging.getLogger("btagent.scheduler.worker")
 def _redis_settings() -> RedisSettings:
     """Build arq RedisSettings from the app's ``BTAGENT_REDIS_URL``."""
     return RedisSettings.from_dsn(get_settings().redis_url)
+
+
+def _hunt_pack_cron_hours() -> set[int]:
+    """Hours-of-day the scheduled hunt-pack cron fires on.
+
+    arq crons are wall-clock, not interval, so an "every N hours" cadence is
+    expressed as the set of hours ``{0, N, 2N, ...}``. Derived from
+    ``BTAGENT_HUNT_SCHEDULER_INTERVAL_HOURS`` (default 4 → 00:00, 04:00,
+    08:00, …). An interval ≤0 or >24 clamps to a single daily run.
+    """
+    interval = get_settings().hunt_scheduler_interval_hours
+    if interval <= 0 or interval > 24:
+        return {0}
+    return set(range(0, 24, interval))
 
 
 async def _on_startup(ctx: dict) -> None:
@@ -41,15 +59,32 @@ class WorkerSettings:
     ``functions`` exposes jobs for ad-hoc enqueue; ``cron_jobs`` are the
     recurring ones. The stale-suppression sweep runs hourly — frequent
     enough that a flipped rule surfaces for re-confirmation the same day,
-    cheap enough to be inconsequential.
+    cheap enough to be inconsequential. The scheduled hunt-pack run fires
+    on the configured cadence (default every 4h) and lands its hits in the
+    #119 triage inbox.
+
+    Both crons use arq's ``unique=True`` (the default): arq takes a Redis
+    lock keyed on each cron's scheduled instant, so even with multiple
+    worker replicas a given tick runs exactly once — the overlap/idempotency
+    guard for the hunt-pack run.
     """
 
-    # ``run_hunt_pack`` is enqueue-on-demand (a pack + schedule payload).
-    # Cron-style scheduled discovery from a pack store lands with the pack
-    # persistence layer in a follow-up; for now packs are triggered explicitly.
-    functions = [stale_suppression_sweep, run_hunt_pack]
+    # ``run_hunt_pack`` is enqueue-on-demand (a pack + schedule payload);
+    # ``scheduled_hunt_pack_run`` is the cron that runs the enabled builtin
+    # packs against the configured backends and ingests into the inbox.
+    functions = [stale_suppression_sweep, run_hunt_pack, scheduled_hunt_pack_run]
     cron_jobs = [
-        cron(stale_suppression_sweep, minute=0),  # top of every hour
+        cron(
+            stale_suppression_sweep,
+            minute=get_settings().hunt_suppression_sweep_minute,
+            unique=True,
+        ),
+        cron(
+            scheduled_hunt_pack_run,
+            hour=_hunt_pack_cron_hours(),
+            minute=0,
+            unique=True,
+        ),
     ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown

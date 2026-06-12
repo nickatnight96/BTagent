@@ -543,6 +543,7 @@ async def sweep_stale_suppressions(
         .all()
     )
 
+    audit = AuditTrail(db)
     expired = 0
     needs_reconfirm = 0
     for rule in rows:
@@ -551,12 +552,38 @@ async def sweep_stale_suppressions(
         if expires_at is not None and expires_at <= now:
             rule.state = SuppressionState.EXPIRED.value
             expired += 1
+            await _audit_sweep_flip(audit, rule=rule, action="suppression_expired")
         elif reconfirm_at is not None and reconfirm_at <= now:
             rule.state = SuppressionState.NEEDS_RECONFIRM.value
             needs_reconfirm += 1
+            await _audit_sweep_flip(audit, rule=rule, action="suppression_needs_reconfirm")
 
     await db.flush()
     return {"expired": expired, "needs_reconfirm": needs_reconfirm, "scanned": len(rows)}
+
+
+async def _audit_sweep_flip(audit: AuditTrail, *, rule: SuppressionRuleRow, action: str) -> None:
+    """Record one sweep-driven suppression state flip on the audit chain.
+
+    The sweep is a system (cron) actor — no analyst is in the loop — so the
+    flip must still be defensible on the ledger (a suppression silently
+    expiring or being re-flagged is a control-state change). Category
+    ``hunt``; action ``suppression_expired`` / ``suppression_needs_reconfirm``.
+    """
+    await audit.record(
+        actor="system:suppression_sweep",
+        category=AuditCategory.HUNT,
+        action=action,
+        resource=f"suppression:{rule.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": rule.org_id,
+            "name": rule.name,
+            "new_state": rule.state,
+            "expires_at": rule.expires_at.isoformat() if rule.expires_at else None,
+            "reconfirm_at": rule.reconfirm_at.isoformat() if rule.reconfirm_at else None,
+        },
+    )
 
 
 # --------------------------------------------------------------------------- #
