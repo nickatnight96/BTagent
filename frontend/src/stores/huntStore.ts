@@ -1,17 +1,25 @@
 import { create } from "zustand";
+import { ApiError } from "@/api/client";
 import type {
   CreateSuppressionRequest,
   HuntFinding,
   HuntFindingCluster,
+  PromoteClusterRequest,
   SuppressionRule,
+  SuppressClusterRequest,
 } from "@/types/hunt";
 import {
   createSuppression,
   listFindings,
   listSuppressions,
+  promoteCluster,
   promoteFindings,
+  suppressCluster,
   suppressFinding,
 } from "@/api/hunt";
+
+/** The active tab in the triage inbox. */
+export type InboxTab = "active" | "suppressed" | "promoted";
 
 interface HuntState {
   clusters: HuntFindingCluster[];
@@ -20,6 +28,9 @@ interface HuntState {
   totalClusters: number;
   totalFindings: number;
   includeSuppressed: boolean;
+  activeTab: InboxTab;
+  page: number;
+  pageSize: number;
 
   isLoading: boolean;
   isMutating: boolean;
@@ -28,15 +39,29 @@ interface HuntState {
   /** Findings selected for bulk promotion. */
   selectedFindingIds: string[];
 
-  fetchInbox: () => Promise<void>;
+  fetchInbox: (opts?: { page?: number }) => Promise<void>;
   fetchSuppressions: () => Promise<void>;
+  setTab: (tab: InboxTab) => void;
+  setPage: (page: number) => void;
   toggleIncludeSuppressed: () => Promise<void>;
   toggleSelected: (findingId: string) => void;
   clearSelection: () => void;
   suppress: (findingId: string, body: CreateSuppressionRequest) => Promise<void>;
+  suppressCluster: (clusterId: string, body: SuppressClusterRequest) => Promise<void>;
+  promoteCluster: (clusterId: string, body: PromoteClusterRequest) => Promise<string>;
   createRule: (body: CreateSuppressionRequest) => Promise<void>;
   promote: (findingIds: string[], title?: string) => Promise<string>;
   clearError: () => void;
+}
+
+/** Extract a human-readable message from an error, preferring body.detail for ApiError. */
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    const body = err.body as { detail?: string } | null;
+    if (body?.detail) return body.detail;
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
 }
 
 /** Findings grouped by their cluster id (clusterless findings under ""). */
@@ -57,6 +82,9 @@ export const useHuntStore = create<HuntState>((set, get) => ({
   totalClusters: 0,
   totalFindings: 0,
   includeSuppressed: false,
+  activeTab: "active",
+  page: 1,
+  pageSize: 50,
 
   isLoading: false,
   isMutating: false,
@@ -64,19 +92,26 @@ export const useHuntStore = create<HuntState>((set, get) => ({
 
   selectedFindingIds: [],
 
-  fetchInbox: async () => {
+  fetchInbox: async (opts) => {
+    const { includeSuppressed, page: currentPage, pageSize } = get();
+    const page = opts?.page ?? currentPage;
     set({ isLoading: true, error: null });
     try {
-      const resp = await listFindings({ include_suppressed: get().includeSuppressed });
+      const resp = await listFindings({
+        include_suppressed: includeSuppressed,
+        page,
+        page_size: pageSize,
+      });
       set({
         clusters: resp.clusters ?? [],
         findings: resp.findings ?? [],
         totalClusters: resp.total_clusters ?? 0,
         totalFindings: resp.total_findings ?? 0,
+        page,
         isLoading: false,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load hunt inbox";
+      const message = extractErrorMessage(err, "Failed to load hunt inbox");
       set({ isLoading: false, error: message });
     }
   },
@@ -86,9 +121,19 @@ export const useHuntStore = create<HuntState>((set, get) => ({
       const resp = await listSuppressions();
       set({ suppressions: resp.items ?? [] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load suppressions";
+      const message = extractErrorMessage(err, "Failed to load suppressions");
       set({ error: message });
     }
+  },
+
+  setTab: (tab) => {
+    const includeSuppressed = tab === "suppressed";
+    set({ activeTab: tab, includeSuppressed, page: 1 });
+  },
+
+  setPage: (page) => {
+    set({ page });
+    void get().fetchInbox({ page });
   },
 
   toggleIncludeSuppressed: async () => {
@@ -114,7 +159,34 @@ export const useHuntStore = create<HuntState>((set, get) => ({
       await get().fetchInbox();
       set({ isMutating: false });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to suppress finding";
+      const message = extractErrorMessage(err, "Failed to suppress finding");
+      set({ isMutating: false, error: message });
+      throw err;
+    }
+  },
+
+  suppressCluster: async (clusterId, body) => {
+    set({ isMutating: true, error: null });
+    try {
+      await suppressCluster(clusterId, body);
+      await get().fetchInbox();
+      set({ isMutating: false });
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to suppress cluster");
+      set({ isMutating: false, error: message });
+      throw err;
+    }
+  },
+
+  promoteCluster: async (clusterId, body) => {
+    set({ isMutating: true, error: null });
+    try {
+      const resp = await promoteCluster(clusterId, body);
+      set({ isMutating: false });
+      await get().fetchInbox();
+      return resp.investigation_id;
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to promote cluster");
       set({ isMutating: false, error: message });
       throw err;
     }
@@ -127,7 +199,7 @@ export const useHuntStore = create<HuntState>((set, get) => ({
       await Promise.all([get().fetchInbox(), get().fetchSuppressions()]);
       set({ isMutating: false });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to create suppression";
+      const message = extractErrorMessage(err, "Failed to create suppression");
       set({ isMutating: false, error: message });
       throw err;
     }
@@ -141,7 +213,7 @@ export const useHuntStore = create<HuntState>((set, get) => ({
       await get().fetchInbox();
       return resp.investigation_id;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to promote findings";
+      const message = extractErrorMessage(err, "Failed to promote findings");
       set({ isMutating: false, error: message });
       throw err;
     }

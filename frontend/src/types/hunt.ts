@@ -125,3 +125,15 @@ export interface PromoteFindingsResponse {
   investigation_id: string;
   promoted_finding_ids: string[];
 }
+
+export interface SuppressClusterRequest {
+  name: string;
+  reason: string;
+  match?: SuppressionMatch | null;
+  expires_in_hours?: number | null;
+  reconfirm_in_hours?: number | null;
+}
+
+export interface PromoteClusterRequest {
+  title?: string | null;
+}

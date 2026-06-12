@@ -5,9 +5,11 @@ import type {
   CreateSuppressionRequest,
   HuntFinding,
   HuntFindingClusterListResponse,
+  PromoteClusterRequest,
   PromoteFindingsResponse,
   SuppressionListResponse,
   SuppressionRule,
+  SuppressClusterRequest,
 } from "@/types/hunt";
 
 const BASE = "/v1/hunt";
@@ -62,4 +64,23 @@ export async function createSuppression(
   body: CreateSuppressionRequest,
 ): Promise<SuppressionRule> {
   return api.post<SuppressionRule>(`${BASE}/suppressions`, body);
+}
+
+/** Bulk-suppress a cluster (one rule covering the cluster's pattern). */
+export async function suppressCluster(
+  clusterId: string,
+  body: SuppressClusterRequest,
+): Promise<SuppressionRule> {
+  return api.post<SuppressionRule>(`${BASE}/clusters/${clusterId}/suppress`, body);
+}
+
+/** Escalate a cluster's eligible members into a single investigation. */
+export async function promoteCluster(
+  clusterId: string,
+  body: PromoteClusterRequest,
+): Promise<PromoteFindingsResponse> {
+  return api.post<PromoteFindingsResponse>(
+    `${BASE}/clusters/${clusterId}/promote`,
+    body,
+  );
 }
