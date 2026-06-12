@@ -1,17 +1,19 @@
 """CrowdStrike Falcon integration nodes.
 
-Ports two representative tools from the existing
+Ports representative tools from the existing
 ``agents/btagent_agents/mcp/servers/crowdstrike_mcp.py`` MCP server to
 the engine Node model:
 
 * ``CrowdStrikeListDetectionsNode`` -- list current Falcon detections.
+* ``CrowdStrikeEventSearchNode`` -- run a Falcon LogScale query over raw
+  endpoint telemetry (ProcessRollup2 and similar event streams).
 * ``CrowdStrikeIsolateHostNode`` -- network-contain a host (the
   representative containment action; in production this composes with
   the HITL middleware in front of the Runner).
 
-The fixtures are intentionally minimal -- one detection, one host --
-just enough for tests to assert the schema shape. The richer agents/
-fixtures stay in the agents/ tree until Sprint 3 cuts over.
+The fixtures are intentionally minimal -- just enough for tests to
+assert the schema shape. The richer agents/ fixtures stay in the agents/
+tree until Sprint 3 cuts over.
 """
 
 from __future__ import annotations
@@ -83,6 +85,118 @@ _MOCK_HOSTS: dict[str, dict[str, Any]] = {
     },
 }
 
+# Realistic ProcessRollup2-style raw endpoint events for the event_search mock.
+# Fields match Falcon LogScale schema so the hunting-runner entity / observable
+# extractors (ComputerName -> host, UserName -> user, SHA256HashData -> hash)
+# can find their values without any adapter shim.
+#
+# Timestamps are expressed as offsets from now (in minutes) so the mock stays
+# fresh regardless of when the tests run.  The third event is >48h old so that
+# tests asserting lookback filtering can use a short window and expect 0 results.
+_MOCK_ENDPOINT_EVENT_TEMPLATES: list[tuple[int, dict[str, Any]]] = [
+    # (age_minutes, static_fields)
+    (
+        30,
+        {
+            "event_simpleName": "ProcessRollup2",
+            "ComputerName": "WS-JSMITH-PC",
+            "UserName": "jsmith",
+            "ImageFileName": "\\Device\\HarddiskVolume3\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "CommandLine": "powershell.exe -enc SQBuAHYAbwBrAGUALQBXAGUAYgBSAGUAcQB1AGUAcwB0AA==",
+            "SHA256HashData": "abc1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd",
+            "ParentImageFileName": "\\Device\\HarddiskVolume3\\Windows\\explorer.exe",
+            "MD5HashData": "d41d8cd98f00b204e9800998ecf8427e",
+            "TargetProcessId": "4812",
+            "cid": "cid_abc123",
+        },
+    ),
+    (
+        90,
+        {
+            "event_simpleName": "ProcessRollup2",
+            "ComputerName": "WS-JSMITH-PC",
+            "UserName": "jsmith",
+            "ImageFileName": "\\Device\\HarddiskVolume3\\Windows\\System32\\cmd.exe",
+            "CommandLine": "cmd.exe /c whoami",
+            "SHA256HashData": "def4567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12",
+            "ParentImageFileName": "\\Device\\HarddiskVolume3\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "MD5HashData": "098f6bcd4621d373cade4e832627b4f6",
+            "TargetProcessId": "3904",
+            "cid": "cid_abc123",
+        },
+    ),
+    (
+        # >48h old — used by the lookback-filter test (lookback_hours=1 -> 0 results)
+        2940,
+        {
+            "event_simpleName": "ProcessRollup2",
+            "ComputerName": "SRV-WEBAPP-01",
+            "UserName": "svc_web",
+            "ImageFileName": "\\Device\\HarddiskVolume3\\Windows\\System32\\net.exe",
+            "CommandLine": "net.exe localgroup administrators",
+            "SHA256HashData": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210fe",
+            "ParentImageFileName": "\\Device\\HarddiskVolume3\\Windows\\System32\\cmd.exe",
+            "MD5HashData": "a87ff679a2f3e71d9181a67b7542122c",
+            "TargetProcessId": "2248",
+            "cid": "cid_abc123",
+        },
+    ),
+]
+
+
+def _build_mock_endpoint_events() -> list[dict[str, Any]]:
+    """Return mock events with timestamps generated relative to *now*."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    result: list[dict[str, Any]] = []
+    for age_minutes, fields in _MOCK_ENDPOINT_EVENT_TEMPLATES:
+        ts = now - timedelta(minutes=age_minutes)
+        result.append({"timestamp": ts.strftime("%Y-%m-%dT%H:%M:%S.000Z"), **fields})
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Schemas: event_search
+# ---------------------------------------------------------------------------
+
+
+class CrowdStrikeEventSearchInput(BaseModel):
+    query: str = Field(
+        ...,
+        description=(
+            "Falcon LogScale / event-search query string "
+            "(e.g. '#event_simpleName=ProcessRollup2 ImageFileName=/powershell.exe/'). "
+            "Accepts the full LogScale filter syntax used by Falcon Insight event search."
+        ),
+        examples=["#event_simpleName=ProcessRollup2"],
+    )
+    lookback_hours: int = Field(
+        default=24,
+        ge=1,
+        description="Look-back window in hours relative to now (maps to LogScale start/end time).",
+    )
+    max_events: int = Field(
+        default=100,
+        ge=1,
+        description="Maximum number of raw endpoint events to return.",
+    )
+
+
+class CrowdStrikeEventSearchOutput(BaseModel):
+    events: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Raw Falcon LogScale endpoint events. Empty list when nothing matched.",
+    )
+    count: int = Field(
+        default=0,
+        description="Number of events returned (after max_events truncation).",
+    )
+    truncated: bool = Field(
+        default=False,
+        description="True if the search had more matches than max_events and they were dropped.",
+    )
+
 
 # ---------------------------------------------------------------------------
 # Schemas: list_detections
@@ -144,6 +258,73 @@ class CrowdStrikeIsolateHostOutput(BaseModel):
 # ---------------------------------------------------------------------------
 # Nodes
 # ---------------------------------------------------------------------------
+
+
+@NodeRegistry.register
+class CrowdStrikeEventSearchNode(Node[CrowdStrikeEventSearchInput, CrowdStrikeEventSearchOutput]):
+    """Run a Falcon LogScale query over raw CrowdStrike endpoint telemetry.
+
+    Executes an event-search query against Falcon Insight's raw event stream
+    (ProcessRollup2, NetworkConnectIP4, DnsRequest, etc.), returning the
+    matching raw events for downstream enrichment and entity extraction.
+
+    Mock path returns ProcessRollup2-style fixtures so the hunting runner's
+    entity / observable extractors find host (ComputerName), user (UserName),
+    and hash (SHA256HashData) values. The lookback and max_events caps are
+    honoured: events older than ``lookback_hours`` are filtered out and the
+    result list is sliced to ``max_events``.
+    """
+
+    meta = NodeMeta(
+        id="integration.crowdstrike.event_search",
+        name="CrowdStrike: Event Search",
+        version="0.1.0",
+        category=NodeCategory.INTEGRATION,
+        description=(
+            "Execute a Falcon LogScale query over raw endpoint telemetry. "
+            "Returns matching events plus a truncation flag when the result "
+            "set exceeds max_events."
+        ),
+    )
+    input_schema = CrowdStrikeEventSearchInput
+    output_schema = CrowdStrikeEventSearchOutput
+    manifest = CROWDSTRIKE_MANIFEST
+    capability_id = "event_search"
+
+    async def run(
+        self,
+        input: CrowdStrikeEventSearchInput,
+        ctx: NodeContext,
+    ) -> CrowdStrikeEventSearchOutput:
+        if _mock_mode_enabled():
+            from datetime import UTC, datetime, timedelta
+
+            cutoff = datetime.now(UTC) - timedelta(hours=input.lookback_hours)
+
+            pool: list[dict[str, Any]] = []
+            for event in _build_mock_endpoint_events():
+                ts_raw = event.get("timestamp", "")
+                try:
+                    # Parse ISO timestamp; treat naive as UTC.
+                    ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                    if ts < cutoff:
+                        continue
+                except (ValueError, AttributeError):
+                    pass  # Unparseable timestamps pass through (do not filter).
+                pool.append(event)
+
+            truncated = len(pool) > input.max_events
+            events = pool[: input.max_events]
+            return CrowdStrikeEventSearchOutput(
+                events=events,
+                count=len(events),
+                truncated=truncated,
+            )
+
+        raise NotImplementedError(
+            "CrowdStrike live event-search integration ships in Sprint 4 follow-up; "
+            "set BTAGENT_MOCK_CONNECTORS=true to use mock fixtures."
+        )
 
 
 @NodeRegistry.register

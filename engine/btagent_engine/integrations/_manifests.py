@@ -107,6 +107,15 @@ CROWDSTRIKE_MANIFEST = ConnectorManifest(
             hitl_required=False,
             count_only_supported=True,
         ),
+        QueryCapability(
+            id="event_search",
+            description="Run a Falcon LogScale query over raw endpoint telemetry (ProcessRollup2 etc.).",
+            ocsf_emits=[OCSFEventClass.PROCESS_ACTIVITY],
+            tlp_egress=TLP.RED,
+            cost_class=CostClass.MODERATE,
+            hitl_required=False,
+            count_only_supported=False,
+        ),
     ],
     actions=[
         ActionCapability(

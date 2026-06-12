@@ -186,6 +186,36 @@ async def test_sentinel_and_elastic_hits_extract_their_dialects():
     assert kinds["user"] == "jsmith"
 
 
+# --- CrowdStrike event-search backend ---
+
+
+async def test_crowdstrike_backend_yields_hits_with_entities_and_hash():
+    """CrowdStrike backend now runs the transpiled LogScale query via event_search.
+
+    The mock returns ProcessRollup2 fixtures which carry ComputerName (host),
+    UserName (user), and SHA256HashData (hash), so the extraction layer should
+    find all three.
+    """
+    result = await run_pack(_pack([_ps_rule()]), ["crowdstrike"], _ctx())
+
+    assert result.error_count == 0
+    cs_results = result.rule_results[0].backend_results
+    assert len(cs_results) == 1
+    br = cs_results[0]
+    assert br.backend == "crowdstrike"
+    # The transpiled LogScale query must be recorded on the BackendRunResult.
+    assert br.query is not None and br.query.strip()
+    assert br.hit_count >= 1
+
+    hit = br.hits[0]
+    kinds = {e.kind: e.value for e in hit.entities}
+    assert "host" in kinds, f"expected 'host' entity, got: {kinds}"
+    assert "user" in kinds, f"expected 'user' entity, got: {kinds}"
+    # SHA256HashData -> hash observable via _HASH_KEYS extraction.
+    assert hit.observable is not None
+    assert hit.observable_type == "hash"
+
+
 # --- error isolation ---
 
 
@@ -262,7 +292,8 @@ async def test_builtin_pack_runs_end_to_end_on_mocks():
     assert result.all_hits
     # Every backend result carries the transpiled query it ran.
     assert all(b.query for r in result.rule_results for b in r.backend_results)
-    # CrowdStrike degrades to detections; severity still comes from the rule.
+    # CrowdStrike runs the transpiled LogScale query via event_search; severity
+    # is propagated from the rule (not the detection severity floor).
     cs_hits = [h for h in result.all_hits if h.backend == "crowdstrike"]
     assert cs_hits
     assert all(h.severity in set(Severity) for h in cs_hits)
