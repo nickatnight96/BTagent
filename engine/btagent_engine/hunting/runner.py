@@ -18,13 +18,8 @@ store). ``SigmaHit`` carries everything that conversion needs: ``source``
 
 Backend execution notes:
 
-* Splunk / Sentinel / Elastic run the transpiled query verbatim through
-  their search nodes.
-* The engine's CrowdStrike surface has no raw event-search node yet (only
-  ``list_detections``); the transpiled LogScale query is recorded on the
-  result for audit while execution degrades to listing detections at or
-  above the rule's severity. The real event-search call lands with the
-  Phase 4 live-connector work.
+* Splunk / Sentinel / Elastic / CrowdStrike all run the transpiled query
+  verbatim through their search nodes, respecting lookback and max_hits.
 """
 
 from __future__ import annotations
@@ -46,8 +41,8 @@ from btagent_engine.hunting.transpile import (
     transpile,
 )
 from btagent_engine.integrations.crowdstrike import (
-    CrowdStrikeListDetectionsInput,
-    CrowdStrikeListDetectionsNode,
+    CrowdStrikeEventSearchInput,
+    CrowdStrikeEventSearchNode,
 )
 from btagent_engine.integrations.elastic import ElasticSearchInput, ElasticSearchNode
 from btagent_engine.integrations.sentinel import SentinelKQLQueryInput, SentinelKQLQueryNode
@@ -180,7 +175,15 @@ _IP_KEYS = (
     "destination.ip",
     "remote_ip",
 )
-_HASH_KEYS = ("sha256", "hash.sha256", "process.hash.sha256", "md5", "hash.md5")
+_HASH_KEYS = (
+    "sha256",
+    "sha256hashdata",
+    "hash.sha256",
+    "process.hash.sha256",
+    "md5",
+    "md5hashdata",
+    "hash.md5",
+)
 _DOMAIN_KEYS = ("domain", "dns.question.name", "query", "dest_domain")
 _SUMMARY_KEYS = ("summary", "message", "commandline", "command_line", "process.command_line")
 
@@ -266,15 +269,6 @@ _ELASTIC_INDEX_BY_CATEGORY = {
 }
 _ELASTIC_DEFAULT_INDEX = "filebeat-*"
 
-# Severity floor handed to CrowdStrike list_detections per rule severity.
-_CS_SEVERITY_FLOOR = {
-    Severity.CRITICAL: "critical",
-    Severity.HIGH: "high",
-    Severity.MEDIUM: "medium",
-    Severity.LOW: "low",
-    Severity.INFO: "all",
-}
-
 
 async def _run_splunk(
     query: str, rule: HuntPackRule, ctx: NodeContext, lookback_hours: int, max_hits: int
@@ -333,15 +327,13 @@ async def _run_elastic(
 async def _run_crowdstrike(
     query: str, rule: HuntPackRule, ctx: NodeContext, lookback_hours: int, max_hits: int
 ) -> list[dict[str, Any]]:
-    # No raw event-search node on the engine's CrowdStrike surface yet (see
-    # module docstring) — degrade to detections at/above the rule severity.
-    out = await CrowdStrikeListDetectionsNode().run(
-        CrowdStrikeListDetectionsInput(
-            severity=_CS_SEVERITY_FLOOR.get(rule.severity, "all"), limit=max_hits
+    out = await CrowdStrikeEventSearchNode().run(
+        CrowdStrikeEventSearchInput(
+            query=query, lookback_hours=lookback_hours, max_events=max_hits
         ),
         ctx,
     )
-    return out.detections
+    return out.events
 
 
 _BACKEND_ADAPTERS = {
