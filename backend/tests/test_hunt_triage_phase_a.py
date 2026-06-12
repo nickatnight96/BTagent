@@ -466,3 +466,244 @@ async def test_new_finding_reopens_suppressed_cluster_after_rule_expires(
     assert b["cluster_id"] == cluster_id
     assert b["state"] != "suppressed"
     assert await _cluster_state(db_session, cluster_id) == "clustered"
+
+
+# --------------------------------------------------------------------------- #
+# Codex PR#201 P1 (a): server-side cluster state filter, applied pre-pagination
+# --------------------------------------------------------------------------- #
+
+
+async def _isolated_org(db_session: AsyncSession) -> str:
+    """A fresh org so seeded-cluster counts are exact (the in-memory DB is
+    shared across tests, so counting against DEFAULT_ORG_ID would be racy)."""
+    org_id = generate_id("org")
+    db_session.add(OrganizationRow(id=org_id, name=f"hunt-{org_id}"))
+    await db_session.flush()
+    return org_id
+
+
+async def _seed_cluster_in_state(
+    db_session: AsyncSession, *, org_id: str, state: str, idx: int
+) -> str:
+    """Create a single-finding cluster forced into a given aggregate state."""
+    from btagent_backend.db.models_hunt import HuntFindingClusterRow, HuntFindingRow
+
+    now = datetime.now(UTC)
+    cluster = HuntFindingClusterRow(
+        id=generate_id("hclu"),
+        org_id=org_id,
+        signature=f"sig-{state}-{idx}-{generate_id('s')}",
+        title=f"{state} {idx}",
+        domain="sigma",
+        severity="medium",
+        technique_ids=[],
+        finding_count=1,
+        state=state,
+        representative_finding_id="x",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(cluster)
+    await db_session.flush()
+    finding = HuntFindingRow(
+        id=generate_id("hfnd"),
+        org_id=org_id,
+        source="hunt_pack",
+        domain="sigma",
+        title=f"{state} {idx}",
+        description="",
+        severity="medium",
+        confidence=0.5,
+        state=state,
+        technique_ids=[],
+        entities=[],
+        observables=[],
+        evidence={},
+        cluster_id=cluster.id,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(finding)
+    await db_session.flush()
+    return cluster.id
+
+
+async def test_state_filter_applied_before_pagination(db_session: AsyncSession):
+    """Seed >page_size clusters across states; page-1 of the suppressed tab
+    shows suppressed clusters only and the total counts only suppressed."""
+    org_id = await _isolated_org(db_session)
+    # 5 suppressed + 5 active + 3 promoted; page_size 3.
+    suppressed_ids = {
+        await _seed_cluster_in_state(db_session, org_id=org_id, state="suppressed", idx=i)
+        for i in range(5)
+    }
+    for i in range(5):
+        await _seed_cluster_in_state(db_session, org_id=org_id, state="clustered", idx=100 + i)
+    for i in range(3):
+        await _seed_cluster_in_state(db_session, org_id=org_id, state="promoted", idx=200 + i)
+    await db_session.commit()
+
+    clusters, _findings, total_clusters, _tf = await svc.list_clusters(
+        db_session, org_id=org_id, state="suppressed", page=1, page_size=3
+    )
+    # Total reflects ALL suppressed clusters, not just this page.
+    assert total_clusters == 5
+    # Page returns only suppressed clusters, capped at page_size.
+    assert len(clusters) == 3
+    assert all(c.state == "suppressed" for c in clusters)
+    assert all(c.id in suppressed_ids for c in clusters)
+
+    # Page 2 returns the remaining 2 suppressed clusters.
+    page2, _f2, total2, _tf2 = await svc.list_clusters(
+        db_session, org_id=org_id, state="suppressed", page=2, page_size=3
+    )
+    assert total2 == 5
+    assert len(page2) == 2
+    assert all(c.state == "suppressed" for c in page2)
+
+
+async def test_state_filter_promoted_and_active(db_session: AsyncSession):
+    org_id = await _isolated_org(db_session)
+    await _seed_cluster_in_state(db_session, org_id=org_id, state="promoted", idx=1)
+    await _seed_cluster_in_state(db_session, org_id=org_id, state="clustered", idx=2)
+    await _seed_cluster_in_state(db_session, org_id=org_id, state="suppressed", idx=3)
+    await db_session.commit()
+
+    promoted, _f, total_p, _tf = await svc.list_clusters(
+        db_session, org_id=org_id, state="promoted"
+    )
+    assert total_p == 1
+    assert all(c.state == "promoted" for c in promoted)
+
+    active, _f2, total_a, _tf2 = await svc.list_clusters(db_session, org_id=org_id, state="active")
+    assert total_a == 1
+    assert all(c.state in ("new", "clustered") for c in active)
+
+
+async def test_state_all_default_unfiltered(db_session: AsyncSession):
+    """``all`` / default state applies no cluster filter (back-compat)."""
+    org_id = await _isolated_org(db_session)
+    await _seed_cluster_in_state(db_session, org_id=org_id, state="promoted", idx=1)
+    await _seed_cluster_in_state(db_session, org_id=org_id, state="clustered", idx=2)
+    await db_session.commit()
+    clusters_all, _f, total_all, _tf = await svc.list_clusters(
+        db_session, org_id=org_id, state="all"
+    )
+    states = {c.state for c in clusters_all}
+    # default (no state) behaves the same as "all"
+    clusters_def, _f2, total_def, _tf2 = await svc.list_clusters(db_session, org_id=org_id)
+    assert {c.state for c in clusters_def} == states
+    assert total_def == total_all == 2
+    assert states == {"promoted", "clustered"}
+
+
+async def test_include_suppressed_back_compat(db_session: AsyncSession):
+    """When only include_suppressed is varied (no state), behave as today:
+    suppressed member findings are hidden by default, shown when requested.
+    Service-level + isolated org so pagination over the shared DB can't flake."""
+    org_id = await _isolated_org(db_session)
+    # One suppressed member, one active member, in distinct clusters.
+    await _seed_cluster_in_state(db_session, org_id=org_id, state="suppressed", idx=1)
+    await _seed_cluster_in_state(db_session, org_id=org_id, state="clustered", idx=2)
+    await db_session.commit()
+
+    # Default (include_suppressed=False, no state): suppressed findings hidden.
+    _c, findings_def, _tc, total_def = await svc.list_clusters(db_session, org_id=org_id)
+    assert all(f.state != "suppressed" for f in findings_def)
+    assert total_def == 1  # only the active member counts
+
+    # include_suppressed=True: the suppressed member is returned.
+    _c2, findings_inc, _tc2, total_inc = await svc.list_clusters(
+        db_session, org_id=org_id, include_suppressed=True
+    )
+    assert any(f.state == "suppressed" for f in findings_inc)
+    assert total_inc == 2
+
+
+# --------------------------------------------------------------------------- #
+# Codex PR#201 P1 (b): individual suppress/promote recomputes parent cluster
+# --------------------------------------------------------------------------- #
+
+
+async def test_individual_suppress_all_members_flips_cluster(
+    client, analyst_token, admin_token, db_session: AsyncSession
+):
+    await _post_decoys(client, analyst_token)
+    a = await _post_finding(client, analyst_token, _finding_body("T1546.950", "WS-IS-A"))
+    b = await _post_finding(client, analyst_token, _finding_body("T1546.950", "WS-IS-B"))
+    cluster_id = a["cluster_id"]
+    assert b["cluster_id"] == cluster_id
+
+    # Suppress every member individually (by exact host). Each call recomputes
+    # the parent cluster; the cluster flips to suppressed once ALL non-dismissed
+    # members are suppressed.
+    for fid, host in ((a["id"], "WS-IS-A"), (b["id"], "WS-IS-B")):
+        supp = await client.post(
+            f"/api/v1/hunt/findings/{fid}/suppress",
+            json={
+                "name": f"is-{host}",
+                "reason": "individual suppress probe",
+                "match": {"entity_values": [host]},
+            },
+            headers=auth_header(admin_token),
+        )
+        assert supp.status_code == 201, supp.text
+
+    assert await _cluster_state(db_session, cluster_id) == "suppressed"
+
+
+async def test_individual_suppress_partial_leaves_clustered(
+    client, analyst_token, admin_token, db_session: AsyncSession
+):
+    await _post_decoys(client, analyst_token)
+    a = await _post_finding(client, analyst_token, _finding_body("T1547.950", "WS-IP-A"))
+    b = await _post_finding(client, analyst_token, _finding_body("T1547.950", "WS-IP-B"))
+    cluster_id = a["cluster_id"]
+    assert b["cluster_id"] == cluster_id
+
+    # Suppress only ONE member — a mix remains, cluster stays clustered.
+    supp = await client.post(
+        f"/api/v1/hunt/findings/{a['id']}/suppress",
+        json={
+            "name": "ip-a",
+            "reason": "partial suppress probe",
+            "match": {"entity_values": ["WS-IP-A"]},
+        },
+        headers=auth_header(admin_token),
+    )
+    assert supp.status_code == 201, supp.text
+    assert await _cluster_state(db_session, cluster_id) == "clustered"
+
+
+async def test_individual_promote_all_members_flips_cluster(
+    client, analyst_token, admin_token, db_session: AsyncSession
+):
+    a = await _post_finding(client, analyst_token, _finding_body("T1003.950", "WS-PR-A"))
+    b = await _post_finding(client, analyst_token, _finding_body("T1003.950", "WS-PR-B"))
+    cluster_id = a["cluster_id"]
+    assert b["cluster_id"] == cluster_id
+
+    promo = await client.post(
+        "/api/v1/hunt/findings/promote",
+        json={"finding_ids": [a["id"], b["id"]], "title": "promote both"},
+        headers=auth_header(admin_token),
+    )
+    assert promo.status_code == 201, promo.text
+    assert await _cluster_state(db_session, cluster_id) == "promoted"
+
+
+async def test_individual_promote_partial_leaves_clustered(
+    client, analyst_token, admin_token, db_session: AsyncSession
+):
+    a = await _post_finding(client, analyst_token, _finding_body("T1021.950", "WS-PP-A"))
+    b = await _post_finding(client, analyst_token, _finding_body("T1021.950", "WS-PP-B"))
+    cluster_id = a["cluster_id"]
+    assert b["cluster_id"] == cluster_id
+
+    promo = await client.post(
+        "/api/v1/hunt/findings/promote",
+        json={"finding_ids": [a["id"]]},
+        headers=auth_header(admin_token),
+    )
+    assert promo.status_code == 201, promo.text
+    assert await _cluster_state(db_session, cluster_id) == "clustered"

@@ -58,3 +58,10 @@ env:
   BTAGENT_LOG_LEVEL: warning
   BTAGENT_OTEL_ENABLED: "true"
   BTAGENT_MOCK_CONNECTORS: "false"
+  # Scheduled hunt-pack cron gate. The default hunt backends target Splunk,
+  # whose LIVE execution path is not yet wired (raises NotImplementedError),
+  # so with mock connectors off every scheduled tick would create zero
+  # findings. We pin it OFF explicitly here; flip to "true" only once live
+  # SIEM/EDR hunt execution is configured, otherwise the cron just logs a
+  # one-line warning and no-ops each tick.
+  BTAGENT_HUNT_SCHEDULE_ENABLED: "false"

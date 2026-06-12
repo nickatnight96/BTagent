@@ -291,6 +291,42 @@ class Settings(BaseSettings):
     default_model_id: str = "claude-sonnet-4-20250514"
     mock_connectors: bool = False
 
+    # Proactive threat hunting scheduler (#112 integration). The arq worker
+    # runs the enabled builtin hunt packs on this cadence and lands their hits
+    # in the #119 triage inbox; the stale-suppression sweep (#119) runs on its
+    # own cadence. All overridable via ``BTAGENT_HUNT_*`` env vars.
+    #   BTAGENT_HUNT_SCHEDULER_INTERVAL_HOURS=4
+    #   BTAGENT_HUNT_SCHEDULER_BACKENDS='["splunk","sentinel"]'
+    hunt_scheduler_interval_hours: int = 4
+    hunt_scheduler_backends: list[str] = Field(default_factory=lambda: ["splunk"])
+    hunt_scheduler_lookback_hours: int = 24
+    hunt_scheduler_max_hits_per_query: int = 100
+    # The stale-suppression sweep cadence (minutes past each hour it fires on).
+    hunt_suppression_sweep_minute: int = 0
+    # Codex #202 P1: whether the scheduled hunt-pack cron is allowed to run.
+    # The default backends (``hunt_scheduler_backends``) target Splunk, whose
+    # LIVE execution path raises NotImplementedError (the ``_real_executor``
+    # placeholder). With ``mock_connectors=False`` (the production default)
+    # every scheduled tick would silently create zero findings. So this knob
+    # *derives* from ``mock_connectors`` when left unset: enabled when mocks
+    # are on, disabled when mocks are off. An operator who has wired live
+    # connectors can force it on via ``BTAGENT_HUNT_SCHEDULE_ENABLED=true``.
+    # Left as ``None`` here so the post-init validator can tell "unset"
+    # (derive from mocks) apart from an explicit ``true``/``false``.
+    hunt_schedule_enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def _derive_hunt_schedule_enabled(self) -> "Settings":
+        """Default ``hunt_schedule_enabled`` from ``mock_connectors`` when unset.
+
+        Mocks on → schedule on (the deterministic executor produces findings);
+        mocks off → schedule off (live execution is not yet wired and would
+        no-op), unless the operator explicitly set the flag.
+        """
+        if self.hunt_schedule_enabled is None:
+            self.hunt_schedule_enabled = self.mock_connectors
+        return self
+
     # Embedding / Knowledge Base
     embedding_provider: str = "openai"  # openai | ollama
     embedding_model: str = "text-embedding-3-small"

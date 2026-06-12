@@ -249,3 +249,37 @@ class PromoteFindingsResponse(BaseModel):
 
     investigation_id: str
     promoted_finding_ids: list[str]
+
+
+class HuntPackRun(BaseModel):
+    """One scheduled / ad-hoc hunt-pack execution's history record (#112).
+
+    Mirrors :class:`btagent_backend.db.models_hunt.HuntPackRunRow`. The
+    ``rule_stats`` map is ``{rule_id: {"title", "hits", "errors"}}`` — the
+    per-rule rollup the future noise baselines read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    org_id: str
+    run_id: str
+    pack_id: str
+    pack_name: str
+    pack_version: str = ""
+    backends: list[str] = Field(default_factory=list)
+    rule_stats: dict[str, Any] = Field(default_factory=dict)
+    hit_count: int = 0
+    error_count: int = 0
+    findings_created: int = 0
+    status: str = "completed"
+    error: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+
+
+class HuntPackRunListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[HuntPackRun]
+    total: int

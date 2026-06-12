@@ -185,6 +185,52 @@ async def _cluster_members(db: AsyncSession, *, cluster_id: str) -> list[HuntFin
     return [row_to_finding(r) for r in rows]
 
 
+async def _recompute_cluster_states(db: AsyncSession, *, cluster_ids: set[str]) -> None:
+    """Roll an individual finding action up to its parent cluster (Codex PR#201 P1).
+
+    An individually suppressed/promoted finding used to leave its parent
+    cluster untouched, so the cluster never appeared in the matching state tab
+    and the member silently vanished. After such an action we recompute each
+    affected cluster's aggregate over its **non-dismissed** members:
+
+    * all remaining members ``SUPPRESSED`` → cluster ``SUPPRESSED``
+    * all remaining members ``PROMOTED`` → cluster ``PROMOTED``
+    * a mix (or any still-active member) → cluster ``CLUSTERED``
+
+    This mirrors the spirit of the ingest reopen logic in
+    :func:`_upsert_cluster_for` (which drags terminal clusters back to
+    ``CLUSTERED`` on a fresh member) and of :func:`suppress_cluster`'s
+    all-members-suppressed flip — they must stay consistent. Audit rows are
+    unchanged: this is a derived-state reconciliation, not a new action.
+    """
+    for cluster_id in cluster_ids:
+        cluster = await get_cluster(db, cluster_id)
+        if cluster is None:
+            continue
+        member_states = [
+            row.state
+            for row in (
+                await db.execute(
+                    select(HuntFindingRow).where(HuntFindingRow.cluster_id == cluster_id)
+                )
+            )
+            .scalars()
+            .all()
+        ]
+        considered = [s for s in member_states if s != HuntFindingState.DISMISSED.value]
+        if not considered:
+            continue
+        if all(s == HuntFindingState.SUPPRESSED.value for s in considered):
+            new_state = HuntFindingState.SUPPRESSED.value
+        elif all(s == HuntFindingState.PROMOTED.value for s in considered):
+            new_state = HuntFindingState.PROMOTED.value
+        else:
+            new_state = HuntFindingState.CLUSTERED.value
+        if cluster.state != new_state:
+            cluster.state = new_state
+            cluster.updated_at = _utcnow()
+
+
 # --------------------------------------------------------------------------- #
 # Suppression apply
 # --------------------------------------------------------------------------- #
@@ -324,47 +370,80 @@ async def get_finding(db: AsyncSession, finding_id: str) -> HuntFindingRow | Non
     return result.scalar_one_or_none()
 
 
+# Codex PR#201 P1: the ``state`` query param maps to a cluster-state
+# predicate applied BEFORE pagination (so tabs don't filter a single page
+# client-side and produce empty pages / wrong totals). ``active`` covers the
+# two non-terminal cluster states (a cluster is created CLUSTERED and only a
+# fresh-ingest reopen could leave it NEW-shaped); ``suppressed`` / ``promoted``
+# are exact terminal-state matches. ``all`` (the default) applies no filter,
+# preserving the pre-existing behaviour for current consumers.
+_CLUSTER_STATE_FILTERS: dict[str, tuple[str, ...]] = {
+    "active": (HuntFindingState.NEW.value, HuntFindingState.CLUSTERED.value),
+    "suppressed": (HuntFindingState.SUPPRESSED.value,),
+    "promoted": (HuntFindingState.PROMOTED.value,),
+}
+
+
 async def list_clusters(
     db: AsyncSession,
     *,
     org_id: str,
     include_suppressed: bool = False,
+    state: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[HuntFindingClusterRow], list[HuntFindingRow], int, int]:
     """Return the clustered triage inbox for an org.
 
     Clusters newest-first, plus the member findings for the returned
-    clusters. Suppressed findings are excluded unless ``include_suppressed``.
+    clusters. Suppressed *findings* are excluded unless ``include_suppressed``.
+
+    ``state`` filters on the **cluster** aggregate state and is applied to the
+    cluster query (and its count) BEFORE pagination, so a state tab shows the
+    right page and the right total (Codex PR#201 P1). Accepted values:
+    ``active`` (NEW/CLUSTERED), ``suppressed``, ``promoted``, ``all`` /
+    ``None`` (no filter — the default, back-compatible behaviour). Precedence
+    with ``include_suppressed``: an explicit ``state`` wins; when ``state`` is
+    unset the legacy ``include_suppressed`` flag still governs which member
+    findings are returned.
     """
     offset = (page - 1) * page_size
+
+    state_filter = _CLUSTER_STATE_FILTERS.get(state) if state and state != "all" else None
 
     count_q = (
         select(func.count())
         .select_from(HuntFindingClusterRow)
         .where(HuntFindingClusterRow.org_id == org_id)
     )
+    if state_filter is not None:
+        count_q = count_q.where(HuntFindingClusterRow.state.in_(state_filter))
     total_clusters = (await db.execute(count_q)).scalar_one() or 0
 
-    cluster_rows = (
-        (
-            await db.execute(
-                select(HuntFindingClusterRow)
-                .where(HuntFindingClusterRow.org_id == org_id)
-                .order_by(HuntFindingClusterRow.updated_at.desc())
-                .offset(offset)
-                .limit(page_size)
-            )
-        )
-        .scalars()
-        .all()
+    cluster_q = (
+        select(HuntFindingClusterRow)
+        .where(HuntFindingClusterRow.org_id == org_id)
+        .order_by(HuntFindingClusterRow.updated_at.desc())
     )
+    if state_filter is not None:
+        cluster_q = cluster_q.where(HuntFindingClusterRow.state.in_(state_filter))
+    cluster_rows = (await db.execute(cluster_q.offset(offset).limit(page_size))).scalars().all()
+
+    # Whether suppressed *member findings* are returned. The ``suppressed`` /
+    # ``promoted`` tabs explicitly want their slice's members verbatim (a
+    # ``suppressed`` tab would be empty otherwise), so they override the legacy
+    # ``include_suppressed=false`` default. ``active``, ``all`` and the
+    # no-``state`` default keep the legacy behaviour: suppressed findings are
+    # hidden unless ``include_suppressed`` is set. (``all`` must NOT imply
+    # show-suppressed — it is the back-compatible default the existing inbox
+    # sends, which has always hidden suppressed findings.)
+    show_suppressed = include_suppressed or state in ("suppressed", "promoted")
 
     cluster_ids = [c.id for c in cluster_rows]
     findings: list[HuntFindingRow] = []
     if cluster_ids:
         finding_q = select(HuntFindingRow).where(HuntFindingRow.cluster_id.in_(cluster_ids))
-        if not include_suppressed:
+        if not show_suppressed:
             finding_q = finding_q.where(HuntFindingRow.state != HuntFindingState.SUPPRESSED.value)
         finding_q = finding_q.order_by(HuntFindingRow.created_at.desc())
         findings = list((await db.execute(finding_q)).scalars().all())
@@ -372,7 +451,7 @@ async def list_clusters(
     total_findings_q = (
         select(func.count()).select_from(HuntFindingRow).where(HuntFindingRow.org_id == org_id)
     )
-    if not include_suppressed:
+    if not show_suppressed:
         total_findings_q = total_findings_q.where(
             HuntFindingRow.state != HuntFindingState.SUPPRESSED.value
         )
@@ -480,12 +559,23 @@ async def create_suppression(
     )
 
     suppressed = 0
+    touched_clusters: set[str] = set()
     for frow in existing:
         if triage.suppression_matches(match, row_to_finding(frow)):
             frow.state = HuntFindingState.SUPPRESSED.value
             frow.suppressed_by = rule.id
             suppressed += 1
+            if frow.cluster_id:
+                touched_clusters.add(frow.cluster_id)
     rule.match_count = suppressed
+
+    # Codex PR#201 P1: roll the individual suppressions up to their parent
+    # clusters so a cluster whose members are now all suppressed flips to
+    # SUPPRESSED (and shows in the suppressed tab). ``suppress_cluster`` does
+    # its own flush-time flip; this covers finding-level / standalone-rule
+    # suppression. Must run before the flush below.
+    if touched_clusters:
+        await _recompute_cluster_states(db, cluster_ids=touched_clusters)
 
     await AuditTrail(db).record(
         actor=actor or created_by or "system",
@@ -543,6 +633,7 @@ async def sweep_stale_suppressions(
         .all()
     )
 
+    audit = AuditTrail(db)
     expired = 0
     needs_reconfirm = 0
     for rule in rows:
@@ -551,12 +642,38 @@ async def sweep_stale_suppressions(
         if expires_at is not None and expires_at <= now:
             rule.state = SuppressionState.EXPIRED.value
             expired += 1
+            await _audit_sweep_flip(audit, rule=rule, action="suppression_expired")
         elif reconfirm_at is not None and reconfirm_at <= now:
             rule.state = SuppressionState.NEEDS_RECONFIRM.value
             needs_reconfirm += 1
+            await _audit_sweep_flip(audit, rule=rule, action="suppression_needs_reconfirm")
 
     await db.flush()
     return {"expired": expired, "needs_reconfirm": needs_reconfirm, "scanned": len(rows)}
+
+
+async def _audit_sweep_flip(audit: AuditTrail, *, rule: SuppressionRuleRow, action: str) -> None:
+    """Record one sweep-driven suppression state flip on the audit chain.
+
+    The sweep is a system (cron) actor — no analyst is in the loop — so the
+    flip must still be defensible on the ledger (a suppression silently
+    expiring or being re-flagged is a control-state change). Category
+    ``hunt``; action ``suppression_expired`` / ``suppression_needs_reconfirm``.
+    """
+    await audit.record(
+        actor="system:suppression_sweep",
+        category=AuditCategory.HUNT,
+        action=action,
+        resource=f"suppression:{rule.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": rule.org_id,
+            "name": rule.name,
+            "new_state": rule.state,
+            "expires_at": rule.expires_at.isoformat() if rule.expires_at else None,
+            "reconfirm_at": rule.reconfirm_at.isoformat() if rule.reconfirm_at else None,
+        },
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -626,9 +743,20 @@ async def promote_to_investigation(
     db.add(inv)
     await db.flush()
 
+    touched_clusters: set[str] = set()
     for r in rows:
         r.state = HuntFindingState.PROMOTED.value
         r.investigation_id = inv.id
+        if r.cluster_id:
+            touched_clusters.add(r.cluster_id)
+
+    # Codex PR#201 P1: roll finding-level promotions up to the parent cluster
+    # so a cluster whose non-dismissed members are now all promoted flips to
+    # PROMOTED (and leaves the active tab). ``promote_cluster`` sets the
+    # cluster state itself; this covers the finding-level promote path. A
+    # partial promotion leaves the cluster CLUSTERED. Runs before the flush.
+    if touched_clusters:
+        await _recompute_cluster_states(db, cluster_ids=touched_clusters)
 
     await AuditTrail(db).record(
         actor=actor or assigned_to or "system",
