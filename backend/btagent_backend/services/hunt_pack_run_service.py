@@ -46,9 +46,12 @@ Mapping decisions (documented for review):
 Dedupe decision (documented): within a single run the same rule firing many
 times for the same host/observable produces duplicate hits (mock connectors
 demonstrably do this). We dedupe on the stable key
-``(rule_id, backend, tuple(sorted entity values), observable)`` and keep the
-first hit per key. This collapses true duplicates while preserving distinct
-entities/observables of the same rule.
+``(rule_id, backend, tuple(sorted entity (kind, value) pairs),
+observable_type, observable)`` and keep the first hit per key. This collapses
+true duplicates while preserving distinct entities/observables of the same
+rule — including the kind, so ``host=alice`` and ``user=alice`` stay distinct,
+and the observable type so an IP and a domain with the same string don't
+collide.
 """
 
 from __future__ import annotations
@@ -109,10 +112,18 @@ def _cap_raw(raw: dict[str, Any]) -> dict[str, Any]:
     return {"_truncated": True, "_preview": encoded[:_RAW_PREVIEW_CHARS]}
 
 
-def _dedupe_key(hit: SigmaHit) -> tuple[str, str, tuple[str, ...], str | None]:
-    """Stable within-run identity for a hit (see module docstring)."""
-    entity_values = tuple(sorted(e.value for e in hit.entities))
-    return (hit.rule_id, hit.backend, entity_values, hit.observable)
+def _dedupe_key(
+    hit: SigmaHit,
+) -> tuple[str, str, tuple[tuple[str, str], ...], str | None, str | None]:
+    """Stable within-run identity for a hit (see module docstring).
+
+    Codex #202 P2: the key includes each entity's ``(kind, value)`` pair (not
+    just the value) and the ``observable_type``, so ``host=alice`` and
+    ``user=alice`` — or an IP vs a domain with the same string — no longer
+    collide into one finding.
+    """
+    entity_pairs = tuple(sorted((e.kind, e.value) for e in hit.entities))
+    return (hit.rule_id, hit.backend, entity_pairs, hit.observable_type, hit.observable)
 
 
 def _title_for(hit: SigmaHit) -> str:
@@ -160,10 +171,11 @@ def sigma_hit_to_finding_request(hit: SigmaHit) -> RecordFindingRequest:
 def hits_to_finding_requests(hits: Iterable[SigmaHit]) -> list[RecordFindingRequest]:
     """Convert a batch of hits, deduping identical hits within the batch.
 
-    Dedupe key: ``(rule_id, backend, sorted entity values, observable)`` —
-    the first hit per key wins. Order is preserved.
+    Dedupe key: ``(rule_id, backend, sorted entity (kind, value) pairs,
+    observable_type, observable)`` — the first hit per key wins. Order is
+    preserved.
     """
-    seen: set[tuple[str, str, tuple[str, ...], str | None]] = set()
+    seen: set[tuple[str, str, tuple[tuple[str, str], ...], str | None, str | None]] = set()
     out: list[RecordFindingRequest] = []
     for hit in hits:
         key = _dedupe_key(hit)
@@ -172,6 +184,35 @@ def hits_to_finding_requests(hits: Iterable[SigmaHit]) -> list[RecordFindingRequ
         seen.add(key)
         out.append(sigma_hit_to_finding_request(hit))
     return out
+
+
+def _derive_run_status(result: PackRunResult) -> str:
+    """Codex #202 P2: a run's status must reflect its execution errors.
+
+    Counts every rule×backend execution outcome:
+
+    * ``failed`` — EVERY execution errored (transpile or run); there were
+      executions and none succeeded, so the run produced nothing useful.
+    * ``completed_with_errors`` — some executions errored and some succeeded
+      (partial result; the analyst should know the picture is incomplete).
+    * ``completed`` — no execution errored.
+
+    A run with no executions at all (empty pack) has ``error_count == 0`` and
+    is treated as ``completed`` — there was nothing to fail.
+    """
+    errored = 0
+    succeeded = 0
+    for rule in result.rule_results:
+        for backend in rule.backend_results:
+            if backend.error:
+                errored += 1
+            else:
+                succeeded += 1
+    if errored == 0:
+        return "completed"
+    if succeeded == 0:
+        return "failed"
+    return "completed_with_errors"
 
 
 def _rule_stats(result: PackRunResult) -> dict[str, dict[str, Any]]:
@@ -196,7 +237,7 @@ async def persist_pack_run(
     *,
     org_id: str,
     result: PackRunResult,
-    status: str = "completed",
+    status: str | None = None,
     error: str | None = None,
 ) -> tuple[HuntPackRunRow, int]:
     """Ingest a run's hits into the #119 store and record its history row.
@@ -205,7 +246,14 @@ async def persist_pack_run(
     :func:`hunt_triage_service.persist_hunt_findings` (so active suppressions
     are applied pre-insert), then writes a :class:`HuntPackRunRow`. Returns
     the history row and the number of findings created. Not committed.
+
+    ``status`` is derived from the run's per-rule×backend execution outcomes
+    when not supplied (Codex #202 P2 — see :func:`_derive_run_status`): a run
+    where every execution errored is ``failed``; a partial one is
+    ``completed_with_errors``; a clean one is ``completed``.
     """
+    if status is None:
+        status = _derive_run_status(result)
     requests = hits_to_finding_requests(result.all_hits)
     rows = await hunt_triage_service.persist_hunt_findings(db, org_id=org_id, findings=requests)
 

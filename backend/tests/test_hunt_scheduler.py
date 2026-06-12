@@ -92,3 +92,55 @@ async def test_sweep_accepts_naive_now(db_session):
     assert counts["expired"] == 1
     await db_session.refresh(expired)
     assert expired.state == "expired"
+
+
+# --- Codex #202 P1: hunt_schedule_enabled derived default + cron gate ---
+
+
+def _settings(**env):
+    from btagent_backend.config import Settings
+
+    return Settings(env="test", **env)
+
+
+def test_hunt_schedule_enabled_derives_from_mock_connectors():
+    # Mocks on → schedule enabled; mocks off → schedule disabled (default).
+    assert _settings(mock_connectors=True).hunt_schedule_enabled is True
+    assert _settings(mock_connectors=False).hunt_schedule_enabled is False
+
+
+def test_hunt_schedule_enabled_explicit_override_wins():
+    # An operator with live connectors can force it on despite mocks off.
+    assert (
+        _settings(mock_connectors=False, hunt_schedule_enabled=True).hunt_schedule_enabled is True
+    )
+    # ...and force it off despite mocks on.
+    assert (
+        _settings(mock_connectors=True, hunt_schedule_enabled=False).hunt_schedule_enabled is False
+    )
+
+
+async def test_scheduled_cron_skips_and_warns_when_disabled(monkeypatch, caplog):
+    """When hunt_schedule_enabled is false the cron must no-op with one warning
+    and never touch the engine/runner (which would NotImplementedError live)."""
+    import logging
+
+    from btagent_backend.config import get_settings
+    from btagent_backend.scheduler import jobs
+
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "false")
+    get_settings.cache_clear()
+    try:
+        with caplog.at_level(logging.WARNING, logger="btagent.scheduler.jobs"):
+            result = await jobs.scheduled_hunt_pack_run({})
+        assert result == {
+            "packs_run": 0,
+            "findings_created": 0,
+            "hits": 0,
+            "failed_packs": 0,
+        }
+        warnings = [r for r in caplog.records if "hunt schedule disabled" in r.message]
+        assert len(warnings) == 1
+        assert "BTAGENT_HUNT_SCHEDULE_ENABLED=true" in warnings[0].message
+    finally:
+        get_settings.cache_clear()

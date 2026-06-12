@@ -130,6 +130,89 @@ def test_dedupe_keeps_distinct_backends():
     assert len(reqs) == 2
 
 
+def test_dedupe_keeps_distinct_entity_kinds_same_value():
+    """Codex #202 P2: host=alice and user=alice must NOT collide — the key
+    includes each entity's (kind, value) pair, not just the value."""
+    hits = [
+        _hit(entities=[SigmaHitEntity(kind="host", value="alice")]),
+        _hit(entities=[SigmaHitEntity(kind="user", value="alice")]),
+    ]
+    reqs = prs.hits_to_finding_requests(hits)
+    assert len(reqs) == 2
+
+
+def test_dedupe_keeps_distinct_observable_types_same_value():
+    """Codex #202 P2: same observable string, different type stays distinct."""
+    hits = [
+        _hit(observable="x", observable_type="ip"),
+        _hit(observable="x", observable_type="domain"),
+    ]
+    reqs = prs.hits_to_finding_requests(hits)
+    assert len(reqs) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Run status derivation (Codex #202 P2)
+# --------------------------------------------------------------------------- #
+
+
+def _result(*rule_specs) -> "engine_runner.PackRunResult":
+    """Build a PackRunResult from ``(rule_id, [(backend, error_or_None), ...])``."""
+    PackRunResult = engine_runner.PackRunResult
+    RuleRunResult = engine_runner.RuleRunResult
+    BackendRunResult = engine_runner.BackendRunResult
+    now = datetime.now(UTC)
+    rule_results = []
+    for rule_id, backends in rule_specs:
+        brs = [
+            BackendRunResult(
+                backend=b,
+                query=None if err else "q",
+                hit_count=0,
+                hits=[],
+                error=err,
+            )
+            for b, err in backends
+        ]
+        rule_results.append(RuleRunResult(rule_id=rule_id, rule_title=rule_id, backend_results=brs))
+    return PackRunResult(
+        run_id=generate_id("hrun"),
+        pack_id="hpack_abc",
+        pack_name="p",
+        pack_version="1",
+        backends=["splunk", "sentinel"],
+        started_at=now,
+        completed_at=now,
+        rule_results=rule_results,
+    )
+
+
+def test_status_completed_when_no_errors():
+    res = _result(("r1", [("splunk", None), ("sentinel", None)]))
+    assert prs._derive_run_status(res) == "completed"
+
+
+def test_status_failed_when_every_execution_errored():
+    res = _result(
+        ("r1", [("splunk", "boom")]),
+        ("r2", [("sentinel", "kaboom")]),
+    )
+    assert prs._derive_run_status(res) == "failed"
+
+
+def test_status_completed_with_errors_when_partial():
+    res = _result(
+        ("r1", [("splunk", None), ("sentinel", "boom")]),
+    )
+    assert prs._derive_run_status(res) == "completed_with_errors"
+
+
+async def test_persist_pack_run_records_derived_status(db_session):
+    res = _result(("r1", [("splunk", None), ("sentinel", "boom")]))
+    row, _created = await prs.persist_pack_run(db_session, org_id=DEFAULT_ORG_ID, result=res)
+    assert row.status == "completed_with_errors"
+
+
 # --------------------------------------------------------------------------- #
 # Scheduled-run service end-to-end (engine mock connectors)
 # --------------------------------------------------------------------------- #

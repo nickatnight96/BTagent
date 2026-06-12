@@ -303,6 +303,29 @@ class Settings(BaseSettings):
     hunt_scheduler_max_hits_per_query: int = 100
     # The stale-suppression sweep cadence (minutes past each hour it fires on).
     hunt_suppression_sweep_minute: int = 0
+    # Codex #202 P1: whether the scheduled hunt-pack cron is allowed to run.
+    # The default backends (``hunt_scheduler_backends``) target Splunk, whose
+    # LIVE execution path raises NotImplementedError (the ``_real_executor``
+    # placeholder). With ``mock_connectors=False`` (the production default)
+    # every scheduled tick would silently create zero findings. So this knob
+    # *derives* from ``mock_connectors`` when left unset: enabled when mocks
+    # are on, disabled when mocks are off. An operator who has wired live
+    # connectors can force it on via ``BTAGENT_HUNT_SCHEDULE_ENABLED=true``.
+    # Left as ``None`` here so the post-init validator can tell "unset"
+    # (derive from mocks) apart from an explicit ``true``/``false``.
+    hunt_schedule_enabled: bool | None = None
+
+    @model_validator(mode="after")
+    def _derive_hunt_schedule_enabled(self) -> "Settings":
+        """Default ``hunt_schedule_enabled`` from ``mock_connectors`` when unset.
+
+        Mocks on → schedule on (the deterministic executor produces findings);
+        mocks off → schedule off (live execution is not yet wired and would
+        no-op), unless the operator explicitly set the flag.
+        """
+        if self.hunt_schedule_enabled is None:
+            self.hunt_schedule_enabled = self.mock_connectors
+        return self
 
     # Embedding / Knowledge Base
     embedding_provider: str = "openai"  # openai | ollama

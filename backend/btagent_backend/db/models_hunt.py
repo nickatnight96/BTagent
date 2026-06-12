@@ -197,8 +197,12 @@ class HuntPackRunRow(Base):
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     findings_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # ``completed`` (clean run) | ``failed`` (run itself raised before finishing).
-    status: Mapped[str] = mapped_column(String(16), nullable=False, default="completed")
+    # Terminal status. ``completed`` (no execution errors) |
+    # ``completed_with_errors`` (some rule×backend executions errored, some
+    # succeeded) | ``failed`` (every execution errored, or the run itself
+    # raised before finishing). ``completed_with_errors`` is 21 chars, hence
+    # the 32-char column (widened from 16 in migration 0022, Codex #202 P2).
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False

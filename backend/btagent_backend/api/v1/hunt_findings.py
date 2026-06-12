@@ -156,6 +156,16 @@ async def record_finding(
 @router.get("/findings", response_model=HuntFindingClusterListResponse)
 async def list_findings(
     include_suppressed: bool = Query(False),
+    state: str = Query(
+        "all",
+        pattern="^(active|suppressed|promoted|all)$",
+        description=(
+            "Filter clusters by aggregate state, applied server-side before "
+            "pagination. 'active' = new/clustered, 'suppressed', 'promoted', "
+            "'all' (default, no filter). An explicit state takes precedence "
+            "over include_suppressed."
+        ),
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -167,6 +177,7 @@ async def list_findings(
         db,
         org_id=user.org_id,
         include_suppressed=include_suppressed,
+        state=state,
         page=page,
         page_size=page_size,
     )

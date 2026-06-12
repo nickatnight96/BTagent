@@ -57,10 +57,23 @@ async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
     worker firing the same cron tick. The thin shell here owns the single
     commit; the decision logic is in :mod:`hunt_pack_run_service`.
     """
+    settings = get_settings()
+
+    # Codex #202 P1: don't fire the scheduled run onto a backend whose live
+    # path no-ops. ``hunt_schedule_enabled`` derives from ``mock_connectors``
+    # (see config), so with mocks off in production this tick is a clear,
+    # single warning rather than a silent zero-finding run. One log line per
+    # tick keeps the cron from spamming while still surfacing the misconfig.
+    if not settings.hunt_schedule_enabled:
+        logger.warning(
+            "hunt schedule disabled: live connectors not configured; "
+            "set BTAGENT_HUNT_SCHEDULE_ENABLED=true to override"
+        )
+        return {"packs_run": 0, "findings_created": 0, "hits": 0, "failed_packs": 0}
+
     # Lazy import: the engine pulls pysigma, only present in the worker image.
     from btagent_backend.services import hunt_pack_run_service
 
-    settings = get_settings()
     async with async_session_factory() as session:
         run_rows = await hunt_pack_run_service.run_pack_and_ingest(
             session,
