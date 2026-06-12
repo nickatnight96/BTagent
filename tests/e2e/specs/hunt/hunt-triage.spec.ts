@@ -7,6 +7,24 @@
  *
  * Requires the backend to be running with BTAGENT_MOCK_CONNECTORS=true and
  * the senior auth session from .auth/senior.json.
+ *
+ * Over-broad gate notes
+ * ---------------------
+ * The backend enforces `is_overbroad` (max_match_fraction = 0.5): a
+ * suppression rule that would match > 50% of the org's recent findings is
+ * rejected with HTTP 409. If we seed only the 2 cluster findings that we want
+ * to suppress, the derived match (domain=sigma + technique T1059.001) covers
+ * 2/2 = 100% → 409 → the cluster never leaves Active → the assertion fails.
+ *
+ * Fix: seed DECOY_COUNT (6) unrelated findings with distinct, spec-namespaced
+ * technique IDs (T1800.9xx) BEFORE seeding the target cluster. This means
+ * 2 / (6 + 2) = 25% match fraction, safely below the 50% gate.
+ *
+ * Technique IDs are fixed strings (T1800.901…906) for determinism; entity
+ * values carry a per-run timestamp suffix so decoys across parallel shards
+ * don't interfere with one another's entity-value suppression rules while
+ * still forming distinct clusters (signature = domain|techniques|entity-kinds,
+ * not entity values).
  */
 import type { Page } from "@playwright/test";
 import { test, expect } from "../../fixtures/auth";
@@ -51,6 +69,54 @@ async function seedFinding(
   return ((await resp.json()) as { id: string }).id;
 }
 
+/**
+ * Number of decoy findings to seed before the target cluster.
+ *
+ * The over-broad gate rejects a suppression rule whose derived match covers
+ * > 50% of recent findings.  We need at least N decoys such that
+ *   2 / (N + 2) < 0.5  →  N > 2  →  N >= 3.
+ * We use 6 for headroom in case other specs in the same shard have already
+ * seeded a small number of findings with matching technique T1059.001 via
+ * old test data retained between reruns.
+ */
+const DECOY_COUNT = 6;
+
+/**
+ * Seed DECOY_COUNT unrelated findings so the target cluster's 2 findings
+ * represent a small fraction of the org's total, keeping the derived
+ * suppression match well under the 50% over-broad gate.
+ *
+ * Technique IDs are fixed (T1800.901…906) to avoid technique-count overbroad
+ * check (each decoy is its own distinct technique, not all sharing one);
+ * entity values carry the per-run `runTag` suffix to isolate parallel shards.
+ */
+async function seedDecoyFindings(seniorPage: Page, runTag: string): Promise<void> {
+  // Fixed spec-namespaced technique IDs: T1800.9xx reserved for E2E decoys.
+  const decoyTechniques = [
+    "T1800.901",
+    "T1800.902",
+    "T1800.903",
+    "T1800.904",
+    "T1800.905",
+    "T1800.906",
+  ] as const;
+
+  for (let i = 0; i < DECOY_COUNT; i++) {
+    const tech = decoyTechniques[i];
+    await seedFinding(seniorPage, {
+      source: "hunt_pack",
+      domain: "sigma",
+      title: `DECOY-${tech}-${runTag}`,
+      severity: "low",
+      technique_ids: [tech],
+      // Entity value carries runTag for shard isolation; entity *kind* ("host")
+      // is shared with the target cluster, but the technique differs so these
+      // decoys form their own separate clusters.
+      entities: [{ kind: "host", value: `decoy-host-${i}-${runTag}` }],
+    });
+  }
+}
+
 /** Return the cluster for a finding (via the inbox API). */
 async function getClusterForFinding(
   seniorPage: Page,
@@ -78,6 +144,12 @@ test.describe("Hunt Triage Inbox (Phase-B)", () => {
     seniorPage,
   }) => {
     const tag = `E2E-hunt-${Date.now()}`;
+
+    // Seed decoy findings FIRST so the target cluster's 2 findings represent
+    // only 2/(DECOY_COUNT+2) ≈ 25% of recent findings — safely below the
+    // backend's 50% over-broad suppression gate. Without decoys, 2/2 = 100%
+    // triggers HTTP 409, leaving the cluster on the Active tab.
+    await seedDecoyFindings(seniorPage, tag);
 
     // Seed two findings so the triage service clusters them together
     const fid1 = await seedFinding(seniorPage, {
