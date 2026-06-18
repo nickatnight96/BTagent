@@ -27,6 +27,8 @@ PREFIXES = {
     "bout": "bout",  # Behavioral outlier (#114)
     "hrun": "hrun",  # Hunt pack run (engine transient run id, #112)
     "hpkrun": "hpkrun",  # Persisted hunt pack-run history row (#112 integration)
+    "ws": "ws",  # Weak signal (cross-investigation pattern hunter, #120)
+    "phpr": "phpr",  # Pattern-hunt proposal (#120)
 }
 
 

@@ -83,6 +83,7 @@ import btagent_backend.db.models_hunt  # noqa: E402, F401
 import btagent_backend.db.models_knowledge  # noqa: E402, F401
 import btagent_backend.db.models_mfa  # noqa: E402, F401
 import btagent_backend.db.models_mitre  # noqa: E402, F401
+import btagent_backend.db.models_pattern  # noqa: E402, F401
 import btagent_backend.db.models_playbook  # noqa: E402, F401
 import btagent_backend.db.models_workflow  # noqa: E402, F401
 from btagent_backend.db.models import Base  # noqa: E402

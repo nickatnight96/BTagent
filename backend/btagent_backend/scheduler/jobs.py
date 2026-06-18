@@ -148,3 +148,50 @@ def _real_executor():
         "Live SIEM/EDR hunt execution is not yet wired; "
         "set BTAGENT_MOCK_CONNECTORS=true to use the deterministic executor."
     )
+
+
+async def weekly_pattern_scan(ctx: dict[str, Any]) -> dict[str, int]:
+    """Surface cross-investigation weak-signal patterns as hunt proposals (#120).
+
+    The weekly cron entry point for the Cross-Investigation Pattern Hunter.
+    Walks the **closed-investigation pgvector corpus** (no live connectors —
+    this hunt is not connector-blocked), extracts weak signals, ranks clusters
+    by ``frequency × recency × cross-investigation diversity`` (diversity
+    dominant), and upserts the top-N as ``pattern_hunt_proposals``.
+
+    Thin shell: the single commit lives here; all decisions are in
+    :mod:`btagent_backend.services.pattern_hunt_service` /
+    :mod:`btagent_shared.hunt.pattern`. Gated behind ``pattern_scan_enabled``
+    (mirrors ``hunt_schedule_enabled`` in shape but defaults on, since there is
+    nothing to no-op against — the corpus is already stored).
+    """
+    settings = get_settings()
+    if not settings.pattern_scan_enabled:
+        logger.warning("pattern scan disabled: set BTAGENT_PATTERN_SCAN_ENABLED=true to enable")
+        return {
+            "investigations_scanned": 0,
+            "weak_signals_upserted": 0,
+            "clusters_ranked": 0,
+            "proposals_created": 0,
+            "proposals_updated": 0,
+        }
+
+    from btagent_backend.services import pattern_hunt_service
+
+    async with async_session_factory() as session:
+        result = await pattern_hunt_service.scan_corpus(
+            session,
+            org_id=DEFAULT_ORG_ID,
+            top_n=settings.pattern_scan_top_n,
+        )
+        await session.commit()
+
+    counts = {
+        "investigations_scanned": result.investigations_scanned,
+        "weak_signals_upserted": result.weak_signals_upserted,
+        "clusters_ranked": result.clusters_ranked,
+        "proposals_created": result.proposals_created,
+        "proposals_updated": result.proposals_updated,
+    }
+    logger.info("weekly_pattern_scan: %s", counts)
+    return counts
