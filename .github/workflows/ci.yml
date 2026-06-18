@@ -426,15 +426,43 @@ jobs:
 
       - name: Install Playwright + Chromium
         working-directory: tests/e2e
+        # Bound the whole step: ``install-deps`` shells out to apt-get, which
+        # on a fresh runner can block on the unattended-upgrades dpkg lock and
+        # otherwise hang the shard for the entire job timeout (observed ~20 min
+        # stalls on a single shard while siblings passed). Budget covers three
+        # full 4-minute attempts (3 x (240s + 30s kill-grace) + sleeps + npm) so
+        # the final retry is actually reachable on repeated lock hangs.
+        timeout-minutes: 18
         run: |
           npm install --no-audit --no-fund
           # On a cache hit the browser binary is already present, so download
           # only the OS shared libs. On a miss, download the binary + OS deps.
           if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
-            npx playwright install-deps chromium
+            install_cmd="npx playwright install-deps chromium"
           else
-            npx playwright install --with-deps chromium
+            install_cmd="npx playwright install --with-deps chromium"
           fi
+          # apt can hang waiting on the dpkg lock; bound each attempt and retry
+          # (clearing a stuck lock between tries) so a transient lock-wait is
+          # killed and retried rather than stalling the whole shard.
+          # ``--kill-after=30`` escalates to SIGKILL 30s after the SIGTERM at
+          # 240s, so an apt/dpkg child that ignores SIGTERM is still bounded
+          # and the loop reaches the lock cleanup + next attempt.
+          for attempt in 1 2 3; do
+            if timeout --kill-after=30 240 bash -c "$install_cmd"; then
+              echo "playwright install succeeded (attempt $attempt)"
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "playwright install failed after 3 attempts" >&2
+              exit 1
+            fi
+            echo "playwright install attempt $attempt timed out/failed; clearing apt locks and retrying" >&2
+            sudo killall -9 apt-get apt unattended-upgrade dpkg 2>/dev/null || true
+            sudo rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock 2>/dev/null || true
+            sudo dpkg --configure -a 2>/dev/null || true
+            sleep 15
+          done
 
       - name: Run database migrations
         run: cd backend && alembic upgrade head
