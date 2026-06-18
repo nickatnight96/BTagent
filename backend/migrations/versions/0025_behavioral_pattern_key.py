@@ -8,7 +8,7 @@ re-firing as an outlier. We now persist the matched pattern key on the
 outlier so feedback updates the same key the scorer reads. Nullable so
 pre-existing rows survive; feedback falls back to ``event_id`` for those.
 
-Revision ID: 0025_behavioral_outlier_pattern_key
+Revision ID: 0025_behavioral_pattern_key
 Revises: 0022_hunt_pack_run_status_width
 Create Date: 2026-06-18
 """
@@ -18,7 +18,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0025_behavioral_outlier_pattern_key"
+revision: str = "0025_behavioral_pattern_key"
 down_revision: str | None = "0022_hunt_pack_run_status_width"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
