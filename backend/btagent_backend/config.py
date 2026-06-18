@@ -327,6 +327,18 @@ class Settings(BaseSettings):
             self.hunt_schedule_enabled = self.mock_connectors
         return self
 
+    # Cross-Investigation Pattern Hunter (#120). The weekly scan walks the
+    # closed-investigation pgvector corpus and surfaces cross-case weak-signal
+    # patterns as hunt proposals. Unlike the hunt-pack scheduler this is NOT
+    # connector-blocked — it runs entirely over already-stored data — so its
+    # gate mirrors ``hunt_schedule_enabled`` in shape but defaults ON.
+    #   BTAGENT_PATTERN_SCAN_ENABLED=false
+    #   BTAGENT_PATTERN_SCAN_WEEKDAY=6   (0=Mon .. 6=Sun)
+    pattern_scan_enabled: bool = True
+    pattern_scan_weekday: int = 6  # Sunday
+    pattern_scan_hour: int = 3
+    pattern_scan_top_n: int = 10
+
     # Embedding / Knowledge Base
     embedding_provider: str = "openai"  # openai | ollama
     embedding_model: str = "text-embedding-3-small"

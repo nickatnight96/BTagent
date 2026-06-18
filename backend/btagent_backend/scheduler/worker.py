@@ -21,6 +21,7 @@ from btagent_backend.scheduler.jobs import (
     run_hunt_pack,
     scheduled_hunt_pack_run,
     stale_suppression_sweep,
+    weekly_pattern_scan,
 )
 
 logger = logging.getLogger("btagent.scheduler.worker")
@@ -72,7 +73,12 @@ class WorkerSettings:
     # ``run_hunt_pack`` is enqueue-on-demand (a pack + schedule payload);
     # ``scheduled_hunt_pack_run`` is the cron that runs the enabled builtin
     # packs against the configured backends and ingests into the inbox.
-    functions = [stale_suppression_sweep, run_hunt_pack, scheduled_hunt_pack_run]
+    functions = [
+        stale_suppression_sweep,
+        run_hunt_pack,
+        scheduled_hunt_pack_run,
+        weekly_pattern_scan,
+    ]
     cron_jobs = [
         cron(
             stale_suppression_sweep,
@@ -82,6 +88,16 @@ class WorkerSettings:
         cron(
             scheduled_hunt_pack_run,
             hour=_hunt_pack_cron_hours(),
+            minute=0,
+            unique=True,
+        ),
+        # #120: weekly cross-investigation pattern scan. Wall-clock weekly via
+        # (weekday, hour, minute). Not connector-blocked — runs over the
+        # already-stored closed-investigation corpus.
+        cron(
+            weekly_pattern_scan,
+            weekday=get_settings().pattern_scan_weekday,
+            hour=get_settings().pattern_scan_hour,
             minute=0,
             unique=True,
         ),
