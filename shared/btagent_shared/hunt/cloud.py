@@ -228,7 +228,12 @@ def score_workload_risk(workload: AgenticWorkload) -> float:
         Risk score in [0.0, 1.0].
     """
     score = 0.0
-    if workload.is_shadow:
+    # Codex #207: score the workload's *derived* shadow classification, not just
+    # the separately-supplied ``is_shadow`` flag. A default untagged (or
+    # UNMANAGED-kind) workload is emitted as shadow by detect_shadow_workloads()
+    # via classify_workload(); the score must use the same predicate so such a
+    # workload is not under-scored when its is_shadow flag was never set.
+    if classify_workload(workload) or workload.is_shadow:
         score += _SHADOW_WEIGHT
     if workload.has_overprivileged_identity:
         score += _OVERPRIVILEGE_WEIGHT
@@ -569,7 +574,17 @@ def detect_snapshot_external_share(
 
         external_accounts: list[str] = []
         for perm in add_perms:
-            account_id = perm.get("userId") or perm.get("group") or ""
+            # Codex #207: ModifyDBSnapshotAttribute's ``valuesToAdd`` is a list of
+            # account-ID *strings*, whereas Modify{Snapshot,Image}Attribute carry
+            # permission *mappings* ({"userId": ...} / {"group": ...}). Handle both
+            # shapes so a string entry doesn't raise AttributeError and abort the
+            # whole detection sweep.
+            if isinstance(perm, str):
+                account_id = perm
+            elif isinstance(perm, dict):
+                account_id = perm.get("userId") or perm.get("group") or ""
+            else:
+                account_id = ""
             if account_id == "all" or (account_id and account_id not in trusted_account_ids):
                 external_accounts.append(account_id)
 
@@ -657,9 +672,12 @@ def detect_cloudtrail_tamper(
     list[RecordFindingRequest]
     """
     import re
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta
 
-    _TAMPER_EVENTS = {"StopLogging", "DeleteTrail", "UpdateTrail", "DeleteFlowLogs"}
+    # Events that unconditionally disable / destroy logging.
+    _ALWAYS_DISABLE_EVENTS = {"StopLogging", "DeleteTrail", "DeleteFlowLogs"}
+    # UpdateTrail is only tampering when it actually disables logging (see below).
+    _CONDITIONAL_TAMPER_EVENTS = {"UpdateTrail"}
     _SUSPICIOUS_AUTH_EVENTS = {"ConsoleLogin", "GetSessionToken", "AssumeRole"}
 
     def _parse_event_time(ev: dict[str, Any]) -> datetime | None:
@@ -673,6 +691,73 @@ def detect_cloudtrail_tamper(
         except ValueError:
             return None
 
+    def _is_logging_disable_update(ev: dict[str, Any]) -> bool:
+        """Codex #207: only an UpdateTrail that *disables* logging is tampering.
+
+        Mirrors the accompanying ``cloudtrail_stoplog.yml`` Sigma rule's
+        ``selection_update_disable`` predicate
+        (``requestParameters.enableLogFileValidation: 'false'``). Routine
+        UpdateTrail changes — destination/bucket updates, *enabling* log-file
+        validation, multi-region toggles — do not disable logging and must not
+        fire. Both the AWS API field name and the falsy value are matched
+        case-insensitively across str/bool shapes.
+        """
+        params = ev.get("requestParameters") or {}
+        if not isinstance(params, dict):
+            return False
+        # Log-file validation explicitly turned off.
+        validation = params.get("enableLogFileValidation")
+        if validation is not None and str(validation).strip().lower() == "false":
+            return True
+        # CloudWatch Logs delivery / global-service-event capture disabled — both
+        # blind portions of the audit trail.
+        for key in ("includeGlobalServiceEvents", "isLogging", "isMultiRegionTrail"):
+            value = params.get(key)
+            if value is not None and str(value).strip().lower() == "false":
+                return True
+        return False
+
+    def _is_suspicious_auth(ev: dict[str, Any]) -> bool:
+        """Codex #207: apply the documented unusual-source / no-MFA criteria.
+
+        A ConsoleLogin / AssumeRole / GetSessionToken only corroborates a
+        logging-tamper event when it shows genuinely suspicious authentication:
+        MFA was not used, or the call originated from an unusual source. Without
+        this gate any unrelated login in the lookback window wrongly escalated
+        the finding to CRITICAL.
+        """
+        name = ev.get("eventName", "")
+        if name not in _SUSPICIOUS_AUTH_EVENTS:
+            return False
+
+        additional = ev.get("additionalEventData") or {}
+        if not isinstance(additional, dict):
+            additional = {}
+
+        # MFA signal: present on ConsoleLogin and STS calls. Treat an explicit
+        # "false"/"no" as suspicious; an explicit "true"/"yes" is corroborating-
+        # clean. AWS uses ``mfaAuthenticated`` (STS) and ``MFAUsed`` (ConsoleLogin).
+        mfa = additional.get("mfaAuthenticated")
+        if mfa is None:
+            mfa = additional.get("MFAUsed")
+        if mfa is None:
+            mfa = (ev.get("requestParameters") or {}).get("mfaAuthenticated")
+        mfa_str = str(mfa).strip().lower() if mfa is not None else None
+        if mfa_str in ("false", "no"):
+            return True
+        if mfa_str in ("true", "yes"):
+            return False
+
+        # Unusual-source signal — an explicit flag set by the fixture/connector
+        # shim, or a non-AWS-service source IP marked unusual.
+        if str(additional.get("unusualSource", "")).strip().lower() == "true":
+            return True
+        if str(ev.get("unusualSource", "")).strip().lower() == "true":
+            return True
+
+        # No MFA evidence and no unusual-source signal — not corroborating.
+        return False
+
     # Separate events by category.
     suspicious_auths: list[tuple[datetime, dict[str, Any]]] = []
     tamper_events: list[tuple[datetime, dict[str, Any]]] = []
@@ -682,16 +767,12 @@ def detect_cloudtrail_tamper(
         if ts is None:
             continue
         name = ev.get("eventName", "")
-        if name in _TAMPER_EVENTS:
+        if name in _ALWAYS_DISABLE_EVENTS or (
+            name in _CONDITIONAL_TAMPER_EVENTS and _is_logging_disable_update(ev)
+        ):
             tamper_events.append((ts, ev))
-        elif name in _SUSPICIOUS_AUTH_EVENTS:
-            # Only count as suspicious if MFA was not used for GetSessionToken.
-            if name == "GetSessionToken":
-                mfa = (ev.get("additionalEventData") or {}).get("mfaAuthenticated", "true")
-                if str(mfa).lower() == "false":
-                    suspicious_auths.append((ts, ev))
-            else:
-                suspicious_auths.append((ts, ev))
+        elif _is_suspicious_auth(ev):
+            suspicious_auths.append((ts, ev))
 
     window = timedelta(seconds=suspicious_auth_window_seconds)
     findings: list[RecordFindingRequest] = []

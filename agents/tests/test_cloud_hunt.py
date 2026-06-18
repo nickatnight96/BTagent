@@ -31,7 +31,7 @@ Test matrix:
 
 from __future__ import annotations
 
-from datetime import UTC
+from datetime import UTC, datetime
 
 import pytest
 from btagent_shared.hunt.cloud import (
@@ -75,6 +75,8 @@ from tests.fixtures.cloud.iam_fixtures import (
     STS_HIGH_VALUE_TARGETS,
     TRUSTED_ACCOUNT,
 )
+
+_FIXED_NOW = datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # T1–T3: STS chaining
@@ -481,3 +483,249 @@ def test_T21_mitre_mapper_cloud_keywords():
         assert expected_technique in technique_ids, (
             f"Expected {expected_technique!r} in suggestions for {text!r}, got: {technique_ids}"
         )
+
+
+# ---------------------------------------------------------------------------
+# T22: Pack discovery — the cloud pack loads via the engine builtin loader
+# (Codex #207 finding 1)
+# ---------------------------------------------------------------------------
+
+
+def test_T22_cloud_pack_loads_via_builtin_loader():
+    """The relocated cloud pack loads through btagent_engine's builtin loader.
+
+    The pack must live under engine/btagent_engine/hunting/packs/<name>/ with
+    manifest ``file:`` values equal to the bare basenames under ``rules/`` — the
+    only shape the shared loader accepts. Code-based detectors are NOT listed as
+    Sigma ``rules:`` entries.
+    """
+    from btagent_engine.hunting import HuntPack, load_builtin_pack
+    from btagent_engine.hunting.pack import BUILTIN_PACKS_DIR
+
+    pack = load_builtin_pack("cloud_control_plane")
+    assert isinstance(pack, HuntPack)
+    assert pack.id.startswith("hpack_")
+    assert pack.name == "Cloud Control-Plane Hunt Pack"
+    assert pack.version == "1.0.0"
+
+    # All 11 Sigma rules load; the 3 code detectors are NOT among them.
+    assert len(pack.rules) == 11
+    rule_files = {r.file for r in pack.rules}
+    assert "sts_assumerole_chain.yml" in rule_files
+    assert "snapshot_external_share.yml" in rule_files
+    assert not any(f.endswith(".py") for f in rule_files)
+
+    # GuardDuty rules ship disabled (deferred on #100); the rest are enabled.
+    by_file = {r.file: r for r in pack.rules}
+    assert by_file["guardduty_iam_anomaly.yml"].enabled is False
+    assert by_file["guardduty_privilege_escalation.yml"].enabled is False
+    assert by_file["sts_assumerole_chain.yml"].enabled is True
+
+    # The code-based detector modules ship alongside the pack (not as rules).
+    pack_dir = BUILTIN_PACKS_DIR / "cloud_control_plane"
+    assert (pack_dir / "detectors" / "sts_trust_graph_closure.py").is_file()
+    assert (pack_dir / "detectors" / "shadow_workload_inventory.py").is_file()
+    assert (pack_dir / "detectors" / "workload_identity_privilege.py").is_file()
+
+
+# ---------------------------------------------------------------------------
+# T23: Risk score uses derived shadow classification (Codex #207 finding 2)
+# ---------------------------------------------------------------------------
+
+
+def test_T23_risk_score_uses_derived_shadow_classification():
+    """An untagged workload with is_shadow=False is still scored as shadow.
+
+    Before the fix the shadow weight only applied when the separately-supplied
+    is_shadow flag was True, so a default untagged workload was emitted as shadow
+    by detect_shadow_workloads() yet under-scored by score_workload_risk().
+    """
+    untagged_default = AgenticWorkload(
+        id="wl_untagged",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=AgenticWorkloadKind.BEDROCK_AGENTCORE,
+        resource_id=f"arn:aws:bedrock:us-east-1:{TRUSTED_ACCOUNT}:agent/UNTAGGED",
+        display_name="Untagged agent, is_shadow flag never set",
+        identity_ref=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/SomeRole",
+        governance_tagged=False,  # derived-shadow
+        is_shadow=False,  # flag never set by the inventory shim
+        has_overprivileged_identity=False,
+        internet_reachable=False,
+        last_activity=_FIXED_NOW,
+        risk_score=0.0,
+    )
+    # classify_workload says shadow, so the shadow weight must be applied.
+    assert classify_workload(untagged_default) is True
+    assert score_workload_risk(untagged_default) == pytest.approx(0.4)
+
+    # UNMANAGED kind (even if tagged + is_shadow=False) is derived-shadow too.
+    unmanaged = untagged_default.model_copy(
+        update={"governance_tagged": True, "kind": AgenticWorkloadKind.UNMANAGED}
+    )
+    assert score_workload_risk(unmanaged) == pytest.approx(0.4)
+
+    # A genuinely managed + tagged workload still scores 0.0.
+    managed = untagged_default.model_copy(update={"governance_tagged": True})
+    assert classify_workload(managed) is False
+    assert score_workload_risk(managed) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# T24–T25: RDS snapshot share accepts string account IDs (Codex #207 finding 3)
+# ---------------------------------------------------------------------------
+
+
+def test_T24_rds_snapshot_share_string_account_ids():
+    """ModifyDBSnapshotAttribute valuesToAdd is a list of account-ID strings."""
+    events = [
+        {
+            "eventName": "ModifyDBSnapshotAttribute",
+            "eventTime": "2026-06-18T12:00:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:assumed-role/AttackerRole/s"},
+            "requestParameters": {
+                "dBSnapshotIdentifier": "prod-db-snapshot-final",
+                "attributeName": "restore",
+                "valuesToAdd": [EXTERNAL_ACCOUNT],  # bare account-ID string
+            },
+        }
+    ]
+    findings = detect_snapshot_external_share(
+        events, trusted_account_ids={TRUSTED_ACCOUNT, SECOND_ACCOUNT}
+    )
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.evidence["detection"] == "snapshot_external_share"
+    assert EXTERNAL_ACCOUNT in f.evidence["external_accounts"]
+    assert f.evidence["resource_id"] == "prod-db-snapshot-final"
+
+
+def test_T25_rds_string_share_does_not_abort_sweep():
+    """A string-shaped valuesToAdd entry must not raise / abort run_all_detections."""
+    events = [
+        {
+            "eventName": "ModifyDBSnapshotAttribute",
+            "eventTime": "2026-06-18T12:00:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:user/dba"},
+            "requestParameters": {
+                "dBSnapshotIdentifier": "snap-1",
+                "valuesToAdd": [EXTERNAL_ACCOUNT, TRUSTED_ACCOUNT],
+            },
+        }
+    ]
+    # Combined with the dict-shaped fixture events — both shapes coexist.
+    combined = SNAPSHOT_SHARE_EVENTS + events
+    findings = detect_snapshot_external_share(
+        combined, trusted_account_ids={TRUSTED_ACCOUNT, SECOND_ACCOUNT}
+    )
+    # The trusted account in valuesToAdd is filtered; the external one fires.
+    rds = [f for f in findings if f.evidence.get("resource_id") == "snap-1"]
+    assert len(rds) == 1
+    assert rds[0].evidence["external_accounts"] == [EXTERNAL_ACCOUNT]
+
+
+# ---------------------------------------------------------------------------
+# T26–T27: UpdateTrail filtered to actual logging-disable changes
+# (Codex #207 finding 4)
+# ---------------------------------------------------------------------------
+
+
+def test_T26_update_trail_disable_fires():
+    """UpdateTrail disabling log-file validation IS treated as tampering."""
+    events = [
+        {
+            "eventName": "UpdateTrail",
+            "eventTime": "2026-06-18T07:00:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:user/eve"},
+            "requestParameters": {
+                "name": "management-events",
+                "enableLogFileValidation": "false",
+            },
+        }
+    ]
+    findings = detect_cloudtrail_tamper(events)
+    assert len(findings) == 1
+    assert findings[0].evidence["event_name"] == "UpdateTrail"
+
+
+def test_T27_routine_update_trail_does_not_fire():
+    """Routine UpdateTrail (destination change / enabling validation) does NOT fire."""
+    routine_events = [
+        {
+            "eventName": "UpdateTrail",
+            "eventTime": "2026-06-18T07:00:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/IaCPipeline"},
+            "requestParameters": {
+                "name": "management-events",
+                "s3BucketName": "new-audit-bucket",
+                "enableLogFileValidation": "true",  # enabling, not disabling
+            },
+        }
+    ]
+    assert detect_cloudtrail_tamper(routine_events) == []
+
+
+# ---------------------------------------------------------------------------
+# T28: Only genuinely suspicious auth corroborates a tamper event
+# (Codex #207 finding 5)
+# ---------------------------------------------------------------------------
+
+
+def test_T28_clean_login_does_not_escalate_tamper():
+    """An MFA-backed ConsoleLogin before StopLogging must NOT escalate to CRITICAL."""
+    events = [
+        # Clean, MFA-backed console login one minute before the tamper.
+        {
+            "eventName": "ConsoleLogin",
+            "eventTime": "2026-06-18T08:14:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:user/admin"},
+            "additionalEventData": {"MFAUsed": "Yes"},
+            "requestParameters": {},
+        },
+        {
+            "eventName": "StopLogging",
+            "eventTime": "2026-06-18T08:15:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/Ops"},
+            "requestParameters": {
+                "trailARN": f"arn:aws:cloudtrail:us-east-1:{TRUSTED_ACCOUNT}:trail/t1"
+            },
+        },
+    ]
+    findings = detect_cloudtrail_tamper(events)
+    assert len(findings) == 1
+    # Clean login is not corroborating — finding stays standalone HIGH.
+    assert findings[0].severity == Severity.HIGH
+    assert findings[0].evidence["correlated_suspicious_auths"] == []
+
+
+def test_T28b_no_mfa_login_does_corroborate_tamper():
+    """A no-MFA ConsoleLogin before StopLogging DOES corroborate → CRITICAL."""
+    events = [
+        {
+            "eventName": "ConsoleLogin",
+            "eventTime": "2026-06-18T08:14:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:user/attacker"},
+            "additionalEventData": {"MFAUsed": "No"},
+            "requestParameters": {},
+        },
+        {
+            "eventName": "StopLogging",
+            "eventTime": "2026-06-18T08:15:00Z",
+            "awsRegion": "us-east-1",
+            "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/Ops"},
+            "requestParameters": {
+                "trailARN": f"arn:aws:cloudtrail:us-east-1:{TRUSTED_ACCOUNT}:trail/t1"
+            },
+        },
+    ]
+    findings = detect_cloudtrail_tamper(events)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.CRITICAL
+    assert len(findings[0].evidence["correlated_suspicious_auths"]) == 1
