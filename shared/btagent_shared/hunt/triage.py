@@ -142,6 +142,33 @@ def suppression_matches(match: SuppressionMatch, finding: HuntFinding) -> bool:
     return True
 
 
+def harmful_suppressions(
+    rules: Sequence[SuppressionMatch],
+    rule_ids: Sequence[str],
+    promoted_findings: Sequence[HuntFinding],
+) -> list[str]:
+    """Return rule_ids whose match criteria would have matched any promoted finding.
+
+    A suppression rule is "harmful" when it would have hidden a finding that an
+    analyst has now confirmed as a real threat (i.e. promoted to an investigation).
+    This pure helper is called by the service's ``promote_to_investigation`` to
+    discover which active rules need their ``harmful_flag`` set.
+
+    Args:
+        rules: The ``SuppressionMatch`` criteria for each rule (parallel to rule_ids).
+        rule_ids: The IDs of the rules to check (parallel to rules).
+        promoted_findings: The findings just promoted into a confirmed investigation.
+
+    Returns:
+        Sorted list of rule IDs that match at least one promoted finding.
+    """
+    flagged: list[str] = []
+    for rule_id, match in zip(rule_ids, rules):
+        if any(suppression_matches(match, f) for f in promoted_findings):
+            flagged.append(rule_id)
+    return sorted(flagged)
+
+
 def is_overbroad(
     match: SuppressionMatch,
     sample: Sequence[HuntFinding],

@@ -100,6 +100,9 @@ def _suppression_response(row: SuppressionRuleRow) -> SuppressionRule:
         created_at=row.created_at,
         expires_at=row.expires_at,
         reconfirm_at=row.reconfirm_at,
+        harmful_flag=bool(row.harmful_flag),
+        harmful_reason=row.harmful_reason,
+        harmful_finding_id=row.harmful_finding_id,
     )
 
 
@@ -234,6 +237,8 @@ async def suppress_finding(
             target=f"hunt_finding:{row.id}",
             expires_in_hours=body.expires_in_hours,
             reconfirm_in_hours=body.reconfirm_in_hours,
+            acknowledge_overbroad=body.acknowledge_overbroad,
+            caller_role=user.role,
         )
     except svc.OverbroadSuppressionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
@@ -296,6 +301,8 @@ async def suppress_cluster(
             actor=user.username,
             expires_in_hours=body.expires_in_hours,
             reconfirm_in_hours=body.reconfirm_in_hours,
+            acknowledge_overbroad=body.acknowledge_overbroad,
+            caller_role=user.role,
         )
     except svc.OverbroadSuppressionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
@@ -390,6 +397,8 @@ async def create_suppression(
             actor=user.username,
             expires_in_hours=body.expires_in_hours,
             reconfirm_in_hours=body.reconfirm_in_hours,
+            acknowledge_overbroad=body.acknowledge_overbroad,
+            caller_role=user.role,
         )
     except svc.OverbroadSuppressionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
