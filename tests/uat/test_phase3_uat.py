@@ -593,7 +593,7 @@ class TestReportsAPI:
         """Reports router is included in the v1 API router."""
         from btagent_backend.api.v1.router import api_v1_router
 
-        route_paths = [r.path for r in api_v1_router.routes]
+        route_paths = [r.path for r in api_v1_router.routes if hasattr(r, "path")]
         # FastAPI includes the prefix in route paths
         has_reports = any("/reports" in p for p in route_paths)
         assert has_reports, f"No /reports routes in: {route_paths}"

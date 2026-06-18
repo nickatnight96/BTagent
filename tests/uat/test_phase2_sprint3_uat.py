@@ -416,7 +416,7 @@ class TestPlaybookAPI:
         """Playbook router is mounted in the v1 API router."""
         from btagent_backend.api.v1.router import api_v1_router
 
-        route_paths = [r.path for r in api_v1_router.routes]
+        route_paths = [r.path for r in api_v1_router.routes if hasattr(r, "path")]
         playbook_paths = [p for p in route_paths if "playbook" in p]
         assert len(playbook_paths) > 0, "No playbook routes found in api_v1_router"
 

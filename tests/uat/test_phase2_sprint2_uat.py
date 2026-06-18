@@ -37,7 +37,7 @@ class TestKnowledgeAPI:
         """Knowledge router is mounted in the v1 API router."""
         from btagent_backend.api.v1.router import api_v1_router
 
-        route_paths = [r.path for r in api_v1_router.routes]
+        route_paths = [r.path for r in api_v1_router.routes if hasattr(r, "path")]
         # Check that knowledge routes are included
         knowledge_paths = [p for p in route_paths if "knowledge" in p]
         assert len(knowledge_paths) > 0, (
