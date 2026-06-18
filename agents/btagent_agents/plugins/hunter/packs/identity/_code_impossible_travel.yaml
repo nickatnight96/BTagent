@@ -1,0 +1,20 @@
+# Code-based detector descriptor (not a Sigma rule).
+# Executed by the IdentityHuntPackRunner via btagent_shared.hunt.identity.
+id: identity.impossible_travel
+title: Impossible Travel (Geo-Velocity)
+kind: code
+implementation: btagent_shared.hunt.identity.detect_impossible_travel
+description: >
+  Two sign-in events for the same principal where the physical distance between
+  their geolocations implies a travel speed exceeding 900 km/h (faster than a
+  commercial jet). This is a strong indicator of simultaneous sessions from
+  different attackers / locations (T1078, T1078.004). Requires sign-in events
+  to carry populated latitude/longitude fields (IP-to-geo enrichment performed
+  by the connector layer in #100). Events without geo data are skipped.
+mitre_techniques:
+  - T1078
+  - T1078.004
+severity: high
+parameters:
+  min_speed_kmh: 900
+deferred_pending_connector: true

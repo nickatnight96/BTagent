@@ -1,0 +1,91 @@
+# Identity Hunt Pack — Phase 6 #116
+# Connector-independent identity detections. Rules marked [SIGMA] transpile
+# to Splunk / Sentinel / Elastic / CrowdStrike; rules marked [CODE] are
+# behavioral detectors implemented in btagent_shared.hunt.identity and are
+# NOT executable via the Sigma transpiler — they require the code-based
+# runner path in IdentityHuntPackRunner.
+#
+# Live-connector wiring (Okta / Entra / Google Workspace) is deferred
+# pending connector-tier #100. Until then, these run against fixture
+# events or pre-ingested audit-log exports.
+id: hpack_01KTSKZRHHTVFPY55TZ2G47D0DX
+name: Identity Hunt Pack
+version: 1.0.0
+description: >
+  Identity-plane threat hunts covering OAuth token abuse, account
+  takeover indicators, MFA fatigue, service-principal persistence,
+  federation trust tampering, and impossible-travel patterns.
+  Combines Sigma-expressible log rules (Entra / Okta audit events)
+  and code-based behavioral detectors.
+
+rules:
+  # ── Sigma rules (log-based, transpilable) ────────────────────────────────
+  - file: entra_federation_trust_modification.yml
+    enabled: true
+    notes: >
+      Always high-severity. Any modification to a SAML federation trust
+      should be on a CAB record; unexpected changes are Golden SAML
+      precursors.
+
+  - file: entra_service_principal_credential_addition.yml
+    enabled: true
+    notes: >
+      Service principal credentials added outside approved automation are
+      a common persistence / privilege-escalation mechanism. Tune on
+      known CI/CD service account names.
+
+  - file: okta_mfa_push_bombing.yml
+    enabled: true
+    notes: >
+      Three or more Okta DENIED push factors within 10 minutes followed
+      by a SUCCESS is the canonical MFA-fatigue pattern. Baseline
+      expected to be near-zero; any hit should escalate to triage.
+
+  - file: entra_risky_signin_high_confidence.yml
+    enabled: true
+    notes: >
+      Surfaces Microsoft Identity Protection HIGH risk-level sign-ins
+      directly; requires Entra ID P2 licence. Tune on known RDP jump-box
+      IPs that legitimately appear risky.
+
+  - file: google_workspace_oauth_grant_to_unverified_app.yml
+    enabled: true
+    notes: >
+      Google Workspace admin audit events for OAuth grants to apps that
+      are not verified by Google. Unverified apps are a common vector
+      for OAuth phishing campaigns.
+
+  - file: entra_admin_consent_grant_high_privilege_scope.yml
+    enabled: true
+    notes: >
+      Flags admin-consent grants that include high-privilege scopes
+      (Directory.ReadWrite.All, RoleManagement.ReadWrite.Directory, etc.).
+      Any new grant of these scopes is a significant security event.
+
+  - file: okta_admin_role_granted_to_non_admin.yml
+    enabled: true
+    notes: >
+      Unexpected admin-role assignment in Okta. Tune on known provisioning
+      automation service accounts. Hits should always be reviewed.
+
+  # ── Code-based detectors (behavioral — not Sigma-transpilable) ───────────
+  - file: _code_oauth_token_replay.yaml
+    enabled: true
+    notes: >
+      [CODE] Implemented in btagent_shared.hunt.identity.detect_oauth_token_replay.
+      Same token/session ID observed from 2+ distinct ASNs in 30 minutes.
+      Requires token_id / session_id fields in the identity event stream.
+
+  - file: _code_dormant_app_reactivation.yaml
+    enabled: true
+    notes: >
+      [CODE] Implemented in btagent_shared.hunt.identity.detect_dormant_app_reactivation.
+      OAuth app idle >90 days then generates activity. Requires OAuthGrant
+      snapshot from connector.
+
+  - file: _code_impossible_travel.yaml
+    enabled: true
+    notes: >
+      [CODE] Implemented in btagent_shared.hunt.identity.detect_impossible_travel.
+      Geo-velocity check across sign-in events. Requires IP-to-geo enrichment
+      in the event stream (lat/lon populated by connector).

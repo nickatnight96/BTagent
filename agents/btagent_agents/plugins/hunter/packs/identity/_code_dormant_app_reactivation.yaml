@@ -1,0 +1,20 @@
+# Code-based detector descriptor (not a Sigma rule).
+# Executed by the IdentityHuntPackRunner via btagent_shared.hunt.identity.
+id: identity.dormant_app_reactivation
+title: Dormant OAuth App Reactivation
+kind: code
+implementation: btagent_shared.hunt.identity.detect_dormant_app_reactivation
+description: >
+  An OAuth application whose last_used timestamp was more than 90 days before
+  the start of the hunt window generates activity events. Dormant app
+  reactivation may indicate a forgotten or abandoned OAuth grant being exploited
+  by an attacker who discovered it via OAuth grant enumeration (T1550.001,
+  T1078.004). Requires an OAuthGrant snapshot from the connector (#100) and
+  an activity event stream that carries app_id fields.
+mitre_techniques:
+  - T1550.001
+  - T1078.004
+severity: high
+parameters:
+  idle_days: 90
+deferred_pending_connector: true

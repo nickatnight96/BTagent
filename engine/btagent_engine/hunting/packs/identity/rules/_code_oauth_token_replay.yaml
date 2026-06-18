@@ -1,0 +1,23 @@
+# Code-based detector descriptor (not a Sigma rule).
+# Executed by the IdentityHuntPackRunner via btagent_shared.hunt.identity.
+#
+# id must be the same as rule_id emitted by the detector.
+id: identity.oauth_token_replay
+title: OAuth Token / Session Replay
+kind: code
+implementation: btagent_shared.hunt.identity.detect_oauth_token_replay
+description: >
+  Same token_id or session_id materialises from two or more distinct ASNs
+  within a 30-minute rolling window — consistent with stolen-token replay
+  across geographically dispersed attacker infrastructure (T1550.001).
+  Requires the identity event stream to carry populated token_id or
+  session_id fields (populated by Okta / Entra / GWS connector).
+mitre_techniques:
+  - T1550.001
+  - T1078
+severity: high
+parameters:
+  window_minutes: 30
+  min_asn_count: 2
+# live_connector_required: true (token_id/session_id fields populated by #100 connector)
+deferred_pending_connector: true

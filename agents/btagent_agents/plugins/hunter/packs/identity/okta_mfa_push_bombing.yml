@@ -1,0 +1,35 @@
+title: Okta MFA Push Bombing / Fatigue Attack
+id: 3a7b2c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6e
+status: test
+description: >
+  Detects MFA push-bombing (fatigue) attacks in Okta where an adversary with
+  valid credentials repeatedly sends push notifications until the user approves
+  one (T1621). The detection surfaces DENY sequences followed by an ALLOW for
+  the same user within a short time window. The Sigma rule surfaces raw MFA
+  events; the downstream triage clustering is responsible for the N-denials-
+  before-approve correlation (or use the code-based detector for in-line scoring).
+references:
+  - https://attack.mitre.org/techniques/T1621/
+  - https://sec.okta.com/articles/2023/08/cross-tenant-impersonation-prevention-and-detection
+author: BTagent
+date: 2026-06-18
+logsource:
+  product: okta
+  service: systemlog
+detection:
+  selection_denied:
+    eventType: "user.authentication.auth_via_mfa"
+    outcome.result: "DENY"
+    transaction.type: "WEB"
+  # Note: the N-denials-then-approve correlation is made downstream.
+  # This rule deliberately surfaces all DENY events as raw material for
+  # triage clustering (same design pattern as failed_logon_spray.yml).
+  condition: selection_denied
+falsepositives:
+  - Legitimate user declining an unexpected push they did not initiate (desired behaviour)
+  - Testing / demo environments where push approvals are automated
+level: medium
+tags:
+  - attack.credential-access
+  - attack.t1621
+  - attack.t1078

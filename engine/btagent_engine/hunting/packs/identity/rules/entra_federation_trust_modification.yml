@@ -1,0 +1,37 @@
+title: Entra ID Federation Trust Modification
+id: 8f2a1c3d-4e5b-4f6a-9c7d-1e2f3a4b5c6d
+status: test
+description: >
+  Detects modifications to SAML federation trust settings in Microsoft Entra ID
+  (formerly Azure AD). Any modification to a federated domain's authentication
+  configuration could indicate a Golden SAML attack setup (T1484.002), where an
+  adversary who controls the IdP signing key can forge authentication assertions
+  for any user in the tenant without knowing their passwords.
+references:
+  - https://attack.mitre.org/techniques/T1484/002/
+  - https://o365blog.com/post/msolspr/
+author: BTagent
+date: 2026-06-18
+logsource:
+  product: azure
+  service: auditlogs
+detection:
+  selection:
+    OperationName:
+      - "Set domain authentication"
+      - "Set federation settings on domain"
+      - "Update domain"
+    ResultStatus: "Success"
+  selection_category:
+    Category: "DirectoryManagement"
+  condition: selection and selection_category
+falsepositives:
+  - Legitimate changes to SAML configuration during migration projects
+  - Entra ID Connect federation updates during directory sync changes
+  - Planned IdP migrations (should be on change records)
+level: critical
+tags:
+  - attack.persistence
+  - attack.defense-evasion
+  - attack.t1484.002
+  - attack.t1556

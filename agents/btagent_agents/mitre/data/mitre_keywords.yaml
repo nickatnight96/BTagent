@@ -478,3 +478,239 @@
 - keyword: "ddos"
   technique_id: "T1499"
   confidence: 0.85
+
+# ── IDENTITY (Phase 6 #116) ────────────────────────────────────────────────
+# Identity-plane techniques for the Identity Hunt Agent. Added as a clearly
+# delimited block — do NOT reorder or merge with the sections above.
+#
+# T1078  Valid Accounts (and sub-techniques)
+- keyword: "valid accounts"
+  technique_id: "T1078"
+  confidence: 0.75
+
+- keyword: "account takeover"
+  technique_id: "T1078"
+  confidence: 0.9
+
+- keyword: "cloud account"
+  technique_id: "T1078.004"
+  confidence: 0.8
+
+- keyword: "federated identity"
+  technique_id: "T1078.004"
+  confidence: 0.8
+
+- keyword: "service account abuse"
+  technique_id: "T1078.003"
+  confidence: 0.85
+
+- keyword: "default account"
+  technique_id: "T1078.001"
+  confidence: 0.8
+
+# T1098  Account Manipulation (and sub-techniques)
+- keyword: "account manipulation"
+  technique_id: "T1098"
+  confidence: 0.85
+
+- keyword: "additional cloud credentials"
+  technique_id: "T1098.001"
+  confidence: 0.9
+
+- keyword: "service principal credential"
+  technique_id: "T1098.001"
+  confidence: 0.9
+
+- keyword: "client secret"
+  technique_id: "T1098.001"
+  confidence: 0.8
+
+- keyword: "application certificate"
+  technique_id: "T1098.001"
+  confidence: 0.75
+
+- keyword: "additional email delegate"
+  technique_id: "T1098.002"
+  confidence: 0.85
+
+- keyword: "add owner to application"
+  technique_id: "T1098.003"
+  confidence: 0.85
+
+- keyword: "ssh authorized keys"
+  technique_id: "T1098.004"
+  confidence: 0.85
+
+# T1556  Modify Authentication Process (and sub-techniques)
+- keyword: "modify authentication"
+  technique_id: "T1556"
+  confidence: 0.8
+
+- keyword: "domain controller authentication"
+  technique_id: "T1556.001"
+  confidence: 0.85
+
+- keyword: "password filter"
+  technique_id: "T1556.002"
+  confidence: 0.85
+
+- keyword: "pluggable authentication module"
+  technique_id: "T1556.003"
+  confidence: 0.85
+
+- keyword: "pam module"
+  technique_id: "T1556.003"
+  confidence: 0.85
+
+- keyword: "network device authentication"
+  technique_id: "T1556.004"
+  confidence: 0.8
+
+- keyword: "reversible encryption"
+  technique_id: "T1556.005"
+  confidence: 0.85
+
+# T1539  Steal Web Session Cookie
+- keyword: "session cookie theft"
+  technique_id: "T1539"
+  confidence: 0.9
+
+- keyword: "cookie hijacking"
+  technique_id: "T1539"
+  confidence: 0.9
+
+- keyword: "pass the cookie"
+  technique_id: "T1539"
+  confidence: 0.95
+
+- keyword: "session hijacking"
+  technique_id: "T1539"
+  confidence: 0.85
+
+- keyword: "steal session"
+  technique_id: "T1539"
+  confidence: 0.85
+
+# T1550  Use Alternate Authentication Material (and sub-techniques)
+- keyword: "alternate authentication"
+  technique_id: "T1550"
+  confidence: 0.8
+
+- keyword: "application access token"
+  technique_id: "T1550.001"
+  confidence: 0.9
+
+- keyword: "oauth token abuse"
+  technique_id: "T1550.001"
+  confidence: 0.95
+
+- keyword: "token replay"
+  technique_id: "T1550.001"
+  confidence: 0.95
+
+- keyword: "stolen oauth token"
+  technique_id: "T1550.001"
+  confidence: 0.95
+
+- keyword: "pass the hash"
+  technique_id: "T1550.002"
+  confidence: 0.95
+
+- keyword: "pass the ticket"
+  technique_id: "T1550.003"
+  confidence: 0.95
+
+- keyword: "web session cookie"
+  technique_id: "T1550.004"
+  confidence: 0.85
+
+# T1621  Multi-Factor Authentication Request Generation (MFA Fatigue)
+- keyword: "mfa fatigue"
+  technique_id: "T1621"
+  confidence: 0.95
+
+- keyword: "mfa bombing"
+  technique_id: "T1621"
+  confidence: 0.95
+
+- keyword: "mfa push spam"
+  technique_id: "T1621"
+  confidence: 0.9
+
+- keyword: "push notification fatigue"
+  technique_id: "T1621"
+  confidence: 0.9
+
+- keyword: "mfa request generation"
+  technique_id: "T1621"
+  confidence: 0.85
+
+# T1484  Domain Policy Modification (and sub-techniques)
+- keyword: "domain policy modification"
+  technique_id: "T1484"
+  confidence: 0.85
+
+- keyword: "group policy modification"
+  technique_id: "T1484.001"
+  confidence: 0.85
+
+- keyword: "federation trust modification"
+  technique_id: "T1484.002"
+  confidence: 0.95
+
+- keyword: "golden saml"
+  technique_id: "T1484.002"
+  confidence: 0.95
+
+- keyword: "saml federation trust"
+  technique_id: "T1484.002"
+  confidence: 0.9
+
+- keyword: "domain trust modification"
+  technique_id: "T1484.002"
+  confidence: 0.9
+
+# Identity-adjacent Discovery (T1087 sub-techniques for cloud identity)
+- keyword: "cloud account discovery"
+  technique_id: "T1087.004"
+  confidence: 0.85
+
+- keyword: "entra user enumeration"
+  technique_id: "T1087.004"
+  confidence: 0.85
+
+- keyword: "okta user enumeration"
+  technique_id: "T1087.004"
+  confidence: 0.85
+
+- keyword: "service principal enumeration"
+  technique_id: "T1087.004"
+  confidence: 0.85
+
+- keyword: "oauth app enumeration"
+  technique_id: "T1087.004"
+  confidence: 0.8
+
+# Impossible travel (correlated T1078 indicator)
+- keyword: "impossible travel"
+  technique_id: "T1078"
+  confidence: 0.9
+
+- keyword: "geo velocity"
+  technique_id: "T1078"
+  confidence: 0.85
+
+- keyword: "simultaneous logins"
+  technique_id: "T1078"
+  confidence: 0.8
+
+# Dormant app / stale grant
+- keyword: "dormant oauth app"
+  technique_id: "T1550.001"
+  confidence: 0.85
+
+- keyword: "stale oauth grant"
+  technique_id: "T1550.001"
+  confidence: 0.85
+
+# ── END IDENTITY BLOCK ─────────────────────────────────────────────────────

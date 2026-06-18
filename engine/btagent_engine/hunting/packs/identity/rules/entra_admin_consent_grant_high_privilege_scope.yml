@@ -1,0 +1,45 @@
+title: Entra ID Admin Consent Grant for High-Privilege Graph Scope
+id: 9e8f7a6b-5c4d-3e2f-1a0b-9c8d7e6f5a4b
+status: test
+description: >
+  Detects admin-consent grants in Microsoft Entra ID that include high-privilege
+  Microsoft Graph API scopes. An attacker who compromises a Global Administrator
+  account may grant a malicious app admin-consent to high-privilege scopes such
+  as Directory.ReadWrite.All (full directory read/write) or
+  RoleManagement.ReadWrite.Directory (ability to assign any role), enabling
+  persistent privileged access via an OAuth app even after the admin account's
+  password is reset (T1550.001, T1098.001).
+references:
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://www.mandiant.com/resources/blog/remediation-and-hardening-strategies-for-microsoft-365
+author: BTagent
+date: 2026-06-18
+logsource:
+  product: azure
+  service: auditlogs
+detection:
+  selection_operation:
+    OperationName: "Consent to application"
+    ResultStatus: "Success"
+  selection_scope:
+    ModifiedProperties|contains:
+      - "Directory.ReadWrite.All"
+      - "RoleManagement.ReadWrite.Directory"
+      - "AppRoleAssignment.ReadWrite.All"
+      - "User.ReadWrite.All"
+      - "Mail.ReadWrite"
+      - "Files.ReadWrite.All"
+  selection_consent_type:
+    ModifiedProperties|contains: "AllPrincipals"
+  condition: selection_operation and selection_scope and selection_consent_type
+falsepositives:
+  - Legitimate enterprise application onboarding with documented approval
+  - Migrations between tenants that require temporary high-privilege grants
+  - Microsoft 365 management tooling deployed by IT admins
+level: high
+tags:
+  - attack.persistence
+  - attack.credential-access
+  - attack.t1550.001
+  - attack.t1098.001
