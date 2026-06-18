@@ -247,6 +247,42 @@ async def detect_outlier(
     return row
 
 
+async def get_outlier(db: AsyncSession, outlier_id: str) -> BehavioralOutlierRow | None:
+    """Fetch one outlier by id (the route layer owns the org-scoping 404)."""
+    return await db.get(BehavioralOutlierRow, outlier_id)
+
+
+async def list_outliers(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    intent_label: IntentLabel | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[BehavioralOutlierRow], int]:
+    """Org-scoped, paginated outlier list, newest-first.
+
+    Optionally filtered by ``intent_label`` (``None`` = no filter). Returns the
+    page rows plus the total matching count (for the paginated response).
+    """
+    from sqlalchemy import func
+
+    base = select(BehavioralOutlierRow).where(BehavioralOutlierRow.org_id == org_id)
+    if intent_label is not None:
+        base = base.where(BehavioralOutlierRow.intent_label == intent_label.value)
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = int((await db.execute(count_stmt)).scalar_one())
+
+    page_stmt = (
+        base.order_by(BehavioralOutlierRow.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = list((await db.execute(page_stmt)).scalars().all())
+    return rows, total
+
+
 async def set_intent(
     db: AsyncSession,
     *,

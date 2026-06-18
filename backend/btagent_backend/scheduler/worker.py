@@ -18,6 +18,7 @@ from arq.connections import RedisSettings
 
 from btagent_backend.config import get_settings
 from btagent_backend.scheduler.jobs import (
+    behavioral_baseline_sweep,
     run_hunt_pack,
     scheduled_hunt_pack_run,
     stale_suppression_sweep,
@@ -41,6 +42,19 @@ def _hunt_pack_cron_hours() -> set[int]:
     08:00, …). An interval ≤0 or >24 clamps to a single daily run.
     """
     interval = get_settings().hunt_scheduler_interval_hours
+    if interval <= 0 or interval > 24:
+        return {0}
+    return set(range(0, 24, interval))
+
+
+def _behavioral_cron_hours() -> set[int]:
+    """Hours-of-day the behavioral baseline+stale sweep cron fires on.
+
+    Same wall-clock cadence expansion as :func:`_hunt_pack_cron_hours`, driven
+    by ``BTAGENT_BEHAVIORAL_SCHEDULER_INTERVAL_HOURS`` (default 6 → 00:00,
+    06:00, 12:00, 18:00). An interval ≤0 or >24 clamps to a single daily run.
+    """
+    interval = get_settings().behavioral_scheduler_interval_hours
     if interval <= 0 or interval > 24:
         return {0}
     return set(range(0, 24, interval))
@@ -78,6 +92,7 @@ class WorkerSettings:
         run_hunt_pack,
         scheduled_hunt_pack_run,
         weekly_pattern_scan,
+        behavioral_baseline_sweep,
     ]
     cron_jobs = [
         cron(
@@ -98,6 +113,15 @@ class WorkerSettings:
             weekly_pattern_scan,
             weekday=get_settings().pattern_scan_weekday,
             hour=get_settings().pattern_scan_hour,
+            minute=0,
+            unique=True,
+        ),
+        # Behavioral Hunter maintenance (#114): baseline rebuild (gated on a
+        # wired telemetry feed) + stale-entity sweep. ``unique=True`` so a
+        # given tick runs exactly once across worker replicas.
+        cron(
+            behavioral_baseline_sweep,
+            hour=_behavioral_cron_hours(),
             minute=0,
             unique=True,
         ),

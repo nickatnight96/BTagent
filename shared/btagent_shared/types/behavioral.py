@@ -114,3 +114,44 @@ class BehavioralOutlier(BaseModel):
     intent_rationale: str | None = None
     promoted_to_finding_id: str | None = None
     created_at: datetime
+
+
+# --------------------------------------------------------------------------- #
+# Request / response payloads for ``/api/v1/behavioral/*`` (#114 Phase A)
+# --------------------------------------------------------------------------- #
+
+
+class SetIntentRequest(BaseModel):
+    """Body for ``POST /behavioral/outliers/{id}/intent`` — analyst triage.
+
+    The analyst (or the IntentClassifier acting on their behalf) records a
+    verdict + rationale; mirrors the service's :func:`set_intent` signature.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent_label: IntentLabel
+    rationale: str = Field(..., min_length=1, max_length=4096)
+
+
+class PromoteOutlierRequest(BaseModel):
+    """Body for ``POST /behavioral/outliers/{id}/promote`` — escalate to #119."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    technique_ids: list[str] = Field(default_factory=list)
+
+
+class PromoteOutlierResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    finding_id: str
+
+
+class BehavioralOutlierListResponse(BaseModel):
+    """Paginated, org-scoped list of behavioral outliers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[BehavioralOutlier]
+    total: int

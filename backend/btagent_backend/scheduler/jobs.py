@@ -201,3 +201,57 @@ async def weekly_pattern_scan(ctx: dict[str, Any]) -> dict[str, int]:
     }
     logger.info("weekly_pattern_scan: %s", counts)
     return counts
+
+
+async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
+    """Behavioral Hunter maintenance cron: stale-sweep (+ baseline-build) (#114).
+
+    Mirrors :func:`stale_suppression_sweep` / :func:`scheduled_hunt_pack_run`:
+    a thin shell that opens a session, delegates to ``behavioral_service``, and
+    commits once. Two halves:
+
+    * **Stale-entity archival** — always runs. Entities unseen for
+      ``behavioral_stale_after_days`` are candidates for archival so the active
+      baseline pool doesn't accumulate noise from departed users /
+      decommissioned hosts. The list is logged here; the destructive archival
+      action (and the per-entity ``BehavioralEntityRow`` lifecycle column) is a
+      Phase B follow-up — surfacing the count is the Phase A slice.
+    * **Baseline rebuild** — gated. There is NO live EDR telemetry feed wired
+      yet, so there is no event source to fold into fresh baselines. Rather
+      than fabricate data, the baseline-build half is skipped with a single
+      clear "no telemetry source wired" warning whenever
+      ``behavioral_schedule_enabled`` is false (the default with mocks off).
+      An operator who wires a telemetry source sets
+      ``BTAGENT_BEHAVIORAL_SCHEDULE_ENABLED=true`` to flip this on; the actual
+      ingest+build wiring lands with that feed.
+
+    Returns the sweep counts so they show up in arq's job result + our logs.
+    """
+    settings = get_settings()
+    from datetime import timedelta
+
+    from btagent_backend.services import behavioral_service
+
+    async with async_session_factory() as session:
+        stale = await behavioral_service.stale_entities(
+            session,
+            stale_after=timedelta(days=settings.behavioral_stale_after_days),
+        )
+        # Read-only sweep in the Phase A slice — nothing to commit yet, but the
+        # session is committed for symmetry with the other jobs (and so a future
+        # archival mutation needs no shell change).
+        await session.commit()
+
+    if not settings.behavioral_schedule_enabled:
+        # No live EDR telemetry feed is wired, so there is no event source to
+        # build fresh baselines from. One warning per tick (not per entity)
+        # surfaces the misconfig without spamming the log.
+        logger.warning(
+            "behavioral baseline-build skipped: no telemetry source wired; "
+            "set BTAGENT_BEHAVIORAL_SCHEDULE_ENABLED=true once an EDR feed is "
+            "configured to enable the baseline rebuild half of this sweep"
+        )
+
+    counts = {"stale_entities": len(stale), "baselines_built": 0}
+    logger.info("behavioral_baseline_sweep: %s", counts)
+    return counts
