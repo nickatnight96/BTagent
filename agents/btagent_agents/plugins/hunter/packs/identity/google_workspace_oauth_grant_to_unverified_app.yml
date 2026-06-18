@@ -1,0 +1,34 @@
+title: Google Workspace OAuth Grant to Unverified Application
+id: 2b1c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e
+status: test
+description: >
+  Detects OAuth authorisation grants in Google Workspace where a user consents
+  to share data with an application that has not been verified by Google
+  (T1550.001, T1078). Unverified OAuth apps are the primary vector for OAuth
+  phishing campaigns, where a user is tricked into granting permissions to a
+  malicious app that then exfiltrates email, Drive files, or contacts without
+  any credential theft. Google Workspace admin audit logs record these grants
+  in the "admin" and "token" audit event categories.
+references:
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://workspace.google.com/intl/en/security/overview/
+author: BTagent
+date: 2026-06-18
+logsource:
+  product: google_workspace
+  service: admin
+detection:
+  selection:
+    eventName: "AUTHORIZE_API_CLIENT_ACCESS"
+  filter_verified:
+    is_domain_owned_app: "true"
+  condition: selection and not filter_verified
+falsepositives:
+  - Internal developer testing of in-house apps before Google verification
+  - Third-party tools approved via domain-wide delegation (check allowlist)
+level: medium
+tags:
+  - attack.initial-access
+  - attack.credential-access
+  - attack.t1550.001
+  - attack.t1078

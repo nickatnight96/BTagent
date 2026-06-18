@@ -1,0 +1,40 @@
+title: Okta Admin Role Granted to Non-Admin User
+id: 4c3d2e1f-0a9b-8c7d-6e5f-4a3b2c1d0e9f
+status: test
+description: >
+  Detects when an Okta Super Admin or Org Admin role is assigned to a user who
+  did not previously hold admin privileges. Unexpected admin role grants are a
+  common post-compromise persistence / privilege-escalation technique (T1098,
+  T1078). Attackers with access to an admin account will frequently add a
+  second account as admin to maintain access if the compromised account is
+  suspended or its password reset.
+references:
+  - https://attack.mitre.org/techniques/T1098/
+  - https://developer.okta.com/docs/reference/api/system-log/
+author: BTagent
+date: 2026-06-18
+logsource:
+  product: okta
+  service: systemlog
+detection:
+  selection:
+    eventType: "user.account.privilege.grant"
+    target.0.type: "User"
+    outcome.result: "SUCCESS"
+  selection_admin_role:
+    debugContext.debugData.privilegeGranted|contains:
+      - "SUPER_ADMIN"
+      - "ORG_ADMIN"
+      - "APP_ADMIN"
+      - "READ_ONLY_ADMIN"
+  condition: selection and selection_admin_role
+falsepositives:
+  - Planned admin provisioning during onboarding (verify against HR change feed)
+  - Emergency access account (break-glass) provisioning (should be documented)
+  - IAM automation scripts rotating admin assignments (tune on service account)
+level: high
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098
+  - attack.t1078
