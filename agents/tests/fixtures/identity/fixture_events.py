@@ -409,3 +409,186 @@ def mfa_clean_events() -> list[IdentityEvent]:
             timestamp=_dt("2026-06-18T07:04:00"),
         ),
     ]
+
+
+# ── Same-session different-token replay (Finding #1) ──────────────────────
+
+
+def session_replay_different_token_events() -> list[IdentityEvent]:
+    """Same session_id reused across ASNs but with a *refreshed* (different) token_id.
+
+    This is the stolen-session-with-refreshed-token scenario: the attacker uses
+    a different access token on each request but the underlying session ID is
+    constant. The old indexing (token_id or session_id) would key on the first
+    populated field (token_id) and miss the session-level cross-ASN signal when
+    the token IDs differ. Fix #1 emits an observation for each populated
+    identifier, so the session dimension triggers independently.
+    """
+    session = "session_STOLEN_SESSION_001"
+    return [
+        IdentityEvent(
+            id="evt_sess_replay_001",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.TOKEN_ISSUED,
+            principal_id="julia@corp.example.com",
+            app_id="app_ms_graph",
+            session_id=session,
+            token_id="jti_REFRESHED_TOKEN_001",  # first token
+            ip_address="8.8.8.1",
+            geo=GeoLocation(country="US", city="Mountain View", asn="AS15169"),
+            timestamp=_dt("2026-06-18T12:00:00"),
+        ),
+        IdentityEvent(
+            id="evt_sess_replay_002",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.TOKEN_REFRESH,
+            principal_id="julia@corp.example.com",
+            app_id="app_ms_graph",
+            session_id=session,
+            token_id="jti_REFRESHED_TOKEN_002",  # different (refreshed) token id
+            ip_address="13.107.4.1",
+            geo=GeoLocation(country="US", city="Redmond", asn="AS8075"),
+            timestamp=_dt("2026-06-18T12:18:00"),
+        ),
+    ]
+
+
+# ── Two principals sharing one app (Finding #3) ────────────────────────────
+
+
+def two_principals_shared_app_grants_and_events() -> tuple[list[OAuthGrant], list[IdentityEvent]]:
+    """Alice has a dormant grant; Bob's grant for the SAME app is active.
+
+    The old dormant-app detector keyed only by app_id. Bob's more-recent
+    activity would overwrite Alice's dormant entry in the index, so Alice's
+    dormant grant was silently dropped. Fix #3 keys by (principal_id, app_id)
+    so both grants are tracked independently.
+
+    Expected: exactly one dormant-reactivation result, for Alice (not Bob).
+    Bob's event should NOT trigger because his grant is active (< idle_days).
+    """
+    shared_app_id = "app_SHARED_SAAS_001"
+    # Alice's grant is 100 days dormant
+    alice_grant = OAuthGrant(
+        id="grant_ALICE_SHARED_001",
+        org_id=_ORG,
+        app_id=shared_app_id,
+        app_display_name="SharedSaaS",
+        principal_id="alice@corp.example.com",
+        provider=IdentityProvider.ENTRA,
+        scopes=["Mail.Read"],
+        consent_type=OAuthConsentType.USER,
+        granted_at=_dt("2025-06-01T09:00:00"),
+        last_used=_dt("2026-03-10T09:00:00"),  # 100 days before 2026-06-18
+    )
+    # Bob's grant for the same app is only 5 days dormant — should NOT flag
+    bob_grant = OAuthGrant(
+        id="grant_BOB_SHARED_001",
+        org_id=_ORG,
+        app_id=shared_app_id,
+        app_display_name="SharedSaaS",
+        principal_id="bob@corp.example.com",
+        provider=IdentityProvider.ENTRA,
+        scopes=["User.Read"],
+        consent_type=OAuthConsentType.USER,
+        granted_at=_dt("2026-01-01T09:00:00"),
+        last_used=_dt("2026-06-13T09:00:00"),  # only 5 days idle
+    )
+    alice_event = IdentityEvent(
+        id="evt_alice_shared_app_001",
+        org_id=_ORG,
+        provider=_PROVIDER,
+        kind=IdentityEventKind.TOKEN_ISSUED,
+        principal_id="alice@corp.example.com",
+        app_id=shared_app_id,
+        timestamp=_dt("2026-06-18T14:00:00"),
+    )
+    bob_event = IdentityEvent(
+        id="evt_bob_shared_app_001",
+        org_id=_ORG,
+        provider=_PROVIDER,
+        kind=IdentityEventKind.TOKEN_ISSUED,
+        principal_id="bob@corp.example.com",
+        app_id=shared_app_id,
+        timestamp=_dt("2026-06-18T15:00:00"),
+    )
+    return [alice_grant, bob_grant], [alice_event, bob_event]
+
+
+# ── MFA denial-run reset after an earlier approval (Finding #4) ───────────
+
+
+def mfa_fatigue_with_prior_approval_events() -> list[IdentityEvent]:
+    """3 denials, an approval, then another normal approval — only the first run fires.
+
+    Pattern:
+      T+0:  DENIED    ─┐
+      T+2:  DENIED     ├─ run-1: 3 denials → should fire on approval at T+6
+      T+4:  DENIED    ─┘
+      T+6:  APPROVED  ← first approval (run-1 fires here)
+      T+8:  DENIED    ─┐ only 1 denial after the approval
+      T+10: APPROVED  ← second approval (should NOT fire — only 1 denial in run)
+
+    Before the fix the backward scan counted *all* denials inside the window
+    without respecting the approval boundary, so the second APPROVED at T+10
+    saw the T+0..T+4 denials (3 count) and wrongly fired again.
+    """
+    principal = "karen@corp.example.com"
+    return [
+        IdentityEvent(
+            id="evt_mfa_prior_deny_001",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.MFA_DENIED,
+            principal_id=principal,
+            ip_address="45.33.32.1",
+            timestamp=_dt("2026-06-18T09:00:00"),
+        ),
+        IdentityEvent(
+            id="evt_mfa_prior_deny_002",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.MFA_DENIED,
+            principal_id=principal,
+            ip_address="45.33.32.1",
+            timestamp=_dt("2026-06-18T09:02:00"),
+        ),
+        IdentityEvent(
+            id="evt_mfa_prior_deny_003",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.MFA_DENIED,
+            principal_id=principal,
+            ip_address="45.33.32.1",
+            timestamp=_dt("2026-06-18T09:04:00"),
+        ),
+        IdentityEvent(
+            id="evt_mfa_prior_approve_001",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.MFA_APPROVED,
+            principal_id=principal,
+            ip_address="45.33.32.1",
+            timestamp=_dt("2026-06-18T09:06:00"),  # first approval — run-1 fires
+        ),
+        IdentityEvent(
+            id="evt_mfa_prior_deny_004",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.MFA_DENIED,
+            principal_id=principal,
+            ip_address="45.33.32.1",
+            timestamp=_dt("2026-06-18T09:08:00"),  # only 1 denial after first approval
+        ),
+        IdentityEvent(
+            id="evt_mfa_prior_approve_002",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.MFA_APPROVED,
+            principal_id=principal,
+            ip_address="45.33.32.1",
+            timestamp=_dt("2026-06-18T09:10:00"),  # second approval — should NOT re-fire
+        ),
+    ]

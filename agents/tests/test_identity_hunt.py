@@ -71,26 +71,59 @@ from tests.fixtures.identity.fixture_events import (
     impossible_travel_events,
     mfa_clean_events,
     mfa_fatigue_events,
+    mfa_fatigue_with_prior_approval_events,
     non_sp_credential_addition_events,
     possible_travel_events,
+    session_replay_different_token_events,
     sp_credential_addition_events,
     token_replay_events,
+    two_principals_shared_app_grants_and_events,
 )
 
 # ── OAuth token replay ─────────────────────────────────────────────────────
 
 
 def test_token_replay_flagged() -> None:
-    """A session_id appearing from 2 ASNs in 18 min should be flagged."""
+    """Token and session IDs appearing from 2 ASNs in 18 min should each be flagged.
+
+    Fix #1: replay is now indexed per credential identifier type so a stolen
+    session reused with a refreshed token (different token_id, same session_id)
+    is caught on the session dimension, and vice-versa.  Both dimensions fire
+    here because the fixture sets identical token_id and session_id values.
+    """
     events = token_replay_events()
     results = detect_oauth_token_replay(events, window_minutes=30, min_asn_count=2)
-    assert len(results) == 1
-    r = results[0]
-    assert r.rule_id == "identity.oauth_token_replay"
-    assert "AS15169" in r.evidence["distinct_asns"]
-    assert "AS8075" in r.evidence["distinct_asns"]
-    assert r.severity == "high"
-    assert r.confidence > 0.5
+    # Both token and session dimensions should be detected
+    assert len(results) == 2
+    cred_types = {r.evidence["cred_type"] for r in results}
+    assert cred_types == {"token", "session"}
+    for r in results:
+        assert r.rule_id == "identity.oauth_token_replay"
+        assert "AS15169" in r.evidence["distinct_asns"]
+        assert "AS8075" in r.evidence["distinct_asns"]
+        assert r.severity == "high"
+        assert r.confidence > 0.5
+
+
+def test_session_replay_different_token_flagged() -> None:
+    """Session reused across ASNs with a *refreshed* (different) token_id must still flag.
+
+    This is the Fix #1 scenario: the old code keyed on ``token_id or session_id``
+    so if token_id was populated first, a stolen session with a refreshed access
+    token would only match on the token dimension (which differs per event) and
+    miss the session-level cross-ASN signal.  Fix #1 emits an independent
+    observation for each populated credential identifier.
+    """
+    events = session_replay_different_token_events()
+    results = detect_oauth_token_replay(events, window_minutes=30, min_asn_count=2)
+    # The session dimension must fire (same session_id, two different ASNs).
+    # The two token_ids differ so the token dimension should NOT fire (each
+    # token is only seen once — no cross-ASN replay on the token key).
+    cred_types = {r.evidence["cred_type"] for r in results}
+    assert "session" in cred_types, "Session-dimension replay was not detected"
+    assert "token" not in cred_types, (
+        "Token dimension should not fire when token_ids differ per event"
+    )
 
 
 def test_clean_token_not_flagged() -> None:
@@ -133,6 +166,28 @@ def test_dormant_app_finding_valid() -> None:
     assert req.title
     assert req.technique_ids  # at least one technique
     assert req.entities  # at least one entity
+
+
+def test_dormant_app_two_principals_shared_app() -> None:
+    """Alice's dormant grant must flag even when Bob shares the same app and his grant is active.
+
+    Fix #3: the dormant-grant index is now keyed by (principal_id, app_id) rather
+    than just app_id.  Under the old scheme Bob's recent activity would silently
+    overwrite Alice's dormant entry, suppressing her finding.  Under the fix each
+    (principal, app) pair is tracked independently.
+    """
+    grants, events = two_principals_shared_app_grants_and_events()
+    results = detect_dormant_app_reactivation(grants, events, idle_days=90)
+
+    # Exactly one finding: Alice's dormant grant (100 days idle)
+    assert len(results) == 1, (
+        f"Expected 1 finding (Alice's dormant grant) but got {len(results)}: "
+        + ", ".join(r.evidence.get("principal_id", "?") for r in results)
+    )
+    r = results[0]
+    assert r.evidence["principal_id"] == "alice@corp.example.com"
+    assert r.evidence["app_id"] == "app_SHARED_SAAS_001"
+    assert r.evidence["idle_days"] >= 90
 
 
 # ── Impossible travel ──────────────────────────────────────────────────────
@@ -211,6 +266,27 @@ def test_mfa_clean_not_flagged() -> None:
     """Only 2 denials before approve (below threshold of 3) — should not flag."""
     results = detect_mfa_fatigue(mfa_clean_events(), denial_threshold=3, window_minutes=10)
     assert results == []
+
+
+def test_mfa_fatigue_denial_run_resets_after_approval() -> None:
+    """Denials before an earlier approval must not count toward a later approval's run.
+
+    Fix #4: the backward scan is now bounded by the previous approval so an
+    interrupted denial run followed by a legitimate second approval does not
+    wrongly re-fire.
+
+    Sequence: 3 denials → approval-1 (fires) → 1 denial → approval-2 (must NOT fire).
+    """
+    results = detect_mfa_fatigue(
+        mfa_fatigue_with_prior_approval_events(), denial_threshold=3, window_minutes=10
+    )
+    # Exactly one finding: the first run of 3 denials before approval-1
+    assert len(results) == 1, f"Expected exactly 1 finding but got {len(results)}: " + str(
+        [r.evidence for r in results]
+    )
+    r = results[0]
+    assert r.evidence["approval_event_id"] == "evt_mfa_prior_approve_001"
+    assert r.evidence["denial_count"] == 3
 
 
 # ── Finding contract (RecordFindingRequest) ────────────────────────────────
@@ -313,11 +389,19 @@ def test_run_all_empty_events() -> None:
 
 
 def test_build_grant_graph_structure() -> None:
-    """build_grant_graph returns a nested {principal: {app: {...}}} dict."""
+    """build_grant_graph returns a nested {principal: {app: [grant_entry, ...]}} dict.
+
+    Multiple grants for the same (principal, app) are preserved as a list so
+    over-privilege analysis is never lossy (Finding #2 fix).
+    """
     grants, _ = dormant_grant_and_events()
     graph = build_grant_graph(grants)
     assert "alice@corp.example.com" in graph
-    app_entry = graph["alice@corp.example.com"]["app_FORGOTTEN_SAAS_001"]
+    app_entries = graph["alice@corp.example.com"]["app_FORGOTTEN_SAAS_001"]
+    # The graph now stores a list of grant entries per (principal, app)
+    assert isinstance(app_entries, list)
+    assert len(app_entries) == 1
+    app_entry = app_entries[0]
     assert "Mail.Read" in app_entry["scopes"]
     assert app_entry["consent_type"] == "user"
     assert app_entry["last_used"] is not None  # was set in fixture
@@ -338,3 +422,40 @@ def test_build_grant_graph_excludes_revoked() -> None:
     )
     graph = build_grant_graph([revoked_grant])
     assert graph == {}
+
+
+def test_build_grant_graph_multi_grant_same_app() -> None:
+    """Multiple grants for the same (principal, app) are all retained in the list.
+
+    Fix #2: the old code silently overwrote earlier grants with ``graph[p][a] = {...}``.
+    The graph now stores a list so resource-specific scope bundles are not lost and
+    over-privilege analysis is complete.
+    """
+    now = datetime(2026, 6, 18, tzinfo=UTC)
+    grant_a = OAuthGrant(
+        id="grant_MULTI_001",
+        org_id="org_01FIXTURE",
+        app_id="app_MULTI_001",
+        principal_id="lana@corp.example.com",
+        provider=IdentityProvider.ENTRA,
+        scopes=["Mail.Read"],
+        consent_type=OAuthConsentType.USER,
+        granted_at=now,
+    )
+    grant_b = OAuthGrant(
+        id="grant_MULTI_002",
+        org_id="org_01FIXTURE",
+        app_id="app_MULTI_001",  # same app
+        principal_id="lana@corp.example.com",  # same principal
+        provider=IdentityProvider.ENTRA,
+        scopes=["Files.ReadWrite.All"],  # different (higher-privilege) scope bundle
+        consent_type=OAuthConsentType.ADMIN,
+        granted_at=now,
+    )
+    graph = build_grant_graph([grant_a, grant_b])
+    app_entries = graph["lana@corp.example.com"]["app_MULTI_001"]
+    assert isinstance(app_entries, list)
+    assert len(app_entries) == 2, "Both grants must be retained (no silent overwrite)"
+    scope_sets = [set(e["scopes"]) for e in app_entries]
+    assert {"Mail.Read"} in scope_sets
+    assert {"Files.ReadWrite.All"} in scope_sets

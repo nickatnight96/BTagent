@@ -144,24 +144,28 @@ def detect_oauth_token_replay(
     list[IdentityDetectionResult]
         One result per flagged (principal, credential) pair.
     """
-    # key: (principal_id, cred_key) -> list[(timestamp, asn, ip, event_id)]
-    cred_observations: dict[tuple[str, str], list[tuple[datetime, str, str, str]]] = defaultdict(
-        list
+    # key: (principal_id, cred_type, cred_key) -> list[(timestamp, asn, ip, event_id)]
+    # Emit one observation per *populated* credential identifier so that a stolen
+    # session reused with refreshed (different) access-token IDs across ASNs is
+    # still caught on the session dimension, and vice-versa.
+    cred_observations: dict[tuple[str, str, str], list[tuple[datetime, str, str, str]]] = (
+        defaultdict(list)
     )
 
     for evt in events:
-        cred_key = evt.token_id or evt.session_id
-        if not cred_key:
+        asn_or_ip = evt.geo.asn or evt.ip_address
+        obs_entry = (evt.timestamp, asn_or_ip, evt.ip_address, evt.id)
+        if evt.token_id:
+            cred_observations[(evt.principal_id, "token", evt.token_id)].append(obs_entry)
+        if evt.session_id:
+            cred_observations[(evt.principal_id, "session", evt.session_id)].append(obs_entry)
+        if not evt.token_id and not evt.session_id:
             continue
-        key = (evt.principal_id, cred_key)
-        cred_observations[key].append(
-            (evt.timestamp, evt.geo.asn or evt.ip_address, evt.ip_address, evt.id)
-        )
 
     results: list[IdentityDetectionResult] = []
     window = timedelta(minutes=window_minutes)
 
-    for (principal_id, cred_key), obs in cred_observations.items():
+    for (principal_id, cred_type, cred_key), obs in cred_observations.items():
         # Sort by time and slide the window
         obs_sorted = sorted(obs, key=lambda x: x[0])
         for i, (ts_anchor, _, _, _) in enumerate(obs_sorted):
@@ -171,12 +175,12 @@ def detect_oauth_token_replay(
                 event_ids = [o[3] for o in window_obs]
                 results.append(
                     IdentityDetectionResult(
-                        detection_id=f"idr-replay-{principal_id}-{cred_key[:16]}-{i}",
+                        detection_id=f"idr-replay-{principal_id}-{cred_type}-{cred_key[:16]}-{i}",
                         rule_id="identity.oauth_token_replay",
                         title=f"OAuth token/session replay: {principal_id}",
                         description=(
-                            f"Credential '{cred_key[:24]}…' for principal '{principal_id}' "
-                            f"was observed from {len(asns)} distinct ASNs "
+                            f"{cred_type.title()} '{cred_key[:24]}…' for principal "
+                            f"'{principal_id}' was observed from {len(asns)} distinct ASNs "
                             f"({', '.join(sorted(asns))}) within a {window_minutes}-minute window. "
                             "This pattern is consistent with stolen-token replay across "
                             "geographically dispersed infrastructure (T1550.001)."
@@ -186,9 +190,10 @@ def detect_oauth_token_replay(
                         technique_ids=_TECHNIQUES["oauth_token_replay"],
                         entity_kind="user",
                         entity_value=principal_id,
-                        observable_type="session_id",
+                        observable_type=f"{cred_type}_id",
                         observable_value=cred_key[:256],
                         evidence={
+                            "cred_type": cred_type,
                             "cred_key": cred_key[:64],
                             "distinct_asns": sorted(asns),
                             "window_minutes": window_minutes,
@@ -197,7 +202,7 @@ def detect_oauth_token_replay(
                         },
                     )
                 )
-                break  # one result per (principal, cred) pair
+                break  # one result per (principal, cred_type, cred) pair
 
     return results
 
@@ -233,30 +238,36 @@ def detect_dormant_app_reactivation(
     earliest_event = min(evt.timestamp for evt in events)
     idle_threshold = timedelta(days=idle_days)
 
-    # Build dormant grant index: app_id -> grant
-    dormant: dict[str, OAuthGrant] = {}
+    # Build dormant grant index: (principal_id, app_id) -> grant
+    # Keying by (principal_id, app_id) prevents Alice's dormant grant from being
+    # emitted on Bob's event, and avoids multiple dormant grants overwriting each
+    # other when several principals share the same app.
+    dormant: dict[tuple[str, str], OAuthGrant] = {}
     for grant in grants:
         if grant.revoked_at is not None:
             continue  # already revoked; not a reactivation
         if grant.last_used is None:
             # Never used since grant — dormant from grant_date perspective
             if earliest_event - grant.granted_at >= idle_threshold:
-                dormant[grant.app_id] = grant
+                dormant[(grant.principal_id, grant.app_id)] = grant
         else:
             if earliest_event - grant.last_used >= idle_threshold:
-                dormant[grant.app_id] = grant
+                dormant[(grant.principal_id, grant.app_id)] = grant
 
     results: list[IdentityDetectionResult] = []
-    seen_app_ids: set[str] = set()
+    seen_keys: set[tuple[str, str]] = set()
 
     for evt in events:
-        if not evt.app_id or evt.app_id not in dormant:
+        if not evt.app_id:
             continue
-        if evt.app_id in seen_app_ids:
+        key = (evt.principal_id, evt.app_id)
+        if key not in dormant:
             continue
-        seen_app_ids.add(evt.app_id)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
 
-        grant = dormant[evt.app_id]
+        grant = dormant[key]
         idle_since = grant.last_used or grant.granted_at
         idle_duration_days = (earliest_event - idle_since).days
 
@@ -566,11 +577,23 @@ def detect_mfa_fatigue(
             if evt.kind != IdentityEventKind.MFA_APPROVED:
                 continue
 
-            # Look backward in the window for denials
+            # Find the previous approval (if any) to bound the denial run.
+            # Denials that occurred before an earlier approval belong to a
+            # previous (resolved) authentication attempt and must not be
+            # counted toward the current run — otherwise an interrupted denial
+            # sequence followed by a legitimate approval wrongly re-fires.
+            prev_approvals = [
+                e for e in sorted_evts[:i] if e.kind == IdentityEventKind.MFA_APPROVED
+            ]
+            run_start = prev_approvals[-1].timestamp if prev_approvals else None
+
+            # Look backward in the window for denials *after* the previous approval
             denials = [
                 e
                 for e in sorted_evts[:i]
-                if e.kind == IdentityEventKind.MFA_DENIED and evt.timestamp - e.timestamp <= window
+                if e.kind == IdentityEventKind.MFA_DENIED
+                and evt.timestamp - e.timestamp <= window
+                and (run_start is None or e.timestamp > run_start)
             ]
 
             if len(denials) < denial_threshold:
@@ -738,22 +761,32 @@ def build_grant_graph(
 ) -> dict[str, Any]:
     """Build an in-memory principal↔app↔scope grant graph from a grant list.
 
-    Returns a nested dict for display / traversal:
-    ``{principal_id: {app_id: {"scopes": [...], "consent_type": ..., ...}}}``
+    Returns a nested dict for display / traversal::
 
-    Used by the hunt-pack runner to enumerate over-privileged grants and by
-    the dormant-app detector to pre-index grants by app_id.
+        {principal_id: {app_id: [{"grant_id": ..., "scopes": [...], ...}, ...]}}
+
+    A provider can issue multiple grants for the same (principal, app) pair —
+    for example, resource-specific scope bundles or tenant-scoped consents.
+    Keying by a single dict value per (principal, app) silently drops earlier
+    grants and loses scope coverage for over-privilege analysis. The graph
+    therefore retains a *list* of grant entries so no grant is discarded.
+
+    Used by the hunt-pack runner to enumerate over-privileged grants.
     """
-    graph: dict[str, dict[str, Any]] = defaultdict(dict)
+    graph: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     for grant in grants:
         if grant.revoked_at is not None:
             continue
-        graph[grant.principal_id][grant.app_id] = {
-            "scopes": list(grant.scopes),
-            "consent_type": grant.consent_type,
-            "granted_at": grant.granted_at.isoformat(),
-            "last_used": grant.last_used.isoformat() if grant.last_used else None,
-            "app_display_name": grant.app_display_name,
-            "provider": grant.provider,
-        }
-    return dict(graph)
+        graph[grant.principal_id][grant.app_id].append(
+            {
+                "grant_id": grant.id,
+                "scopes": list(grant.scopes),
+                "consent_type": grant.consent_type,
+                "granted_at": grant.granted_at.isoformat(),
+                "last_used": grant.last_used.isoformat() if grant.last_used else None,
+                "app_display_name": grant.app_display_name,
+                "provider": grant.provider,
+            }
+        )
+    # Convert inner defaultdicts to plain dicts for a clean return type
+    return {pid: dict(apps) for pid, apps in graph.items()}
