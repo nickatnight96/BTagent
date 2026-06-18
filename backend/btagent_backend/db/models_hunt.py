@@ -15,6 +15,7 @@ present from day one, matching the workflow / knowledge / playbook stores.
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -157,6 +158,12 @@ class SuppressionRuleRow(Base):
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reconfirm_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Harmful-flag: set when a promoted (confirmed-threat) finding matches this
+    # rule's criteria, indicating the rule was hiding real signal.
+    # Migration: 0023_suppression_harmful_flag.
+    harmful_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    harmful_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    harmful_finding_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_suppression_rules_org_id", "org_id"),

@@ -21,7 +21,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from btagent_shared.hunt import triage
-from btagent_shared.types.enums import AuditCategory, AuditOutcome, Severity
+from btagent_shared.types.enums import AuditCategory, AuditOutcome, Severity, UserRole
 from btagent_shared.types.hunt import (
     HuntFindingState,
     SuppressionState,
@@ -481,6 +481,8 @@ async def create_suppression(
     target: str | None = None,
     expires_in_hours: int | None = None,
     reconfirm_in_hours: int | None = None,
+    acknowledge_overbroad: bool = False,
+    caller_role: str | None = None,
 ) -> tuple[SuppressionRuleRow, int]:
     """Create a suppression rule and apply it to existing matching findings.
 
@@ -489,10 +491,16 @@ async def create_suppression(
     :class:`ValueError` otherwise. Guards against over-broad rules (see
     :func:`btagent_shared.hunt.triage.is_overbroad`) by sampling recent
     findings; raises :class:`OverbroadSuppressionError` if the rule would
-    match too large / too diverse a slice. Records the action on the
-    hash-chain audit log (category ``hunt`` / action ``suppress``;
-    ``actor`` defaults to ``created_by``). Returns the rule and the count
-    of findings it suppressed on creation.
+    match too large / too diverse a slice.
+
+    When ``acknowledge_overbroad=True`` and the caller holds the
+    ``incident_commander`` or ``admin`` role (``caller_role``), an over-broad
+    rule is allowed through with an extra audit entry recording the override.
+    Lower roles and unauthenticated callers are still rejected.
+
+    Records the action on the hash-chain audit log (category ``hunt`` /
+    action ``suppress``; ``actor`` defaults to ``created_by``). Returns the
+    rule and the count of findings it suppressed on creation.
     """
     if not reason or not reason.strip():
         raise ValueError("Suppression rationale (reason) is required and must not be blank")
@@ -512,8 +520,21 @@ async def create_suppression(
     sample = [row_to_finding(r) for r in sample_rows]
 
     overbroad, why = triage.is_overbroad(match, sample)
+    overbroad_acknowledged = False
     if overbroad:
-        raise OverbroadSuppressionError(why)
+        # Allow IC/admin to override the overbroad gate when they explicitly
+        # acknowledge it. All other callers (including unauthenticated) are
+        # hard-rejected regardless of the flag.
+        _elevated_roles = {UserRole.INCIDENT_COMMANDER.value, UserRole.ADMIN.value}
+        if acknowledge_overbroad and caller_role in _elevated_roles:
+            overbroad_acknowledged = True
+            logger.warning(
+                "Over-broad suppression acknowledged by elevated role %s: %s",
+                caller_role,
+                why,
+            )
+        else:
+            raise OverbroadSuppressionError(why)
 
     now = _utcnow()
     expires_at = now + timedelta(hours=expires_in_hours) if expires_in_hours else None
@@ -534,6 +555,9 @@ async def create_suppression(
         created_at=now,
         expires_at=expires_at,
         reconfirm_at=reconfirm_at,
+        harmful_flag=False,
+        harmful_reason=None,
+        harmful_finding_id=None,
     )
     db.add(rule)
     await db.flush()
@@ -577,21 +601,27 @@ async def create_suppression(
     if touched_clusters:
         await _recompute_cluster_states(db, cluster_ids=touched_clusters)
 
+    audit_details: dict = {
+        "org_id": org_id,
+        "name": name,
+        "reason": reason,
+        "match": match.model_dump(mode="json"),
+        "suppressed_count": suppressed,
+        "target": target,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+    }
+    if overbroad_acknowledged:
+        audit_details["overbroad_acknowledged"] = True
+        audit_details["overbroad_reason"] = why
+        audit_details["approver_role"] = caller_role
+
     await AuditTrail(db).record(
         actor=actor or created_by or "system",
         category=AuditCategory.HUNT,
         action="suppress",
         resource=f"suppression:{rule.id}",
         outcome=AuditOutcome.SUCCESS,
-        details={
-            "org_id": org_id,
-            "name": name,
-            "reason": reason,
-            "match": match.model_dump(mode="json"),
-            "suppressed_count": suppressed,
-            "target": target,
-            "expires_at": expires_at.isoformat() if expires_at else None,
-        },
+        details=audit_details,
     )
     await db.flush()
     return rule, suppressed
@@ -758,6 +788,50 @@ async def promote_to_investigation(
     if touched_clusters:
         await _recompute_cluster_states(db, cluster_ids=touched_clusters)
 
+    # Phase C (#119): harmful-suppression detection. Any active suppression rule
+    # whose match criteria would have matched one of the promoted findings is
+    # flagged as harmful — it was hiding real threat signal.
+    active_rules = await _active_suppressions(db, org_id=org_id)
+    if active_rules:
+        rule_ids = [r.id for r in active_rules]
+        rule_matches = [row_to_suppression(r) for r in active_rules]
+        harmful_ids = triage.harmful_suppressions(rule_matches, rule_ids, findings)
+        if harmful_ids:
+            harmful_set = set(harmful_ids)
+            for rule in active_rules:
+                # Only the FIRST promotion that proves a rule harmful records the
+                # trigger: harmful_reason / harmful_finding_id track the original
+                # finding, and we avoid emitting a duplicate flagged-harmful audit
+                # event when an already-flagged rule matches a later promotion.
+                if rule.id in harmful_set and not rule.harmful_flag:
+                    first_finding = next(
+                        f
+                        for f in findings
+                        if triage.suppression_matches(row_to_suppression(rule), f)
+                    )
+                    harm_reason = (
+                        f"Suppression '{rule.name}' matched finding '{first_finding.id}' "
+                        f"promoted to investigation '{inv.id}' by "
+                        f"{actor or assigned_to or 'system'}"
+                    )
+                    rule.harmful_flag = True
+                    rule.harmful_reason = harm_reason
+                    rule.harmful_finding_id = first_finding.id
+                    await AuditTrail(db).record(
+                        actor=actor or assigned_to or "system",
+                        category=AuditCategory.HUNT,
+                        action="suppression_flagged_harmful",
+                        resource=f"suppression:{rule.id}",
+                        outcome=AuditOutcome.SUCCESS,
+                        details={
+                            "org_id": org_id,
+                            "suppression_name": rule.name,
+                            "harmful_reason": harm_reason,
+                            "harmful_finding_id": first_finding.id,
+                            "investigation_id": inv.id,
+                        },
+                    )
+
     await AuditTrail(db).record(
         actor=actor or assigned_to or "system",
         category=AuditCategory.HUNT,
@@ -801,6 +875,8 @@ async def suppress_cluster(
     actor: str | None = None,
     expires_in_hours: int | None = None,
     reconfirm_in_hours: int | None = None,
+    acknowledge_overbroad: bool = False,
+    caller_role: str | None = None,
 ) -> tuple[SuppressionRuleRow, int]:
     """Bulk-suppress a cluster: one rule covering the cluster's pattern.
 
@@ -811,6 +887,9 @@ async def suppress_cluster(
     (:class:`ValueError` otherwise — guards pasting the wrong criteria), and
     the usual over-broad gate applies. The cluster row itself is flipped to
     ``SUPPRESSED`` when every member is suppressed.
+
+    ``acknowledge_overbroad`` and ``caller_role`` are forwarded to
+    :func:`create_suppression` for the IC-gated override path.
     """
     members = await _cluster_members(db, cluster_id=cluster.id)
     if match is None:
@@ -829,6 +908,8 @@ async def suppress_cluster(
         target=f"hunt_cluster:{cluster.id}",
         expires_in_hours=expires_in_hours,
         reconfirm_in_hours=reconfirm_in_hours,
+        acknowledge_overbroad=acknowledge_overbroad,
+        caller_role=caller_role,
     )
 
     member_rows = (

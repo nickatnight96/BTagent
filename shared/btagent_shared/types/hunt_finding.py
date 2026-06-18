@@ -144,6 +144,11 @@ class SuppressionRule(BaseModel):
     created_at: datetime
     expires_at: datetime | None = None
     reconfirm_at: datetime | None = None
+    # Harmful-flag: set when this rule is found to have been hiding a
+    # confirmed-threat finding (set by promote_to_investigation).
+    harmful_flag: bool = False
+    harmful_reason: str | None = None
+    harmful_finding_id: str | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -185,6 +190,10 @@ class CreateSuppressionRequest(BaseModel):
     # which the service still nudges via a default reconfirm window.
     expires_in_hours: int | None = Field(default=None, ge=1, le=8760)
     reconfirm_in_hours: int | None = Field(default=None, ge=1, le=8760)
+    # Set to True to acknowledge that this rule is over-broad and proceed
+    # anyway. Only honoured when the caller has incident_commander or admin
+    # role; lower roles are still rejected regardless of this flag.
+    acknowledge_overbroad: bool = False
 
 
 class PromoteFindingsRequest(BaseModel):
@@ -211,6 +220,10 @@ class SuppressClusterRequest(BaseModel):
     match: SuppressionMatch | None = None
     expires_in_hours: int | None = Field(default=None, ge=1, le=8760)
     reconfirm_in_hours: int | None = Field(default=None, ge=1, le=8760)
+    # Set to True to acknowledge that this rule is over-broad and proceed
+    # anyway. Only honoured when the caller has incident_commander or admin
+    # role; lower roles are still rejected regardless of this flag.
+    acknowledge_overbroad: bool = False
 
 
 class PromoteClusterRequest(BaseModel):
