@@ -279,3 +279,97 @@ def test_pattern_scan_enabled_defaults_on():
     # Unlike the connector-blocked hunt-pack scheduler, the pattern scan runs
     # over already-stored data, so its gate defaults ON regardless of mocks.
     assert Settings(env="test", mock_connectors=False).pattern_scan_enabled is True
+
+
+# --------------------------------------------------------------------------- #
+# Finding 1 (Codex #208 P1): the weekly job scans EVERY org, not just default
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_org_with_pattern(db, *, org_id: str, tag: str) -> None:
+    """Seed an org row + 3 closed investigations sharing one C2 domain."""
+    from btagent_backend.db.models import OrganizationRow
+
+    db.add(OrganizationRow(id=org_id, name=f"Org {tag}", created_at=NOW))
+    await db.flush()
+    for i in range(3):
+        inv_id = f"inv_{tag}_{i}"
+        inv = InvestigationRow(
+            id=inv_id,
+            org_id=org_id,
+            title=f"Case {inv_id}",
+            description="",
+            status="closed",
+            severity="medium",
+            tlp_level="green",
+            config={},
+            created_at=NOW - timedelta(days=i + 2),
+            updated_at=NOW - timedelta(days=i + 1),
+            closed_at=NOW - timedelta(days=i + 1),
+        )
+        db.add(inv)
+        await db.flush()
+        ioc = IOCRow(
+            id=generate_id("ioc"),
+            org_id=org_id,
+            investigation_id=inv_id,
+            type="domain",
+            value=f"n{i}.{tag}-c2.net",
+            enrichment={},
+        )
+        db.add(ioc)
+        await db.flush()
+
+
+async def test_scan_all_orgs_covers_every_org(db_session):
+    """Two orgs each holding a cross-case pattern must BOTH be scanned —
+    the weekly job delegates to ``scan_all_orgs``, which enumerates every org
+    rather than the single DEFAULT_ORG_ID (which would exclude the second)."""
+    org_a = "org_pscan_a"
+    org_b = "org_pscan_b"
+    await _seed_org_with_pattern(db_session, org_id=org_a, tag="alpha")
+    await _seed_org_with_pattern(db_session, org_id=org_b, tag="bravo")
+
+    result = await svc.scan_all_orgs(db_session, top_n=10, now=NOW)
+
+    # Both seeded orgs (plus the default + any other seeded org) were scanned.
+    assert result.orgs_scanned >= 2
+    # 3 closed investigations per seeded org were walked.
+    assert result.investigations_scanned >= 6
+    assert result.proposals_created >= 2
+
+    # Each org has its own proposal for its own TLD cluster — proof both
+    # tenants (not just the default) were scanned.
+    for tag in ("alpha", "bravo"):
+        org_id = org_a if tag == "alpha" else org_b
+        rows = (
+            (
+                await db_session.execute(
+                    select(PatternHuntProposalRow).where(
+                        PatternHuntProposalRow.org_id == org_id,
+                        PatternHuntProposalRow.cluster_id.like(f"%{tag}-c2-net%"),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows, f"no proposal scanned for org {org_id} ({tag})"
+
+
+async def test_scan_all_orgs_lists_every_org(db_session):
+    """``list_org_ids`` returns every org so the scan can't silently skip one."""
+    await _seed_org_with_pattern(db_session, org_id="org_list_x", tag="xray")
+    org_ids = await svc.list_org_ids(db_session)
+    assert "org_list_x" in org_ids
+    assert DEFAULT_ORG_ID in org_ids
+
+
+def test_weekly_pattern_scan_delegates_to_scan_all_orgs():
+    """Wiring check: the thin job shell calls the multi-org service entry."""
+    import inspect
+
+    from btagent_backend.scheduler import jobs
+
+    src = inspect.getsource(jobs.weekly_pattern_scan)
+    assert "scan_all_orgs" in src

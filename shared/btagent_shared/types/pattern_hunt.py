@@ -102,6 +102,17 @@ class WeakSignal(BaseModel):
     id: str
     kind: WeakSignalKind
     value: str = Field(..., min_length=1, max_length=2048)
+    # The original :class:`~btagent_shared.types.enums.IOCType` value (e.g.
+    # ``"ip"`` / ``"url"`` / ``"hash_sha256"``) for ``kind == IOC`` signals, so
+    # the downstream proposal transformer can preserve the known indicator type
+    # instead of flattening every exact IOC to ``OTHER`` (which would make the
+    # hypothesis generator emit zero hypotheses). ``None`` for non-IOC kinds and
+    # for genuinely unknown IOC types (which fall back to ``OTHER`` downstream).
+    ioc_type: str | None = Field(
+        default=None,
+        max_length=30,
+        description="Original IOCType value for IOC-kind signals; None otherwise.",
+    )
     first_seen: datetime
     last_seen: datetime
     investigation_refs: list[str] = Field(

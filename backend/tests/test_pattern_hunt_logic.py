@@ -235,6 +235,105 @@ def test_cluster_to_hunt_input_rejects_empty_cluster():
 
 
 # --------------------------------------------------------------------------- #
+# Finding 3 (Codex #208 P1): exact-IOC signals preserve their original type
+# --------------------------------------------------------------------------- #
+
+
+def test_ip_signal_yields_ip_ioc_and_maps_in_hypothesis_gen():
+    """An IP IOC recurring across cases must keep IOCType.IP through to the
+    proposal, so the hypothesis generator's default-TTP map can pick it up
+    (rather than flattening to OTHER → zero hypotheses)."""
+    from btagent_shared.types.enums import IOCType
+
+    records = [
+        ClosedInvestigationRecord(
+            investigation_id="inv_a",
+            closed_at=NOW,
+            iocs=[ObservedIOC(type="ip", value="203.0.113.7")],
+        ),
+        ClosedInvestigationRecord(
+            investigation_id="inv_b",
+            closed_at=NOW,
+            iocs=[ObservedIOC(type="ip", value="203.0.113.7")],
+        ),
+    ]
+    signals = WeakSignalExtractor().extract(records)
+    ip_sig = next(s for s in signals if s.kind is WeakSignalKind.IOC and s.value == "203.0.113.7")
+    assert ip_sig.ioc_type == "ip"
+
+    cluster = WeakSignalClusterer().cluster([ip_sig], now=NOW)[0]
+    hi = pattern.cluster_to_hunt_input(cluster, initiated_by="tester")
+    assert len(hi.iocs) == 1
+    assert hi.iocs[0].type is IOCType.IP
+
+    # And hypothesis_gen's default-TTP map has an entry for "ip", so a proposal
+    # built from this IOC can produce a non-empty hypothesis list / runbook.
+    from btagent_engine.reasoning.hypothesis_gen import _IOC_TYPE_DEFAULT_TTP
+
+    assert hi.iocs[0].type.value in _IOC_TYPE_DEFAULT_TTP
+
+
+def test_common_ioc_types_survive_unknown_falls_back_to_other():
+    from btagent_shared.types.enums import IOCType
+
+    cases = [
+        ("ip", IOCType.IP),
+        ("url", IOCType.URL),
+        ("hash_sha256", IOCType.HASH_SHA256),
+        ("email", IOCType.EMAIL),
+        ("cve", IOCType.CVE),
+        ("file_path", IOCType.FILE_PATH),
+        # genuinely unknown / unset -> OTHER
+        ("totally_made_up", IOCType.OTHER),
+    ]
+    for raw_type, expected in cases:
+        records = [
+            ClosedInvestigationRecord(
+                investigation_id=f"inv_{raw_type}_{i}",
+                closed_at=NOW,
+                iocs=[ObservedIOC(type=raw_type, value=f"val-{raw_type}")],
+            )
+            for i in range(2)
+        ]
+        signals = WeakSignalExtractor().extract(records)
+        sig = next(s for s in signals if s.kind is WeakSignalKind.IOC)
+        cluster = WeakSignalClusterer().cluster([sig], now=NOW)[0]
+        hi = pattern.cluster_to_hunt_input(cluster, initiated_by="t")
+        assert hi.iocs[0].type is expected, raw_type
+
+
+# --------------------------------------------------------------------------- #
+# Finding 2 (Codex #208 P1): cluster ids are collision-resistant
+# --------------------------------------------------------------------------- #
+
+
+def test_distinct_values_collapsing_to_same_slug_get_distinct_cluster_ids():
+    """`a.b` and `a-b` both slug to `a-b`; the appended content hash must keep
+    their cluster ids (and signal/ioc ids) distinct so neither proposal
+    silently overwrites the other on the (org_id, cluster_id) unique key."""
+    dotted = _ws(value="a.b", distinct=3)
+    dashed = _ws(value="a-b", distinct=3)
+    clusters = WeakSignalClusterer().cluster([dotted, dashed], now=NOW)
+    ids = [c.id for c in clusters]
+    assert len(ids) == len(set(ids)), ids
+    # Both still carry the readable slug prefix for humans.
+    assert all(cid.startswith("wsc_ioc_a-b_") for cid in ids), ids
+
+
+def test_cluster_id_is_deterministic_across_runs():
+    sig = _ws(value="a.b", distinct=3)
+    run1 = WeakSignalClusterer().cluster([sig], now=NOW)[0].id
+    run2 = WeakSignalClusterer().cluster([sig], now=NOW)[0].id
+    assert run1 == run2
+
+    # Long values sharing a 48-char slug prefix also stay distinct.
+    long_a = _ws(value="x" * 60 + "-aaa", distinct=2)
+    long_b = _ws(value="x" * 60 + "-bbb", distinct=2)
+    c = WeakSignalClusterer().cluster([long_a, long_b], now=NOW)
+    assert c[0].id != c[1].id
+
+
+# --------------------------------------------------------------------------- #
 # Golden scenario: ~50 closed investigations, 3 APT patterns
 # --------------------------------------------------------------------------- #
 

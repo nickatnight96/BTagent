@@ -159,8 +159,13 @@ async def weekly_pattern_scan(ctx: dict[str, Any]) -> dict[str, int]:
     by ``frequency × recency × cross-investigation diversity`` (diversity
     dominant), and upserts the top-N as ``pattern_hunt_proposals``.
 
-    Thin shell: the single commit lives here; all decisions are in
-    :mod:`btagent_backend.services.pattern_hunt_service` /
+    Multi-tenant: ``scan_corpus`` and the weak-signal / proposal tables are all
+    org-scoped, so the job scans **every** organization — running it against a
+    single hard-coded ``DEFAULT_ORG_ID`` would permanently exclude every other
+    tenant's corpus. One ``scan_corpus`` call per org, counts aggregated.
+
+    Thin shell: the single commit lives here (after all orgs are scanned); all
+    decisions are in :mod:`btagent_backend.services.pattern_hunt_service` /
     :mod:`btagent_shared.hunt.pattern`. Gated behind ``pattern_scan_enabled``
     (mirrors ``hunt_schedule_enabled`` in shape but defaults on, since there is
     nothing to no-op against — the corpus is already stored).
@@ -169,6 +174,7 @@ async def weekly_pattern_scan(ctx: dict[str, Any]) -> dict[str, int]:
     if not settings.pattern_scan_enabled:
         logger.warning("pattern scan disabled: set BTAGENT_PATTERN_SCAN_ENABLED=true to enable")
         return {
+            "orgs_scanned": 0,
             "investigations_scanned": 0,
             "weak_signals_upserted": 0,
             "clusters_ranked": 0,
@@ -179,14 +185,14 @@ async def weekly_pattern_scan(ctx: dict[str, Any]) -> dict[str, int]:
     from btagent_backend.services import pattern_hunt_service
 
     async with async_session_factory() as session:
-        result = await pattern_hunt_service.scan_corpus(
+        result = await pattern_hunt_service.scan_all_orgs(
             session,
-            org_id=DEFAULT_ORG_ID,
             top_n=settings.pattern_scan_top_n,
         )
         await session.commit()
 
     counts = {
+        "orgs_scanned": result.orgs_scanned,
         "investigations_scanned": result.investigations_scanned,
         "weak_signals_upserted": result.weak_signals_upserted,
         "clusters_ranked": result.clusters_ranked,

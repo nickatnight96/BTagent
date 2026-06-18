@@ -43,6 +43,7 @@ the pinned guarantee.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections.abc import Iterable, Sequence
@@ -102,6 +103,37 @@ class ClosedInvestigationRecord:
 
 # IOC types that map to the TLD-extraction path (domains / urls / emails).
 _DOMAINISH_IOC_TYPES = frozenset({"domain", "url", "email"})
+
+# Recognised IOCType values (lowercase, matching
+# ``btagent_shared.types.enums.IOCType``). An observed IOC whose type
+# normalises into this set keeps that type all the way through to the hunt
+# proposal so the hypothesis generator can map it to a default TTP; anything
+# else (or an absent type) falls back to ``IOCType.OTHER`` downstream.
+_KNOWN_IOC_TYPES = frozenset(t.value for t in IOCType)
+
+
+def normalize_ioc_type(raw: str | None) -> str | None:
+    """Map a raw observed IOC ``type`` to a canonical ``IOCType`` value.
+
+    Returns the lowercase value when it is a recognised ``IOCType`` (so the
+    original indicator type survives into the proposal), or ``None`` when the
+    type is absent / unknown (the caller then falls back to ``OTHER``).
+    """
+    if not raw:
+        return None
+    candidate = raw.strip().lower()
+    return candidate if candidate in _KNOWN_IOC_TYPES else None
+
+
+def _resolve_ioc_type(raw: str | None) -> IOCType:
+    """Resolve a preserved IOC-type string to an :class:`IOCType` enum value.
+
+    A recognised value round-trips to the matching enum member; anything else
+    (including ``None``) falls back to :attr:`IOCType.OTHER`.
+    """
+    norm = normalize_ioc_type(raw)
+    return IOCType(norm) if norm is not None else IOCType.OTHER
+
 
 # A conservative public-suffix-ish split: take the last two labels. We do NOT
 # ship a full PSL here (that'd be a heavy dep) — two-label TLD+1 is the right
@@ -173,6 +205,10 @@ class _Accum:
     first_seen: datetime
     last_seen: datetime
     investigation_refs: set[str] = field(default_factory=set)
+    # Original IOCType value for IOC-kind signals (preserved so the proposal
+    # transformer doesn't flatten every exact IOC to ``OTHER``). ``None`` for
+    # non-IOC kinds; for IOC signals it is the first non-empty type observed.
+    ioc_type: str | None = None
 
 
 class WeakSignalExtractor:
@@ -210,6 +246,7 @@ class WeakSignalExtractor:
                     id=_signal_id(kind, value),
                     kind=kind,
                     value=value,
+                    ioc_type=a.ioc_type,
                     first_seen=a.first_seen,
                     last_seen=a.last_seen,
                     investigation_refs=sorted(a.investigation_refs),
@@ -231,6 +268,7 @@ class WeakSignalExtractor:
         *,
         first_seen: datetime | None = None,
         last_seen: datetime | None = None,
+        ioc_type: str | None = None,
     ) -> None:
         norm = normalize_value(kind, value)
         if not norm:
@@ -246,6 +284,7 @@ class WeakSignalExtractor:
                 first_seen=fs,
                 last_seen=ls,
                 investigation_refs={inv_id},
+                ioc_type=ioc_type,
             )
             return
         a.investigation_refs.add(inv_id)
@@ -253,6 +292,10 @@ class WeakSignalExtractor:
             a.first_seen = fs
         if ls > a.last_seen:
             a.last_seen = ls
+        # Keep the first known type; only fill in if we hadn't recorded one
+        # (the same normalised value should carry a consistent type).
+        if a.ioc_type is None and ioc_type is not None:
+            a.ioc_type = ioc_type
 
     def _ingest_iocs(
         self,
@@ -263,7 +306,9 @@ class WeakSignalExtractor:
         for ioc in rec.iocs:
             fs = ioc.first_seen or inv_ts
             ls = ioc.last_seen or inv_ts
-            # The full IOC is always a signal.
+            # The full IOC is always a signal. Carry the canonical IOC type
+            # forward so the proposal transformer can preserve it (an unknown
+            # / absent type normalises to None → OTHER downstream).
             self._bump(
                 acc,
                 WeakSignalKind.IOC,
@@ -272,6 +317,7 @@ class WeakSignalExtractor:
                 inv_ts,
                 first_seen=fs,
                 last_seen=ls,
+                ioc_type=normalize_ioc_type(ioc.type),
             )
             # Domain-ish IOCs additionally contribute their TLD+1 key — the
             # coarser signal a campaign's rotating infra collapses onto.
@@ -494,7 +540,9 @@ def cluster_to_hunt_input(
     Maps each member signal to the right HuntInput field:
 
     * ``technique`` → ``ttps``
-    * ``ioc`` → ``iocs`` (as a synthetic :class:`IOC`)
+    * ``ioc`` → ``iocs`` (as a synthetic :class:`IOC`, keeping the original
+      indicator type — ip/url/hash/email/cve/file-path — so the downstream
+      hypothesis generator can map it; unknown types fall back to ``other``)
     * ``tld`` → an ``iocs`` ``domain`` entry (the registrable suffix)
     * everything else (cmdline / asset / asn) → an ``iocs`` ``other`` entry so
       the input is never empty and the observable is carried forward.
@@ -534,14 +582,23 @@ def cluster_to_hunt_input(
 
 
 def _signal_to_ioc(sig: WeakSignal) -> IOC:
-    """Map a non-technique signal to a synthetic :class:`IOC`."""
-    ioc_type = {
-        WeakSignalKind.IOC: IOCType.OTHER,
-        WeakSignalKind.TLD: IOCType.DOMAIN,
-        WeakSignalKind.CMDLINE_FRAGMENT: IOCType.OTHER,
-        WeakSignalKind.ASSET: IOCType.OTHER,
-        WeakSignalKind.ASN: IOCType.OTHER,
-    }.get(sig.kind, IOCType.OTHER)
+    """Map a non-technique signal to a synthetic :class:`IOC`.
+
+    For an ``IOC``-kind signal the original indicator type (preserved on
+    :attr:`WeakSignal.ioc_type`) is retained when it is a recognised
+    :class:`IOCType` — so an IP/URL/hash/email/CVE/file-path stays itself and
+    the hypothesis generator can map it to a default TTP. Only a genuinely
+    unknown / absent type falls back to ``OTHER``.
+    """
+    if sig.kind is WeakSignalKind.IOC:
+        ioc_type = _resolve_ioc_type(sig.ioc_type)
+    else:
+        ioc_type = {
+            WeakSignalKind.TLD: IOCType.DOMAIN,
+            WeakSignalKind.CMDLINE_FRAGMENT: IOCType.OTHER,
+            WeakSignalKind.ASSET: IOCType.OTHER,
+            WeakSignalKind.ASN: IOCType.OTHER,
+        }.get(sig.kind, IOCType.OTHER)
     return IOC(
         id=_ioc_id(sig),
         investigation_id="",
@@ -579,16 +636,32 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")[:48] or "x"
 
 
+def _content_hash(*parts: str) -> str:
+    """Short, stable, collision-resistant hash of the FULL id content.
+
+    The human-readable :func:`_slug` strips punctuation and truncates at 48
+    chars, so distinct normalised values (e.g. ``a.b`` and ``a-b``, or two
+    values sharing a 48-char prefix) can collapse to the same slug. Since
+    persistence treats ``(org_id, cluster_id)`` as unique, that collision would
+    let one proposal silently overwrite another (and a dismiss/snooze suppress
+    both). Appending this hash of the complete ``kind`` + value(s) restores
+    uniqueness while staying fully deterministic — the same logical signal
+    always produces the same id across runs, so the upsert still finds its row.
+    """
+    digest = hashlib.sha256("\x00".join(parts).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
 def _signal_id(kind: WeakSignalKind, value: str) -> str:
-    return f"ws_{kind.value}_{_slug(value)}"
+    return f"ws_{kind.value}_{_slug(value)}_{_content_hash(kind.value, value)}"
 
 
 def _cluster_id(kind: WeakSignalKind, value: str) -> str:
-    return f"wsc_{kind.value}_{_slug(value)}"
+    return f"wsc_{kind.value}_{_slug(value)}_{_content_hash(kind.value, value)}"
 
 
 def _ioc_id(sig: WeakSignal) -> str:
-    return f"ioc_{_slug(sig.value)}"
+    return f"ioc_{_slug(sig.value)}_{_content_hash(sig.kind.value, sig.value)}"
 
 
 def _cluster_rationale(sig: WeakSignal, *, now: datetime) -> str:

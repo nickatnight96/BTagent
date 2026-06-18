@@ -30,7 +30,12 @@ from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, IOCRow
+from btagent_backend.db.models import (
+    DEFAULT_ORG_ID,
+    InvestigationRow,
+    IOCRow,
+    OrganizationRow,
+)
 from btagent_backend.db.models_pattern import PatternHuntProposalRow, WeakSignalRow
 
 logger = logging.getLogger("btagent.services.pattern_hunt")
@@ -71,6 +76,22 @@ class PatternScanResult:
     proposals_updated: int = 0
     proposals_suppressed: int = 0
     top_clusters: list[WeakSignalCluster] | None = None
+
+
+@dataclass
+class MultiOrgScanResult:
+    """Aggregate of scanning every organization's corpus in one run.
+
+    The weekly job runs one :func:`scan_corpus` per org (the weak-signal and
+    proposal tables are org-scoped), so the per-org counts roll up here.
+    """
+
+    orgs_scanned: int = 0
+    investigations_scanned: int = 0
+    weak_signals_upserted: int = 0
+    clusters_ranked: int = 0
+    proposals_created: int = 0
+    proposals_updated: int = 0
 
 
 # --------------------------------------------------------------------------- #
@@ -319,6 +340,53 @@ async def scan_corpus(
         result.proposals_suppressed,
     )
     return result
+
+
+async def list_org_ids(db: AsyncSession) -> list[str]:
+    """Every organization id, ascending. Falls back to the default tenant.
+
+    The weekly scan is multi-tenant: it must walk every org's corpus, not a
+    single hard-coded ``DEFAULT_ORG_ID`` (which would permanently exclude all
+    other tenants). If the org table is somehow empty, fall back to the
+    default so a fresh/greenfield deployment still scans something.
+    """
+    org_ids = list(
+        (await db.execute(select(OrganizationRow.id).order_by(OrganizationRow.id))).scalars().all()
+    )
+    return org_ids or [DEFAULT_ORG_ID]
+
+
+async def scan_all_orgs(
+    db: AsyncSession,
+    *,
+    initiated_by: str = "pattern_hunter",
+    top_n: int = 10,
+    min_distinct_investigations: int = 2,
+    now: datetime | None = None,
+) -> MultiOrgScanResult:
+    """Run :func:`scan_corpus` for **every** organization, aggregating counts.
+
+    The decision logic the weekly job delegates to: enumerate orgs, scan each
+    org-scoped corpus, and roll the per-org counts into one summary. The job
+    owns the single commit (this never commits), keeping it a thin shell.
+    """
+    agg = MultiOrgScanResult()
+    for org_id in await list_org_ids(db):
+        result = await scan_corpus(
+            db,
+            org_id=org_id,
+            initiated_by=initiated_by,
+            top_n=top_n,
+            min_distinct_investigations=min_distinct_investigations,
+            now=now,
+        )
+        agg.orgs_scanned += 1
+        agg.investigations_scanned += result.investigations_scanned
+        agg.weak_signals_upserted += result.weak_signals_upserted
+        agg.clusters_ranked += result.clusters_ranked
+        agg.proposals_created += result.proposals_created
+        agg.proposals_updated += result.proposals_updated
+    return agg
 
 
 async def _upsert_proposal(
