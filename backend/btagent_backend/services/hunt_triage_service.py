@@ -799,7 +799,11 @@ async def promote_to_investigation(
         if harmful_ids:
             harmful_set = set(harmful_ids)
             for rule in active_rules:
-                if rule.id in harmful_set:
+                # Only the FIRST promotion that proves a rule harmful records the
+                # trigger: harmful_reason / harmful_finding_id track the original
+                # finding, and we avoid emitting a duplicate flagged-harmful audit
+                # event when an already-flagged rule matches a later promotion.
+                if rule.id in harmful_set and not rule.harmful_flag:
                     first_finding = next(
                         f
                         for f in findings

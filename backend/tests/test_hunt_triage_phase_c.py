@@ -34,7 +34,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.auth.jwt import create_token_pair, hash_password
 from btagent_backend.db.models import DEFAULT_ORG_ID, AuditLogRow, UserRow
-from btagent_backend.db.models_hunt import SuppressionRuleRow
+from btagent_backend.db.models_hunt import (
+    HuntFindingClusterRow,
+    HuntFindingRow,
+    SuppressionRuleRow,
+)
 from btagent_backend.services import hunt_triage_service as svc
 
 # --------------------------------------------------------------------------- #
@@ -42,14 +46,28 @@ from btagent_backend.services import hunt_triage_service as svc
 # --------------------------------------------------------------------------- #
 
 
+async def _clear_shared_hunt_state(db_session: AsyncSession) -> None:
+    """Delete committed hunt + audit rows (children before parents).
+
+    These tests commit findings, clusters, suppression rules, and audit
+    entries, but ``db_session`` only *rolls back* per test — so committed rows
+    survive into sibling suites in the shared session-scoped DB. A leaked
+    active suppression would, e.g., suppress test_huntpack_persist's findings
+    instead of letting them cluster. Clear everything this file commits.
+    """
+    await db_session.execute(delete(HuntFindingRow))
+    await db_session.execute(delete(HuntFindingClusterRow))
+    await db_session.execute(delete(SuppressionRuleRow))
+    await db_session.execute(delete(AuditLogRow))
+    await db_session.commit()
+
+
 @pytest_asyncio.fixture(autouse=True)
-async def _isolate_audit_log(db_session: AsyncSession):
-    """Clear audit_logs before + after each test (shared in-memory DB)."""
-    await db_session.execute(delete(AuditLogRow))
-    await db_session.commit()
+async def _isolate_hunt_state(db_session: AsyncSession):
+    """Clear hunt + audit state before + after each test (shared in-memory DB)."""
+    await _clear_shared_hunt_state(db_session)
     yield
-    await db_session.execute(delete(AuditLogRow))
-    await db_session.commit()
+    await _clear_shared_hunt_state(db_session)
 
 
 @pytest_asyncio.fixture()
