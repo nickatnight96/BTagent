@@ -237,6 +237,7 @@ async def detect_outlier(
         entity_id=entity.id,
         profile_type=profile_type.value,
         event_id=event_id,
+        event_pattern_key=event_pattern_key,
         cosine_distance=distance,
         frequency_rank=rank,
         raw_event_excerpt=raw_event_excerpt[:4096],
@@ -245,6 +246,42 @@ async def detect_outlier(
     db.add(row)
     await db.flush()
     return row
+
+
+async def get_outlier(db: AsyncSession, outlier_id: str) -> BehavioralOutlierRow | None:
+    """Fetch one outlier by id (the route layer owns the org-scoping 404)."""
+    return await db.get(BehavioralOutlierRow, outlier_id)
+
+
+async def list_outliers(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    intent_label: IntentLabel | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[BehavioralOutlierRow], int]:
+    """Org-scoped, paginated outlier list, newest-first.
+
+    Optionally filtered by ``intent_label`` (``None`` = no filter). Returns the
+    page rows plus the total matching count (for the paginated response).
+    """
+    from sqlalchemy import func
+
+    base = select(BehavioralOutlierRow).where(BehavioralOutlierRow.org_id == org_id)
+    if intent_label is not None:
+        base = base.where(BehavioralOutlierRow.intent_label == intent_label.value)
+
+    count_stmt = select(func.count()).select_from(base.subquery())
+    total = int((await db.execute(count_stmt)).scalar_one())
+
+    page_stmt = (
+        base.order_by(BehavioralOutlierRow.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = list((await db.execute(page_stmt)).scalars().all())
+    return rows, total
 
 
 async def set_intent(
@@ -353,8 +390,13 @@ async def feedback_benign(
     if profile is None:
         raise ValueError("no baseline profile to fold feedback into")
 
+    # Raise the SAME key the scorer matched on, so the pattern is actually
+    # suppressed next time. ``event_pattern_key`` is what ``score_outlier``
+    # looks up; fall back to ``event_id`` only for rows written before the
+    # column existed.
+    pattern_key = outlier.event_pattern_key or outlier.event_id
     profile.frequency_map = behavioral_logic.update_frequency_map(
-        dict(profile.frequency_map or {}), outlier.event_id
+        dict(profile.frequency_map or {}), pattern_key
     )
     profile.pattern_count = len(profile.frequency_map)
     profile.sample_size = profile.sample_size + 1

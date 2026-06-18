@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from btagent_backend.api.v1.audit import router as audit_router
 from btagent_backend.api.v1.auth import router as auth_router
+from btagent_backend.api.v1.behavioral import router as behavioral_router
 from btagent_backend.api.v1.config import router as config_router
 from btagent_backend.api.v1.health import router as health_router
 from btagent_backend.api.v1.hunt_findings import router as hunt_router
@@ -45,6 +46,7 @@ api_v1_router.include_router(tlp_policies_router)
 api_v1_router.include_router(triage_router)
 api_v1_router.include_router(webhooks_router)
 api_v1_router.include_router(workflows_router)
+api_v1_router.include_router(behavioral_router)
 
 # Health at root level (no /api/v1 prefix)
 health_router_root = health_router

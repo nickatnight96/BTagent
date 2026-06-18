@@ -118,6 +118,11 @@ class BehavioralOutlierRow(Base):
     )
     profile_type: Mapped[str] = mapped_column(String(64), nullable=False)
     event_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    # The pattern key the scorer matched on (may differ from ``event_id``).
+    # Persisted so benign feedback raises the *same* key the scorer looks up,
+    # actually suppressing the pattern. Nullable for rows written before this
+    # column existed; feedback falls back to ``event_id`` for those.
+    event_pattern_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
     cosine_distance: Mapped[float] = mapped_column(Float, nullable=False)
     frequency_rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     raw_event_excerpt: Mapped[str] = mapped_column(Text, default="")

@@ -339,6 +339,37 @@ class Settings(BaseSettings):
     pattern_scan_hour: int = 3
     pattern_scan_top_n: int = 10
 
+    # Behavioral Hunter scheduler (#114 Phase A). The arq worker rebuilds
+    # entity baselines + sweeps stale entities on this cadence. Same
+    # derive-from-mocks semantics as ``hunt_schedule_enabled``: there is no
+    # live EDR telemetry feed yet, so with mocks off the job only runs the
+    # stale-entity archival pass and logs a single "no telemetry source wired"
+    # warning rather than fabricating baseline data. An operator who has wired
+    # a telemetry source can force the full path on via
+    # ``BTAGENT_BEHAVIORAL_SCHEDULE_ENABLED=true``. Left ``None`` so the
+    # post-init validator can tell "unset" (derive from mocks) apart from an
+    # explicit ``true``/``false``.
+    behavioral_schedule_enabled: bool | None = None
+    # Hours-of-day cadence for the behavioral baseline-build + stale sweep,
+    # expressed the same way as the hunt-pack cron (interval → {0, N, 2N, …}).
+    behavioral_scheduler_interval_hours: int = 6
+    # Entities unseen for this many days are flagged for archival by the sweep.
+    behavioral_stale_after_days: int = 30
+
+    @model_validator(mode="after")
+    def _derive_behavioral_schedule_enabled(self) -> "Settings":
+        """Default ``behavioral_schedule_enabled`` from ``mock_connectors``.
+
+        Mocks on → enabled (the job can exercise the full baseline-build path
+        against deterministic fixtures); mocks off → disabled, because no live
+        EDR telemetry feed is wired yet and the baseline-build half would
+        no-op. The stale-entity archival pass still runs regardless (see
+        :func:`btagent_backend.scheduler.jobs.behavioral_baseline_sweep`).
+        """
+        if self.behavioral_schedule_enabled is None:
+            self.behavioral_schedule_enabled = self.mock_connectors
+        return self
+
     # Embedding / Knowledge Base
     embedding_provider: str = "openai"  # openai | ollama
     embedding_model: str = "text-embedding-3-small"

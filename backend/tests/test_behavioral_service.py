@@ -277,7 +277,102 @@ async def test_feedback_benign_bumps_frequency_in_baseline(db_session):
     )
 
     updated = await svc.feedback_benign(db_session, outlier_id=out.id)
-    assert "evt_known_safe" in updated.frequency_map
+    # Codex #206: the PATTERN KEY the scorer reads is raised, not the event id.
+    assert "rare_but_safe" in updated.frequency_map
+    assert "evt_known_safe" not in updated.frequency_map
+    assert updated.sample_size == initial_sample + 1
+
+
+async def test_feedback_benign_suppresses_pattern_when_event_id_differs(db_session):
+    """Codex #206: benign feedback must raise the PATTERN KEY the scorer reads,
+    not the event id. With ``event_id != event_pattern_key``, the fed-back
+    pattern must actually stop re-firing as an outlier.
+    """
+    entity = await svc.upsert_entity(
+        db_session, org_id=DEFAULT_ORG_ID, kind=EntityKind.HOST, canonical_id="WS-KEY"
+    )
+    now = datetime.now(UTC)
+    await svc.build_baseline(
+        db_session,
+        entity=entity,
+        profile_type=ProfileType.CMDLINE_EMBEDDING,
+        vectors=[[1.0, 0.0]],
+        pattern_keys=["common"],
+        window_start=now - timedelta(days=30),
+        window_end=now,
+    )
+    # event_id and the matched pattern key deliberately diverge.
+    out = await svc.detect_outlier(
+        db_session,
+        entity=entity,
+        profile_type=ProfileType.CMDLINE_EMBEDDING,
+        event_id="evt_api",
+        event_vector=[0.0, 1.0],
+        event_pattern_key="encoded_pwsh",
+        frequency_floor=2,
+    )
+    assert out is not None
+    assert out.event_id == "evt_api"
+    assert out.event_pattern_key == "encoded_pwsh"
+
+    await svc.set_intent(
+        db_session,
+        outlier_id=out.id,
+        label=IntentLabel.BENIGN,
+        rationale="admin tooling",
+    )
+    profile = await svc.feedback_benign(db_session, outlier_id=out.id)
+    # The PATTERN KEY was bumped — not the event id (the old, broken behavior).
+    assert "encoded_pwsh" in profile.frequency_map
+    assert "evt_api" not in profile.frequency_map
+
+    # Same pattern re-observed is now suppressed (within the frequency floor).
+    again = await svc.detect_outlier(
+        db_session,
+        entity=entity,
+        profile_type=ProfileType.CMDLINE_EMBEDDING,
+        event_id="evt_api_2",
+        event_vector=[0.0, 1.0],
+        event_pattern_key="encoded_pwsh",
+        frequency_floor=2,
+    )
+    assert again is None
+
+
+async def test_feedback_benign_falls_back_to_event_id_for_legacy_rows(db_session):
+    """Rows written before the column existed (``event_pattern_key is None``)
+    fall back to ``event_id`` so legacy feedback still folds into the baseline.
+    """
+    entity = await svc.upsert_entity(
+        db_session, org_id=DEFAULT_ORG_ID, kind=EntityKind.HOST, canonical_id="WS-LEGACY"
+    )
+    now = datetime.now(UTC)
+    profile = await svc.build_baseline(
+        db_session,
+        entity=entity,
+        profile_type=ProfileType.CMDLINE_EMBEDDING,
+        vectors=[[1.0, 0.0]],
+        pattern_keys=["common"],
+        window_start=now - timedelta(days=30),
+        window_end=now,
+    )
+    initial_sample = profile.sample_size
+    out = await svc.detect_outlier(
+        db_session,
+        entity=entity,
+        profile_type=ProfileType.CMDLINE_EMBEDDING,
+        event_id="evt_legacy",
+        event_vector=[0.0, 1.0],
+        event_pattern_key="some_pattern",
+    )
+    assert out is not None
+    # Simulate a pre-migration row: null out the persisted pattern key.
+    out.event_pattern_key = None
+    await db_session.flush()
+
+    await svc.set_intent(db_session, outlier_id=out.id, label=IntentLabel.BENIGN, rationale="ok")
+    updated = await svc.feedback_benign(db_session, outlier_id=out.id)
+    assert "evt_legacy" in updated.frequency_map
     assert updated.sample_size == initial_sample + 1
 
 
