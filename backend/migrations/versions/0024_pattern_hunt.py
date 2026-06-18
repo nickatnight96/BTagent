@@ -11,12 +11,11 @@ term. ``pattern_hunt_proposals`` holds ranked clusters turned into ready-to-run
 spam duplicates.
 
 Revision ID: 0024_pattern_hunt
-Revises: 0022_hunt_pack_run_status_width
+Revises: 0023_suppression_harmful_flag
 Create Date: 2026-06-18
 
-Note: ``down_revision`` chains onto the current head (0022). If a 0023 lands
-first at merge time the orchestrator re-chains this — expected; this branch is
-single-head on its own.
+Note: re-chained at merge onto 0023 (the #204 harmful-suppression migration,
+which landed first) so the alembic history stays linear.
 """
 
 from collections.abc import Sequence
@@ -26,7 +25,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision: str = "0024_pattern_hunt"
-down_revision: str | None = "0022_hunt_pack_run_status_width"
+down_revision: str | None = "0023_suppression_harmful_flag"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
