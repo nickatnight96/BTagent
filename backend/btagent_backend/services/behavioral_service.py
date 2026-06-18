@@ -237,6 +237,7 @@ async def detect_outlier(
         entity_id=entity.id,
         profile_type=profile_type.value,
         event_id=event_id,
+        event_pattern_key=event_pattern_key,
         cosine_distance=distance,
         frequency_rank=rank,
         raw_event_excerpt=raw_event_excerpt[:4096],
@@ -389,8 +390,13 @@ async def feedback_benign(
     if profile is None:
         raise ValueError("no baseline profile to fold feedback into")
 
+    # Raise the SAME key the scorer matched on, so the pattern is actually
+    # suppressed next time. ``event_pattern_key`` is what ``score_outlier``
+    # looks up; fall back to ``event_id`` only for rows written before the
+    # column existed.
+    pattern_key = outlier.event_pattern_key or outlier.event_id
     profile.frequency_map = behavioral_logic.update_frequency_map(
-        dict(profile.frequency_map or {}), outlier.event_id
+        dict(profile.frequency_map or {}), pattern_key
     )
     profile.pattern_count = len(profile.frequency_map)
     profile.sample_size = profile.sample_size + 1

@@ -167,6 +167,36 @@ async def test_promote_lands_in_hunt_findings(client, admin_token, seeded_outlie
     assert resp.json()["finding_id"].startswith("hfnd_")
 
 
+async def test_promote_is_idempotent_on_retry(client, admin_token, seeded_outlier, db_session):
+    """A retried promote returns the existing finding, not a duplicate insert."""
+    from sqlalchemy import func, select
+
+    from btagent_backend.db.models_hunt import HuntFindingRow
+
+    first = await client.post(
+        f"/api/v1/behavioral/outliers/{seeded_outlier.id}/promote",
+        json={"technique_ids": ["T1059.001"]},
+        headers=auth_header(admin_token),
+    )
+    assert first.status_code == 201, first.text
+    finding_id = first.json()["finding_id"]
+
+    count_stmt = select(func.count()).select_from(HuntFindingRow)
+    after_first = int((await db_session.execute(count_stmt)).scalar_one())
+
+    # Retry: same finding id back, and no second HuntFinding row written.
+    retry = await client.post(
+        f"/api/v1/behavioral/outliers/{seeded_outlier.id}/promote",
+        json={"technique_ids": ["T1059.001"]},
+        headers=auth_header(admin_token),
+    )
+    assert retry.status_code == 201, retry.text
+    assert retry.json()["finding_id"] == finding_id
+
+    after_retry = int((await db_session.execute(count_stmt)).scalar_one())
+    assert after_retry == after_first
+
+
 # --- classify endpoint (no model registered -> row unchanged, 200) ---
 
 

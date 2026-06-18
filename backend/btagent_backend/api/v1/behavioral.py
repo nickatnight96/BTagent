@@ -142,9 +142,17 @@ async def promote_outlier(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Escalate an outlier into the #119 HuntFinding queue (senior action)."""
+    """Escalate an outlier into the #119 HuntFinding queue (senior action).
+
+    Idempotent on retry: if the outlier already carries a
+    ``promoted_to_finding_id`` we return that existing finding rather than
+    inserting a second HuntFinding (which would also clobber the
+    back-reference).
+    """
     user.require_permission("hunt:promote")
-    await _load_outlier_scoped(db, outlier_id, user)
+    row = await _load_outlier_scoped(db, outlier_id, user)
+    if row.promoted_to_finding_id is not None:
+        return PromoteOutlierResponse(finding_id=row.promoted_to_finding_id)
     try:
         finding_id = await svc.promote_outlier(
             db, outlier_id=outlier_id, technique_ids=body.technique_ids
