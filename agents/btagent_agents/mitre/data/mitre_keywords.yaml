@@ -714,3 +714,259 @@
   confidence: 0.85
 
 # ── END IDENTITY BLOCK ─────────────────────────────────────────────────────
+
+# ── CLOUD BLOCK (Phase 6 #117 — Cloud Control-Plane Hunter) ────────────────
+# Cloud-specific techniques appended here; do NOT reorder entries above.
+# Techniques: T1078.004, T1098.001, T1098.003, T1537, T1550.001, T1562.008,
+#             T1059.009, T1530, T1619, T1580, T1526.
+
+# ── Cloud Accounts / Identity (TA0001, TA0003, TA0004) ─────────────────────
+- keyword: "assumerole"
+  technique_id: "T1078.004"
+  confidence: 0.9
+
+- keyword: "assume role"
+  technique_id: "T1078.004"
+  confidence: 0.9
+
+- keyword: "cloud account"
+  technique_id: "T1078.004"
+  confidence: 0.8
+
+- keyword: "iam user"
+  technique_id: "T1078.004"
+  confidence: 0.75
+
+- keyword: "service account"
+  technique_id: "T1078.004"
+  confidence: 0.75
+
+- keyword: "workload identity"
+  technique_id: "T1078.004"
+  confidence: 0.8
+
+- keyword: "sts"
+  technique_id: "T1078.004"
+  confidence: 0.75
+
+- keyword: "role chaining"
+  technique_id: "T1078.004"
+  confidence: 0.92
+
+# ── IAM Persistence / Credential Manipulation (TA0003) ─────────────────────
+- keyword: "access key"
+  technique_id: "T1098.001"
+  confidence: 0.85
+
+- keyword: "createaccesskey"
+  technique_id: "T1098.001"
+  confidence: 0.92
+
+- keyword: "iam persistence"
+  technique_id: "T1098.001"
+  confidence: 0.9
+
+- keyword: "inline policy"
+  technique_id: "T1098.001"
+  confidence: 0.85
+
+- keyword: "putrole policy"
+  technique_id: "T1098.001"
+  confidence: 0.88
+
+- keyword: "putuser policy"
+  technique_id: "T1098.001"
+  confidence: 0.88
+
+# ── Cloud Role / Trust Manipulation (TA0003, TA0004) ───────────────────────
+- keyword: "trust policy"
+  technique_id: "T1098.003"
+  confidence: 0.88
+
+- keyword: "updateassumerolepolicy"
+  technique_id: "T1098.003"
+  confidence: 0.95
+
+- keyword: "cross account trust"
+  technique_id: "T1098.003"
+  confidence: 0.9
+
+- keyword: "cross-account"
+  technique_id: "T1098.003"
+  confidence: 0.75
+
+- keyword: "federated credential"
+  technique_id: "T1098.003"
+  confidence: 0.8
+
+# ── Cloud Data Transfer / Exfiltration (TA0010) ────────────────────────────
+- keyword: "snapshot share"
+  technique_id: "T1537"
+  confidence: 0.9
+
+- keyword: "ami share"
+  technique_id: "T1537"
+  confidence: 0.9
+
+- keyword: "modifysnapshotattribute"
+  technique_id: "T1537"
+  confidence: 0.95
+
+- keyword: "modifyimageattribute"
+  technique_id: "T1537"
+  confidence: 0.95
+
+- keyword: "public ami"
+  technique_id: "T1537"
+  confidence: 0.9
+
+- keyword: "s3 bucket exfil"
+  technique_id: "T1537"
+  confidence: 0.88
+
+- keyword: "transfer to cloud"
+  technique_id: "T1537"
+  confidence: 0.85
+
+# ── Application Access Token / Alt Auth Material (TA0008) ──────────────────
+- keyword: "application token"
+  technique_id: "T1550.001"
+  confidence: 0.85
+
+- keyword: "pass the token"
+  technique_id: "T1550.001"
+  confidence: 0.9
+
+- keyword: "oauth token"
+  technique_id: "T1550.001"
+  confidence: 0.8
+
+- keyword: "bearer token"
+  technique_id: "T1550.001"
+  confidence: 0.8
+
+# ── Impair Cloud Defenses / Disable Logging (TA0005) ───────────────────────
+- keyword: "stoplog"
+  technique_id: "T1562.008"
+  confidence: 0.95
+
+- keyword: "stoplogging"
+  technique_id: "T1562.008"
+  confidence: 0.95
+
+- keyword: "deletetrail"
+  technique_id: "T1562.008"
+  confidence: 0.95
+
+- keyword: "cloudtrail disabled"
+  technique_id: "T1562.008"
+  confidence: 0.95
+
+- keyword: "disable cloud logging"
+  technique_id: "T1562.008"
+  confidence: 0.92
+
+- keyword: "tamper audit log"
+  technique_id: "T1562.008"
+  confidence: 0.9
+
+- keyword: "disable guardduty"
+  technique_id: "T1562.008"
+  confidence: 0.93
+
+- keyword: "deletedetector"
+  technique_id: "T1562.008"
+  confidence: 0.95
+
+- keyword: "disable flow logs"
+  technique_id: "T1562.008"
+  confidence: 0.9
+
+# ── Cloud Scripting / Serverless Execution (TA0002) ────────────────────────
+- keyword: "lambda invoke"
+  technique_id: "T1059.009"
+  confidence: 0.8
+
+- keyword: "cloud function"
+  technique_id: "T1059.009"
+  confidence: 0.8
+
+- keyword: "serverless execution"
+  technique_id: "T1059.009"
+  confidence: 0.82
+
+- keyword: "bedrock invoke"
+  technique_id: "T1059.009"
+  confidence: 0.78
+
+- keyword: "vertex ai invoke"
+  technique_id: "T1059.009"
+  confidence: 0.78
+
+- keyword: "mcp server"
+  technique_id: "T1059.009"
+  confidence: 0.75
+
+# ── Cloud Storage Object Discovery (TA0007) ─────────────────────────────────
+- keyword: "s3 list"
+  technique_id: "T1530"
+  confidence: 0.75
+
+- keyword: "cloud storage enumeration"
+  technique_id: "T1530"
+  confidence: 0.82
+
+- keyword: "gcs bucket list"
+  technique_id: "T1530"
+  confidence: 0.8
+
+- keyword: "blob storage access"
+  technique_id: "T1530"
+  confidence: 0.75
+
+# ── Cloud Infrastructure Discovery (TA0007) ─────────────────────────────────
+- keyword: "describeinstances"
+  technique_id: "T1619"
+  confidence: 0.7
+
+- keyword: "cloud resource enumeration"
+  technique_id: "T1619"
+  confidence: 0.8
+
+- keyword: "list compute"
+  technique_id: "T1619"
+  confidence: 0.72
+
+- keyword: "cloud inventory"
+  technique_id: "T1619"
+  confidence: 0.7
+
+# ── Cloud Infrastructure Acquisition / Shadow IT ───────────────────────────
+- keyword: "shadow workload"
+  technique_id: "T1580"
+  confidence: 0.85
+
+- keyword: "unmanaged agent"
+  technique_id: "T1580"
+  confidence: 0.82
+
+- keyword: "rogue lambda"
+  technique_id: "T1580"
+  confidence: 0.88
+
+- keyword: "agentic workload"
+  technique_id: "T1580"
+  confidence: 0.78
+
+# ── Cloud Service Discovery (TA0007) ────────────────────────────────────────
+- keyword: "cloud service discovery"
+  technique_id: "T1526"
+  confidence: 0.75
+
+- keyword: "listservices"
+  technique_id: "T1526"
+  confidence: 0.72
+
+- keyword: "service enumeration"
+  technique_id: "T1526"
+  confidence: 0.75

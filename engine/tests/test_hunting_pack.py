@@ -70,6 +70,34 @@ def test_builtin_packs_dir_is_packaged():
     assert (BUILTIN_PACKS_DIR / "windows_baseline" / "pack.yaml").is_file()
 
 
+def test_builtin_cloud_control_plane_pack_loads():
+    """Codex #207: the cloud pack lives under the builtin packs dir with
+    bare-basename ``file:`` values, so load_builtin_pack discovers it. The
+    code-based detectors ship as separate ``.py`` modules and are NOT Sigma
+    ``rules:`` entries."""
+    pack = load_builtin_pack("cloud_control_plane")
+    assert isinstance(pack, HuntPack)
+    assert pack.id.startswith("hpack_")
+    assert pack.name == "Cloud Control-Plane Hunt Pack"
+    assert pack.version == "1.0.0"
+
+    # 11 Sigma rules; none of them is a .py detector.
+    assert len(pack.rules) == 11
+    rule_files = {r.file for r in pack.rules}
+    assert not any(str(f).endswith(".py") for f in rule_files)
+    assert "sts_assumerole_chain.yml" in rule_files
+
+    by_file = {r.file: r for r in pack.rules}
+    # GuardDuty rules are deferred (disabled) pending the #100 connector.
+    assert by_file["guardduty_iam_anomaly.yml"].enabled is False
+    assert by_file["guardduty_privilege_escalation.yml"].enabled is False
+    assert len(pack.enabled_rules) == 9
+
+    # The code-based detector modules ship alongside the pack (documented, not loaded).
+    pack_dir = BUILTIN_PACKS_DIR / "cloud_control_plane"
+    assert (pack_dir / "detectors" / "sts_trust_graph_closure.py").is_file()
+
+
 # --- fixture-dir loading ---
 
 

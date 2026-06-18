@@ -1,0 +1,31 @@
+title: IAM Access Key Created — Potential Persistence Backdoor
+id: c0d12301-1a1b-4c8d-a8f7-000000000002
+status: test
+description: >
+  Detects creation of a new IAM access key for any user, which establishes a
+  long-lived credential that persists beyond the current session.  Attackers
+  use this technique to maintain access after initial compromise.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: CreateAccessKey
+  filter_service_accounts:
+    # Known legitimate automated rotation — tune per environment.
+    userIdentity.arn|contains:
+      - ':user/svc-'
+      - ':user/automation-'
+  condition: selection and not filter_service_accounts
+falsepositives:
+  - Legitimate access key rotation via automated tooling
+  - Onboarding new service accounts
+level: high
+tags:
+  - attack.persistence
+  - attack.t1098.001
+  - cloud.control-plane

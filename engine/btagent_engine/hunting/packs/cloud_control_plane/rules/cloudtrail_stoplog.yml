@@ -1,0 +1,31 @@
+title: CloudTrail Logging Disabled or Trail Deleted
+id: c0d12301-1a1b-4c8d-a8f7-000000000006
+status: test
+description: >
+  Detects StopLogging, DeleteTrail, or UpdateTrail events that disable CloudTrail
+  logging.  Adversaries disable cloud audit logging to avoid detection after
+  achieving initial access, typically as a precursor to data exfiltration or
+  destructive action.
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_stop:
+    eventName:
+      - StopLogging
+      - DeleteTrail
+  selection_update_disable:
+    eventName: UpdateTrail
+    requestParameters.enableLogFileValidation: 'false'
+  condition: selection_stop or selection_update_disable
+falsepositives:
+  - Trail consolidation operations during account restructuring (extremely rare)
+level: critical
+tags:
+  - attack.defense-evasion
+  - attack.t1562.008
+  - cloud.control-plane

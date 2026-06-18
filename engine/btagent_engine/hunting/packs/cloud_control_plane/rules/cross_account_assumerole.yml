@@ -1,0 +1,39 @@
+title: AssumeRole from Unrecognised External AWS Account
+id: c0d12301-1a1b-4c8d-a8f7-000000000005
+status: test
+description: >
+  Detects cross-account AssumeRole where the requesting account is not in the
+  organisation's known-account list.  This may indicate a compromised external
+  partner account, a misconfigured trust policy, or active exploitation of
+  cross-account role confusion.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://attack.mitre.org/techniques/T1550/001/
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: AssumeRole
+    userIdentity.accountId|not_startswith:
+      # Placeholder — replace with actual account ID prefixes or use a lookup.
+      - '111122223333'
+      - '444455556666'
+  filter_aws_services:
+    userIdentity.type: AWSService
+  condition: selection and not filter_aws_services
+falsepositives:
+  - Vendor accounts with legitimate cross-account access (add to filter)
+  - AWS service-linked role creation
+level: high
+tags:
+  - attack.lateral-movement
+  - attack.t1078.004
+  - attack.t1550.001
+  - cloud.control-plane
+notes: >
+  Tune filter conditions with actual organisation account IDs before enabling.
+  The code-based detector (D3) provides cross-reference against a configurable
+  trusted_account_ids set without requiring a Sigma filter update.

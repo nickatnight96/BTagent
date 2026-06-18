@@ -1,0 +1,35 @@
+title: IAM Inline Policy Attached — Persistence via Unmanaged Policy
+id: c0d12301-1a1b-4c8d-a8f7-000000000003
+status: test
+description: >
+  Detects PutUserPolicy or PutRolePolicy events that attach an inline policy.
+  Unlike managed policies, inline policies are embedded directly in the principal
+  and are not visible in the standard IAM policy list, making them a stealthy
+  persistence mechanism that can bypass SCP-enforcement tooling.
+references:
+  - https://attack.mitre.org/techniques/T1098/001/
+  - https://attack.mitre.org/techniques/T1098/003/
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName:
+      - PutUserPolicy
+      - PutRolePolicy
+  filter_iac:
+    # Terraform/CDK deployments — tune on actual pipeline ARNs.
+    userIdentity.arn|contains:
+      - ':assumed-role/TerraformDeployRole'
+      - ':assumed-role/CDKToolkit'
+  condition: selection and not filter_iac
+falsepositives:
+  - IaC deployment pipelines creating inline policies as part of normal provisioning
+level: high
+tags:
+  - attack.persistence
+  - attack.t1098.001
+  - attack.t1098.003
+  - cloud.control-plane
