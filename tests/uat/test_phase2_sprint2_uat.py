@@ -17,8 +17,6 @@ Tests cover:
 
 import asyncio
 
-import pytest
-
 
 # ── UAT-KNOWLEDGE-API: API endpoint validation ────────────────
 
@@ -35,22 +33,27 @@ class TestKnowledgeAPI:
 
     def test_knowledge_router_mounted_in_v1(self):
         """Knowledge router is mounted in the v1 API router."""
+        from fastapi import FastAPI
+
         from btagent_backend.api.v1.router import api_v1_router
 
-        route_paths = [r.path for r in api_v1_router.routes]
+        # FastAPI >=0.137 keeps sub-router routes inside _IncludedRouter
+        # entries instead of flattening them into ``.routes``; resolve the
+        # full path set via the OpenAPI schema, which walks every endpoint
+        # regardless of the internal route representation.
+        app = FastAPI()
+        app.include_router(api_v1_router)
+        route_paths = list(app.openapi()["paths"].keys())
         # Check that knowledge routes are included
         knowledge_paths = [p for p in route_paths if "knowledge" in p]
-        assert len(knowledge_paths) > 0, (
-            "No knowledge routes found in api_v1_router"
-        )
+        assert len(knowledge_paths) > 0, "No knowledge routes found in api_v1_router"
 
     def test_ingest_endpoint_exists(self):
         """POST /knowledge/ingest endpoint is defined."""
         from btagent_backend.api.v1.knowledge import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/knowledge/ingest", ("POST",)) in routes
 
@@ -59,8 +62,7 @@ class TestKnowledgeAPI:
         from btagent_backend.api.v1.knowledge import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/knowledge/query", ("POST",)) in routes
 
@@ -69,8 +71,7 @@ class TestKnowledgeAPI:
         from btagent_backend.api.v1.knowledge import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/knowledge/search", ("GET",)) in routes
 
@@ -79,8 +80,7 @@ class TestKnowledgeAPI:
         from btagent_backend.api.v1.knowledge import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/knowledge/documents", ("GET",)) in routes
 
@@ -96,8 +96,7 @@ class TestKnowledgeAPI:
         from btagent_backend.api.v1.knowledge import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/knowledge/documents/{document_id}", ("DELETE",)) in routes
 
@@ -175,9 +174,7 @@ class TestKnowledgePlugin:
         from btagent_agents.plugins import PLUGIN_MODULES
 
         assert "knowledge" in PLUGIN_MODULES
-        assert PLUGIN_MODULES["knowledge"] == (
-            "btagent_agents.plugins.knowledge"
-        )
+        assert PLUGIN_MODULES["knowledge"] == ("btagent_agents.plugins.knowledge")
 
     def test_plugin_loads_via_registry(self):
         """Plugin loads through the standard plugin loader."""
@@ -216,9 +213,7 @@ class TestKnowledgeSubgraph:
             "citations",
         }
         for field in required_fields:
-            assert field in annotations, (
-                f"Missing field '{field}' in KnowledgeState"
-            )
+            assert field in annotations, f"Missing field '{field}' in KnowledgeState"
 
     def test_graph_has_four_nodes(self):
         """Subgraph has understand_query, retrieve_context, generate_answer, cite_sources."""
@@ -236,9 +231,7 @@ class TestKnowledgeSubgraph:
             "generate_answer",
             "cite_sources",
         }
-        assert expected.issubset(node_names), (
-            f"Missing nodes: {expected - node_names}"
-        )
+        assert expected.issubset(node_names), f"Missing nodes: {expected - node_names}"
 
     def test_graph_invocation(self):
         """Subgraph runs end-to-end with test input."""
@@ -247,16 +240,18 @@ class TestKnowledgeSubgraph:
         )
 
         graph = create_knowledge_subgraph()
-        result = graph.invoke({
-            "query": "What is APT29?",
-            "investigation_id": "inv_test_001",
-            "retrieved_chunks": [],
-            "answer": "",
-            "citations": [],
-            "rephrased_query": "",
-            "errors": [],
-            "status": "pending",
-        })
+        result = graph.invoke(
+            {
+                "query": "What is APT29?",
+                "investigation_id": "inv_test_001",
+                "retrieved_chunks": [],
+                "answer": "",
+                "citations": [],
+                "rephrased_query": "",
+                "errors": [],
+                "status": "pending",
+            }
+        )
 
         assert result["status"] == "complete"
         assert result["answer"] != ""
@@ -270,16 +265,18 @@ class TestKnowledgeSubgraph:
         )
 
         graph = create_knowledge_subgraph()
-        result = graph.invoke({
-            "query": "",
-            "investigation_id": "",
-            "retrieved_chunks": [],
-            "answer": "",
-            "citations": [],
-            "rephrased_query": "",
-            "errors": [],
-            "status": "pending",
-        })
+        result = graph.invoke(
+            {
+                "query": "",
+                "investigation_id": "",
+                "retrieved_chunks": [],
+                "answer": "",
+                "citations": [],
+                "rephrased_query": "",
+                "errors": [],
+                "status": "pending",
+            }
+        )
 
         assert result["status"] == "failed"
         assert len(result["errors"]) > 0
@@ -356,9 +353,7 @@ class TestEmbeddingService:
         svc = MockEmbeddingService()
         loop = asyncio.new_event_loop()
         try:
-            embeddings = loop.run_until_complete(
-                svc.generate_embeddings([])
-            )
+            embeddings = loop.run_until_complete(svc.generate_embeddings([]))
         finally:
             loop.close()
 
@@ -438,7 +433,8 @@ class TestChunkingService:
         assert len(chunks) >= 1
         # At least one chunk should have section_header metadata
         headers = [
-            c.metadata.get("section_header") for c in chunks
+            c.metadata.get("section_header")
+            for c in chunks
             if c.metadata.get("section_header")
         ]
         assert len(headers) > 0
@@ -498,10 +494,12 @@ class TestHybridSearch:
             search_knowledge_base,
         )
 
-        result = search_knowledge_base.invoke({
-            "query": "APT29 threat",
-            "top_k": 3,
-        })
+        result = search_knowledge_base.invoke(
+            {
+                "query": "APT29 threat",
+                "top_k": 3,
+            }
+        )
 
         assert "results" in result
         assert "total_results" in result
@@ -514,10 +512,12 @@ class TestHybridSearch:
             search_knowledge_base,
         )
 
-        result = search_knowledge_base.invoke({
-            "query": "",
-            "top_k": 5,
-        })
+        result = search_knowledge_base.invoke(
+            {
+                "query": "",
+                "top_k": 5,
+            }
+        )
 
         assert result["total_results"] == 0
         assert "error" in result
@@ -761,9 +761,7 @@ class TestDBModels:
             / "versions"
             / "0004_knowledge_base.py"
         )
-        assert migration_path.exists(), (
-            f"Migration not found at {migration_path}"
-        )
+        assert migration_path.exists(), f"Migration not found at {migration_path}"
 
 
 # ── UAT-CONFIG: Configuration settings ───────────────────────

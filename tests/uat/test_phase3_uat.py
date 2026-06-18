@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
-import pytest
 import yaml
 
 
@@ -124,9 +122,11 @@ class TestSummarizer:
             summarize_multiple,
         )
 
-        result = summarize_multiple.invoke({
-            "investigation_ids": "inv_mock_001,inv_mock_002",
-        })
+        result = summarize_multiple.invoke(
+            {
+                "investigation_ids": "inv_mock_001,inv_mock_002",
+            }
+        )
         assert result["status"] == "success"
         assert result["investigation_count"] == 2
         assert result["aggregated_ioc_count"] > 0
@@ -142,10 +142,12 @@ class TestSummarizer:
         )
 
         summary = summarize_investigation.invoke({"investigation_id": "inv_mock_001"})
-        result = format_agency_report.invoke({
-            "summary_json": json.dumps(summary),
-            "format": "cisa",
-        })
+        result = format_agency_report.invoke(
+            {
+                "summary_json": json.dumps(summary),
+                "format": "cisa",
+            }
+        )
         assert result["status"] == "success"
         assert result["format"] == "cisa"
         sections = result["sections"]
@@ -160,10 +162,12 @@ class TestSummarizer:
         )
 
         summary = summarize_investigation.invoke({"investigation_id": "inv_mock_001"})
-        result = format_agency_report.invoke({
-            "summary_json": json.dumps(summary),
-            "format": "fbi_ic3",
-        })
+        result = format_agency_report.invoke(
+            {
+                "summary_json": json.dumps(summary),
+                "format": "fbi_ic3",
+            }
+        )
         assert result["status"] == "success"
         assert result["format"] == "fbi_ic3"
         sections = result["sections"]
@@ -178,10 +182,12 @@ class TestSummarizer:
         )
 
         summary = summarize_investigation.invoke({"investigation_id": "inv_mock_001"})
-        result = format_agency_report.invoke({
-            "summary_json": json.dumps(summary),
-            "format": "isac",
-        })
+        result = format_agency_report.invoke(
+            {
+                "summary_json": json.dumps(summary),
+                "format": "isac",
+            }
+        )
         assert result["status"] == "success"
         assert result["format"] == "isac"
 
@@ -191,10 +197,12 @@ class TestSummarizer:
             format_agency_report,
         )
 
-        result = format_agency_report.invoke({
-            "summary_json": "{}",
-            "format": "invalid_format",
-        })
+        result = format_agency_report.invoke(
+            {
+                "summary_json": "{}",
+                "format": "invalid_format",
+            }
+        )
         assert result["status"] == "failed"
 
 
@@ -265,10 +273,12 @@ class TestReportGenerator:
             generate_report,
         )
 
-        result = generate_report.invoke({
-            "investigation_id": "inv_mock_001",
-            "template": "incident_report",
-        })
+        result = generate_report.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "template": "incident_report",
+            }
+        )
         assert result["status"] == "success"
         sections = result["sections"]
         assert "executive_summary" in sections
@@ -283,10 +293,12 @@ class TestReportGenerator:
             generate_report,
         )
 
-        result = generate_report.invoke({
-            "investigation_id": "inv_mock_001",
-            "template": "executive_briefing",
-        })
+        result = generate_report.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "template": "executive_briefing",
+            }
+        )
         assert result["status"] == "success"
         assert result["section_count"] >= 3
 
@@ -296,10 +308,12 @@ class TestReportGenerator:
             generate_section,
         )
 
-        result = generate_section.invoke({
-            "investigation_id": "inv_mock_001",
-            "section": "executive_summary",
-        })
+        result = generate_section.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "section": "executive_summary",
+            }
+        )
         assert result["status"] == "success"
         assert "content" in result
         assert len(result["content"]) > 20
@@ -310,10 +324,12 @@ class TestReportGenerator:
             generate_section,
         )
 
-        result = generate_section.invoke({
-            "investigation_id": "inv_mock_001",
-            "section": "nonexistent_section",
-        })
+        result = generate_section.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "section": "nonexistent_section",
+            }
+        )
         assert result["status"] == "failed"
 
 
@@ -428,10 +444,12 @@ class TestRemediationGenerator:
             generate_remediation,
         )
 
-        result = generate_remediation.invoke({
-            "investigation_id": "inv_mock_001",
-            "audience": "executive",
-        })
+        result = generate_remediation.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "audience": "executive",
+            }
+        )
         assert result["status"] == "success"
         assert result["audience"] == "executive"
         assert "business_impact" in result
@@ -447,17 +465,17 @@ class TestRemediationGenerator:
             generate_remediation,
         )
 
-        result = generate_remediation.invoke({
-            "investigation_id": "inv_mock_001",
-            "audience": "technical",
-        })
+        result = generate_remediation.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "audience": "technical",
+            }
+        )
         assert result["status"] == "success"
         assert result["audience"] == "technical"
         assert "actions" in result
         # Technical actions should have commands
-        has_commands = any(
-            "commands" in action for action in result["actions"]
-        )
+        has_commands = any("commands" in action for action in result["actions"])
         assert has_commands
 
     def test_compliance_remediation(self):
@@ -466,18 +484,17 @@ class TestRemediationGenerator:
             generate_remediation,
         )
 
-        result = generate_remediation.invoke({
-            "investigation_id": "inv_mock_001",
-            "audience": "compliance",
-        })
+        result = generate_remediation.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "audience": "compliance",
+            }
+        )
         assert result["status"] == "success"
         assert result["audience"] == "compliance"
         assert "regulatory_considerations" in result
         # Should mention GDPR or HIPAA
-        frameworks = [
-            r["framework"]
-            for r in result["regulatory_considerations"]
-        ]
+        frameworks = [r["framework"] for r in result["regulatory_considerations"]]
         assert "GDPR" in frameworks or "HIPAA" in frameworks
 
     def test_invalid_audience(self):
@@ -486,10 +503,12 @@ class TestRemediationGenerator:
             generate_remediation,
         )
 
-        result = generate_remediation.invoke({
-            "investigation_id": "inv_mock_001",
-            "audience": "invalid",
-        })
+        result = generate_remediation.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "audience": "invalid",
+            }
+        )
         assert result["status"] == "failed"
 
     def test_hardening_recommendations(self):
@@ -498,9 +517,11 @@ class TestRemediationGenerator:
             generate_hardening_recommendations,
         )
 
-        result = generate_hardening_recommendations.invoke({
-            "investigation_id": "inv_mock_001",
-        })
+        result = generate_hardening_recommendations.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+            }
+        )
         assert result["status"] == "success"
         assert result["recommendation_count"] > 0
         assert len(result["nist_csf_functions_covered"]) > 0
@@ -520,10 +541,12 @@ class TestDetectionContent:
             generate_detection_content,
         )
 
-        result = generate_detection_content.invoke({
-            "investigation_id": "inv_mock_001",
-            "platform": "splunk",
-        })
+        result = generate_detection_content.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "platform": "splunk",
+            }
+        )
         assert result["status"] == "success"
         assert result["platform"] == "splunk"
         assert result["rule_count"] > 0
@@ -537,10 +560,12 @@ class TestDetectionContent:
             generate_detection_content,
         )
 
-        result = generate_detection_content.invoke({
-            "investigation_id": "inv_mock_001",
-            "platform": "elastic",
-        })
+        result = generate_detection_content.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "platform": "elastic",
+            }
+        )
         assert result["status"] == "success"
         assert result["platform"] == "elastic"
         assert result["rule_count"] > 0
@@ -553,10 +578,12 @@ class TestDetectionContent:
             generate_detection_content,
         )
 
-        result = generate_detection_content.invoke({
-            "investigation_id": "inv_mock_001",
-            "platform": "sentinel",
-        })
+        result = generate_detection_content.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "platform": "sentinel",
+            }
+        )
         assert result["status"] == "success"
         assert result["platform"] == "sentinel"
         assert result["rule_count"] > 0
@@ -569,10 +596,12 @@ class TestDetectionContent:
             generate_detection_content,
         )
 
-        result = generate_detection_content.invoke({
-            "investigation_id": "inv_mock_001",
-            "platform": "invalid_platform",
-        })
+        result = generate_detection_content.invoke(
+            {
+                "investigation_id": "inv_mock_001",
+                "platform": "invalid_platform",
+            }
+        )
         assert result["status"] == "failed"
 
 
@@ -591,9 +620,17 @@ class TestReportsAPI:
 
     def test_reports_router_in_v1(self):
         """Reports router is included in the v1 API router."""
+        from fastapi import FastAPI
+
         from btagent_backend.api.v1.router import api_v1_router
 
-        route_paths = [r.path for r in api_v1_router.routes]
+        # FastAPI >=0.137 keeps sub-router routes inside _IncludedRouter
+        # entries instead of flattening them into ``.routes``; resolve the
+        # full path set via the OpenAPI schema, which walks every endpoint
+        # regardless of the internal route representation.
+        app = FastAPI()
+        app.include_router(api_v1_router)
+        route_paths = list(app.openapi()["paths"].keys())
         # FastAPI includes the prefix in route paths
         has_reports = any("/reports" in p for p in route_paths)
         assert has_reports, f"No /reports routes in: {route_paths}"
@@ -603,64 +640,54 @@ class TestReportsAPI:
         from btagent_backend.api.v1.reports import router
 
         paths_and_methods = [
-            (r.path, list(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, list(r.methods)) for r in router.routes if hasattr(r, "methods")
         ]
-        assert any(
-            "/generate" in p and "POST" in m
-            for p, m in paths_and_methods
-        ), f"POST /generate not found in: {paths_and_methods}"
+        assert any("/generate" in p and "POST" in m for p, m in paths_and_methods), (
+            f"POST /generate not found in: {paths_and_methods}"
+        )
 
     def test_templates_endpoint_exists(self):
         """GET /reports/templates endpoint exists."""
         from btagent_backend.api.v1.reports import router
 
         paths_and_methods = [
-            (r.path, list(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, list(r.methods)) for r in router.routes if hasattr(r, "methods")
         ]
-        assert any(
-            "/templates" in p and "GET" in m
-            for p, m in paths_and_methods
-        ), f"GET /templates not found in: {paths_and_methods}"
+        assert any("/templates" in p and "GET" in m for p, m in paths_and_methods), (
+            f"GET /templates not found in: {paths_and_methods}"
+        )
 
     def test_summarize_endpoint_exists(self):
         """POST /reports/summarize endpoint exists."""
         from btagent_backend.api.v1.reports import router
 
         paths_and_methods = [
-            (r.path, list(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, list(r.methods)) for r in router.routes if hasattr(r, "methods")
         ]
-        assert any(
-            "/summarize" in p and "POST" in m
-            for p, m in paths_and_methods
-        ), f"POST /summarize not found in: {paths_and_methods}"
+        assert any("/summarize" in p and "POST" in m for p, m in paths_and_methods), (
+            f"POST /summarize not found in: {paths_and_methods}"
+        )
 
     def test_remediation_endpoint_exists(self):
         """POST /reports/remediation endpoint exists."""
         from btagent_backend.api.v1.reports import router
 
         paths_and_methods = [
-            (r.path, list(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, list(r.methods)) for r in router.routes if hasattr(r, "methods")
         ]
-        assert any(
-            "/remediation" in p and "POST" in m
-            for p, m in paths_and_methods
-        ), f"POST /remediation not found in: {paths_and_methods}"
+        assert any("/remediation" in p and "POST" in m for p, m in paths_and_methods), (
+            f"POST /remediation not found in: {paths_and_methods}"
+        )
 
     def test_detection_content_endpoint_exists(self):
         """POST /reports/detection-content endpoint exists."""
         from btagent_backend.api.v1.reports import router
 
         paths_and_methods = [
-            (r.path, list(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, list(r.methods)) for r in router.routes if hasattr(r, "methods")
         ]
         assert any(
-            "/detection-content" in p and "POST" in m
-            for p, m in paths_and_methods
+            "/detection-content" in p and "POST" in m for p, m in paths_and_methods
         ), f"POST /detection-content not found in: {paths_and_methods}"
 
 
@@ -759,11 +786,13 @@ class TestOrchestratorWiring:
         """coordination_node runs without error."""
         from btagent_agents.orchestrator.nodes import coordination_node
 
-        result = coordination_node({
-            "investigation_id": "inv_mock_001",
-            "messages": [],
-            "timeline": [],
-        })
+        result = coordination_node(
+            {
+                "investigation_id": "inv_mock_001",
+                "messages": [],
+                "timeline": [],
+            }
+        )
         assert "messages" in result
         assert result["current_agent"] == "coordination"
 
@@ -771,11 +800,13 @@ class TestOrchestratorWiring:
         """mitigation_node runs without error."""
         from btagent_agents.orchestrator.nodes import mitigation_node
 
-        result = mitigation_node({
-            "investigation_id": "inv_mock_001",
-            "messages": [],
-            "timeline": [],
-        })
+        result = mitigation_node(
+            {
+                "investigation_id": "inv_mock_001",
+                "messages": [],
+                "timeline": [],
+            }
+        )
         assert "messages" in result
         assert result["current_agent"] == "mitigation"
 
@@ -849,9 +880,7 @@ class TestAllPlugins:
             plugin = load_plugin(name)
             assert plugin is not None
             tools = plugin.get_tools()
-            assert len(tools) >= 2, (
-                f"Plugin '{name}' has only {len(tools)} tool(s)"
-            )
+            assert len(tools) >= 2, f"Plugin '{name}' has only {len(tools)} tool(s)"
 
     def test_all_plugins_have_system_prompts(self):
         """All 7 plugins have non-empty system prompts."""
