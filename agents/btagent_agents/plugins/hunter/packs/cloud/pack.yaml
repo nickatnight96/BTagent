@@ -1,0 +1,114 @@
+# Cloud Control-Plane Hunt Pack — Phase 6 #117
+# Connector-independent slice: all rules are code-based detectors operating on
+# fixture data or future CloudTrail/GuardDuty MCP output.
+#
+# Live-connector rules (CloudTrail/GuardDuty MCP) are listed but DISABLED until
+# #100 connectors land.  The corresponding Sigma/code rules are developed here
+# so they are ready to enable when the connectors are available.
+#
+# Loaded by btagent_engine.hunting.load_builtin_pack("cloud_control_plane")
+id: hpack_01KTSKZRHHTVFPY55TZ2G47D5J
+name: Cloud Control-Plane Hunt Pack
+version: 1.0.0
+description: >
+  Detects cloud control-plane attack patterns: STS role-chaining, IAM persistence,
+  cross-account trust abuse, snapshot exfiltration, CloudTrail tampering, and
+  shadow agentic workloads.  Sigma rules target CloudTrail logs via Splunk/Sentinel;
+  code-based detectors run the graph-closure and correlation logic in
+  btagent_shared.hunt.cloud.
+
+domain: cloud
+
+rules:
+  # ── Sigma rules (CloudTrail log-source) ───────────────────────────────────
+  - file: rules/sts_assumerole_chain.yml
+    enabled: true
+    notes: >
+      Requires CloudTrail management-event logs in the connected SIEM.
+      Deferred until #100 CloudTrail connector lands.  Rule transpiles cleanly
+      to Splunk/Sentinel today; enable when connector is wired.
+
+  - file: rules/iam_access_key_created.yml
+    enabled: true
+    notes: >
+      Low false-positive rate in environments with strict IAM access-key policies.
+      Expect baseline of ~0 in well-managed orgs; tune on break-glass paths.
+
+  - file: rules/iam_inline_policy_attached.yml
+    enabled: true
+    notes: >
+      Inline policies bypass SCP evaluation paths and are a known persistence vector.
+      Investigate all hits; near-zero expected baseline.
+
+  - file: rules/iam_trust_policy_mutation.yml
+    enabled: true
+    notes: >
+      UpdateAssumeRolePolicy is almost never a routine operation.
+      Correlate with the principal performing the change (should be IaC/pipeline,
+      not a human console session).
+
+  - file: rules/cross_account_assumerole.yml
+    enabled: true
+    notes: >
+      Cross-account AssumeRole from unrecognised external account.
+      Tune trusted_account_ids via pack configuration after live wiring.
+
+  - file: rules/cloudtrail_stoplog.yml
+    enabled: true
+    notes: >
+      StopLogging / DeleteTrail — near-zero expected baseline in any org.
+      Correlated-auth version runs in the code-based detector (D5).
+
+  - file: rules/cloudtrail_log_tamper_correlation.yml
+    enabled: true
+    notes: >
+      Composite rule: StopLogging within 1h of ConsoleLogin without MFA or
+      unauthenticated AssumeRole.  Code-based equivalent in cloud.detect_cloudtrail_tamper.
+
+  - file: rules/snapshot_external_share.yml
+    enabled: true
+    notes: >
+      ModifySnapshotAttribute / ModifyImageAttribute sharing to external account.
+      Exfiltration vector — high severity by default.
+
+  - file: rules/ami_public_share.yml
+    enabled: true
+    notes: >
+      LaunchPermission set to 'all' — AMI made public.  Critical severity.
+
+  - file: rules/guardduty_iam_anomaly.yml
+    enabled: false
+    notes: >
+      DEFERRED — requires GuardDuty finding stream via #100 connector.
+      Rule structure ready; enable when GuardDuty MCP server lands.
+
+  - file: rules/guardduty_privilege_escalation.yml
+    enabled: false
+    notes: >
+      DEFERRED — requires GuardDuty finding stream via #100 connector.
+
+  # ── Code-based detectors (graph/behavioral — not expressible in Sigma) ────
+  - file: detectors/sts_trust_graph_closure.py
+    type: code
+    enabled: true
+    notes: >
+      Transitive STS assume-role closure — finds multi-hop attack paths in the
+      IAM trust graph.  Implemented in btagent_shared.hunt.cloud.detect_sts_chaining.
+      Requires IAM role inventory (fixture-based or future IAM connector).
+
+  - file: detectors/shadow_workload_inventory.py
+    type: code
+    enabled: true
+    notes: >
+      Shadow agentic-workload discovery — classifies Bedrock AgentCore / Vertex /
+      Cloud Run MCP / GKE inference workloads as managed vs. shadow.
+      Implemented in btagent_shared.hunt.cloud.detect_shadow_workloads.
+      Governance workflow integration is deferred.
+
+  - file: detectors/workload_identity_privilege.py
+    type: code
+    enabled: true
+    notes: >
+      Overprivileged agentic identity check — cross-references workload's linked
+      IAM identity for broad/wildcard permissions.
+      Implemented in btagent_shared.hunt.cloud.detect_overprivileged_workload_identity.

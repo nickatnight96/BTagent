@@ -1,0 +1,40 @@
+title: STS AssumeRole Chain — Multi-hop Role Traversal
+id: c0d12301-1a1b-4c8d-a8f7-000000000001
+status: test
+description: >
+  Detects a principal assuming a role that itself assumed another role within a
+  short time window, indicating a possible multi-hop STS chain (attack path
+  enumeration or exploitation of transitive trust).  Correlate with the graph-closure
+  detector for authoritative path analysis.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: AssumeRole
+    userIdentity.type: AssumedRole
+  filter_automated:
+    # Exclude known pipeline/automation ARN patterns — tune per environment.
+    userIdentity.arn|contains:
+      - ':assumed-role/AWSServiceRole'
+      - ':assumed-role/OrganizationAccountAccessRole'
+  condition: selection and not filter_automated
+falsepositives:
+  - Cross-account automation pipelines and deployment tooling
+  - AWS service-linked role assumption (already filtered above)
+level: medium
+tags:
+  - attack.lateral-movement
+  - attack.t1078.004
+  - attack.t1550.001
+  - cloud.control-plane
+notes: >
+  Requires CloudTrail management-event logs.  For authoritative multi-hop path
+  analysis use the code-based sts_trust_graph_closure detector which operates on
+  the full IAM inventory without relying on event ordering.

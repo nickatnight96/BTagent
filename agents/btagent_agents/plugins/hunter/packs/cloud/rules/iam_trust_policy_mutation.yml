@@ -1,0 +1,32 @@
+title: IAM Role Trust Policy Modified — Potential Privilege Escalation Back-door
+id: c0d12301-1a1b-4c8d-a8f7-000000000004
+status: test
+description: >
+  Detects UpdateAssumeRolePolicy events, which modify a role's trust relationship
+  document.  Attackers use this to add an external or compromised principal as a
+  trustee, establishing persistent access that survives password rotations and
+  MFA enforcement changes.
+references:
+  - https://attack.mitre.org/techniques/T1098/003/
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: UpdateAssumeRolePolicy
+  filter_known_automation:
+    userIdentity.arn|contains:
+      - ':assumed-role/TerraformDeployRole'
+      - ':assumed-role/CDKToolkit'
+      - ':assumed-role/PipelineRole'
+  condition: selection and not filter_known_automation
+falsepositives:
+  - IaC pipeline role-trust updates as part of infrastructure provisioning
+level: critical
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098.003
+  - cloud.control-plane

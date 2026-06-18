@@ -1,0 +1,41 @@
+title: CloudTrail Tamper Correlated with Prior Suspicious Authentication
+id: c0d12301-1a1b-4c8d-a8f7-000000000007
+status: test
+description: >
+  Composite detection: a CloudTrail tamper event (StopLogging/DeleteTrail) preceded
+  within 1 hour by a suspicious authentication event (ConsoleLogin without MFA, or
+  GetSessionToken without MFA).  This sequence strongly suggests an attacker is
+  disabling logging to cover their tracks after initial access.
+
+  NOTE: Most SIEMs cannot express temporal correlation natively in Sigma.  This rule
+  documents the intended detection; the authoritative implementation is the code-based
+  detector btagent_shared.hunt.cloud.detect_cloudtrail_tamper which runs the correlation
+  in Python over a time-windowed event buffer.
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+  - https://attack.mitre.org/techniques/T1078/004/
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_tamper:
+    eventName:
+      - StopLogging
+      - DeleteTrail
+  # Proxy condition for the correlation — SIEMs with temporal lookup support
+  # should join this against ConsoleLogin/GetSessionToken events in the lookback window.
+  condition: selection_tamper
+falsepositives:
+  - Trail deletion during legitimate account offboarding
+level: critical
+tags:
+  - attack.defense-evasion
+  - attack.t1562.008
+  - attack.t1078.004
+  - cloud.control-plane
+notes: >
+  The code-based detector in btagent_shared.hunt.cloud.detect_cloudtrail_tamper
+  provides the full temporal-correlation logic.  This Sigma rule serves as the
+  single-event trigger that routes to the code-based correlation step.

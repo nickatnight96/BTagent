@@ -1,0 +1,30 @@
+title: AMI Made Public — Critical Data Exfiltration Risk
+id: c0d12301-1a1b-4c8d-a8f7-000000000009
+status: test
+description: >
+  Detects ModifyImageAttribute setting launchPermission to 'all', making an AMI
+  publicly available.  Public AMIs may contain embedded secrets, credentials,
+  configuration files, or proprietary data.  This is a critical severity event
+  in any production environment.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: ModifyImageAttribute
+    requestParameters.launchPermission.add.items|contains:
+      - '"group":"all"'
+      - 'group: all'
+  condition: selection
+falsepositives:
+  - Intentional public AMI publishing (e.g. open-source community AMIs — should be
+    approved via change management before execution)
+level: critical
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - cloud.control-plane

@@ -1,0 +1,36 @@
+title: GuardDuty IAM Anomaly Finding (DEFERRED)
+id: c0d12301-1a1b-4c8d-a8f7-000000000010
+status: unsupported
+description: >
+  DEFERRED — blocked on #100 GuardDuty MCP connector.
+
+  Intended detection: consume GuardDuty findings of type
+  UnauthorizedAccess:IAMUser/* or Recon:IAMUser/* and emit them as
+  HuntFinding records with the cloud domain.
+
+  When the GuardDuty connector lands, this rule should be converted to a
+  code-based detector that normalises the GuardDuty severity mapping into
+  the btagent_shared.types.enums.Severity scale.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://docs.aws.amazon.com/guardduty/latest/ug/guardduty_finding-types-iam.html
+author: BTagent (#117)
+date: 2026-06-18
+logsource:
+  product: aws
+  service: guardduty
+detection:
+  selection:
+    type|startswith:
+      - 'UnauthorizedAccess:IAMUser'
+      - 'Recon:IAMUser'
+      - 'PrivilegeEscalation:IAMUser'
+  condition: selection
+falsepositives:
+  - Misconfigured permission boundaries
+level: high
+tags:
+  - attack.credential-access
+  - attack.t1078.004
+  - cloud.control-plane
+  - deferred
