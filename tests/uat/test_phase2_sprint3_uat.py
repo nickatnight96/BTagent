@@ -190,9 +190,17 @@ class TestPlaybookDB:
 
         columns = {c.name for c in PlaybookRow.__table__.columns}
         required = {
-            "id", "name", "version", "description", "yaml_content",
-            "trigger_type", "trigger_config", "created_by",
-            "created_at", "updated_at", "is_active",
+            "id",
+            "name",
+            "version",
+            "description",
+            "yaml_content",
+            "trigger_type",
+            "trigger_config",
+            "created_by",
+            "created_at",
+            "updated_at",
+            "is_active",
         }
         assert required.issubset(columns), f"Missing columns: {required - columns}"
 
@@ -202,9 +210,15 @@ class TestPlaybookDB:
 
         columns = {c.name for c in PlaybookExecutionRow.__table__.columns}
         required = {
-            "id", "playbook_id", "investigation_id", "status",
-            "trigger_data", "step_results", "started_at",
-            "completed_at", "error",
+            "id",
+            "playbook_id",
+            "investigation_id",
+            "status",
+            "trigger_data",
+            "step_results",
+            "started_at",
+            "completed_at",
+            "error",
         }
         assert required.issubset(columns), f"Missing columns: {required - columns}"
 
@@ -414,9 +428,17 @@ class TestPlaybookAPI:
 
     def test_router_mounted_in_v1(self):
         """Playbook router is mounted in the v1 API router."""
+        from fastapi import FastAPI
+
         from btagent_backend.api.v1.router import api_v1_router
 
-        route_paths = [r.path for r in api_v1_router.routes if hasattr(r, "path")]
+        # FastAPI >=0.137 keeps sub-router routes inside _IncludedRouter
+        # entries instead of flattening them into ``.routes``; resolve the
+        # full path set via the OpenAPI schema, which walks every endpoint
+        # regardless of the internal route representation.
+        app = FastAPI()
+        app.include_router(api_v1_router)
+        route_paths = list(app.openapi()["paths"].keys())
         playbook_paths = [p for p in route_paths if "playbook" in p]
         assert len(playbook_paths) > 0, "No playbook routes found in api_v1_router"
 
@@ -425,8 +447,7 @@ class TestPlaybookAPI:
         from btagent_backend.api.v1.playbooks import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/playbooks", ("GET",)) in routes
 
@@ -435,8 +456,7 @@ class TestPlaybookAPI:
         from btagent_backend.api.v1.playbooks import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/playbooks", ("POST",)) in routes
 
@@ -452,8 +472,7 @@ class TestPlaybookAPI:
         from btagent_backend.api.v1.playbooks import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/playbooks/{playbook_id}", ("PUT",)) in routes
 
@@ -462,8 +481,7 @@ class TestPlaybookAPI:
         from btagent_backend.api.v1.playbooks import router
 
         routes = {
-            (r.path, tuple(r.methods)) for r in router.routes
-            if hasattr(r, "methods")
+            (r.path, tuple(r.methods)) for r in router.routes if hasattr(r, "methods")
         }
         assert ("/playbooks/{playbook_id}", ("DELETE",)) in routes
 
@@ -679,9 +697,7 @@ class TestStepHandlers:
         )
         loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(
-                execute_action_step(step, {}, mock=True)
-            )
+            result = loop.run_until_complete(execute_action_step(step, {}, mock=True))
         finally:
             loop.close()
 
@@ -749,9 +765,7 @@ class TestStepHandlers:
         )
         loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(
-                execute_parallel_fork_step(step, {})
-            )
+            result = loop.run_until_complete(execute_parallel_fork_step(step, {}))
         finally:
             loop.close()
 
@@ -813,9 +827,9 @@ class TestPlaybookRBAC:
         """Incident commander can execute containment playbooks."""
         from btagent_backend.auth.rbac import has_permission
 
-        assert has_permission(
-            "incident_commander", "playbook:execute_containment"
-        ) is True
+        assert (
+            has_permission("incident_commander", "playbook:execute_containment") is True
+        )
 
     def test_all_playbook_permissions_in_registry(self):
         """All playbook permissions are in the PERMISSIONS dict."""
@@ -952,12 +966,7 @@ class TestKnowledgeFrontend:
 
     def test_knowledge_route_in_router(self):
         """Router includes /knowledge route."""
-        path = (
-            Path(__file__).resolve().parents[2]
-            / "frontend"
-            / "src"
-            / "router.tsx"
-        )
+        path = Path(__file__).resolve().parents[2] / "frontend" / "src" / "router.tsx"
         content = path.read_text()
         assert "knowledge" in content.lower(), "Knowledge route not found in router"
 
