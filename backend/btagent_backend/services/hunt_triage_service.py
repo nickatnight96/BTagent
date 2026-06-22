@@ -390,6 +390,7 @@ async def list_clusters(
     org_id: str,
     include_suppressed: bool = False,
     state: str | None = None,
+    domain: str | None = None,
     page: int = 1,
     page_size: int = 50,
 ) -> tuple[list[HuntFindingClusterRow], list[HuntFindingRow], int, int]:
@@ -418,6 +419,11 @@ async def list_clusters(
     )
     if state_filter is not None:
         count_q = count_q.where(HuntFindingClusterRow.state.in_(state_filter))
+    # ``domain`` (Codex #216/#217 P1): filter by HuntDomain on the cluster
+    # row server-side, so the per-domain hunt views get correct totals + the
+    # right slice on every page instead of paging through cross-domain noise.
+    if domain is not None:
+        count_q = count_q.where(HuntFindingClusterRow.domain == domain)
     total_clusters = (await db.execute(count_q)).scalar_one() or 0
 
     cluster_q = (
@@ -427,6 +433,8 @@ async def list_clusters(
     )
     if state_filter is not None:
         cluster_q = cluster_q.where(HuntFindingClusterRow.state.in_(state_filter))
+    if domain is not None:
+        cluster_q = cluster_q.where(HuntFindingClusterRow.domain == domain)
     cluster_rows = (await db.execute(cluster_q.offset(offset).limit(page_size))).scalars().all()
 
     # Whether suppressed *member findings* are returned. The ``suppressed`` /

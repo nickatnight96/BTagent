@@ -72,11 +72,15 @@ export function buildTimeline(findings: HuntFinding[]): CloudTimelineEntry[] {
 }
 
 /**
- * Build IAM role relationships from cloud findings that carry assume_chain
- * or trust_policy evidence.
+ * Build IAM role relationships from cloud findings that carry an STS-chain
+ * trace in evidence.
  *
- * For each finding with an ``assume_chain`` of [A, B, C, ...], we emit
- * relationships A→B, B→C, etc. (each step in the chain).
+ * The Phase-A ``detect_sts_chaining`` detector emits the trace under
+ * ``evidence.path`` (with ``evidence.detection === "sts_chaining"``). An older
+ * ``assume_chain`` key is accepted as a fallback for any tests / replays still
+ * shaped to the pre-#216 contract.
+ *
+ * For each chain ``[A, B, C, ...]`` we emit A→B, B→C, etc. (each step).
  * Duplicate relationships (same source_role + trustee pair) are deduplicated,
  * keeping the first occurrence.
  */
@@ -86,7 +90,9 @@ export function buildIAMLinks(findings: HuntFinding[]): IAMRelationship[] {
 
   for (const f of findings) {
     const ev = extractEvidence(f);
-    const chain = ev.assume_chain;
+    // Prefer the real emitter's key (``evidence.path``); fall back to the
+    // legacy ``assume_chain`` for any caller still shaped that way.
+    const chain = Array.isArray(ev.path) ? ev.path : ev.assume_chain;
     if (!Array.isArray(chain) || chain.length < 2) continue;
 
     for (let i = 0; i < chain.length - 1; i++) {
@@ -132,9 +138,11 @@ function detectCrossAccount(a: string, b: string): boolean {
 /**
  * Build the agentic-workload inventory matrix.
  *
- * Each cloud finding may carry ``evidence.provider`` and
- * ``evidence.workload_kind``.  Shadow status comes from
- * ``evidence.shadow_workload === true``.
+ * Each cloud finding may carry ``evidence.provider`` and a workload kind
+ * under ``evidence.kind`` (the real ``detect_shadow_workloads`` /
+ * ``detect_overprivileged_workload_identity`` emitters), with a legacy
+ * ``evidence.workload_kind`` accepted as a fallback. Shadow status comes
+ * from ``evidence.shadow_workload === true``.
  *
  * Returns one cell per (provider × workload_kind) pair in the ordered matrix.
  * Cells with zero count for both managed and shadow are still emitted so the
@@ -159,7 +167,9 @@ export function buildWorkloadMatrix(findings: HuntFinding[]): WorkloadMatrixCell
   for (const f of findings) {
     const ev = extractEvidence(f);
     const provider = ev.provider;
-    const kind = ev.workload_kind;
+    // Prefer the real emitter's key (``evidence.kind``); fall back to the
+    // legacy ``workload_kind``.
+    const kind = ev.kind ?? ev.workload_kind;
     if (!provider || !kind) continue;
 
     const key = `${provider}|${kind}`;
@@ -271,14 +281,13 @@ export const useCloudStore = create<CloudState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const resp = await listCloudFindings({ state: "active", page, page_size: pageSize });
-      // Client-side domain filter as a fallback in case the backend does not
-      // yet support the domain query parameter.
-      const cloudFindings = (resp.findings ?? []).filter(
-        (f) => f.domain === "cloud",
-      );
+      // Codex #216 P1: the backend's ``list_findings`` now honours the
+      // ``domain=cloud`` query param the API client sends — server-side filter
+      // before pagination — so the page already contains only cloud findings
+      // and ``total`` is the real cloud total. No client-side re-filter.
       set({
-        findings: cloudFindings,
-        total: cloudFindings.length,
+        findings: resp.findings ?? [],
+        total: resp.total_findings ?? (resp.findings ?? []).length,
         page,
         isLoading: false,
       });

@@ -94,17 +94,27 @@ export interface CloudFindingEvidence {
   /** Target resource ARN/ID. */
   target_arn?: string;
   /**
-   * Assume-chain: list of ARN/ID strings representing a transitive
-   * assume-role path, e.g. [roleA, roleB, roleC].
+   * STS assume-role chain trace from the Phase-A ``detect_sts_chaining``
+   * detector. Real emitter writes ``path`` (with ``detection==="sts_chaining"``);
+   * ``assume_chain`` is accepted as a legacy alias.
    */
+  path?: string[];
+  /** Legacy alias for ``path`` — older fixtures may still use this key. */
   assume_chain?: string[];
+  /** Detection-type tag from the Phase-A emitters (e.g. ``"sts_chaining"``). */
+  detection?: string;
   /** Raw trust policy extract (AWS AssumeRolePolicyDocument). */
   trust_policy?: Record<string, unknown>;
   /** Risk score in [0, 1] (only for shadow-workload findings). */
   risk_score?: number;
   /** True when this finding relates to a shadow (unmanaged) agentic workload. */
   shadow_workload?: boolean;
-  /** AgenticWorkloadKind when known. */
+  /**
+   * Workload kind from the real ``detect_shadow_workloads`` /
+   * ``detect_overprivileged_workload_identity`` emitters (``evidence.kind``).
+   * ``workload_kind`` is accepted as a legacy alias.
+   */
+  kind?: AgenticWorkloadKind;
   workload_kind?: AgenticWorkloadKind;
   /** MITRE technique family used for grouping in the tamper tab. */
   technique_family?: string;

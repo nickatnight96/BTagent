@@ -345,25 +345,27 @@ beforeEach(() => {
 });
 
 describe("useCloudStore.fetchFindings", () => {
-  it("populates findings after client-side domain filter", async () => {
-    const cloudFindingItem = cloudFinding({ id: "cloud-1" });
-    const nonCloudFinding: HuntFinding = {
-      ...cloudFinding({ id: "other-1" }),
-      domain: "behavioral",
-    };
+  it("trusts the server-side domain=cloud filter and uses total_findings", async () => {
+    // Codex #216 P1: the backend's list_findings now honours ``domain=cloud``
+    // server-side, so the store passes whatever it gets straight through —
+    // no client-side re-filter — and uses ``total_findings`` from the
+    // response so pagination reflects the real cloud total (not the current
+    // page length, which was the pre-fix bug).
+    const cloudA = cloudFinding({ id: "cloud-1" });
+    const cloudB = cloudFinding({ id: "cloud-2" });
     mockListCloudFindings.mockResolvedValueOnce({
       clusters: [],
-      findings: [cloudFindingItem, nonCloudFinding],
+      findings: [cloudA, cloudB],
       total_clusters: 0,
-      total_findings: 2,
+      total_findings: 142, // server-side total across all pages
     });
 
     await useCloudStore.getState().fetchFindings();
 
-    const { findings, isLoading, error } = useCloudStore.getState();
-    // Client-side filter keeps only domain=cloud.
-    expect(findings).toHaveLength(1);
-    expect(findings[0]!.id).toBe("cloud-1");
+    const { findings, total, isLoading, error } = useCloudStore.getState();
+    expect(findings).toHaveLength(2);
+    expect(findings.map((f) => f.id)).toEqual(["cloud-1", "cloud-2"]);
+    expect(total).toBe(142);
     expect(isLoading).toBe(false);
     expect(error).toBeNull();
   });
@@ -430,5 +432,54 @@ describe("useCloudStore.setTab", () => {
   it("updates activeTab", () => {
     useCloudStore.getState().setTab("iam");
     expect(useCloudStore.getState().activeTab).toBe("iam");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Codex #216 regression — read REAL detector evidence keys
+// ---------------------------------------------------------------------------
+
+describe("Codex #216 regression — real-detector evidence keys", () => {
+  it("buildIAMLinks reads evidence.path (the real detect_sts_chaining key)", () => {
+    // Real Phase-A emitter writes ``evidence.path`` + ``evidence.detection`` ===
+    // "sts_chaining" (not the legacy ``assume_chain`` we originally read).
+    const f = cloudFinding({
+      id: "f-codex-216-sts",
+      evidence: {
+        detection: "sts_chaining",
+        path: [
+          "arn:aws:iam::111111111111:role/A",
+          "arn:aws:iam::222222222222:role/B",
+          "arn:aws:iam::222222222222:role/C",
+        ],
+      },
+    });
+    const links = buildIAMLinks([f]);
+    expect(links).toHaveLength(2);
+    expect(links[0]!.source_role).toBe("arn:aws:iam::111111111111:role/A");
+    expect(links[0]!.trustee).toBe("arn:aws:iam::222222222222:role/B");
+    expect(links[0]!.is_cross_account).toBe(true); // 111… → 222…
+    expect(links[1]!.source_role).toBe("arn:aws:iam::222222222222:role/B");
+    expect(links[1]!.trustee).toBe("arn:aws:iam::222222222222:role/C");
+  });
+
+  it("buildWorkloadMatrix reads evidence.kind (the real shadow-workload key)", () => {
+    // Real ``detect_shadow_workloads`` emits ``evidence.kind`` + ``provider`` +
+    // ``shadow_workload: True`` — not the legacy ``workload_kind``.
+    const f = cloudFinding({
+      id: "f-codex-216-shadow",
+      evidence: {
+        provider: "aws",
+        kind: "bedrock_agentcore",
+        shadow_workload: true,
+        detection: "shadow_workload",
+      },
+    });
+    const cells = buildWorkloadMatrix([f]);
+    const cell = cells.find((c) => c.provider === "aws" && c.kind === "bedrock_agentcore");
+    expect(cell).toBeDefined();
+    expect(cell!.shadow_count).toBe(1);
+    expect(cell!.managed_count).toBe(0);
   });
 });

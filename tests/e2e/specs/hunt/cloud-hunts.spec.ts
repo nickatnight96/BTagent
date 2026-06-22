@@ -145,7 +145,7 @@ test.describe("Cloud Hunts page", () => {
   // IAM graph tab
   // --------------------------------------------------------------------------
 
-  test("IAM graph tab shows source-role cards for findings with assume_chain", async ({
+  test("IAM graph tab shows source-role cards for findings with path", async ({
     seniorPage,
   }) => {
     const now = Date.now();
@@ -158,7 +158,7 @@ test.describe("Cloud Hunts page", () => {
       evidence: {
         provider: "aws",
         account_id: accountId,
-        assume_chain: [
+        path: [
           `arn:aws:iam::${accountId}:role/SourceRole-${runTag}`,
           `arn:aws:iam::${accountId}:role/MiddleRole-${runTag}`,
           `arn:aws:iam::${accountId}:role/TargetRole-${runTag}`,
@@ -344,10 +344,10 @@ test.describe("Cloud Hunts page", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Empty state — IAM tab with no assume_chain data
+  // Empty state — IAM tab with no path data
   // --------------------------------------------------------------------------
 
-  test("IAM tab shows empty state when no findings carry assume_chain", async ({
+  test("IAM tab shows empty state when no findings carry path", async ({
     seniorPage,
   }) => {
     await seniorPage.goto("/cloud-hunts");
