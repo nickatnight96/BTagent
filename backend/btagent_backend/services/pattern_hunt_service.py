@@ -455,27 +455,51 @@ async def set_proposal_state(
     *,
     proposal_id: str,
     state: ProposalState,
+    triage_rationale: str = "",
 ) -> PatternHuntProposalRow:
     """Transition a proposal's lifecycle state.
 
     Dismiss/snooze flips it into a :data:`SUPPRESSING_STATES` value, which
     :func:`_suppressed_cluster_ids` reads on the next scan so the same cluster
     shape doesn't keep resurfacing. Accept marks the hunt as launched.
+
+    Codex #218: when an analyst provides a ``triage_rationale`` we append it to
+    the proposal's ``rationale`` (preceded by a delimited marker so the
+    generated "why this surfaced" text remains intact). A dedicated
+    ``triage_rationale`` column would be cleaner (Phase C TODO) but a
+    migration is out of scope for this fix.
     """
     row = await db.get(PatternHuntProposalRow, proposal_id)
     if row is None:
         raise ValueError(f"Pattern-hunt proposal not found: {proposal_id}")
     row.state = state.value
+    if triage_rationale.strip():
+        marker = f"\n\n--- Analyst rationale ({state.value}) ---\n"
+        row.rationale = (row.rationale or "") + marker + triage_rationale.strip()
     row.updated_at = _utcnow()
     await db.flush()
     return row
 
 
-async def dismiss_proposal(db: AsyncSession, *, proposal_id: str) -> PatternHuntProposalRow:
+async def dismiss_proposal(
+    db: AsyncSession, *, proposal_id: str, triage_rationale: str = ""
+) -> PatternHuntProposalRow:
     """Mark a proposal dismissed — down-weights similar future surfacing."""
-    return await set_proposal_state(db, proposal_id=proposal_id, state=ProposalState.DISMISSED)
+    return await set_proposal_state(
+        db,
+        proposal_id=proposal_id,
+        state=ProposalState.DISMISSED,
+        triage_rationale=triage_rationale,
+    )
 
 
-async def snooze_proposal(db: AsyncSession, *, proposal_id: str) -> PatternHuntProposalRow:
+async def snooze_proposal(
+    db: AsyncSession, *, proposal_id: str, triage_rationale: str = ""
+) -> PatternHuntProposalRow:
     """Snooze a proposal — reversibly down-weights similar future surfacing."""
-    return await set_proposal_state(db, proposal_id=proposal_id, state=ProposalState.SNOOZED)
+    return await set_proposal_state(
+        db,
+        proposal_id=proposal_id,
+        state=ProposalState.SNOOZED,
+        triage_rationale=triage_rationale,
+    )
