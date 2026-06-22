@@ -108,6 +108,11 @@ const PatternInsightsPage = lazy(() =>
     default: m.PatternInsightsPage,
   })),
 );
+const IdentityHuntsPage = lazy(() =>
+  import("@/components/identity/IdentityHuntsPage").then((m) => ({
+    default: m.IdentityHuntsPage,
+  })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -246,6 +251,10 @@ export const router = createBrowserRouter([
       {
         path: "pattern-insights",
         element: lazyRoute(PatternInsightsPage),
+      },
+      {
+        path: "identity-hunts",
+        element: lazyRoute(IdentityHuntsPage),
       },
     ],
   },
