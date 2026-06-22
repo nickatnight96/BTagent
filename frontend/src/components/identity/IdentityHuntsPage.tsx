@@ -54,7 +54,12 @@ import { UserRole } from "@/types/config";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
-import type { CreateSuppressionRequest } from "@/types/hunt";
+import type {
+  CreateSuppressionRequest,
+  HuntDomain,
+  HuntSource,
+  SuppressionMatch,
+} from "@/types/hunt";
 import type {
   PrincipalSummary,
   IdentityTimelineEntry,
@@ -648,13 +653,49 @@ function GrantTable({ rows }: { rows: GrantTableRow[] }) {
 // Suppress modal (lightweight inline, mirrors HuntTriagePage)
 // --------------------------------------------------------------------------- //
 
+/**
+ * Derive a scoped ``SuppressionMatch`` from the target finding's identifying
+ * shape so the request can pass the backend's over-broad guard.
+ *
+ * Codex #217 P2 fix: previously we sent an all-empty match (no source/
+ * domain/techniques/entities/observables), which the
+ * ``triage.is_overbroad`` guard rejects unconditionally — so analysts and
+ * senior analysts couldn't suppress identity findings at all (the
+ * incident-commander acknowledge-overbroad path isn't exposed on this UI).
+ * The hunt-triage inbox derives its match the same way (domain + a single
+ * shared technique narrows it well below the over-broad threshold).
+ */
+function buildScopedMatch(finding: {
+  source: HuntSource;
+  domain: HuntDomain;
+  technique_ids?: readonly string[];
+}): SuppressionMatch {
+  // Use a SINGLE technique (the first the finding declares) so the rule is
+  // scoped to "this kind of identity-domain detection" without spanning many
+  // techniques — the latter would re-trip the diversity cap in is_overbroad.
+  const technique_ids =
+    finding.technique_ids && finding.technique_ids.length > 0
+      ? [finding.technique_ids[0]!]
+      : [];
+  return {
+    source: finding.source,
+    domain: finding.domain,
+    technique_ids,
+    entity_values: [],
+    observable_values: [],
+  };
+}
+
+
 function SuppressModal({
-  findingId,
+  finding,
   isMutating,
   onConfirm,
   onCancel,
 }: {
-  findingId: string;
+  /** Codex #217 P2: take the full finding so the modal can derive a scoped
+   * match that passes the backend over-broad guard. */
+  finding: { id: string; source: HuntSource; domain: HuntDomain; technique_ids?: readonly string[] };
   isMutating: boolean;
   onConfirm: (findingId: string, body: CreateSuppressionRequest) => Promise<void>;
   onCancel: () => void;
@@ -670,10 +711,13 @@ function SuppressModal({
     }
     setLocalError(null);
     try {
-      await onConfirm(findingId, {
+      await onConfirm(finding.id, {
         name: name.trim(),
         reason: reason.trim(),
-        match: { technique_ids: [], entity_values: [], observable_values: [] },
+        // Scoped match (Codex #217 P2): all-empty would always 409 as
+        // over-broad. ``buildScopedMatch`` narrows to this finding's
+        // source/domain + one technique, well inside the diversity gate.
+        match: buildScopedMatch(finding),
       });
     } catch {
       // error surfaces in parent store
@@ -1044,14 +1088,21 @@ export function IdentityHuntsPage() {
       </div>
 
       {/* ---- Suppress modal ---- */}
-      {suppressTarget && (
-        <SuppressModal
-          findingId={suppressTarget}
-          isMutating={isMutating}
-          onConfirm={handleSuppress}
-          onCancel={() => setSuppressTarget(null)}
-        />
-      )}
+      {(() => {
+        if (!suppressTarget) return null;
+        // Codex #217 P2: look up the full finding so the modal can derive a
+        // scoped suppression match (otherwise the all-empty default 409s).
+        const targetFinding = findings.find((f) => f.id === suppressTarget);
+        if (!targetFinding) return null;
+        return (
+          <SuppressModal
+            finding={targetFinding}
+            isMutating={isMutating}
+            onConfirm={handleSuppress}
+            onCancel={() => setSuppressTarget(null)}
+          />
+        );
+      })()}
 
       {/* ---- Promote modal ---- */}
       {promoteTargets && (

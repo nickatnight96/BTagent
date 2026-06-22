@@ -158,25 +158,26 @@ export function buildGrantTableRows(findings: HuntFinding[]): GrantTableRow[] {
 
     const key = `${principal_id}::${app_id}`;
     const existing = byKey.get(key);
+    // Codex #217 P2: when a later finding wins on severity, REBUILD the row
+    // from that winning finding's evidence — keeping a stale display_name /
+    // scopes / consent_type while only updating severity + finding_id linked
+    // the high-severity card to the right finding but showed grant details
+    // from the earlier, lower-severity one, misleading triage.
+    const candidate: GrantTableRow = {
+      principal_id,
+      app_id,
+      app_display_name: (ev?.app_display_name as string | undefined) ?? app_id,
+      scopes: Array.isArray(ev?.scopes) ? (ev.scopes as string[]) : [],
+      consent_type: (ev?.consent_type as GrantTableRow["consent_type"] | undefined) ?? "unknown",
+      finding_id: f.id,
+      severity: f.severity,
+    };
     if (existing) {
-      // Keep the entry with the highest severity.
       if ((SEVERITY_RANK[f.severity] ?? 0) > (SEVERITY_RANK[existing.severity] ?? 0)) {
-        byKey.set(key, {
-          ...existing,
-          severity: f.severity,
-          finding_id: f.id,
-        });
+        byKey.set(key, candidate);
       }
     } else {
-      byKey.set(key, {
-        principal_id,
-        app_id,
-        app_display_name: (ev?.app_display_name as string | undefined) ?? app_id,
-        scopes: Array.isArray(ev?.scopes) ? (ev.scopes as string[]) : [],
-        consent_type: (ev?.consent_type as GrantTableRow["consent_type"] | undefined) ?? "unknown",
-        finding_id: f.id,
-        severity: f.severity,
-      });
+      byKey.set(key, candidate);
     }
   }
 
