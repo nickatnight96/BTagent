@@ -1,0 +1,49 @@
+title: Agent Identity AssumeRole into Privileged Role
+id: a1d12101-1a1b-4c8d-a8f7-000000000003
+status: test
+description: >
+  Detects an agentic-platform principal (Bedrock AgentCore runtime, Vertex Agent
+  Engine SA, Cloud Run MCP SA) issuing sts:AssumeRole to a role whose name
+  contains an admin / root / billing marker.  An agent should not need to assume
+  privileged roles at runtime; this pattern is a strong signal that the agent
+  identity has been hijacked (via prompt injection or credential replay) and is
+  being abused as a Valid-Accounts pivot.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://atlas.mitre.org/techniques/AML.T0051  # LLM Prompt Injection
+author: BTagent (#121)
+date: 2026-06-22
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: AssumeRole
+    userIdentity.arn|contains:
+      - ':role/BedrockAgentRole-'
+      - ':role/AgentCoreRuntime-'
+      - ':role/VertexAgent-'
+  selection_privileged_target:
+    requestParameters.roleArn|contains:
+      - ':role/AdminRole'
+      - ':role/RootRole'
+      - ':role/BillingAdmin'
+      - ':role/OrganizationAccountAccessRole'
+  condition: selection and selection_privileged_target
+falsepositives:
+  - Pre-approved agent runbook that legitimately requires admin assumption
+    (should be a separate sanctioned-runbook role pattern, never the generic
+    agent role)
+level: critical
+tags:
+  - attack.privilege-escalation
+  - attack.t1078.004
+  - attack.t1550.001
+  - agentic.identity-abuse
+notes: >
+  The authoritative code-based detector
+  btagent_shared.hunt.agentic.detect_agent_identity_abuse compares the actual
+  observed role against the AgentIdentity.declared_role registration; this
+  Sigma rule provides the SIEM-side coverage that fires even when the agent
+  registration is not yet synced.

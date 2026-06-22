@@ -1,0 +1,49 @@
+title: Shadow Agent / Shadow MCP Inventory (CODE DETECTOR)
+id: a1d12101-1a1b-4c8d-a8f7-000000000102
+status: unsupported
+description: >
+  CODE-BASED DETECTOR descriptor — not transpiled by Sigma backends.
+
+  Authoritative implementation:
+    btagent_shared.hunt.agentic.detect_shadow_agents
+    (invoked via packs/agentic_misuse/detectors/shadow_agent_inventory.py::run)
+
+  Reuses btagent_shared.hunt.cloud.classify_workload from the #117 cloud
+  control-plane pack so the same governance routing marker
+  (evidence["shadow_workload"] = True) appears on both cloud-side and
+  agentic-side shadow findings.  This is the single shared-surface point
+  with #117 the issue text mandates.
+
+  Two complementary sweeps:
+    1. AgenticWorkload inventory (#117 type) — emits an AGENTIC finding for
+       every shadow workload so the agentic triage queue sees it too.
+    2. AgentIdentity registrations — emits a finding for any unmanaged or
+       untagged registration (an agent can be registered without a
+       corresponding cloud workload record).
+
+  Live-wiring TODO: replace fixture-supplied workload + identity inventories
+  with live inventory from Bedrock AgentCore list-agents / Vertex Agent
+  Engine agents.list / Cloud Run MCP service tag scan, normalised to
+  AgenticWorkload + AgentIdentity.
+references:
+  - https://attack.mitre.org/techniques/T1580/
+  - https://attack.mitre.org/techniques/T1078/004/
+author: BTagent (#121)
+date: 2026-06-22
+logsource:
+  product: btagent
+  service: agent_inventory
+detection:
+  selection:
+    detector: code.agentic.shadow_agent_inventory
+  condition: selection
+falsepositives:
+  - Tagged agents that are still in onboarding (use governance_tagged=False
+    grace window via the triage suppression layer, not in-detector)
+level: high
+tags:
+  - attack.persistence
+  - attack.t1078.004
+  - attack.t1580
+  - agentic.shadow-workload
+  - code-detector

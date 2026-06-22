@@ -1,0 +1,113 @@
+# Agentic-AI Misuse Hunt Pack — Phase 6 #121
+# Connector-independent slice: SigmaHQ rules cover the network/identity-side
+# signals (Bedrock invocation patterns, agent-role AssumeRole into privileged
+# targets, MCP egress, agent inventory enumeration, credential-shaped LLM
+# response tokens).  The pure-Python detectors (prompt-injection scan, shadow
+# agent / MCP inventory, agent-identity abuse) ship as `_code_*.yaml`
+# Sigma-shaped descriptors that the shared loader can ingest cleanly, plus
+# corresponding Python entry-point modules under `detectors/`.
+#
+# Live-MCP wiring (LLM-call telemetry connector, agent-platform inventory
+# connector) is deferred — same shape as the #117 cloud pack.  See the
+# live-wiring TODO in btagent_shared.hunt.agentic.
+#
+# Loaded by btagent_engine.hunting.load_builtin_pack("agentic_misuse").
+# Loader convention: manifest `file:` values are bare basenames matched against
+# the contents of `rules/`.  Code-based detectors are registered through their
+# `_code_*.yaml` descriptors (Sigma-shaped, status: unsupported); the real
+# logic lives in `detectors/*.py` and is invoked by the runner / tests directly
+# against btagent_shared.hunt.agentic.
+
+id: hpack_01KAGENTICMISUSE0000000001
+name: Agentic-AI Misuse Hunt Pack
+version: 1.0.0
+description: >
+  Detects misuse of agentic-AI workloads: prompt injection on agent inputs,
+  shadow agents / shadow MCP servers, agent identity abuse (out-of-toolset
+  invocation, role escalation), and the network/identity-side signals
+  (Bedrock invocation from unmanaged roles, agent-role privileged AssumeRole,
+  MCP egress to unknown endpoints, agent inventory enumeration,
+  credential-shaped LLM responses).  Reuses the #117 cloud control-plane
+  shadow-workload primitives so the same governance routing surface receives
+  cloud- and agentic-discovered shadow agents.
+
+rules:
+  # ── Sigma rules (network / identity / log-source detections) ────────────────
+  - file: bedrock_invoke_from_unmanaged_role.yml
+    enabled: true
+    notes: >
+      Requires CloudTrail Bedrock data-plane logs in the connected SIEM.
+      Tune filter_managed_agent_roles with the org's sanctioned agent-role ARN
+      prefixes before enabling in production.  Code-based shadow-agent inventory
+      in btagent_shared.hunt.agentic.detect_shadow_agents is the authoritative
+      cross-reference.
+
+  - file: mcp_server_egress_to_unknown_endpoint.yml
+    enabled: true
+    notes: >
+      Requires EDR process+network telemetry.  Defensive complement to the
+      out-of-toolset code detector — fires on the wire even when the agent
+      registration is unknown.
+
+  - file: agent_assumerole_above_declared.yml
+    enabled: true
+    notes: >
+      Requires CloudTrail STS logs.  Critical severity by default — agents
+      assuming admin/root/billing roles is never routine.  Pair with the
+      code-based agent_identity_abuse detector for declared/observed-role
+      authoritative diffing.
+
+  - file: bedrock_get_agent_alias_enum.yml
+    enabled: true
+    notes: >
+      Discovery-stage signal.  Medium severity baseline; expect a small
+      number of legitimate IaC sync hits — tune filter_iac_principals.
+
+  - file: llm_credential_in_prompt_output.yml
+    enabled: false
+    notes: >
+      DEFERRED — requires LLM-gateway response-capture telemetry source.
+      Ships disabled until a live response-capture MCP connector lands.
+      Output-side scanning is intentionally deferred; the input-side scan
+      in code.agentic.prompt_injection_scan covers the request side today.
+
+  # ── Code-based detector descriptors (Sigma-shaped, status: unsupported) ─────
+  # These are loaded by the shared pack loader but carry status: unsupported so
+  # the Sigma transpiler skips them; the runner dispatches via the matching
+  # detectors/<name>.py module against btagent_shared.hunt.agentic.
+  - file: _code_prompt_injection_scan.yml
+    enabled: true
+    notes: >
+      Pure-Python detector.  Authoritative implementation:
+      btagent_shared.hunt.agentic.detect_prompt_injection.
+      Entry point: detectors/prompt_injection_scan.py::run.
+
+  - file: _code_shadow_agent_inventory.yml
+    enabled: true
+    notes: >
+      Pure-Python detector.  Authoritative implementation:
+      btagent_shared.hunt.agentic.detect_shadow_agents.
+      Reuses #117's classify_workload + same shadow_workload routing marker
+      so cloud- and agentic-discovered shadow workloads converge in triage.
+      Entry point: detectors/shadow_agent_inventory.py::run.
+
+  - file: _code_agent_identity_abuse.yml
+    enabled: true
+    notes: >
+      Pure-Python detector.  Authoritative implementation:
+      btagent_shared.hunt.agentic.detect_agent_identity_abuse.
+      Entry point: detectors/agent_identity_abuse.py::run.
+
+# ── Code-based detector wiring (documentation only) ───────────────────────────
+# The runner discovers detectors by module path; this block documents the
+# mapping.  No loader semantics beyond comment.
+detectors:
+  - module: detectors/prompt_injection_scan.py
+    entrypoint: run
+    descriptor: _code_prompt_injection_scan.yml
+  - module: detectors/shadow_agent_inventory.py
+    entrypoint: run
+    descriptor: _code_shadow_agent_inventory.yml
+  - module: detectors/agent_identity_abuse.py
+    entrypoint: run
+    descriptor: _code_agent_identity_abuse.yml

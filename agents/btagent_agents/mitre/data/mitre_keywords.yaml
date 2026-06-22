@@ -970,3 +970,68 @@
 - keyword: "service enumeration"
   technique_id: "T1526"
   confidence: 0.75
+
+# ── AGENTIC (Phase 6 #121) ──────────────────────────────────────────────────
+# Keyword block for the Agentic-AI Misuse Hunter (#121).
+# Append-only — do NOT reorder entries above.
+# Sources: OWASP LLM Top-10, MITRE ATLAS, MITRE ATT&CK Cloud Matrix.
+
+- keyword: "prompt injection"
+  technique_id: "T1059"
+  confidence: 0.85
+
+- keyword: "jailbreak prompt"
+  technique_id: "T1059"
+  confidence: 0.82
+
+- keyword: "ignore previous instructions"
+  technique_id: "T1059"
+  confidence: 0.9
+
+- keyword: "system prompt leak"
+  technique_id: "T1552"
+  confidence: 0.85
+
+- keyword: "agent identity abuse"
+  technique_id: "T1078"
+  confidence: 0.85
+
+- keyword: "agent role escalation"
+  technique_id: "T1078.004"
+  confidence: 0.88
+
+- keyword: "agent token forgery"
+  technique_id: "T1606"
+  confidence: 0.85
+
+- keyword: "shadow agent"
+  technique_id: "T1078.004"
+  confidence: 0.8
+
+- keyword: "shadow mcp"
+  technique_id: "T1078.004"
+  confidence: 0.82
+
+- keyword: "shadow mcp server"
+  technique_id: "T1078.004"
+  confidence: 0.85
+
+- keyword: "out-of-toolset"
+  technique_id: "T1059"
+  confidence: 0.78
+
+- keyword: "unregistered agent"
+  technique_id: "T1078"
+  confidence: 0.8
+
+- keyword: "agent tool abuse"
+  technique_id: "T1059"
+  confidence: 0.8
+
+- keyword: "llm data exfiltration"
+  technique_id: "T1552"
+  confidence: 0.82
+
+- keyword: "agent credential replay"
+  technique_id: "T1606"
+  confidence: 0.85

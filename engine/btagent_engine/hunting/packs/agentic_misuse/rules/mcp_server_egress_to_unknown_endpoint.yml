@@ -1,0 +1,46 @@
+title: MCP Server Egress to Unknown / Untrusted Endpoint
+id: a1d12101-1a1b-4c8d-a8f7-000000000002
+status: test
+description: >
+  Detects outbound network connections from a host running an MCP server
+  process to an external endpoint not in the sanctioned MCP-endpoint allowlist.
+  Compromised MCP servers can exfiltrate context, leak credentials, or proxy
+  attacker C2 traffic; the simplest defence is egress allowlisting and a hunt
+  rule for the violations.
+references:
+  - https://atlas.mitre.org/techniques/AML.T0017  # Develop Capabilities (Adversarial ML)
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+author: BTagent (#121)
+date: 2026-06-22
+logsource:
+  category: network_connection
+  product: linux
+detection:
+  selection:
+    Image|endswith:
+      - '/mcp-server'
+      - '/mcp_server'
+      - '/mcp_runtime'
+      - '/agent-runtime'
+    Initiated: 'true'
+  filter_known_endpoints:
+    # Approved MCP-target endpoints — tune per environment.
+    DestinationHostname|endswith:
+      - '.internal'
+      - '.svc.cluster.local'
+      - 'mcp.internal.company.com'
+  condition: selection and not filter_known_endpoints
+falsepositives:
+  - First-time integration with a new approved external MCP server (add to filter)
+  - Health-check probes to public endpoints
+level: high
+tags:
+  - attack.command-and-control
+  - attack.t1071.001
+  - attack.exfiltration
+  - agentic.mcp
+notes: >
+  Live MCP-process telemetry from an EDR connector is required for this rule to
+  fire in production.  Code-based identity-abuse detection in
+  btagent_shared.hunt.agentic.detect_agent_identity_abuse covers the
+  control-plane equivalent (an MCP tool invoked outside the declared catalogue).
