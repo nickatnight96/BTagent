@@ -55,12 +55,28 @@ import type {
 // RBAC helpers
 // --------------------------------------------------------------------------- //
 
+// Triage (intent labels + feedback-benign) maps to backend ``hunt:triage``,
+// which the RBAC table grants from ``analyst`` upward — see
+// ``backend/btagent_backend/auth/rbac.py``. Hide the buttons only for callers
+// below that floor.
 function useCanTriage(): boolean {
   const role = useAuthStore((s) => s.user?.role);
   return (
-    role === UserRole.ADMIN ||
+    role === UserRole.ANALYST ||
     role === UserRole.SENIOR_ANALYST ||
-    role === UserRole.INCIDENT_COMMANDER
+    role === UserRole.INCIDENT_COMMANDER ||
+    role === UserRole.ADMIN
+  );
+}
+
+// Promote-to-investigation maps to ``hunt:promote``, which the RBAC table
+// gates at ``senior_analyst`` upward.
+function useCanPromote(): boolean {
+  const role = useAuthStore((s) => s.user?.role);
+  return (
+    role === UserRole.SENIOR_ANALYST ||
+    role === UserRole.INCIDENT_COMMANDER ||
+    role === UserRole.ADMIN
   );
 }
 
@@ -653,8 +669,8 @@ function PromoteConfirmation({
 export function BehavioralHuntsPage() {
   const navigate = useNavigate();
   const canTriage = useCanTriage();
-  // Promote requires same RBAC as triage (senior_analyst+).
-  const canPromote = canTriage;
+  // Promote is a distinct permission (``hunt:promote``, senior_analyst+).
+  const canPromote = useCanPromote();
 
   const {
     outliers,
