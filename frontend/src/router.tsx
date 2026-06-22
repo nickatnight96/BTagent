@@ -103,6 +103,11 @@ const CloudHuntsPage = lazy(() =>
     default: m.CloudHuntsPage,
   })),
 );
+const PatternInsightsPage = lazy(() =>
+  import("@/components/pattern/PatternInsightsPage").then((m) => ({
+    default: m.PatternInsightsPage,
+  })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -237,6 +242,10 @@ export const router = createBrowserRouter([
       {
         path: "cloud-hunts",
         element: lazyRoute(CloudHuntsPage),
+      },
+      {
+        path: "pattern-insights",
+        element: lazyRoute(PatternInsightsPage),
       },
     ],
   },

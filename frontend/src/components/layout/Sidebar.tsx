@@ -22,6 +22,7 @@ import {
   KeyRound,
   Activity,
   Cloud,
+  ScanSearch,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -91,6 +92,12 @@ const navItems: NavItem[] = [
     path: "/cloud-hunts",
     icon: <Cloud className="w-5 h-5" />,
     testId: "nav-cloud-hunts-link",
+  },
+  {
+    label: "Pattern Insights",
+    path: "/pattern-insights",
+    icon: <ScanSearch className="w-5 h-5" />,
+    testId: "nav-pattern-insights-link",
   },
   {
     label: "Correlation",
