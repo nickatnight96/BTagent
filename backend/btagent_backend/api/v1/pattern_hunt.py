@@ -172,7 +172,9 @@ async def dismiss_proposal(
     user.require_permission("hunt:triage")
     await _load_proposal_scoped(db, proposal_id, user)
     try:
-        row = await svc.dismiss_proposal(db, proposal_id=proposal_id)
+        row = await svc.dismiss_proposal(
+            db, proposal_id=proposal_id, triage_rationale=body.rationale
+        )
         await db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -190,7 +192,9 @@ async def snooze_proposal(
     user.require_permission("hunt:triage")
     await _load_proposal_scoped(db, proposal_id, user)
     try:
-        row = await svc.snooze_proposal(db, proposal_id=proposal_id)
+        row = await svc.snooze_proposal(
+            db, proposal_id=proposal_id, triage_rationale=body.rationale
+        )
         await db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

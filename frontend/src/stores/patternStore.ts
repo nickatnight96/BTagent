@@ -66,11 +66,23 @@ function extractErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
-/** Merge an updated proposal back into the list in-place. */
+/**
+ * Merge an updated proposal back into the list. When ``stateFilter`` is set
+ * to a specific state (the actionable ``proposed`` queue is the default), a
+ * mutation that flips the proposal out of that state DROPS it from the list
+ * — Codex #218 P2: otherwise the actionable queue showed dismissed / accepted
+ * items until the next poll/refresh even though the backend filter would no
+ * longer return them.
+ */
 function mergeProposal(
   proposals: PatternHuntProposal[],
   updated: PatternHuntProposal,
+  stateFilter: ProposalFilter,
 ): PatternHuntProposal[] {
+  if (stateFilter !== "all" && updated.state !== stateFilter) {
+    // Triaged out of the visible filter — drop it from the list.
+    return proposals.filter((p) => p.id !== updated.id);
+  }
   return proposals.map((p) => (p.id === updated.id ? updated : p));
 }
 
@@ -126,7 +138,13 @@ export const usePatternStore = create<PatternState>((set, get) => ({
       const updated = await dismissProposal(proposalId, body);
       set((s) => ({
         isMutating: false,
-        proposals: mergeProposal(s.proposals, updated),
+        proposals: mergeProposal(s.proposals, updated, s.stateFilter),
+        // ``total`` reflects what the backend would now return for the current
+        // filter; decrement when an item leaves the filtered view (Codex #218).
+        total:
+          s.stateFilter !== "all" && updated.state !== s.stateFilter
+            ? Math.max(0, s.total - 1)
+            : s.total,
       }));
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to dismiss proposal");
@@ -141,7 +159,13 @@ export const usePatternStore = create<PatternState>((set, get) => ({
       const updated = await snoozeProposal(proposalId, body);
       set((s) => ({
         isMutating: false,
-        proposals: mergeProposal(s.proposals, updated),
+        proposals: mergeProposal(s.proposals, updated, s.stateFilter),
+        // ``total`` reflects what the backend would now return for the current
+        // filter; decrement when an item leaves the filtered view (Codex #218).
+        total:
+          s.stateFilter !== "all" && updated.state !== s.stateFilter
+            ? Math.max(0, s.total - 1)
+            : s.total,
       }));
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to snooze proposal");
@@ -156,7 +180,13 @@ export const usePatternStore = create<PatternState>((set, get) => ({
       const updated = await acceptProposal(proposalId, body);
       set((s) => ({
         isMutating: false,
-        proposals: mergeProposal(s.proposals, updated),
+        proposals: mergeProposal(s.proposals, updated, s.stateFilter),
+        // ``total`` reflects what the backend would now return for the current
+        // filter; decrement when an item leaves the filtered view (Codex #218).
+        total:
+          s.stateFilter !== "all" && updated.state !== s.stateFilter
+            ? Math.max(0, s.total - 1)
+            : s.total,
       }));
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to accept proposal");
