@@ -138,12 +138,32 @@ class _ExtractedIndicator:
         self.kill_chain_phases = kill_chain_phases
 
 
+class _UnsupportedIndicator:
+    """Surfaces a STIX indicator whose pattern shape isn't yet supported.
+
+    Returned by :func:`extract_detectable_indicators` in the SAME list as
+    successfully-parsed ``_ExtractedIndicator`` entries so the caller
+    (:func:`process_stix_bundle`) can record an explicit ``SkippedIndicator``
+    instead of silently dropping the input (Codex #213 P2). Carries the raw
+    STIX pattern verbatim for audit/review.
+    """
+
+    __slots__ = ("stix_id", "pattern", "reason")
+
+    def __init__(self, *, stix_id: str, pattern: str, reason: str = "unsupported_pattern") -> None:
+        self.stix_id = stix_id
+        self.pattern = pattern
+        self.reason = reason
+
+
 # ---------------------------------------------------------------------------
 # Step 1 — Extract indicators
 # ---------------------------------------------------------------------------
 
 
-def extract_detectable_indicators(stix_bundle: dict[str, Any]) -> list[_ExtractedIndicator]:
+def extract_detectable_indicators(
+    stix_bundle: dict[str, Any],
+) -> list[_ExtractedIndicator | _UnsupportedIndicator]:
     """Pull detectable indicators from a STIX 2.1 bundle.
 
     Processes STIX ``indicator`` objects whose pattern can be parsed into one
@@ -157,12 +177,12 @@ def extract_detectable_indicators(stix_bundle: dict[str, Any]) -> list[_Extracte
 
     Returns
     -------
-    list[_ExtractedIndicator]
+    list[_ExtractedIndicator | _UnsupportedIndicator]
         Parsed indicators, one per valid STIX Indicator SDO.  Empty list if no
         parseable indicators are found.
     """
     objects: list[dict[str, Any]] = stix_bundle.get("objects", [])
-    results: list[_ExtractedIndicator] = []
+    results: list[_ExtractedIndicator | _UnsupportedIndicator] = []
 
     for obj in objects:
         if obj.get("type") != "indicator":
@@ -180,7 +200,18 @@ def extract_detectable_indicators(stix_bundle: dict[str, Any]) -> list[_Extracte
 
         parsed = _parse_stix_pattern(pattern)
         if parsed is None:
-            logger.debug("Skipping unparseable STIX pattern: %s", pattern[:80])
+            # Codex #213: don't silently drop indicators whose pattern shape
+            # we don't yet support (e.g. ``file:name``, ``x-custom:foo``).
+            # Surface them as ``_UnsupportedIndicator`` so process_stix_bundle
+            # can record an explicit SkippedIndicator with the original
+            # pattern, preserving audit/review visibility for CTI inputs the
+            # pipeline did not convert.
+            logger.debug("Recording unparseable STIX pattern as skipped: %s", pattern[:80])
+            results.append(
+                _UnsupportedIndicator(
+                    stix_id=stix_id, pattern=pattern, reason="unsupported_pattern"
+                )
+            )
             continue
 
         ioc_type, value, logsource_category, logsource_product = parsed
@@ -607,6 +638,20 @@ def process_stix_bundle(
     seen_values: set[str] = set()
 
     for indicator in extracted:
+        # Codex #213: surface unsupported indicators as explicit SkippedIndicator
+        # entries rather than dropping them silently.
+        if isinstance(indicator, _UnsupportedIndicator):
+            skipped.append(
+                SkippedIndicator(
+                    stix_id=indicator.stix_id,
+                    pattern=indicator.pattern,
+                    reason=(
+                        f"Unsupported STIX pattern shape: {indicator.pattern[:200]} "
+                        f"(not in _PATTERN_MAP — extend the parser to add support)."
+                    ),
+                )
+            )
+            continue
         dedup_key = f"{indicator.ioc_type}:{indicator.value}"
         if dedup_key in seen_values:
             skipped.append(

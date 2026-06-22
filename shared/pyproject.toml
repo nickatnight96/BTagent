@@ -6,6 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.13.0",
     "python-ulid>=3.1.0",
+    # CTI→Sigma pipeline (#113) imports yaml at module top in
+    # btagent_shared.hunt.cti_to_detection; declared here so installing
+    # btagent-shared standalone is sufficient (Codex #213 P2).
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

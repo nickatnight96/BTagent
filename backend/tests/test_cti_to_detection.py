@@ -667,3 +667,60 @@ async def test_api_proposals_have_sigma_yaml(client, analyst_token):
         assert proposal["sigma_yaml"], f"Empty sigma_yaml for proposal {proposal['id']}"
         parsed = yaml.safe_load(proposal["sigma_yaml"])
         assert "detection" in parsed, f"sigma_yaml missing 'detection' for {proposal['id']}"
+
+
+# ---------------------------------------------------------------------------
+# Codex #213 regression — unsupported indicators must surface as SkippedIndicator
+# ---------------------------------------------------------------------------
+
+
+def test_unsupported_indicator_pattern_recorded_as_skipped():
+    """A STIX indicator whose pattern isn't in ``_PATTERN_MAP`` (e.g.
+    ``file:name``, ``x-custom:foo``) MUST appear in
+    ``CTIToDetectionResponse.skipped`` with a reason explaining why it
+    couldn't be converted. Before Codex #213 these were silently dropped.
+    """
+    from btagent_shared.hunt.cti_to_detection import process_stix_bundle
+    from btagent_shared.types.config import TLP
+
+    bundle = {
+        "type": "bundle",
+        "id": "bundle--reg-codex-213",
+        "objects": [
+            # 1) Unsupported pattern shape — currently outside _PATTERN_MAP.
+            {
+                "type": "indicator",
+                "id": "indicator--unsupported-001",
+                "spec_version": "2.1",
+                "pattern": "[file:name = 'definitely_evil.exe']",
+                "pattern_type": "stix",
+                "valid_from": "2026-06-22T00:00:00Z",
+                "name": "Suspicious filename",
+            },
+            # 2) Custom STIX-extension pattern — also unsupported.
+            {
+                "type": "indicator",
+                "id": "indicator--unsupported-002",
+                "spec_version": "2.1",
+                "pattern": "[x-custom-object:foo = 'bar']",
+                "pattern_type": "stix",
+                "valid_from": "2026-06-22T00:00:00Z",
+            },
+        ],
+    }
+    resp = process_stix_bundle(bundle, active_tlp=TLP.GREEN)
+
+    # No proposal generated (both indicators unparseable).
+    assert resp.proposals == []
+    # Both indicators surface as SkippedIndicator entries with the raw pattern
+    # and a reason that mentions "Unsupported STIX pattern".
+    unsupported = [s for s in resp.skipped if "Unsupported STIX pattern" in s.reason]
+    assert len(unsupported) == 2, (
+        f"expected 2 unsupported-pattern SkippedIndicators, got: {resp.skipped}"
+    )
+    stix_ids = {s.stix_id for s in unsupported}
+    assert stix_ids == {"indicator--unsupported-001", "indicator--unsupported-002"}
+    # Raw patterns are preserved so reviewers can extend the parser.
+    patterns = {s.pattern for s in unsupported}
+    assert "[file:name = 'definitely_evil.exe']" in patterns
+    assert "[x-custom-object:foo = 'bar']" in patterns
