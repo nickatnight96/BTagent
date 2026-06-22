@@ -21,6 +21,7 @@ import {
   GitBranch,
   KeyRound,
   Activity,
+  Cloud,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -84,6 +85,12 @@ const navItems: NavItem[] = [
     path: "/behavioral",
     icon: <Activity className="w-5 h-5" />,
     testId: "nav-behavioral-link",
+  },
+  {
+    label: "Cloud Hunts",
+    path: "/cloud-hunts",
+    icon: <Cloud className="w-5 h-5" />,
+    testId: "nav-cloud-hunts-link",
   },
   {
     label: "Correlation",

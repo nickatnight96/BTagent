@@ -169,6 +169,16 @@ async def list_findings(
             "over include_suppressed."
         ),
     ),
+    domain: str | None = Query(
+        None,
+        pattern="^(sigma|behavioral|identity|cloud|cross_investigation|agentic)$",
+        description=(
+            "Optional ``HuntDomain`` filter applied server-side before pagination. "
+            "Used by the per-domain hunt views (/cloud-hunts, /identity-hunts, …) "
+            "so domain-specific pages don't have to page through cross-domain "
+            "findings (Codex #216/#217)."
+        ),
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -181,6 +191,7 @@ async def list_findings(
         org_id=user.org_id,
         include_suppressed=include_suppressed,
         state=state,
+        domain=domain,
         page=page,
         page_size=page_size,
     )

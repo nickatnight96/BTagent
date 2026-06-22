@@ -98,6 +98,11 @@ const BehavioralHuntsPage = lazy(() =>
     default: m.BehavioralHuntsPage,
   })),
 );
+const CloudHuntsPage = lazy(() =>
+  import("@/components/cloud/CloudHuntsPage").then((m) => ({
+    default: m.CloudHuntsPage,
+  })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -228,6 +233,10 @@ export const router = createBrowserRouter([
       {
         path: "behavioral",
         element: lazyRoute(BehavioralHuntsPage),
+      },
+      {
+        path: "cloud-hunts",
+        element: lazyRoute(CloudHuntsPage),
       },
     ],
   },
