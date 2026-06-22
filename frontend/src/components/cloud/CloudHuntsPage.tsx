@@ -377,14 +377,19 @@ function IAMGraphTab({ findings }: { findings: HuntFinding[] }) {
 
   if (links.length === 0) {
     return (
-      <Card>
+      // ``cloud-iam-graph`` testid on BOTH branches so the empty-state E2E
+      // can wait on the same anchor and the populated test can target
+      // ``cloud-iam-source-role`` inside it.
+      <Card data-testid="cloud-iam-graph">
         <CardContent className="py-12 text-center text-muted-foreground">
           <GitBranch className="mx-auto mb-3 h-8 w-8 opacity-30" />
           <p className="text-sm">No IAM assume-role relationships found in current findings.</p>
           <p className="text-xs text-slate-600 mt-1">
             Findings must carry{" "}
-            <code className="text-slate-500">evidence.assume_chain</code> with at least two
-            entries for relationships to appear here.
+            <code className="text-slate-500">evidence.path</code> (Phase-A
+            <code className="text-slate-500"> detect_sts_chaining </code> emitter; legacy{" "}
+            <code className="text-slate-500">evidence.assume_chain</code> also accepted) with
+            at least two entries for relationships to appear here.
           </p>
         </CardContent>
       </Card>
