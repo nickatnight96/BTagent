@@ -498,3 +498,92 @@ async def test_full_windows_baseline_coverage_report() -> None:
             f"detected={cr.detected} missed={cr.missed} rate={rate} "
             f"rules_fired={cr.rules_fired}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Codex #215 regression tests — counting + reporting invariants
+# ---------------------------------------------------------------------------
+
+
+def _always_fires_runner(rule_id: str = "broad.always_fires") -> Any:
+    """Synthetic runner that fires a single named rule on EVERY event.
+
+    Lets the regression tests pin counting behaviour without depending on
+    the real Sigma rules. Returns a callable that ``replay_scenario``
+    accepts via its ``runner`` argument.
+    """
+
+    async def _runner(_event_dict: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{"rule_id": rule_id, "matched": True}]
+
+    return _runner
+
+
+async def test_benign_control_hit_is_false_positive_not_detection() -> None:
+    """Codex #215: a benign-control event (``expected_to_fire=False``) that
+    nonetheless lights up a rule MUST count as a false positive — never as
+    detection — so ``detected_pct`` can't be inflated past 100%."""
+    scenario = SimulationScenario(
+        id="reg_codex_215_benign_fp",
+        name="Codex #215 — benign control lights up a broad rule",
+        technique_ids=["T9999.001"],
+        events=[
+            SimulatedAttackEvent(
+                event_id="evt_benign_1",
+                technique_id="T9999.001",
+                source_event_dict=dict(EventID="42", CommandLine="powershell.exe -nop"),
+                expected_to_fire=False,  # benign control
+            ),
+        ],
+    )
+    runner = _always_fires_runner("broad.always_fires")
+    report = build_report(
+        run_id="reg_codex_215",
+        scenarios=[scenario],
+        replay_results_per_scenario=[await replay_scenario(scenario, runner)],
+        generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    cov = next(c for c in report.coverage_by_technique if c.technique_id == "T9999.001")
+    assert cov.detected == 0, "benign control must not count as detection"
+    assert cov.false_positives == 1, "benign control hit must count as false positive"
+    # ``detected_pct`` divides by total_expected_fire which is 0 here, so the
+    # function returns 100.0 by convention — but importantly it cannot be
+    # >100.0 (the regression).
+    assert report.summary.detected_pct <= 100.0
+
+
+async def test_expected_rule_id_pinned_unrelated_rule_does_not_count() -> None:
+    """Codex #215 P1: when ``expected_rule_id`` is set, ONLY that rule firing
+    counts as detection. A different (broad) rule firing must NOT mask the
+    targeted validation gap — it should leave the event as missed and the
+    technique in ``coverage_gaps``."""
+    scenario = SimulationScenario(
+        id="reg_codex_215_pinned_rule",
+        name="Codex #215 — pinned rule missed, unrelated rule fires",
+        technique_ids=["T9999.002"],
+        events=[
+            SimulatedAttackEvent(
+                event_id="evt_pinned_miss_1",
+                technique_id="T9999.002",
+                source_event_dict=dict(EventID="99", CommandLine="net user /add admin Passw0rd!"),
+                expected_to_fire=True,
+                expected_rule_id="specific.required_rule",
+            ),
+        ],
+    )
+    # An UNRELATED rule fires — the required one does not.
+    runner = _always_fires_runner("unrelated.broad_match")
+    report = build_report(
+        run_id="reg_codex_215_b",
+        scenarios=[scenario],
+        replay_results_per_scenario=[await replay_scenario(scenario, runner)],
+        generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    cov = next(c for c in report.coverage_by_technique if c.technique_id == "T9999.002")
+    assert cov.detected == 0, "pinned rule did not fire — must NOT be marked detected"
+    assert cov.missed == 1, "event with unmatched pinned rule must be counted as missed"
+    assert "specific.required_rule" in cov.rules_expected_but_missed
+    # And the gap surfaces in coverage_gaps so analysts see it.
+    assert "T9999.002" in coverage_gaps(report)

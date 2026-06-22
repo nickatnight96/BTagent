@@ -143,11 +143,35 @@ class CoverageResult(BaseModel):
     total_simulated: int = Field(
         ..., ge=0, description="Total events simulated for this technique."
     )
-    detected: int = Field(..., ge=0, description="Events that generated at least one SigmaHit.")
+    detected: int = Field(
+        ...,
+        ge=0,
+        description=(
+            "Events with ``expected_to_fire=True`` whose required Sigma rule "
+            "(``expected_rule_id``) fired. When no ``expected_rule_id`` is "
+            "pinned, any rule firing counts. Benign-control events "
+            "(``expected_to_fire=False``) NEVER contribute here (Codex #215)."
+        ),
+    )
     missed: int = Field(
         ...,
         ge=0,
-        description="Events marked expected_to_fire=True that produced no hit.",
+        description=(
+            "Events marked ``expected_to_fire=True`` that either produced no "
+            "hit at all OR — when ``expected_rule_id`` is set — produced hits "
+            "but the required rule wasn't among them. The second case used to "
+            "be silently swallowed (Codex #215 P1)."
+        ),
+    )
+    false_positives: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Events marked ``expected_to_fire=False`` (benign controls) that "
+            "nonetheless produced at least one Sigma hit — a false-positive "
+            "signal for the analyst. Tracked separately so they never inflate "
+            "``detected`` / ``detected_pct``."
+        ),
     )
     rules_fired: list[str] = Field(
         default_factory=list,

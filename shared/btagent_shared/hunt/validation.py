@@ -149,6 +149,7 @@ def compute_coverage(
     tech_rules_fired: dict[str, set[str]] = defaultdict(set)
     tech_expected_rule_ids: dict[str, set[str]] = defaultdict(set)
     tech_fired_rule_ids: dict[str, set[str]] = defaultdict(set)
+    tech_false_positives: dict[str, int] = defaultdict(int)
 
     for event, hits in replay_results:
         tid = event.technique_id
@@ -161,9 +162,27 @@ def compute_coverage(
         if event.expected_rule_id:
             tech_expected_rule_ids[tid].add(event.expected_rule_id)
 
-        if hits:
+        # Codex #215: a benign-control hit (``expected_to_fire=False`` + any
+        # rule fires) is a FALSE POSITIVE — track separately so it can't
+        # inflate ``detected`` / ``detected_pct``. A benign control with no
+        # hits is the desired outcome and contributes to neither bucket.
+        if not event.expected_to_fire:
+            if hits:
+                tech_false_positives[tid] += 1
+            continue
+
+        # ``expected_to_fire=True`` from here on. An event with a pinned
+        # ``expected_rule_id`` is detected ONLY when THAT rule fired — a
+        # different (broad) rule lighting up is not the same signal and
+        # would mask the targeted validation gap (Codex #215 P1).
+        if event.expected_rule_id:
+            if event.expected_rule_id in fired_rule_ids:
+                tech_detected[tid] += 1
+            else:
+                tech_missed[tid] += 1
+        elif hits:
             tech_detected[tid] += 1
-        elif event.expected_to_fire:
+        else:
             tech_missed[tid] += 1
 
     # Determine the full set of techniques to report on.
@@ -184,6 +203,7 @@ def compute_coverage(
                 total_simulated=tech_total[tid],
                 detected=tech_detected[tid],
                 missed=tech_missed[tid],
+                false_positives=tech_false_positives[tid],
                 rules_fired=sorted(tech_rules_fired[tid]),
                 rules_expected_but_missed=missed_expected_rules,
             )
