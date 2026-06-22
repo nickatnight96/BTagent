@@ -20,6 +20,7 @@ import {
   ShieldBan,
   GitBranch,
   KeyRound,
+  Activity,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -77,6 +78,12 @@ const navItems: NavItem[] = [
     path: "/hunts",
     icon: <FileSearch className="w-5 h-5" />,
     testId: "nav-hunts-link",
+  },
+  {
+    label: "Behavioral Hunts",
+    path: "/behavioral",
+    icon: <Activity className="w-5 h-5" />,
+    testId: "nav-behavioral-link",
   },
   {
     label: "Correlation",
