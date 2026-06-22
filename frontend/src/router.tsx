@@ -93,6 +93,11 @@ const MfaSettingsPage = lazy(() =>
 const SSOIdentitiesPage = lazy(() =>
   import("@/components/auth/SSOIdentitiesPage").then((m) => ({ default: m.SSOIdentitiesPage })),
 );
+const BehavioralHuntsPage = lazy(() =>
+  import("@/components/behavioral/BehavioralHuntsPage").then((m) => ({
+    default: m.BehavioralHuntsPage,
+  })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -219,6 +224,10 @@ export const router = createBrowserRouter([
       {
         path: "sso-identities",
         element: lazyRoute(SSOIdentitiesPage),
+      },
+      {
+        path: "behavioral",
+        element: lazyRoute(BehavioralHuntsPage),
       },
     ],
   },
