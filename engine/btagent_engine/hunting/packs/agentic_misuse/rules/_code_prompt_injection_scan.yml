@@ -1,0 +1,42 @@
+title: Prompt Injection Input Scan (CODE DETECTOR)
+id: a1d12101-1a1b-4c8d-a8f7-000000000101
+status: unsupported
+description: >
+  CODE-BASED DETECTOR descriptor — not transpiled by Sigma backends.
+
+  Authoritative implementation:
+    btagent_shared.hunt.agentic.detect_prompt_injection
+    (invoked via packs/agentic_misuse/detectors/prompt_injection_scan.py::run)
+
+  Operates on AgentCallEvent telemetry: pattern + heuristic scan for
+  prompt-injection signals (instruction override, role hijack, jailbreak
+  personae, encoded-payload smuggling, data-exfil / secret-leak requests,
+  tool-abuse requests).  Each per-event signal cluster aggregates into a
+  single AGENTIC-domain RecordFindingRequest with redacted excerpts in
+  evidence — the raw injection text is never copied into finding payloads.
+
+  Live-wiring TODO: replace fixture-supplied AgentCallEvent batch with a real
+  telemetry MCP connector (Bedrock invocation logs, Vertex
+  request/response capture, OpenAI / Anthropic API-gateway logs).  No
+  schema change to the detector itself.
+references:
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+  - https://atlas.mitre.org/techniques/AML.T0051
+author: BTagent (#121)
+date: 2026-06-22
+logsource:
+  product: btagent
+  service: agentic_call_event
+detection:
+  selection:
+    detector: code.agentic.prompt_injection_scan
+  condition: selection
+falsepositives:
+  - Documentation queries that quote injection-style phrases for educational
+    purposes (handled in code by category-weighted confidence)
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+  - agentic.prompt-injection
+  - code-detector

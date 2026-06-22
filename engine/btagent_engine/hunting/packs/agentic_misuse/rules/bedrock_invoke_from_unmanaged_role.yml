@@ -1,0 +1,46 @@
+title: Bedrock InvokeModel from Unmanaged or Personal IAM Role
+id: a1d12101-1a1b-4c8d-a8f7-000000000001
+status: test
+description: >
+  Detects bedrock:InvokeModel / bedrock:InvokeAgent calls from an IAM role that
+  is NOT a known sanctioned agent-platform role.  In well-governed orgs, Bedrock
+  invocation should originate from Bedrock AgentCore agent roles or explicitly-
+  tagged inference workload roles; calls from unmanaged compute (raw Lambda /
+  EC2 instance roles / personal users) suggest a shadow agentic workload.
+references:
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+  - https://atlas.mitre.org/techniques/AML.T0011  # Acquire Infrastructure (LLM)
+author: BTagent (#121)
+date: 2026-06-22
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: bedrock.amazonaws.com
+    eventName:
+      - InvokeModel
+      - InvokeModelWithResponseStream
+      - InvokeAgent
+  filter_managed_agent_roles:
+    # Sanctioned agent roles — tune per environment.  Empty filter == flag everything.
+    userIdentity.arn|contains:
+      - ':role/BedrockAgentRole-'
+      - ':role/AgentCoreRuntime-'
+      - ':role/InferenceWorkload-'
+  condition: selection and not filter_managed_agent_roles
+falsepositives:
+  - Manual analyst notebooks calling Bedrock for experimentation (add to filter)
+  - One-off batch jobs run under a generic execution role
+level: high
+tags:
+  - attack.execution
+  - attack.t1078.004
+  - attack.t1059
+  - agentic.shadow-workload
+notes: >
+  When the live Bedrock-invocation MCP connector lands, swap the SIEM eventSource
+  filter for direct ingest from Bedrock invocation logs.  The code-based
+  shadow-agent inventory in btagent_shared.hunt.agentic.detect_shadow_agents is
+  the authoritative cross-reference.

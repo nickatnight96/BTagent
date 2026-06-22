@@ -1,0 +1,39 @@
+title: Bedrock Agent Inventory Enumeration from Non-Console Source
+id: a1d12101-1a1b-4c8d-a8f7-000000000004
+status: test
+description: >
+  Detects bedrock:ListAgents / ListAgentAliases / GetAgent enumeration calls
+  from a non-console source (programmatic API caller).  Attackers enumerate
+  the agent inventory to identify shadow / weakly-scoped agents to hijack;
+  legitimate inventory is normally fetched by IaC tooling under known principals.
+references:
+  - https://attack.mitre.org/techniques/T1526/
+  - https://attack.mitre.org/techniques/T1580/
+author: BTagent (#121)
+date: 2026-06-22
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: bedrock.amazonaws.com
+    eventName:
+      - ListAgents
+      - ListAgentAliases
+      - GetAgent
+      - GetAgentAlias
+  filter_iac_principals:
+    userIdentity.arn|contains:
+      - ':role/TerraformDeployRole'
+      - ':role/CDKToolkit'
+      - ':role/AgentInventorySync'
+  condition: selection and not filter_iac_principals
+falsepositives:
+  - Analyst notebooks performing one-off inventory exports
+  - SOAR playbooks enumerating agents as part of governance sweeps
+level: medium
+tags:
+  - attack.discovery
+  - attack.t1526
+  - attack.t1580
+  - agentic.recon

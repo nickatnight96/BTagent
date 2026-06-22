@@ -1,0 +1,52 @@
+title: Agent Identity Abuse — Out-of-Toolset / Role Escalation (CODE DETECTOR)
+id: a1d12101-1a1b-4c8d-a8f7-000000000103
+status: unsupported
+description: >
+  CODE-BASED DETECTOR descriptor — not transpiled by Sigma backends.
+
+  Authoritative implementation:
+    btagent_shared.hunt.agentic.detect_agent_identity_abuse
+    (invoked via packs/agentic_misuse/detectors/agent_identity_abuse.py::run)
+
+  Compares each AgentCallEvent against the AgentIdentity registration to flag:
+    - Out-of-toolset invocation: agent called a tool / API outside its declared
+      tooling catalogue (only checked when the registration declares a non-empty
+      catalogue).
+    - Role escalation: observed_role on the call differs from the registered
+      declared_role.  Pure mismatch is LOW severity; mismatch into a role whose
+      name matches a privileged keyword (admin / root / billing / orgadmin /
+      poweruser) is HIGH severity.
+    - Unregistered identity: an event whose agent_identity_ref has no
+      AgentIdentity record is itself a finding (treats it as shadow-agent
+      activity or credential replay).
+
+  Pair with the related agent_assumerole_above_declared.yml Sigma rule for
+  SIEM-side coverage when the registration store is not synced yet.
+
+  Live-wiring TODO: replace fixture-supplied AgentCallEvent batch with real
+  telemetry; replace fixture-supplied AgentIdentity registry with a live
+  pull from the agent-platform inventory connector.
+references:
+  - https://attack.mitre.org/techniques/T1078/
+  - https://attack.mitre.org/techniques/T1078/004/
+  - https://attack.mitre.org/techniques/T1606/
+author: BTagent (#121)
+date: 2026-06-22
+logsource:
+  product: btagent
+  service: agentic_call_event
+detection:
+  selection:
+    detector: code.agentic.agent_identity_abuse
+  condition: selection
+falsepositives:
+  - Agents in pre-production whose tooling catalogue is intentionally empty
+    (such agents skip the out-of-toolset check by design)
+level: high
+tags:
+  - attack.privilege-escalation
+  - attack.t1078
+  - attack.t1078.004
+  - attack.t1606
+  - agentic.identity-abuse
+  - code-detector
