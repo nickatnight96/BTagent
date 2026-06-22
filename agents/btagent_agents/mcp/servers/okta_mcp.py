@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -244,13 +245,22 @@ def _session_and_token_ids(raw: dict[str, Any]) -> tuple[str, str]:
 
 
 def _app_id_from_event(raw: dict[str, Any]) -> str:
-    """Extract the OAuth client_id (app) from an event's ``target`` array."""
+    """Extract the stable OAuth client/app id from an event's ``target`` array.
+
+    For ``AppInstance`` and ``ClientApp`` targets Okta's ``id`` is the stable
+    client identifier (``0oa…``); ``alternateId`` is the **display label**
+    and can collide across tenants or differ from the registered ``clientId``.
+    ``normalise_oauth_grant`` stores grants keyed on ``clientId``, and the
+    #116 ``detect_dormant_app_reactivation`` joins events ↔ grants on
+    ``(principal_id, app_id)``, so both sides must agree on the stable id —
+    falling back to ``alternateId`` only when no stable id is present (very
+    old log shapes / partial enrichment).
+    """
     for target in raw.get("target") or []:
         if not isinstance(target, dict):
             continue
         if target.get("type") in {"AppInstance", "ClientApp", "AppUser"}:
-            # Okta's alternateId for AppInstance carries the app label
-            return target.get("alternateId") or target.get("id") or ""
+            return target.get("id") or target.get("alternateId") or ""
     return ""
 
 
@@ -316,15 +326,29 @@ def normalise_oauth_grant(
     raw: dict[str, Any],
     *,
     org_id: str,
+    user_login_resolver: Callable[[str], str | None] | None = None,
 ) -> OAuthGrant:
     """Map a single Okta OAuth grant JSON object to :class:`OAuthGrant`.
 
     Okta returns one grant object per scope by default; tests aggregate by
     (client_id, principal_id) where needed.
+
+    Principal-id alignment (Codex #212): System Log events normalise their
+    principal to ``actor.alternateId`` (UPN / login email), but a grant's raw
+    ``userId`` is the Okta user id (``00u…``). The #116
+    ``detect_dormant_app_reactivation`` joins on ``(principal_id, app_id)``,
+    so both sides MUST use the same form. Pass ``user_login_resolver`` (e.g.
+    a closure over Okta's ``GET /api/v1/users/{userId}`` ``profile.login``)
+    to resolve the grant's ``userId`` to the UPN events use. Without the
+    resolver the grant retains its raw ``userId``; that is still safe for
+    grants whose ``userId`` already IS a login (legacy / pre-resolved
+    fixtures), but live integrations should always pass the resolver.
     """
     grant_id = raw.get("id") or f"okta_grant_{raw.get('clientId', 'unknown')}"
     client_id = raw.get("clientId") or "unknown_client"
-    principal_id = raw.get("userId") or raw.get("subject") or "unknown_user"
+    raw_user_id = raw.get("userId") or raw.get("subject") or "unknown_user"
+    resolved_login = user_login_resolver(raw_user_id) if user_login_resolver else None
+    principal_id = resolved_login or raw_user_id
 
     scopes_raw = raw.get("scopes")
     if scopes_raw is None:
@@ -539,10 +563,20 @@ class OktaMCPServer:
         limit: int,
     ) -> dict[str, Any]:
         org_id = self._get_org_id()
+        # Codex #212: normalise grant principal to the same form (UPN /
+        # alternateId) that System Log events use, so detect_dormant_app
+        # can join (principal_id, app_id). In mock mode the resolver is the
+        # fixture login map; in live mode a real connector path would close
+        # over a cached ``GET /api/v1/users/{userId}`` ``profile.login`` call.
+        from btagent_agents.mcp.servers._okta_fixtures import OKTA_FIXTURE_USER_LOGINS
+
+        resolver: Callable[[str], str | None] = OKTA_FIXTURE_USER_LOGINS.get
         raws = [
             g for g in OKTA_FIXTURE_OAUTH_GRANTS if user_id is None or g.get("userId") == user_id
         ][:limit]
-        grants = [normalise_oauth_grant(g, org_id=org_id) for g in raws]
+        grants = [
+            normalise_oauth_grant(g, org_id=org_id, user_login_resolver=resolver) for g in raws
+        ]
         return {
             "status": "success",
             "is_mock": True,

@@ -89,8 +89,10 @@ class TestSystemLogNormalisation:
         # Session and token IDs are pulled from the Okta-specific paths
         assert evt.session_id == "ext_sess_fixture_replay_001"
         assert evt.token_id == "at_fixture_replay_001"
-        # OAuth app id surfaces from target[]
-        assert evt.app_id == "ms_graph_oauth_app"
+        # OAuth app id surfaces from target[] — the STABLE Okta id, not the
+        # display label (Codex #212): _app_id_from_event now prefers
+        # ``target.id`` so it joins to grants keyed on ``clientId``.
+        assert evt.app_id == "0oafixtureapp001"
 
     def test_refresh_token_classifies_as_token_refresh(self) -> None:
         raw = _find_event("okta-evt-replay-bbb-002")
@@ -181,15 +183,64 @@ class TestSystemLogNormalisation:
 
 class TestOAuthGrantNormalisation:
     def test_grant_normalises_to_oauthgrant(self) -> None:
+        from btagent_agents.mcp.servers._okta_fixtures import OKTA_FIXTURE_USER_LOGINS
+
         raw = OKTA_FIXTURE_OAUTH_GRANTS[0]
-        grant = normalise_oauth_grant(raw, org_id="org_test")
+        grant = normalise_oauth_grant(
+            raw,
+            org_id="org_test",
+            user_login_resolver=OKTA_FIXTURE_USER_LOGINS.get,
+        )
         assert isinstance(grant, OAuthGrant)
         assert grant.provider is IdentityProvider.OKTA
+        # The resolver maps the raw Okta user-id (``00u…``) to the UPN that
+        # System Log events normalise their principal to (Codex #212), so the
+        # ``(principal_id, app_id)`` join in detect_dormant_app_reactivation
+        # succeeds against real Okta data shapes.
         assert grant.principal_id == "alice@example.com"
-        assert grant.app_id == "ms_graph_oauth_app"
+        # Grants store the stable clientId, which must equal the stable
+        # ``target.id`` that events surface (Codex #212).
+        assert grant.app_id == "0oafixtureapp001"
         assert "openid" in grant.scopes
         assert "Mail.Read" in grant.scopes
         assert grant.consent_type is OAuthConsentType.USER
+
+    def test_grant_without_resolver_keeps_raw_user_id(self) -> None:
+        """Regression for Codex #212: without a ``user_login_resolver`` the
+        grant retains its raw Okta user-id, NOT a fabricated email. The
+        connector's own path always passes the resolver; this verifies the
+        explicit-default behaviour for callers that genuinely have UPNs in
+        ``userId`` (legacy / pre-resolved fixtures)."""
+        raw = OKTA_FIXTURE_OAUTH_GRANTS[0]
+        grant = normalise_oauth_grant(raw, org_id="org_test")
+        # No resolver → grant carries the stable Okta user-id verbatim.
+        assert grant.principal_id == "00ufixture_alice"
+
+    def test_events_and_grants_join_on_same_principal_and_app_id(self) -> None:
+        """Codex #212 regression: events and grants for the same user+app must
+        produce identical ``(principal_id, app_id)`` keys so
+        ``detect_dormant_app_reactivation`` can join them. This previously
+        broke because events used the app label and grants used the
+        clientId; both now resolve to the stable Okta id, and the resolver
+        aligns the principal_id form."""
+        from btagent_agents.mcp.servers._okta_fixtures import OKTA_FIXTURE_USER_LOGINS
+
+        # Pick the dormant-grant fixture (the one detect_dormant cares about).
+        dormant = next(
+            g for g in OKTA_FIXTURE_OAUTH_GRANTS if g["id"] == "oag_fixture_dormant_grant_001"
+        )
+        grant = normalise_oauth_grant(
+            dormant,
+            org_id="org_test",
+            user_login_resolver=OKTA_FIXTURE_USER_LOGINS.get,
+        )
+        # The matching System Log event (the dormant-reactivation one).
+        evt = normalise_system_log_event(
+            _find_event("okta-evt-dormant-react-001"),
+            org_id="org_test",
+        )
+        assert evt is not None
+        assert (evt.principal_id, evt.app_id) == (grant.principal_id, grant.app_id)
 
     def test_admin_consent_classified(self) -> None:
         raw = next(g for g in OKTA_FIXTURE_OAUTH_GRANTS if g["source"] == "ADMIN")
@@ -267,10 +318,15 @@ class TestMockEnvelopes:
             OAuthGrant.model_validate(g)
 
     async def test_list_oauth_grants_filtered_by_user(self) -> None:
+        # Okta filters grants by ``userId`` (the stable ``00u…``), not by
+        # login/UPN — the connector mirrors that. The resolver maps the
+        # returned grant's ``principal_id`` to the UPN downstream.
         srv = OktaMCPServer(mock_mode=True)
-        env = await srv.okta_list_oauth_grants(user_id="bob@example.com")
+        env = await srv.okta_list_oauth_grants(user_id="00ufixture_bob")
         assert env["total"] == 1
-        assert env["grants_raw"][0]["userId"] == "bob@example.com"
+        assert env["grants_raw"][0]["userId"] == "00ufixture_bob"
+        # And the normalised grant carries the UPN, ready to join with events.
+        assert env["grants"][0]["principal_id"] == "bob@example.com"
 
     async def test_list_sessions_returns_sessions(self) -> None:
         srv = OktaMCPServer(mock_mode=True)

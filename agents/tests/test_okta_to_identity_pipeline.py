@@ -129,7 +129,10 @@ async def test_dormant_app_reactivation_fires_for_okta_fixture(
     findings = detect_dormant_app_reactivation(grants, events, idle_days=90)
     assert findings, "dormant-app detector did not fire on the Okta fixture"
     f = findings[0]
-    assert f.evidence["app_id"] == "dormant_legacy_addon"
+    # Stable Okta app id (the ``target.id`` from the System Log event +
+    # ``clientId`` from the grant) — Codex #212 verified events and grants
+    # join on the same form.
+    assert f.evidence["app_id"] == "0oafixtureapp_dormant"
     assert f.evidence["idle_days"] >= 90
 
 
@@ -183,8 +186,10 @@ def test_pure_normaliser_round_trips_through_pydantic() -> None:
         assert reread.token_id == ev.token_id
         assert reread.geo.asn == ev.geo.asn
 
+    from btagent_agents.mcp.servers._okta_fixtures import OKTA_FIXTURE_USER_LOGINS
+
     for raw in OKTA_FIXTURE_OAUTH_GRANTS:
-        g = normalise_oauth_grant(raw, org_id="x")
+        g = normalise_oauth_grant(raw, org_id="x", user_login_resolver=OKTA_FIXTURE_USER_LOGINS.get)
         dumped = g.model_dump(mode="json")
         reread = OAuthGrant.model_validate(dumped)
         assert reread.principal_id == g.principal_id

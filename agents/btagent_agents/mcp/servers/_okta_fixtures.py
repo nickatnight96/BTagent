@@ -31,17 +31,34 @@ from typing import Any
 
 _FIXTURE_PRINCIPAL_ALICE = "alice@example.com"
 _FIXTURE_PRINCIPAL_BOB = "bob@example.com"
+# Okta-assigned user ids (the form ``userId`` actually takes on live grants /
+# sessions). The connector resolves these to the login form events normalise
+# on (UPN) via :data:`OKTA_FIXTURE_USER_LOGINS`. Tests use that mapping as the
+# ``user_login_resolver`` they pass into :func:`normalise_oauth_grant`.
+_FIXTURE_USER_ID_ALICE = "00ufixture_alice"
+_FIXTURE_USER_ID_BOB = "00ufixture_bob"
 _FIXTURE_TENANT = "https://example.okta.com"
+
+# Stable Okta user-id → login (UPN) lookup. Mirrors what
+# ``GET /api/v1/users/{userId}`` would return for ``profile.login`` in live
+# integrations.
+OKTA_FIXTURE_USER_LOGINS: dict[str, str] = {
+    _FIXTURE_USER_ID_ALICE: _FIXTURE_PRINCIPAL_ALICE,
+    _FIXTURE_USER_ID_BOB: _FIXTURE_PRINCIPAL_BOB,
+}
 _FIXTURE_APP_GRAPH = {
+    # ``id`` is the stable Okta app id (``0oa…``) — the key the connector +
+    # detectors join on. ``alternateId`` is the human label and can differ
+    # tenant-to-tenant (Codex #212).
     "id": "0oafixtureapp001",
     "type": "AppInstance",
-    "alternateId": "ms_graph_oauth_app",
+    "alternateId": "MS Graph OAuth App (Production)",
     "displayName": "MS Graph OAuth App",
 }
 _FIXTURE_APP_DORMANT = {
     "id": "0oafixtureapp_dormant",
     "type": "AppInstance",
-    "alternateId": "dormant_legacy_addon",
+    "alternateId": "Legacy Dormant Addon (Production)",
     "displayName": "Legacy Dormant Addon",
 }
 
@@ -280,10 +297,10 @@ OKTA_FIXTURE_SYSTEM_LOG: list[dict[str, Any]] = [
 OKTA_FIXTURE_OAUTH_GRANTS: list[dict[str, Any]] = [
     {
         "id": "oag_fixture_admin_grant_001",
-        "clientId": _FIXTURE_APP_GRAPH["alternateId"],
+        "clientId": _FIXTURE_APP_GRAPH["id"],
         "clientName": _FIXTURE_APP_GRAPH["displayName"],
         "clientDisplayName": _FIXTURE_APP_GRAPH["displayName"],
-        "userId": _FIXTURE_PRINCIPAL_ALICE,
+        "userId": _FIXTURE_USER_ID_ALICE,
         "scopes": ["openid", "profile", "offline_access", "Mail.Read"],
         "source": "END_USER",
         "status": "ACTIVE",
@@ -294,10 +311,10 @@ OKTA_FIXTURE_OAUTH_GRANTS: list[dict[str, Any]] = [
         # Dormant grant — last_used was Feb (>90d before the
         # June reactivation event timestamp above).
         "id": "oag_fixture_dormant_grant_001",
-        "clientId": _FIXTURE_APP_DORMANT["alternateId"],
+        "clientId": _FIXTURE_APP_DORMANT["id"],
         "clientName": _FIXTURE_APP_DORMANT["displayName"],
         "clientDisplayName": _FIXTURE_APP_DORMANT["displayName"],
-        "userId": _FIXTURE_PRINCIPAL_ALICE,
+        "userId": _FIXTURE_USER_ID_ALICE,
         "scopes": ["openid", "profile", "User.Read"],
         "source": "ADMIN",
         "status": "ACTIVE",
@@ -306,10 +323,10 @@ OKTA_FIXTURE_OAUTH_GRANTS: list[dict[str, Any]] = [
     },
     {
         "id": "oag_fixture_bob_active_001",
-        "clientId": _FIXTURE_APP_GRAPH["alternateId"],
+        "clientId": _FIXTURE_APP_GRAPH["id"],
         "clientName": _FIXTURE_APP_GRAPH["displayName"],
         "clientDisplayName": _FIXTURE_APP_GRAPH["displayName"],
-        "userId": _FIXTURE_PRINCIPAL_BOB,
+        "userId": _FIXTURE_USER_ID_BOB,
         "scopes": ["openid", "profile"],
         "source": "PRE_AUTHORIZED",
         "status": "ACTIVE",
@@ -326,7 +343,7 @@ OKTA_FIXTURE_OAUTH_GRANTS: list[dict[str, Any]] = [
 OKTA_FIXTURE_SESSIONS: list[dict[str, Any]] = [
     {
         "id": "okta_sess_fixture_alice_001",
-        "userId": _FIXTURE_PRINCIPAL_ALICE,
+        "userId": _FIXTURE_USER_ID_ALICE,
         "login": _FIXTURE_PRINCIPAL_ALICE,
         "createdAt": "2026-06-18T09:30:00.000Z",
         "expiresAt": "2026-06-18T21:30:00.000Z",
@@ -337,7 +354,7 @@ OKTA_FIXTURE_SESSIONS: list[dict[str, Any]] = [
     },
     {
         "id": "okta_sess_fixture_bob_001",
-        "userId": _FIXTURE_PRINCIPAL_BOB,
+        "userId": _FIXTURE_USER_ID_BOB,
         "login": _FIXTURE_PRINCIPAL_BOB,
         "createdAt": "2026-06-18T11:06:00.000Z",
         "expiresAt": "2026-06-18T23:06:00.000Z",
