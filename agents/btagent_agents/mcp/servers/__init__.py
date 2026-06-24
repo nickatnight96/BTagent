@@ -6,10 +6,12 @@ Available servers:
     SentinelMCPServer    -- Microsoft Sentinel SIEM
     ElasticMCPServer     -- Elastic Security SIEM
     OktaMCPServer        -- Okta Identity Platform (System Log + OAuth grants)
+    EntraMCPServer       -- Microsoft Entra ID / Azure AD (sign-in + audit + grants)
 """
 
 from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
 from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
+from btagent_agents.mcp.servers.entra_mcp import EntraMCPServer
 from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
 from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
@@ -20,4 +22,5 @@ __all__ = [
     "SentinelMCPServer",
     "ElasticMCPServer",
     "OktaMCPServer",
+    "EntraMCPServer",
 ]
