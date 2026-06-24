@@ -123,5 +123,7 @@ def test_wave_d_rule_ids_are_globally_unique() -> None:
         for rule in pack.rules:
             rid = yaml.safe_load(rule.sigma_yaml).get("id")
             assert rid, f"{name}:{rule.file} missing a rule id"
-            assert rid not in seen, f"duplicate rule id {rid}: {seen.get(rid)} vs {name}:{rule.file}"
+            assert rid not in seen, (
+                f"duplicate rule id {rid}: {seen.get(rid)} vs {name}:{rule.file}"
+            )
             seen[rid] = f"{name}:{rule.file}"
