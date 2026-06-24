@@ -1,0 +1,37 @@
+title: CodePipeline Artifact or Source Tampering
+id: 39e3a403-5a8d-46c1-81aa-d6d8365a7312
+status: test
+description: >-
+  Detects UpdatePipeline or PutJobSuccessResult events in AWS CodePipeline that
+  alter build artifacts, the artifact store, or the source location.  Mutating a
+  pipeline definition or force-completing a job lets an attacker inject malicious
+  artifacts into an otherwise trusted release flow — a build-system supply-chain
+  compromise.
+references:
+  - https://attack.mitre.org/techniques/T1195/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: codepipeline.amazonaws.com
+    eventName:
+      - UpdatePipeline
+      - PutJobSuccessResult
+  filter_iac:
+    userIdentity.arn|contains:
+      - ':assumed-role/TerraformDeployRole'
+      - ':assumed-role/CDKToolkit'
+      - ':assumed-role/PipelineRole'
+  condition: selection and not filter_iac
+falsepositives:
+  - IaC pipelines legitimately editing CodePipeline definitions during provisioning;
+    tune filter_iac on actual deployment role ARNs.  Downstream triage clustering
+    collapses repeated benign updates from the same automation principal.
+level: high
+tags:
+  - attack.persistence
+  - attack.t1195
+  - cloud.supply-chain

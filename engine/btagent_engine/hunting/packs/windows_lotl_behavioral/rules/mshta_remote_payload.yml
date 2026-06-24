@@ -1,0 +1,33 @@
+title: Mshta Remote or Inline Script Payload
+id: 8403a6ec-2702-4b51-ab34-0bfb466bfd80
+status: test
+description: >-
+  Detects mshta.exe executing a remote HTA over http(s) or running inline
+  vbscript:/javascript: payloads. mshta is a signed Microsoft binary commonly
+  abused to retrieve and execute attacker-controlled HTML applications while
+  evading application allowlisting.
+references:
+  - https://attack.mitre.org/techniques/T1218/005/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith: \mshta.exe
+  selection_payload:
+    CommandLine|contains:
+      - 'http://'
+      - 'https://'
+      - 'vbscript:'
+      - 'javascript:'
+  condition: selection_img and selection_payload
+falsepositives:
+  - Legacy line-of-business apps that still ship HTA front-ends; baseline the
+    specific HTA paths/URLs and allowlist them per software inventory.
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.t1218.005
+  - windows.lolbin

@@ -1,0 +1,29 @@
+title: EC2 AMI or Snapshot Copied to Foreign Region — Exfil Staging
+id: 45aa9525-1909-4d7c-aeb2-d1dd23340774
+status: test
+description: >-
+  Detects CopyImage or CopySnapshot where the source region differs from the
+  destination region. Copying an AMI or EBS snapshot into an unexpected region is a
+  control-plane staging step that relocates data closer to attacker infrastructure
+  before a subsequent cross-account share or export.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName:
+      - CopyImage
+      - CopySnapshot
+  condition: selection
+falsepositives:
+  - Multi-region DR replication or golden-AMI distribution pipelines (allowlist the
+    automation principal and the approved source/destination region pairs).
+level: medium
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - cloud.exfiltration

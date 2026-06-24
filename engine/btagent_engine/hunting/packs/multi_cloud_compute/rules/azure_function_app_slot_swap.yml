@@ -1,0 +1,31 @@
+title: Azure Function/Web App Slot Swap or Publishing-Credential Listing
+id: ee8e81de-f9be-4fcf-930d-81c6d65d9d05
+status: test
+description: >-
+  Detects Microsoft.Web/sites/slots/swap operations and publishing-credential
+  listing on App Service / Function Apps.  Swapping a staging slot into production
+  promotes attacker-controlled code without a normal deployment, while listing
+  publishing credentials yields persistent push access — both enable stealthy
+  code-execution persistence.
+references:
+  - https://attack.mitre.org/techniques/T1525/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: azure
+  service: activitylog
+detection:
+  selection:
+    operationName:
+      - Microsoft.Web/sites/slots/swap/action
+      - Microsoft.Web/sites/slots/config/list/action
+      - Microsoft.Web/sites/config/list/action
+      - Microsoft.Web/sites/publishxml/action
+  condition: selection
+falsepositives:
+  - Legitimate blue/green deployments performed by a CI/CD pipeline — scope out the pipeline service principal and expected deployment windows
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1525
+  - cloud.persistence

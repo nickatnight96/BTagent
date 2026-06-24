@@ -1,0 +1,32 @@
+title: CloudTrail Event Selector Narrowed to Blind Logging
+id: 44a0d3a1-022a-4205-b7aa-c9c0fa1805ab
+status: test
+description: >-
+  Detects PutEventSelectors events that reconfigure a CloudTrail to stop recording
+  management or data events.  Adversaries narrow event selectors to blind audit
+  logging without an explicit StopLogging or DeleteTrail, leaving the trail
+  nominally enabled while silently dropping the events that would reveal activity.
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_mgmt_disabled:
+    eventName: PutEventSelectors
+    requestParameters.eventSelectors.includeManagementEvents: 'false'
+  selection_readonly_only:
+    eventName: PutEventSelectors
+    requestParameters.eventSelectors.readWriteType: ReadOnly
+  condition: selection_mgmt_disabled or selection_readonly_only
+falsepositives:
+  - Legitimate cost-optimisation that scopes data-event logging to specific
+    resources (verify the change originates from an approved IaC pipeline and
+    review the resulting selector for management-event coverage)
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.t1562.008
+  - cloud.detection-evasion

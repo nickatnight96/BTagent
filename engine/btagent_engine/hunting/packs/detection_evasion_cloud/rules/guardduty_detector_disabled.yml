@@ -1,0 +1,33 @@
+title: GuardDuty Detector Disabled or Findings Suppressed
+id: 6458fe73-7cce-4f67-b3e7-6effe6e3aaf2
+status: test
+description: >-
+  Detects DeleteDetector, UpdateDetector with enable set to false, or CreateFilter
+  events that disable AWS GuardDuty or suppress its findings.  Adversaries blind
+  the primary AWS threat-detection service so subsequent reconnaissance, privilege
+  escalation, and exfiltration generate no alerts.
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_delete:
+    eventName: DeleteDetector
+  selection_disable:
+    eventName: UpdateDetector
+    requestParameters.enable: 'false'
+  selection_suppress:
+    eventName: CreateFilter
+    requestParameters.action: NOOP
+  condition: selection_delete or selection_disable or selection_suppress
+falsepositives:
+  - Legitimate suppression filters created by the SOC to reduce known-benign
+    finding noise (maintain an allowlist of approved filter names/owners)
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.t1562.001
+  - cloud.detection-evasion

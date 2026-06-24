@@ -1,0 +1,34 @@
+title: Kubernetes CSR Approved or Node Proxy Subresource Accessed
+id: c851000e-e2a3-4b90-900a-2afb99252475
+status: test
+description: >-
+  Detects approval of a CertificateSigningRequest or access to the nodes/proxy
+  subresource.  Approving an attacker-submitted CSR mints a valid kubelet
+  certificate, while the nodes/proxy subresource brokers requests directly to the
+  kubelet API.  Both abuse the node trust path to obtain or wield node-level
+  credentials for privilege escalation and lateral movement.
+references:
+  - https://attack.mitre.org/techniques/T1552/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_csr_approve:
+    verb:
+      - update
+      - create
+    objectRef.resource: certificatesigningrequests
+    objectRef.subresource: approval
+  selection_node_proxy:
+    objectRef.resource: nodes
+    objectRef.subresource: proxy
+  condition: selection_csr_approve or selection_node_proxy
+falsepositives:
+  - The kube-controller-manager auto-approves kubelet-serving CSRs; correlate the approving principal — automated controller identities are expected, human or service-account approvals of node CSRs warrant review.
+level: medium
+tags:
+  - attack.credential-access
+  - attack.t1552
+  - kubernetes.credential-access

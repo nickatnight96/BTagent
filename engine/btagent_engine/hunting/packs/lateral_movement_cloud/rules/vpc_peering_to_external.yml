@@ -1,0 +1,35 @@
+title: VPC Peering Connection Created or Accepted to External AWS Account
+id: 937a4156-abb4-425e-a3f5-fabfa66f5c4e
+status: test
+description: >-
+  Detects CreateVpcPeeringConnection or AcceptVpcPeeringConnection events that
+  bridge to an AWS account outside the organisation's known-account list. An
+  external VPC peer can create a network path for lateral movement and data
+  movement between an attacker-controlled account and victim workloads.
+references:
+  - https://attack.mitre.org/techniques/T1021/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: ec2.amazonaws.com
+    eventName:
+      - CreateVpcPeeringConnection
+      - AcceptVpcPeeringConnection
+  filter_known_accounts:
+    # Placeholder — replace with the organisation's owned account IDs or use a lookup.
+    requestParameters.peerOwnerId:
+      - '111122223333'
+      - '444455556666'
+  condition: selection and not filter_known_accounts
+falsepositives:
+  - Legitimate cross-account peering to a partner or shared-services account
+    (add the peer owner ID to filter_known_accounts).
+level: medium
+tags:
+  - attack.lateral-movement
+  - attack.t1021
+  - cloud.lateral-movement

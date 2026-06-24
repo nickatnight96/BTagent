@@ -1,0 +1,35 @@
+title: EC2 Describe-Based Cloud Infrastructure Recon
+id: 8a6f4e42-2cbc-4f7b-9940-6036a6a7cc9b
+status: test
+description: >-
+  Detects EC2 describe-style reconnaissance of instances, security groups,
+  images, and snapshots.  Adversaries inventory compute, network exposure, and
+  disk images to find lateral-movement paths and exfiltration targets.
+references:
+  - https://attack.mitre.org/techniques/T1580/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: ec2.amazonaws.com
+    eventName:
+      - DescribeInstances
+      - DescribeSecurityGroups
+      - DescribeImages
+      - DescribeSnapshots
+  filter_aws_services:
+    userIdentity.type: AWSService
+  condition: selection and not filter_aws_services
+falsepositives:
+  - Inventory, cost, monitoring, and IaC tooling call EC2 describe APIs
+    constantly; baseline is high.  This is a single-event signature — downstream
+    triage clustering handles describe-spam volume, so investigate clustered
+    bursts from an unexpected principal rather than individual hits.
+level: informational
+tags:
+  - attack.discovery
+  - attack.t1580
+  - cloud.discovery

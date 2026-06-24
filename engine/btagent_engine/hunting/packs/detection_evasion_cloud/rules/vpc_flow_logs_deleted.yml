@@ -1,0 +1,27 @@
+title: VPC Flow Logs Deleted
+id: d653407c-1247-4892-981f-a86bba8aae5e
+status: test
+description: >-
+  Detects DeleteFlowLogs events that remove VPC, subnet, or ENI flow-log
+  configurations.  Adversaries delete flow logs to eliminate network-traffic
+  visibility, blinding detections for lateral movement, command-and-control,
+  and data exfiltration over the network plane.
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: DeleteFlowLogs
+  condition: selection
+falsepositives:
+  - Flow-log teardown during VPC decommissioning or migration (correlate with
+    the calling principal and concurrent VPC/subnet deletions)
+level: medium
+tags:
+  - attack.defense-evasion
+  - attack.t1562.008
+  - cloud.detection-evasion

@@ -1,0 +1,45 @@
+# Lateral Movement (Cloud) hunt pack (Wave D) — builtin engine pack.
+# Loaded by btagent_engine.hunting.load_builtin_pack("lateral_movement_cloud").
+# The loader discovers Sigma rule files directly under ``rules/`` and matches each
+# manifest ``file:`` entry against the bare basename.  The pack id is auto-generated
+# (deterministic hpack_ ULID) by the loader and is intentionally omitted here.
+name: Lateral Movement (Cloud) Hunt Pack
+version: 1.0.0
+description: >-
+  Detects cloud lateral movement across accounts, regions, and networks: SSM
+  agent-mediated remote execution, external VPC peering bridges, world-open
+  admin ports, AssumeRole pivots into novel regions, and EC2 Instance Connect
+  transient SSH key pushes.  Sigma rules target AWS CloudTrail management events
+  via Splunk/Elastic/CrowdStrike.
+
+rules:
+  - file: ssm_send_command_cross_account.yml
+    enabled: true
+    notes: >-
+      SendCommand (RunShellScript) / StartSession over CloudTrail management
+      events.  Transpiles cleanly today.  Ready; enable-on-connector via #100.
+
+  - file: vpc_peering_to_external.yml
+    enabled: true
+    notes: >-
+      CreateVpcPeeringConnection / AcceptVpcPeeringConnection to an account
+      outside filter_known_accounts.  Tune owned account IDs before enabling.
+      Ready; enable-on-connector via #100.
+
+  - file: security_group_world_open.yml
+    enabled: true
+    notes: >-
+      AuthorizeSecurityGroupIngress opening 0.0.0.0/0 on ports 22/3389.
+      Near-zero expected baseline.  Ready; enable-on-connector via #100.
+
+  - file: assumerole_into_new_region.yml
+    enabled: true
+    notes: >-
+      Single-event AssumeRole signature; per-principal region-novelty baselining
+      runs in downstream analytics.  Ready; enable-on-connector via #100.
+
+  - file: ec2_instance_connect_pushed_key.yml
+    enabled: true
+    notes: >-
+      SendSSHPublicKey (EC2 Instance Connect) transient SSH grant over
+      CloudTrail.  Ready; enable-on-connector via #100.

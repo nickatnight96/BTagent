@@ -1,0 +1,31 @@
+title: Kubernetes Pod Mounting hostPath Volume (Node Filesystem Escape)
+id: 7e65c306-bf40-4512-a408-becf369e5ca2
+status: test
+description: >-
+  Detects creation of a Pod that mounts a hostPath volume, exposing a path on the
+  underlying node's filesystem inside the container.  hostPath mounts of sensitive
+  paths (/, /var/run/docker.sock, /etc, host root) enable node-filesystem access,
+  container escape, and credential theft from the host.
+references:
+  - https://attack.mitre.org/techniques/T1611/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    verb: create
+    objectRef.resource: pods
+  selection_hostpath:
+    requestObject.spec.volumes.hostPath.path|startswith: /
+  condition: selection and selection_hostpath
+falsepositives:
+  - Log shippers, CSI/storage drivers, and node-monitoring DaemonSets that mount
+    hostPath by design — filter on trusted service accounts and specific known
+    mount paths.
+level: high
+tags:
+  - attack.privilege-escalation
+  - attack.t1611
+  - container.escape

@@ -1,0 +1,32 @@
+title: EBS/RDS Snapshot Shared with External AWS Account
+id: 793a598b-1cec-4707-bbde-27ddc546e5ec
+status: test
+description: >-
+  Detects ModifySnapshotAttribute or ModifyDBSnapshotAttribute events that grant
+  createVolumePermission or restore access to an external AWS account. Sharing a
+  storage snapshot cross-account copies data out of the environment entirely via
+  the control plane, producing no VPC egress and no flow-log evidence.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName:
+      - ModifySnapshotAttribute
+      - ModifyDBSnapshotAttribute
+    requestParameters.attributeType:
+      - createVolumePermission
+      - restore
+  condition: selection
+falsepositives:
+  - Disaster-recovery or cross-account backup tooling sharing snapshots to a known
+    secondary account (add the recipient account ID to the trusted-account list).
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - cloud.exfiltration

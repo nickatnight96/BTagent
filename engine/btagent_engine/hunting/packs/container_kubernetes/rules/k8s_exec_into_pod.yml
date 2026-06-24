@@ -1,0 +1,32 @@
+title: Kubernetes Exec Into Pod (kubectl exec)
+id: 15878364-4bab-4e3c-bf9c-d1a2d4bd9197
+status: test
+description: >-
+  Detects use of the pods/exec subresource (kubectl exec) to run a command or open
+  an interactive shell inside a running pod.  Interactive exec bypasses image and
+  deployment controls and is a common path for hands-on-keyboard activity,
+  credential theft, and lateral movement inside a cluster.
+references:
+  - https://attack.mitre.org/techniques/T1609/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    verb:
+      - create
+      - get
+    objectRef.resource: pods
+    objectRef.subresource: exec
+  condition: selection
+falsepositives:
+  - Legitimate operator / SRE debugging and break-glass workflows — exec can be
+    routine; downstream triage clustering handles volume, and known debug service
+    accounts should be filtered.
+level: medium
+tags:
+  - attack.execution
+  - attack.t1609
+  - container.execution

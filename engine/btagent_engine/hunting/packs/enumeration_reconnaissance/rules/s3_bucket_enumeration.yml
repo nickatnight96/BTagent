@@ -1,0 +1,34 @@
+title: S3 Bucket Enumeration and Access-Control Probing
+id: 14012f7f-63dd-404b-ac61-d5d8853ef4fd
+status: test
+description: >-
+  Detects enumeration of S3 buckets and probing of their ACLs and policies.
+  Adversaries list buckets then inspect access controls to locate
+  world-readable or misconfigured stores ahead of data exfiltration.
+references:
+  - https://attack.mitre.org/techniques/T1580/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: s3.amazonaws.com
+    eventName:
+      - ListBuckets
+      - GetBucketAcl
+      - GetBucketPolicy
+  filter_aws_services:
+    userIdentity.type: AWSService
+  condition: selection and not filter_aws_services
+falsepositives:
+  - Backup, compliance-scanning, and CSPM tooling enumerate buckets and read
+    ACLs/policies on a schedule; add those principals to the filter.  This is a
+    single-event signature — downstream triage clustering handles probe volume,
+    so a clustered burst against many buckets is the real signal.
+level: low
+tags:
+  - attack.discovery
+  - attack.t1580
+  - cloud.discovery

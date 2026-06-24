@@ -1,0 +1,30 @@
+title: WMIC Process Call Create — Local or Remote Execution
+id: 41a5f481-7e35-4c41-bda7-088bceeecd05
+status: test
+description: >-
+  Detects wmic.exe invoking "process call create", which spawns a new process
+  locally or — when combined with /node: — on a remote host. Adversaries use this
+  signed binary for lateral movement and proxy execution that blends into normal
+  WMI administrative activity.
+references:
+  - https://attack.mitre.org/techniques/T1047/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith: \wmic.exe
+  selection_cmd:
+    CommandLine|contains: 'process call create'
+  condition: selection_img and selection_cmd
+falsepositives:
+  - Legacy management/automation scripts that use wmic for software deployment;
+    correlate with the parent process and any remote /node target and allowlist
+    known administrative tooling.
+level: medium
+tags:
+  - attack.execution
+  - attack.t1047
+  - windows.lolbin

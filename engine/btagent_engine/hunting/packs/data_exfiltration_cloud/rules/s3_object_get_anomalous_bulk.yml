@@ -1,0 +1,29 @@
+title: S3 GetObject — Mass-Retrieval Signature
+id: a7c7743a-9fa7-45f4-8139-4b97648165a4
+status: test
+description: >-
+  Single-event signature for S3 GetObject data-plane reads indicative of bulk object
+  retrieval (mass copy-out of bucket contents). Reading a data store at scale is a
+  classic exfiltration access pattern; this rule emits the per-event signal and
+  leaves volume/rate thresholding to downstream triage clustering.
+references:
+  - https://attack.mitre.org/techniques/T1530/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: s3
+detection:
+  selection:
+    eventName: GetObject
+    eventType: AwsApiCall
+  condition: selection
+falsepositives:
+  - Normal high-volume application read traffic — every GetObject matches in
+    isolation. Volume/threshold and rare-principal scoring are applied by downstream
+    triage clustering, not by this single-event signature.
+level: medium
+tags:
+  - attack.collection
+  - attack.t1530
+  - cloud.exfiltration

@@ -1,0 +1,34 @@
+title: Security Group Ingress Opened to 0.0.0.0/0 on Admin Ports
+id: 5c61062b-698c-425d-a398-21c8e0615f5a
+status: test
+description: >-
+  Detects AuthorizeSecurityGroupIngress events that expose administrative
+  remote-access ports (SSH 22, RDP 3389) to the entire internet (0.0.0.0/0).
+  World-open admin ports give an external attacker a direct foothold and an
+  inbound lateral-movement path into otherwise segmented workloads.
+references:
+  - https://attack.mitre.org/techniques/T1021/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_event:
+    eventSource: ec2.amazonaws.com
+    eventName: AuthorizeSecurityGroupIngress
+  selection_world:
+    requestParameters.ipPermissions.items.ipRanges.items.cidrIp: '0.0.0.0/0'
+  selection_admin_ports:
+    requestParameters.ipPermissions.items.fromPort:
+      - 22
+      - 3389
+  condition: selection_event and selection_world and selection_admin_ports
+falsepositives:
+  - Temporary break-glass access opened by an operator (should be short-lived;
+    correlate with a change ticket and revocation event downstream).
+level: high
+tags:
+  - attack.lateral-movement
+  - attack.t1021
+  - cloud.lateral-movement

@@ -1,0 +1,27 @@
+title: RDS Snapshot Exported to S3 — Potential Exfil Staging
+id: 54e3cf7d-c362-4b6b-b3cf-fac48b1efa8e
+status: test
+description: >-
+  Detects StartExportTask, which exports an RDS/Aurora snapshot to an S3 bucket as
+  Parquet. This converts a database snapshot into flat, readable objects in a bucket
+  that may be attacker-reachable — a common staging step before exfiltration over an
+  alternative protocol.
+references:
+  - https://attack.mitre.org/techniques/T1567/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: StartExportTask
+  condition: selection
+falsepositives:
+  - Scheduled analytics/data-lake export jobs writing to an approved bucket
+    (allowlist the IaC/pipeline principal and the destination bucket ARN).
+level: medium
+tags:
+  - attack.exfiltration
+  - attack.t1567
+  - cloud.exfiltration

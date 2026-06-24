@@ -1,0 +1,41 @@
+# Supply-Chain Cloud Hunt Pack (Wave D)
+# Sigma rules target AWS CloudTrail management events covering cloud build and
+# artifact supply-chain tampering (ECR, CodePipeline, Lambda, CodeBuild).
+#
+# Loaded by btagent_engine.hunting.load_builtin_pack("supply_chain_cloud").
+# The loader discovers Sigma rule files directly under ``rules/`` and matches each
+# manifest ``file:`` entry against the bare basename.  No ``id:`` is set here — the
+# loader auto-generates a deterministic hpack_ identifier.
+name: Supply-Chain Cloud Hunt Pack
+version: 1.0.0
+description: >-
+  Detects cloud build and artifact supply-chain tampering in AWS: ECR image-tag
+  overwrites of immutable-intended tags, CodePipeline artifact/source mutation,
+  Lambda code/layer swaps, and CodeBuild buildspec/source overrides.  All rules
+  target CloudTrail management events and transpile cleanly to Splunk/Elastic/
+  CrowdStrike today; enable against the live CloudTrail connector via #100.
+
+rules:
+  - file: ecr_image_tag_overwrite.yml
+    enabled: true
+    notes: >-
+      PutImage overwriting an intended-immutable tag (':latest'/pinned release).
+      Ready; enable-on-connector via #100.  Best paired with ECR tag immutability.
+
+  - file: codepipeline_artifact_tamper.yml
+    enabled: true
+    notes: >-
+      UpdatePipeline / PutJobSuccessResult altering artifacts or source location.
+      Ready; enable-on-connector via #100.  Tune filter_iac on real pipeline ARNs.
+
+  - file: lambda_layer_or_code_swapped.yml
+    enabled: true
+    notes: >-
+      UpdateFunctionCode / UpdateFunctionConfiguration swapping code or attaching
+      an unknown layer ARN.  Ready; enable-on-connector via #100.
+
+  - file: codebuild_buildspec_override.yml
+    enabled: true
+    notes: >-
+      StartBuild with buildspecOverride or source-location override injecting build
+      steps.  Ready; enable-on-connector via #100.

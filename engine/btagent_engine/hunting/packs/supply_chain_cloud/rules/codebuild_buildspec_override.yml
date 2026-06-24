@@ -1,0 +1,37 @@
+title: CodeBuild StartBuild with Buildspec or Source Override
+id: a57776b0-008c-4f65-870f-0cf651167461
+status: test
+description: >-
+  Detects StartBuild (or StartBuildBatch) events in AWS CodeBuild that supply an
+  inline buildspecOverride or override the source location/version.  Overriding the
+  buildspec injects arbitrary commands into a trusted build, and overriding the
+  source pulls code from an attacker-controlled location — both are build-system
+  supply-chain tampering.
+references:
+  - https://attack.mitre.org/techniques/T1195/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: codebuild.amazonaws.com
+    eventName:
+      - StartBuild
+      - StartBuildBatch
+  override_buildspec:
+    requestParameters.buildspecOverride|contains: ' '
+  override_source:
+    requestParameters.sourceLocationOverride|contains: '/'
+  condition: selection and (override_buildspec or override_source)
+falsepositives:
+  - Engineers running ad-hoc builds with a custom buildspec for debugging; correlate
+    with the invoking principal (should be a pipeline role, not an interactive user)
+    and allow-list known internal source repositories.  Downstream triage clustering
+    handles repeated benign overrides.
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1195
+  - cloud.supply-chain

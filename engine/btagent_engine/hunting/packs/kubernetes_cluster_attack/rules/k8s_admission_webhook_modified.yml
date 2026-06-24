@@ -1,0 +1,32 @@
+title: Kubernetes Admission Webhook Configuration Created or Modified
+id: eb97e747-8d07-4dd6-a0fd-ae6c10540ea5
+status: test
+description: >-
+  Detects create/update operations on ValidatingWebhookConfiguration or
+  MutatingWebhookConfiguration objects.  Adversaries register malicious admission
+  webhooks to intercept and mutate API requests cluster-wide, bypass policy
+  controls, or establish persistence by silently injecting sidecars and
+  credentials into newly created workloads.
+references:
+  - https://attack.mitre.org/techniques/T1610/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    verb:
+      - create
+      - update
+    objectRef.resource:
+      - validatingwebhookconfigurations
+      - mutatingwebhookconfigurations
+  condition: selection
+falsepositives:
+  - Legitimate admission controllers (cert-manager, OPA/Gatekeeper, Istio) installed via IaC; correlate the actor with the deploying pipeline service account rather than a human session.
+level: high
+tags:
+  - attack.persistence
+  - attack.t1610
+  - kubernetes.persistence
