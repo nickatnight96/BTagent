@@ -1,0 +1,28 @@
+title: Azure VM RunCommand Invoked — Remote Code Execution
+id: cd1a65cf-3029-42c2-908d-d2c5eb64ac60
+status: test
+description: >-
+  Detects Microsoft.Compute/virtualMachines/runCommand/action operations, which
+  execute arbitrary scripts on an Azure VM through the control plane without any
+  inbound network access.  RunCommand is a powerful remote-execution primitive
+  abused for lateral movement, credential theft, and hands-on-keyboard activity.
+references:
+  - https://attack.mitre.org/techniques/T1059/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: azure
+  service: activitylog
+detection:
+  selection:
+    operationName:
+      - Microsoft.Compute/virtualMachines/runCommand/action
+      - Microsoft.Compute/virtualMachines/runCommands/write
+  condition: selection
+falsepositives:
+  - Sanctioned operational runbooks and patching automation invoking RunCommand — allowlist the automation principal and expected target resource groups; downstream triage clustering handles bursty rollout volume
+level: high
+tags:
+  - attack.execution
+  - attack.t1059
+  - cloud.execution

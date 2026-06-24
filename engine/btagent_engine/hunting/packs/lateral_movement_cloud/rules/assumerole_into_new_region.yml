@@ -1,0 +1,31 @@
+title: AssumeRole Followed by Activity in a Novel Region for the Principal
+id: 928594b1-442e-44b0-a72e-e14175148c2c
+status: test
+description: >-
+  Detects an AssumeRole event whose resulting activity lands in an AWS region
+  that the assuming principal does not normally use. Attackers pivot into
+  unused regions to operate beneath region-scoped monitoring and to stage
+  resources away from defender attention. This is a single-event signature;
+  region-novelty baselining per principal is performed by downstream analytics.
+references:
+  - https://attack.mitre.org/techniques/T1078/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName: AssumeRole
+  filter_service:
+    userIdentity.type: AWSService
+  condition: selection and not filter_service
+falsepositives:
+  - First legitimate use of a new region for an expanding workload (downstream
+    baseline learns the new region after confirmation; treat first-seen as a lead,
+    not a verdict).
+level: medium
+tags:
+  - attack.lateral-movement
+  - attack.t1078
+  - cloud.lateral-movement

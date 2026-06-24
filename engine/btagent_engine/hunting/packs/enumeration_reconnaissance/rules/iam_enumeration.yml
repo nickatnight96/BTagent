@@ -1,0 +1,39 @@
+title: IAM Principal and Policy Enumeration
+id: 136c5322-1426-4f4e-86ad-3a6e32411798
+status: test
+description: >-
+  Detects enumeration of IAM users, roles, policies, access keys, and the full
+  account authorization detail.  Adversaries map identity and permission
+  structure after gaining access to plan privilege escalation and persistence.
+references:
+  - https://attack.mitre.org/techniques/T1087/004/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: iam.amazonaws.com
+    eventName:
+      - ListUsers
+      - ListRoles
+      - ListPolicies
+      - GetAccountAuthorizationDetails
+      - ListAccessKeys
+  filter_console_admins:
+    # Known IAM/governance tooling and admin sessions — tune per environment.
+    userIdentity.arn|contains:
+      - ':user/svc-iam-'
+      - ':role/governance-'
+  condition: selection and not filter_console_admins
+falsepositives:
+  - IAM governance/IaC tooling and console admins routinely enumerate principals;
+    add them to the filter.  This is a single-event signature — downstream triage
+    clustering handles describe-spam volume, so a lone hit is low signal until
+    correlated into a burst by a single principal.
+level: low
+tags:
+  - attack.discovery
+  - attack.t1087.004
+  - cloud.discovery

@@ -1,0 +1,34 @@
+title: CloudWatch Alarm or Log Group Deleted / Retention Truncated
+id: bf9b3c89-77ff-4cfd-93ac-3d1bc8d22fd3
+status: test
+description: >-
+  Detects DeleteAlarms, DeleteLogGroup, DeleteLogStream, or PutRetentionPolicy
+  with a one-day retention on CloudWatch.  Adversaries delete metric alarms and
+  log groups, or truncate retention to its minimum, to blind alerting and destroy
+  stored evidence after compromising an account.
+references:
+  - https://attack.mitre.org/techniques/T1562/008/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_delete:
+    eventName:
+      - DeleteAlarms
+      - DeleteLogGroup
+      - DeleteLogStream
+  selection_retention:
+    eventName: PutRetentionPolicy
+    requestParameters.retentionInDays: 1
+  condition: selection_delete or selection_retention
+falsepositives:
+  - Routine cleanup of short-lived test alarms or ephemeral log groups by CI/CD
+    (correlate with the calling principal; downstream triage clustering handles
+    bulk-deletion volume)
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.t1562.008
+  - cloud.detection-evasion

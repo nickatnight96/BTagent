@@ -1,0 +1,33 @@
+title: Rundll32 Suspicious Proxy Execution
+id: 548e89f9-5864-4d1b-8054-0b60893a2319
+status: test
+description: >-
+  Detects rundll32.exe invoked with javascript: protocol handlers, the
+  url.dll,OpenURL signature, or no DLL/ordinal arguments at all. These patterns
+  coerce the trusted rundll32 binary into proxying arbitrary script or URL
+  execution, a hallmark of LOLBin defense evasion.
+references:
+  - https://attack.mitre.org/techniques/T1218/011/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith: \rundll32.exe
+  selection_js:
+    CommandLine|contains:
+      - 'javascript:'
+      - 'url.dll,OpenURL'
+      - 'url.dll,FileProtocolHandler'
+      - 'shell32.dll,Control_RunDLL'
+  condition: selection_img and selection_js
+falsepositives:
+  - Legacy installers or control-panel applets that legitimately proxy through
+    url.dll/shell32.dll; baseline per software inventory and allowlist the parent.
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.t1218.011
+  - windows.lolbin

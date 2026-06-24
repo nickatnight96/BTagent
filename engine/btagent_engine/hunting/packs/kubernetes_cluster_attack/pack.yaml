@@ -1,0 +1,52 @@
+# Kubernetes Cluster-Attack Hunt Pack (Wave D)
+# Sigma rules target the Kubernetes API-server audit log source.  All rules
+# transpile cleanly to Splunk/Elastic/CrowdStrike today; the live kubernetes
+# audit connector (#100) is not yet wired, so over-audit-log rules are marked
+# "Ready; enable-on-connector via #100."
+#
+# Loaded by btagent_engine.hunting.load_builtin_pack("kubernetes_cluster_attack").
+# The loader discovers Sigma rule files directly under ``rules/`` and matches
+# each manifest ``file:`` entry against the bare basename.
+name: Kubernetes Cluster-Attack Hunt Pack
+version: 1.0.0
+description: >-
+  Detects Kubernetes control-plane and cluster attacks via API-server audit logs:
+  anonymous access to secrets, admission-webhook persistence, cluster-wide secret
+  enumeration, kube-system DaemonSet persistence, and kubelet certificate / node
+  proxy abuse.  All rules target the kubernetes audit log source and transpile to
+  Splunk/Elastic/CrowdStrike.
+
+rules:
+  - file: k8s_anonymous_authenticated.yml
+    enabled: true
+    notes: >-
+      Anonymous principal reading secrets — near-zero expected baseline in any
+      cluster with anonymous-auth disabled.  Ready; enable-on-connector via #100.
+
+  - file: k8s_admission_webhook_modified.yml
+    enabled: true
+    notes: >-
+      Webhook config changes are rare and IaC-driven; investigate all hits and
+      correlate the actor with the deploying pipeline.  Ready; enable-on-connector
+      via #100.
+
+  - file: k8s_secrets_enumerated.yml
+    enabled: true
+    notes: >-
+      Single-event secrets read signature; downstream triage clustering separates
+      routine controller reads from anomalous cross-namespace sweeps.  Ready;
+      enable-on-connector via #100.
+
+  - file: k8s_daemonset_deployed_kube_system.yml
+    enabled: true
+    notes: >-
+      kube-system DaemonSet creation is a cluster-wide persistence vector; tune
+      against the platform add-on pipeline identity.  Ready; enable-on-connector
+      via #100.
+
+  - file: k8s_node_proxy_or_certificatesigningrequest_approved.yml
+    enabled: true
+    notes: >-
+      CSR approval / nodes-proxy access — correlate the approving principal;
+      controller auto-approval is expected, other approvers warrant review.
+      Ready; enable-on-connector via #100.

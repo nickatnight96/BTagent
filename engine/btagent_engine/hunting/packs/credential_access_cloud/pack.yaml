@@ -1,0 +1,43 @@
+name: Credential Access (Cloud) Hunt Pack
+version: 1.0.0
+description: >-
+  Detects cloud credential theft and secret-access patterns in AWS CloudTrail:
+  Secrets Manager value retrieval, SSM SecureString decryption, EC2 userData
+  injection, account password-policy weakening, and console-login persistence on
+  key-only service accounts.  All rules target CloudTrail management events and
+  transpile cleanly to Splunk/Elastic/CrowdStrike; volume / "bulk" intent is
+  expressed as single-event signatures and clustered by downstream triage.
+
+rules:
+  - file: secretsmanager_bulk_getvalue.yml
+    enabled: true
+    notes: >-
+      GetSecretValue / BatchGetSecretValue over standard CloudTrail. Single-event
+      signature; downstream triage clusters per-principal read volume into a
+      bulk-exfiltration signal. Ready; enable-on-connector via #100.
+
+  - file: ssm_parameter_decrypt.yml
+    enabled: true
+    notes: >-
+      GetParameter(s) with WithDecryption=true on SecureString over CloudTrail.
+      Transpiles cleanly today. Ready; enable-on-connector via #100.
+
+  - file: ec2_userdata_modified.yml
+    enabled: true
+    notes: >-
+      ModifyInstanceAttribute changing userData over CloudTrail. Near-zero runtime
+      baseline; tune filter_known_automation for image-build pipelines.
+      Ready; enable-on-connector via #100.
+
+  - file: iam_password_policy_weakened.yml
+    enabled: true
+    notes: >-
+      UpdateAccountPasswordPolicy relaxing complexity over CloudTrail. Transpiles
+      cleanly today. Ready; enable-on-connector via #100.
+
+  - file: iam_login_profile_created_for_service.yml
+    enabled: true
+    notes: >-
+      CreateLoginProfile / UpdateLoginProfile on naming-convention service accounts
+      over CloudTrail. Near-zero baseline for key-only identities.
+      Ready; enable-on-connector via #100.

@@ -1,0 +1,30 @@
+title: Kubernetes ClusterRoleBinding Granting cluster-admin
+id: 591ad9c2-3f2f-4a91-85ba-0cf766cff7f4
+status: test
+description: >-
+  Detects creation of a ClusterRoleBinding that references the built-in
+  cluster-admin ClusterRole.  Binding cluster-admin to a user, group, or service
+  account grants full control of the cluster and is a high-value persistence and
+  privilege-escalation move that is almost never a routine operation.
+references:
+  - https://attack.mitre.org/techniques/T1078/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    verb: create
+    objectRef.resource: clusterrolebindings
+    requestObject.roleRef.name: cluster-admin
+  condition: selection
+falsepositives:
+  - Initial cluster bootstrap / platform IaC granting cluster-admin to a controller —
+    correlate with the requesting principal (should be a pipeline identity, not a
+    human console session); near-zero baseline otherwise.
+level: high
+tags:
+  - attack.privilege-escalation
+  - attack.t1078
+  - container.persistence

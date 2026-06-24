@@ -1,0 +1,33 @@
+title: Regsvr32 Scriptlet Abuse (Squiblydoo)
+id: c066a564-5181-4f24-817c-bda9933726a4
+status: test
+description: >-
+  Detects regsvr32.exe fetching and registering a remote scriptlet via the
+  /i: switch pointed at an http(s) URL combined with scrobj.dll (the Squiblydoo
+  technique). This bypasses application allowlisting by executing arbitrary
+  script through a signed Microsoft binary.
+references:
+  - https://attack.mitre.org/techniques/T1218/010/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith: \regsvr32.exe
+  selection_remote:
+    CommandLine|contains:
+      - '/i:http'
+      - '/i:ftp'
+  selection_scrobj:
+    CommandLine|contains: scrobj.dll
+  condition: selection_img and selection_remote and selection_scrobj
+falsepositives:
+  - Extremely rare; no known legitimate workflow registers a remote scriptlet via
+    regsvr32. Investigate all hits.
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.t1218.010
+  - windows.lolbin

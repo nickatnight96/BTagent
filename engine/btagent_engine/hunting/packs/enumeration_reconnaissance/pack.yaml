@@ -1,0 +1,39 @@
+name: Enumeration & Reconnaissance Hunt Pack
+version: 1.0.0
+description: >-
+  Detects cloud discovery and reconnaissance enumeration in AWS CloudTrail:
+  IAM principal/policy enumeration, EC2 describe-recon, S3 bucket probing, and
+  STS identity probing used to confirm stolen credentials.  Each rule is a
+  single-event signature; describe-spam volume is clustered downstream by triage.
+
+rules:
+  # ── Sigma rules (CloudTrail log-source) ───────────────────────────────────
+  - file: iam_enumeration.yml
+    enabled: true
+    notes: >-
+      IAM principal/policy enumeration burst indicator (ListUsers/ListRoles/
+      ListPolicies/GetAccountAuthorizationDetails/ListAccessKeys).  Single-event
+      signature; downstream triage clustering handles describe-spam volume.
+      Ready; enable-on-connector via #100.
+
+  - file: ec2_describe_recon.yml
+    enabled: true
+    notes: >-
+      EC2 describe-recon signature (DescribeInstances/DescribeSecurityGroups/
+      DescribeImages/DescribeSnapshots).  Informational baseline is high in
+      well-instrumented orgs; downstream triage clustering handles volume.
+      Ready; enable-on-connector via #100.
+
+  - file: s3_bucket_enumeration.yml
+    enabled: true
+    notes: >-
+      S3 bucket enumeration/probing (ListBuckets/GetBucketAcl/GetBucketPolicy).
+      Single-event signature; downstream triage clustering handles probe volume.
+      Ready; enable-on-connector via #100.
+
+  - file: sts_getcalleridentity_probe.yml
+    enabled: true
+    notes: >-
+      STS identity probing (GetCallerIdentity/GetSessionToken) to confirm stolen
+      credentials.  Single-event signature; downstream triage clustering handles
+      volume.  Ready; enable-on-connector via #100.

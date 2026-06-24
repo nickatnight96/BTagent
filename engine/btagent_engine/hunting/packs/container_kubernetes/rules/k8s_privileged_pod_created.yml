@@ -1,0 +1,34 @@
+title: Kubernetes Privileged Pod Created
+id: e6c0dfd3-a598-49bb-a0ad-05eceb975d9b
+status: test
+description: >-
+  Detects creation of a Pod with a privileged security context or host-namespace
+  sharing (privileged=true, hostPID, or hostNetwork).  Such pods can break out of
+  container isolation, access host devices, and pivot to the underlying node — a
+  primary container-escape primitive.
+references:
+  - https://attack.mitre.org/techniques/T1610/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection_create:
+    verb: create
+    objectRef.resource: pods
+  selection_privileged:
+    requestObject.spec.containers.securityContext.privileged: true
+  selection_hostpid:
+    requestObject.spec.hostPID: true
+  selection_hostnet:
+    requestObject.spec.hostNetwork: true
+  condition: selection_create and (selection_privileged or selection_hostpid or selection_hostnet)
+falsepositives:
+  - System / infrastructure DaemonSets (CNI, CSI, monitoring agents) that legitimately
+    run privileged or host-networked — filter on known service accounts and namespaces.
+level: high
+tags:
+  - attack.privilege-escalation
+  - attack.t1610
+  - container.escape

@@ -1,0 +1,39 @@
+title: Lambda Function Code or Layer Swapped
+id: f0cc01d9-d7b9-4fcd-8a0b-24dfa9b74d04
+status: test
+description: >-
+  Detects UpdateFunctionCode or UpdateFunctionConfiguration events on AWS Lambda,
+  which replace a function's deployment package or attach a Lambda layer.  An
+  unknown or external layer ARN, or an out-of-band code update, can silently inject
+  attacker-controlled code into a trusted serverless workload (supply-chain
+  tampering).
+references:
+  - https://attack.mitre.org/techniques/T1195/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: lambda.amazonaws.com
+    eventName:
+      - UpdateFunctionCode
+      - UpdateFunctionConfiguration
+      - UpdateFunctionCode20150331v2
+      - UpdateFunctionConfiguration20150331v2
+  filter_iac:
+    userIdentity.arn|contains:
+      - ':assumed-role/TerraformDeployRole'
+      - ':assumed-role/CDKToolkit'
+      - ':assumed-role/PipelineRole'
+  condition: selection and not filter_iac
+falsepositives:
+  - Routine deployments updating function code/layers via CI/CD; tune filter_iac on
+    pipeline role ARNs and allow-list known internal layer-publisher account IDs.
+    Downstream triage clustering handles deploy-burst volume.
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1195
+  - cloud.supply-chain

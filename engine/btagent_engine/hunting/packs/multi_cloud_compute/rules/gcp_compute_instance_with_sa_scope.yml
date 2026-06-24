@@ -1,0 +1,29 @@
+title: GCP Compute Instance Created with Broad cloud-platform Scope
+id: f6c845f1-e953-47a2-904e-3e0e89f55849
+status: test
+description: >-
+  Detects compute.instances.insert events that attach a service account with the
+  broad cloud-platform OAuth scope.  An instance running with full-access scope
+  can impersonate the attached service account against every Google API, enabling
+  privilege escalation and lateral movement from a single compromised VM.
+references:
+  - https://attack.mitre.org/techniques/T1078/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: gcp
+  service: audit
+detection:
+  selection:
+    protoPayload.methodName: v1.compute.instances.insert
+  scope_broad:
+    protoPayload.request.serviceAccounts.scopes|contains:
+      - https://www.googleapis.com/auth/cloud-platform
+  condition: selection and scope_broad
+falsepositives:
+  - Platform/admin tooling instances that legitimately require full API scope — restrict by project and add the deploying principal to a downstream allowlist
+level: medium
+tags:
+  - attack.privilege-escalation
+  - attack.t1078
+  - cloud.privilege-escalation

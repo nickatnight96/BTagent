@@ -1,0 +1,34 @@
+title: Kubernetes Anonymous Principal Reading Secrets
+id: 01f20bf2-0f5a-46e9-95c6-b6269b840948
+status: test
+description: >-
+  Detects successful get/list requests against Kubernetes secrets performed by the
+  unauthenticated system:anonymous principal.  Anonymous read access to secrets
+  indicates a misconfigured RBAC binding or an authentication bypass, granting an
+  attacker credentials and service-account tokens for lateral movement.
+references:
+  - https://attack.mitre.org/techniques/T1078/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    user.username: system:anonymous
+    verb:
+      - get
+      - list
+    objectRef.resource: secrets
+  selection_success:
+    responseStatus.code:
+      - 200
+      - 201
+  condition: selection and selection_success
+falsepositives:
+  - Health-check or discovery probes hitting non-secret endpoints (excluded by resource scope); investigate any hit against secrets as a misconfiguration.
+level: high
+tags:
+  - attack.initial-access
+  - attack.t1078
+  - kubernetes.credential-access

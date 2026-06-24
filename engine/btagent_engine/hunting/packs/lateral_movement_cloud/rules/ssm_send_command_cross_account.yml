@@ -1,0 +1,33 @@
+title: SSM SendCommand or StartSession to Instances from Unusual Principal
+id: edbd94ef-a5cd-4605-96e9-61e26422c872
+status: test
+description: >-
+  Detects AWS Systems Manager SendCommand (RunShellScript document) or
+  StartSession against EC2 instances. SSM provides agent-mediated remote
+  execution that bypasses SSH/RDP and network controls, making it a prime
+  lateral-movement channel when invoked by a principal that does not normally
+  drive instance management.
+references:
+  - https://attack.mitre.org/techniques/T1021/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_send_command:
+    eventSource: ssm.amazonaws.com
+    eventName: SendCommand
+    requestParameters.documentName|contains: RunShellScript
+  selection_start_session:
+    eventSource: ssm.amazonaws.com
+    eventName: StartSession
+  condition: selection_send_command or selection_start_session
+falsepositives:
+  - Patch/automation pipelines that legitimately fan out RunShellScript (allowlist the
+    automation role ARN; novel-principal volume is clustered by downstream triage).
+level: high
+tags:
+  - attack.lateral-movement
+  - attack.t1021
+  - cloud.lateral-movement

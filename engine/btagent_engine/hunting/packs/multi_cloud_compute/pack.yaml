@@ -1,0 +1,40 @@
+name: Multi-Cloud Compute Hunt Pack
+version: 1.0.0
+description: >-
+  Detects GCP and Azure compute/identity abuse across the non-AWS clouds: GCP
+  service-account key minting, overprivileged compute instances, Azure
+  high-privilege role assignment to managed identities, App Service slot-swap /
+  publishing-credential persistence, and remote VM RunCommand execution.  Rules
+  target GCP Cloud Audit logs and the Azure Activity Log via Splunk/Elastic/
+  CrowdStrike; Sentinel/Kusto transpile failures are tolerated because that
+  pipeline targets Windows XDR tables.
+
+rules:
+  # ── GCP (Cloud Audit log-source) ──────────────────────────────────────────
+  - file: gcp_service_account_key_created.yml
+    enabled: true
+    notes: >-
+      Fires on google.iam.admin.v1.CreateServiceAccountKey over GCP Cloud Audit
+      logs.  Transpiles cleanly today; Ready; enable-on-connector via #100.
+  - file: gcp_compute_instance_with_sa_scope.yml
+    enabled: true
+    notes: >-
+      compute.instances.insert attaching the broad cloud-platform OAuth scope.
+      Standard GCP audit log-source; Ready; enable-on-connector via #100.
+
+  # ── Azure (Activity Log log-source) ───────────────────────────────────────
+  - file: azure_managed_identity_role_assignment.yml
+    enabled: true
+    notes: >-
+      Owner/Contributor roleAssignments/write to a managed identity.  Near-zero
+      expected baseline; Ready; enable-on-connector via #100.
+  - file: azure_function_app_slot_swap.yml
+    enabled: true
+    notes: >-
+      Slot swap / publishing-credential listing over Azure Activity Log.
+      Scope out CI/CD principals; Ready; enable-on-connector via #100.
+  - file: azure_runcommand_on_vm.yml
+    enabled: true
+    notes: >-
+      virtualMachines/runCommand/action remote execution.  Standard Activity Log
+      log-source; Ready; enable-on-connector via #100.
