@@ -168,7 +168,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Restore uv cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
@@ -232,7 +232,7 @@ jobs:
             libxmlsec1-dev libxml2-dev libxmlsec1-openssl pkg-config xmlsec1
 
       - name: Restore uv cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
@@ -271,7 +271,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Restore uv cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
@@ -380,7 +380,7 @@ jobs:
             tests/e2e/package-lock.json
 
       - name: Restore uv cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
@@ -417,7 +417,7 @@ jobs:
         # (they're apt packages installed system-wide), so they are
         # reinstalled every run via ``install-deps`` below.
         id: playwright-cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('tests/e2e/package-lock.json') }}
@@ -652,7 +652,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Restore uv cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-${{ runner.os }}-${{ hashFiles('**/pyproject.toml') }}
