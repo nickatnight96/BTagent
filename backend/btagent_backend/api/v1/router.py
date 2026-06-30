@@ -10,8 +10,8 @@ from btagent_backend.api.v1.cti_detection import router as cti_detection_router
 from btagent_backend.api.v1.health import router as health_router
 from btagent_backend.api.v1.hunt_findings import router as hunt_router
 from btagent_backend.api.v1.hunts import router as hunts_router
-from btagent_backend.api.v1.investigations import router as investigations_router
 from btagent_backend.api.v1.identity import router as identity_router
+from btagent_backend.api.v1.investigations import router as investigations_router
 from btagent_backend.api.v1.iocs import router as iocs_router
 from btagent_backend.api.v1.knowledge import router as knowledge_router
 from btagent_backend.api.v1.mfa import router as mfa_router
