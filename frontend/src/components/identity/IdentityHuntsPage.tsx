@@ -47,6 +47,7 @@ import {
   useIdentityStore,
   buildPrincipalSummaries,
   buildGrantTableRows,
+  // (graph derivation lives in the store; the page only needs the action + state)
   CONSENT_TECHNIQUE_IDS,
 } from "@/stores/identityStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -54,6 +55,7 @@ import { UserRole } from "@/types/config";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
+import { IdentityGrantsGraph } from "./IdentityGrantsGraph";
 import type {
   CreateSuppressionRequest,
   HuntDomain,
@@ -853,7 +855,11 @@ export function IdentityHuntsPage() {
     isLoading,
     isMutating,
     error,
+    grants,
+    grantsLoading,
+    grantsError,
     fetchFindings,
+    fetchGrants,
     setStateFilter,
     setPage,
     suppress,
@@ -867,7 +873,8 @@ export function IdentityHuntsPage() {
   // Initial load.
   useEffect(() => {
     void fetchFindings();
-  }, [fetchFindings]);
+    void fetchGrants();
+  }, [fetchFindings, fetchGrants]);
 
   // Re-fetch when filter tab changes.
   useEffect(() => {
@@ -946,7 +953,10 @@ export function IdentityHuntsPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => void fetchFindings()}
+          onClick={() => {
+            void fetchFindings();
+            void fetchGrants();
+          }}
           disabled={isLoading}
           data-testid="identity-refresh"
         >
@@ -1050,7 +1060,14 @@ export function IdentityHuntsPage() {
             />
           ))}
 
-          {/* ---- OAuth-grant table ---- */}
+          {/* ---- Live OAuth-grant graph (Phase C) ---- */}
+          <IdentityGrantsGraph
+            grants={grants}
+            loading={grantsLoading}
+            error={grantsError}
+          />
+
+          {/* ---- OAuth-grant detail table (severity + finding linkage) ---- */}
           <GrantTable rows={grantRows} />
 
           {/* ---- Pagination ---- */}
@@ -1118,28 +1135,22 @@ export function IdentityHuntsPage() {
 }
 
 // --------------------------------------------------------------------------- //
-// TODO (Phase C) — Live OAuth-grant graph
+// Phase C — Live OAuth-grant graph (LANDED)
 // --------------------------------------------------------------------------- //
 //
-// The live OAuth-grant graph visualization is DEFERRED because it requires a
-// backend endpoint that does not exist in this slice:
+// The live grant graph is implemented above via <IdentityGrantsGraph>, backed
+// by the read-derive endpoint:
 //
-//   GET /api/v1/identity/grants
-//   Query params: ?principal_id=<id>&active=true&page=<n>&page_size=<n>
+//   GET /api/v1/identity/grants?principal_id=&active=&provider=&page=&page_size=
 //   Response: { items: OAuthGrant[], total: number }
 //
-// Where ``OAuthGrant`` mirrors ``shared/btagent_shared/types/identity_hunt.py``::
-//   - app_id, app_display_name, principal_id, provider, scopes,
-//     consent_type, granted_at, last_used, revoked_at, raw
+// The endpoint derives OAuthGrant records from identity-domain findings'
+// evidence (no new table); ``identityStore.buildGrantGraph`` lays them out and
+// the component renders the principal→app node-link diagram, edges coloured by
+// consent_type (pre_authorized = rose, admin = violet, user = blue) and dashed
+// when revoked. The GrantTable is retained as a severity/finding-linkage detail
+// view beneath the graph.
 //
-// Once the endpoint lands, the implementation would:
-// 1. Add ``fetchGrants(principalId)`` to ``identityStore.ts``.
-// 2. Render a node-link graph (react-flow or custom SVG) grouping nodes by
-//    principal → app, with edges labelled by scopes, and node colour by
-//    consent_type (pre_authorized = red, admin = violet, user = blue).
-// 3. Re-poll or subscribe to IDENTITY_GRANT_* WebSocket events for live
-//    updates without a page refresh.
-//
-// For Phase B the GrantTable above surfaces the grant context that already
-// lives in the finding's evidence dict, which provides the same analyst value
-// at zero extra API cost.
+// Follow-ups (not blocking): a first-class oauth_grants table + ingest-side
+// writer (so grants persist independent of finding retention), and
+// IDENTITY_GRANT_* WebSocket events to replace the 30s polling fallback.

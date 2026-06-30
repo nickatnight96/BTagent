@@ -22,7 +22,12 @@ from conftest import auth_header
 from btagent_backend.db.models import DEFAULT_ORG_ID
 from btagent_backend.db.models_hunt import HuntFindingRow
 
-OTHER_ORG = "org_other_tenant"
+# Distinct from other suites' second-org rows: committed rows persist across
+# tests in this conftest and organizations.name is UNIQUE, so reusing the
+# common "org_other_tenant" / "Other Tenant" literal collides with
+# test_workflow_run_api. Keep this id + name unique to this module.
+OTHER_ORG = "org_idgrants_other"
+OTHER_ORG_NAME = "Identity-Grants Other Tenant"
 
 
 def _finding(
@@ -89,7 +94,7 @@ async def seeded_identity_findings(db_session):
     from btagent_backend.db.models import OrganizationRow
 
     if await db_session.get(OrganizationRow, OTHER_ORG) is None:
-        db_session.add(OrganizationRow(id=OTHER_ORG, name="Other Tenant"))
+        db_session.add(OrganizationRow(id=OTHER_ORG, name=OTHER_ORG_NAME))
         await db_session.flush()
 
     rows = [

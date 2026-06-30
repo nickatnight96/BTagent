@@ -18,6 +18,7 @@ import {
   listIdentityFindings,
   suppressIdentityFinding,
   promoteIdentityFindings,
+  listIdentityGrants,
 } from "@/api/identity";
 import type { HuntFinding, CreateSuppressionRequest } from "@/types/hunt";
 import type {
@@ -25,7 +26,13 @@ import type {
   IdentityTimelineEntry,
   PrincipalSummary,
   GrantTableRow,
+  OAuthGrant,
+  GrantGraph,
 } from "@/types/identity_hunt";
+
+// Vertical spacing between rows in each column of the grant graph layout.
+const GRAPH_ROW_GAP = 90;
+const GRAPH_COL_X = { principal: 0, app: 360 } as const;
 
 // --------------------------------------------------------------------------- //
 // Consent / credential technique IDs (anomalous-consent panel filter)
@@ -186,6 +193,71 @@ export function buildGrantTableRows(findings: HuntFinding[]): GrantTableRow[] {
   );
 }
 
+/**
+ * Build the principal × app node-link graph from a list of OAuthGrants
+ * (the live ``/api/v1/identity/grants`` payload).
+ *
+ * Pure + deterministic so it unit-tests without a DOM:
+ * - Distinct principals become one node each in the LEFT column; distinct
+ *   apps one node each in the RIGHT column. Within a column nodes are ordered
+ *   by first appearance and stacked ``GRAPH_ROW_GAP`` apart.
+ * - Each grant becomes one principal→app edge carrying its consent_type,
+ *   scope count, and revoked flag (the component colours/styles from these).
+ * - Node ids are namespaced (``p:``/``a:``) so a principal and an app that
+ *   happen to share a raw id can't collide.
+ */
+export function buildGrantGraph(grants: OAuthGrant[]): GrantGraph {
+  const principalIds: string[] = [];
+  const appIds: string[] = [];
+  const principalSeen = new Set<string>();
+  const appSeen = new Set<string>();
+  const appLabels = new Map<string, string>();
+
+  for (const g of grants) {
+    if (!principalSeen.has(g.principal_id)) {
+      principalSeen.add(g.principal_id);
+      principalIds.push(g.principal_id);
+    }
+    if (!appSeen.has(g.app_id)) {
+      appSeen.add(g.app_id);
+      appIds.push(g.app_id);
+    }
+    // Prefer a non-empty display name for the app label.
+    if (g.app_display_name && !appLabels.get(g.app_id)) {
+      appLabels.set(g.app_id, g.app_display_name);
+    }
+  }
+
+  const nodes: GrantGraph["nodes"] = [
+    ...principalIds.map((pid, i) => ({
+      id: `p:${pid}`,
+      kind: "principal" as const,
+      label: pid,
+      position: { x: GRAPH_COL_X.principal, y: i * GRAPH_ROW_GAP },
+    })),
+    ...appIds.map((aid, i) => ({
+      id: `a:${aid}`,
+      kind: "app" as const,
+      label: appLabels.get(aid) || aid,
+      position: { x: GRAPH_COL_X.app, y: i * GRAPH_ROW_GAP },
+    })),
+  ];
+
+  // One edge per grant. A dedup'd grant list yields at most one edge per
+  // (principal, app, provider); we still key on grant id so distinct
+  // providers between the same pair render as parallel edges.
+  const edges: GrantGraph["edges"] = grants.map((g) => ({
+    id: `e:${g.id}`,
+    source: `p:${g.principal_id}`,
+    target: `a:${g.app_id}`,
+    consent_type: g.consent_type,
+    scope_count: g.scopes.length,
+    revoked: g.revoked_at !== null,
+  }));
+
+  return { nodes, edges };
+}
+
 // --------------------------------------------------------------------------- //
 // Store types
 // --------------------------------------------------------------------------- //
@@ -206,8 +278,15 @@ interface IdentityState {
   /** Findings selected for bulk promotion. */
   selectedFindingIds: string[];
 
+  /** Live OAuth grants from GET /api/v1/identity/grants (drives the graph). */
+  grants: OAuthGrant[];
+  grantsLoading: boolean;
+  grantsError: string | null;
+
   /** Hydrate identity findings from the backend. */
   fetchFindings: (opts?: { page?: number }) => Promise<void>;
+  /** Hydrate the live OAuth grant graph (optionally scoped to a principal). */
+  fetchGrants: (opts?: { principalId?: string; active?: boolean }) => Promise<void>;
   setStateFilter: (filter: IdentityStateFilter) => void;
   setPage: (page: number) => void;
 
@@ -251,6 +330,10 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
 
   selectedFindingIds: [],
 
+  grants: [],
+  grantsLoading: false,
+  grantsError: null,
+
   fetchFindings: async (opts) => {
     const { stateFilter, page: currentPage, pageSize } = get();
     const page = opts?.page ?? currentPage;
@@ -271,6 +354,21 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to load identity findings");
       set({ isLoading: false, error: message });
+    }
+  },
+
+  fetchGrants: async (opts) => {
+    set({ grantsLoading: true, grantsError: null });
+    try {
+      const resp = await listIdentityGrants({
+        principal_id: opts?.principalId,
+        active: opts?.active,
+        page_size: 200,
+      });
+      set({ grants: resp.items ?? [], grantsLoading: false });
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to load OAuth grants");
+      set({ grantsLoading: false, grantsError: message });
     }
   },
 

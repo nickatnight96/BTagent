@@ -242,3 +242,41 @@ export interface GrantTableRow {
   finding_id: string;
   severity: string;
 }
+
+// --------------------------------------------------------------------------- //
+// Live OAuth-grant graph (#116 Phase C — GET /api/v1/identity/grants)
+// --------------------------------------------------------------------------- //
+
+/** Response shape of ``GET /api/v1/identity/grants``. */
+export interface OAuthGrantListResponse {
+  items: OAuthGrant[];
+  total: number;
+}
+
+/** A node in the principal × app grant graph (consumed by @xyflow/react). */
+export interface GrantGraphNode {
+  id: string;
+  kind: "principal" | "app";
+  /** Human label (UPN / app display name). */
+  label: string;
+  /** Column position — principals left, apps right. */
+  position: { x: number; y: number };
+}
+
+/** An edge: a grant connecting a principal to an app. */
+export interface GrantGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  consent_type: OAuthConsentType;
+  /** Number of scopes the grant carries (drives edge label). */
+  scope_count: number;
+  /** True when the underlying grant has been revoked. */
+  revoked: boolean;
+}
+
+export interface GrantGraph {
+  nodes: GrantGraphNode[];
+  edges: GrantGraphEdge[];
+}
+

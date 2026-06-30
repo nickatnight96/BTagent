@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   buildPrincipalSummaries,
   buildGrantTableRows,
+  buildGrantGraph,
   useIdentityStore,
   CONSENT_TECHNIQUE_IDS,
 } from "@/stores/identityStore";
@@ -456,5 +457,100 @@ describe("useIdentityStore.setStateFilter", () => {
     const { stateFilter, page } = useIdentityStore.getState();
     expect(stateFilter).toBe("promoted");
     expect(page).toBe(1);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// buildGrantGraph (#116 Phase C — live grant graph)
+// --------------------------------------------------------------------------- //
+
+import type { OAuthGrant } from "@/types/identity_hunt";
+
+function grant(overrides: Partial<OAuthGrant> & { id: string }): OAuthGrant {
+  return {
+    org_id: "org_test",
+    app_id: "app_slack",
+    app_display_name: "Slack",
+    principal_id: "alice@example.com",
+    provider: "okta",
+    scopes: ["openid", "profile"],
+    consent_type: "user",
+    granted_at: "2026-06-20T00:00:00Z",
+    last_used: null,
+    revoked_at: null,
+    raw: {},
+    ...overrides,
+  };
+}
+
+describe("buildGrantGraph", () => {
+  it("returns empty nodes/edges for no grants", () => {
+    const g = buildGrantGraph([]);
+    expect(g.nodes).toEqual([]);
+    expect(g.edges).toEqual([]);
+  });
+
+  it("creates one node per distinct principal and app, namespaced by kind", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", principal_id: "alice", app_id: "slack" }),
+      grant({ id: "g2", principal_id: "alice", app_id: "zoom" }),
+      grant({ id: "g3", principal_id: "bob", app_id: "slack" }),
+    ]);
+    const principalNodes = g.nodes.filter((n) => n.kind === "principal");
+    const appNodes = g.nodes.filter((n) => n.kind === "app");
+    expect(principalNodes.map((n) => n.id).sort()).toEqual(["p:alice", "p:bob"]);
+    expect(appNodes.map((n) => n.id).sort()).toEqual(["a:slack", "a:zoom"]);
+  });
+
+  it("lays principals in the left column and apps in the right column", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", principal_id: "alice", app_id: "slack" }),
+      grant({ id: "g2", principal_id: "bob", app_id: "zoom" }),
+    ]);
+    const principals = g.nodes.filter((n) => n.kind === "principal");
+    const apps = g.nodes.filter((n) => n.kind === "app");
+    expect(new Set(principals.map((n) => n.position.x))).toEqual(new Set([0]));
+    // Apps share a single x > principals' x; rows stack vertically.
+    expect(apps.every((n) => n.position.x > 0)).toBe(true);
+    expect(principals.map((n) => n.position.y)).toEqual([0, 90]);
+  });
+
+  it("emits one edge per grant carrying consent_type, scope_count and revoked", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", scopes: ["a", "b", "c"], consent_type: "admin" }),
+      grant({
+        id: "g2",
+        principal_id: "bob",
+        app_id: "legacy",
+        revoked_at: "2026-06-25T00:00:00Z",
+        scopes: [],
+      }),
+    ]);
+    expect(g.edges).toHaveLength(2);
+    const e1 = g.edges.find((e) => e.id === "e:g1")!;
+    expect(e1.source).toBe("p:alice@example.com");
+    expect(e1.target).toBe("a:app_slack");
+    expect(e1.consent_type).toBe("admin");
+    expect(e1.scope_count).toBe(3);
+    expect(e1.revoked).toBe(false);
+    const e2 = g.edges.find((e) => e.id === "e:g2")!;
+    expect(e2.revoked).toBe(true);
+    expect(e2.scope_count).toBe(0);
+  });
+
+  it("prefers a non-empty app display name for the app node label", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", app_id: "app_x", app_display_name: "" }),
+      grant({ id: "g2", app_id: "app_x", app_display_name: "Acme App" }),
+    ]);
+    const appNode = g.nodes.find((n) => n.id === "a:app_x")!;
+    expect(appNode.label).toBe("Acme App");
+  });
+
+  it("does not collide a principal and an app that share a raw id", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", principal_id: "shared", app_id: "shared" }),
+    ]);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(["a:shared", "p:shared"]);
   });
 });
