@@ -35,7 +35,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from btagent_shared.types.hunt_finding import (
     HuntDomain,
@@ -49,8 +49,14 @@ from btagent_shared.types.identity_hunt import (
     IdentityDetectionResult,
     IdentityEvent,
     IdentityEventKind,
+    IdentityProvider,
     OAuthGrant,
+    RevocationProposal,
+    RevocationTarget,
 )
+
+if TYPE_CHECKING:
+    from btagent_shared.types.hunt_finding import HuntFinding
 
 # ---------------------------------------------------------------------------
 # Constants (tunable per-call via kwargs)
@@ -790,3 +796,173 @@ def build_grant_graph(
         )
     # Convert inner defaultdicts to plain dicts for a clean return type
     return {pid: dict(apps) for pid, apps in graph.items()}
+
+
+# ---------------------------------------------------------------------------
+# Revocation proposal builder (#116 Phase C — confirmed hit → revoke playbook)
+# ---------------------------------------------------------------------------
+
+# Forward-named revocation tools: the identity connectors (#100 Tier 1) are
+# read-only today, so these names describe the write actions that arrive with
+# the Tier-1 write surface. The playbook validator treats unknown tools as
+# warnings, not errors, and the playbook itself is double-gated (HITL step).
+_REVOKE_GRANT_TOOL = "identity_revoke_grant"
+_REVOKE_SESSIONS_TOOL = "identity_revoke_sessions"
+
+
+def _revocation_targets(findings: list[HuntFinding]) -> list[RevocationTarget]:
+    """Extract deduped (principal, app) revocation targets from identity findings.
+
+    Only identity-domain findings whose evidence carries a complete grant
+    tuple (``principal_id`` + ``app_id``) contribute — token-replay and
+    impossible-travel findings have no grant to revoke. Targets merge scope
+    sets and source finding IDs across findings about the same grant.
+    """
+    merged: dict[tuple[str, str, str], RevocationTarget] = {}
+    for finding in findings:
+        if finding.domain is not HuntDomain.IDENTITY:
+            continue
+        ev = finding.evidence or {}
+        principal_id = ev.get("principal_id")
+        app_id = ev.get("app_id")
+        if not isinstance(principal_id, str) or not isinstance(app_id, str):
+            continue
+        if not principal_id or not app_id:
+            continue
+
+        provider_raw = ev.get("provider")
+        try:
+            provider = IdentityProvider(provider_raw) if isinstance(provider_raw, str) else None
+        except ValueError:
+            provider = None
+        provider = provider or IdentityProvider.OKTA
+
+        scopes_raw = ev.get("scopes")
+        scopes = (
+            [s for s in scopes_raw if isinstance(s, str)] if isinstance(scopes_raw, list) else []
+        )
+        app_display_name = ev.get("app_display_name")
+        if not isinstance(app_display_name, str):
+            app_display_name = ""
+
+        key = (provider.value, principal_id, app_id)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = RevocationTarget(
+                principal_id=principal_id,
+                app_id=app_id,
+                provider=provider,
+                app_display_name=app_display_name,
+                scopes=sorted(set(scopes)),
+                source_finding_ids=[finding.id],
+            )
+        else:
+            existing.scopes = sorted(set(existing.scopes) | set(scopes))
+            if finding.id not in existing.source_finding_ids:
+                existing.source_finding_ids.append(finding.id)
+            if not existing.app_display_name and app_display_name:
+                existing.app_display_name = app_display_name
+
+    return [merged[k] for k in sorted(merged)]
+
+
+def _revocation_playbook_spec(targets: list[RevocationTarget]) -> dict[str, Any]:
+    """Build the revoke playbook as a JSON-safe dict (YAML-dumpable).
+
+    Shape: one leading ``hitl_gate`` guarding execution, one revoke-grant
+    action per target, one revoke-sessions action per distinct principal,
+    then ``end``. Steps are chained linearly so the DAG validator and the
+    executor both walk it without branch logic.
+    """
+    target_lines = "; ".join(
+        f"{t.principal_id} → {t.app_display_name or t.app_id} ({t.provider.value})" for t in targets
+    )
+    principals = sorted({t.principal_id for t in targets})
+
+    steps: list[dict[str, Any]] = []
+    revoke_ids = [f"revoke_grant_{i + 1}" for i in range(len(targets))]
+    session_ids = [f"revoke_sessions_{i + 1}" for i in range(len(principals))]
+    chain = revoke_ids + session_ids + ["done"]
+
+    steps.append(
+        {
+            "id": "approve_revocation",
+            "type": "hitl_gate",
+            "name": "Approve OAuth grant revocation",
+            "prompt": (
+                f"Revoke {len(targets)} OAuth grant(s) and terminate active sessions? "
+                f"Targets: {target_lines}"
+            ),
+            "required_role": "senior_analyst",
+            "timeout_seconds": 1800,
+            "next_step": chain[0],
+        }
+    )
+    for i, target in enumerate(targets):
+        steps.append(
+            {
+                "id": revoke_ids[i],
+                "type": "action",
+                "name": (
+                    f"Revoke grant: {target.app_display_name or target.app_id} "
+                    f"for {target.principal_id}"
+                ),
+                "tool_name": _REVOKE_GRANT_TOOL,
+                "arguments": {
+                    "provider": target.provider.value,
+                    "principal_id": target.principal_id,
+                    "app_id": target.app_id,
+                    "scopes": list(target.scopes),
+                },
+                "next_step": chain[i + 1],
+            }
+        )
+    for i, principal_id in enumerate(principals):
+        steps.append(
+            {
+                "id": session_ids[i],
+                "type": "action",
+                "name": f"Revoke active sessions: {principal_id}",
+                "tool_name": _REVOKE_SESSIONS_TOOL,
+                "arguments": {"principal_id": principal_id},
+                "next_step": chain[len(targets) + i + 1],
+            }
+        )
+    steps.append({"id": "done", "type": "end", "name": "Revocation complete"})
+
+    return {
+        "name": f"Identity revocation: {len(targets)} grant(s)",
+        "version": "1.0",
+        "description": (
+            "Auto-proposed by the Identity Hunt Agent (#116) on promotion of "
+            "identity grant findings. Revokes the implicated OAuth grants and "
+            "terminates the principals' active sessions after HITL approval."
+        ),
+        "trigger": {"type": "manual", "parameters": {}},
+        "steps": steps,
+    }
+
+
+def build_revocation_proposal(findings: list[HuntFinding]) -> RevocationProposal | None:
+    """Build a revoke-playbook proposal from promoted identity findings.
+
+    Returns ``None`` when no finding carries a revocable grant tuple — the
+    caller simply attaches nothing. Pure logic: no DB, no YAML dependency;
+    the playbook lives in the proposal as a dict until acceptance.
+    """
+    targets = _revocation_targets(findings)
+    if not targets:
+        return None
+
+    titles = sorted({f.title for f in findings if f.domain is HuntDomain.IDENTITY})
+    rationale = (
+        f"{len(targets)} OAuth grant(s) implicated by promoted identity finding(s): "
+        + "; ".join(titles[:10])
+    )
+    spec = _revocation_playbook_spec(targets)
+    return RevocationProposal(
+        targets=targets,
+        rationale=rationale,
+        playbook_name=spec["name"],
+        playbook_spec=spec,
+    )

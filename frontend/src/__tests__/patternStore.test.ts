@@ -136,7 +136,10 @@ describe("usePatternStore.fetchProposals", () => {
 // --------------------------------------------------------------------------- //
 
 describe("usePatternStore.dismiss", () => {
-  it("merges the updated proposal into the list on success", async () => {
+  it("drops the proposal from the filtered view and decrements total", async () => {
+    // Default filter is "proposed" — dismissing flips the proposal out of the
+    // visible filter, so it leaves the list instead of being merged in place
+    // (Codex #218 drop-behavior).
     const original = proposal({ id: "p1" });
     const updated: PatternHuntProposal = { ...original, state: "dismissed" };
     usePatternStore.setState({ proposals: [original], total: 1 });
@@ -147,7 +150,28 @@ describe("usePatternStore.dismiss", () => {
     const inStore = usePatternStore
       .getState()
       .proposals.find((p: PatternHuntProposal) => p.id === "p1");
+    expect(inStore).toBeUndefined();
+    expect(usePatternStore.getState().total).toBe(0);
+    expect(usePatternStore.getState().isMutating).toBe(false);
+  });
+
+  it("merges the updated proposal in place when the filter is 'all'", async () => {
+    const original = proposal({ id: "p1" });
+    const updated: PatternHuntProposal = { ...original, state: "dismissed" };
+    usePatternStore.setState({
+      proposals: [original],
+      total: 1,
+      stateFilter: "all",
+    });
+    mockDismissProposal.mockResolvedValueOnce(updated);
+
+    await usePatternStore.getState().dismiss("p1", { rationale: "not relevant" });
+
+    const inStore = usePatternStore
+      .getState()
+      .proposals.find((p: PatternHuntProposal) => p.id === "p1");
     expect(inStore?.state).toBe("dismissed");
+    expect(usePatternStore.getState().total).toBe(1);
     expect(usePatternStore.getState().isMutating).toBe(false);
   });
 
@@ -169,7 +193,7 @@ describe("usePatternStore.dismiss", () => {
 // --------------------------------------------------------------------------- //
 
 describe("usePatternStore.snooze", () => {
-  it("merges the updated proposal into the list on success", async () => {
+  it("drops the snoozed proposal from the filtered view", async () => {
     const original = proposal({ id: "p2" });
     const updated: PatternHuntProposal = { ...original, state: "snoozed" };
     usePatternStore.setState({ proposals: [original], total: 1 });
@@ -180,7 +204,8 @@ describe("usePatternStore.snooze", () => {
     const inStore = usePatternStore
       .getState()
       .proposals.find((p: PatternHuntProposal) => p.id === "p2");
-    expect(inStore?.state).toBe("snoozed");
+    expect(inStore).toBeUndefined();
+    expect(usePatternStore.getState().total).toBe(0);
   });
 
   it("sets error on failure", async () => {
@@ -197,7 +222,7 @@ describe("usePatternStore.snooze", () => {
 // --------------------------------------------------------------------------- //
 
 describe("usePatternStore.accept", () => {
-  it("merges the accepted proposal into the list", async () => {
+  it("drops the accepted proposal from the filtered view", async () => {
     const original = proposal({ id: "p3" });
     const updated: PatternHuntProposal = { ...original, state: "accepted" };
     usePatternStore.setState({ proposals: [original], total: 1 });
@@ -208,7 +233,8 @@ describe("usePatternStore.accept", () => {
     const inStore = usePatternStore
       .getState()
       .proposals.find((p: PatternHuntProposal) => p.id === "p3");
-    expect(inStore?.state).toBe("accepted");
+    expect(inStore).toBeUndefined();
+    expect(usePatternStore.getState().total).toBe(0);
     expect(usePatternStore.getState().isMutating).toBe(false);
   });
 });

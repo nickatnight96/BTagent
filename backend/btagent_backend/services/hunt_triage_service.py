@@ -21,6 +21,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from btagent_shared.hunt import triage
+from btagent_shared.hunt.identity import build_revocation_proposal
 from btagent_shared.types.enums import AuditCategory, AuditOutcome, Severity, UserRole
 from btagent_shared.types.hunt import (
     HuntFindingState,
@@ -759,6 +760,21 @@ async def promote_to_investigation(
 
     inv_title = title or f"Hunt promotion: {rows[0].title}"
     now = _utcnow()
+    config: dict = {
+        "origin": "hunt_promotion",
+        "hunt_finding_ids": [r.id for r in rows],
+        "mitre_techniques": techniques,
+        "observables": observables,
+        "evidence": [f.evidence for f in findings if f.evidence],
+    }
+    # #116 Phase C: promoted identity grant findings get an inert revoke-
+    # playbook proposal attached. It stays proposal-shaped data until a
+    # senior analyst accepts it via the identity API (the HITL gate) —
+    # acceptance is what materialises a runnable playbook.
+    revocation = build_revocation_proposal(findings)
+    if revocation is not None:
+        config["revocation_proposal"] = revocation.model_dump(mode="json")
+
     inv = InvestigationRow(
         id=generate_id("inv"),
         org_id=org_id,
@@ -768,13 +784,7 @@ async def promote_to_investigation(
         tlp_level="amber",
         status="pending",
         assigned_to=assigned_to,
-        config={
-            "origin": "hunt_promotion",
-            "hunt_finding_ids": [r.id for r in rows],
-            "mitre_techniques": techniques,
-            "observables": observables,
-            "evidence": [f.evidence for f in findings if f.evidence],
-        },
+        config=config,
         created_at=now,
         updated_at=now,
     )
@@ -852,6 +862,7 @@ async def promote_to_investigation(
             "severity": severity.value,
             "hunt_finding_ids": [r.id for r in rows],
             "mitre_techniques": techniques,
+            "revocation_proposed": revocation is not None,
         },
     )
     await db.flush()
