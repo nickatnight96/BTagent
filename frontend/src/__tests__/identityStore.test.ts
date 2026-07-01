@@ -309,13 +309,48 @@ describe("buildGrantTableRows", () => {
 const mockListIdentityFindings = vi.fn();
 const mockSuppressIdentityFinding = vi.fn();
 const mockPromoteIdentityFindings = vi.fn();
+const mockListIdentityGrants = vi.fn();
+const mockGetRevocationProposal = vi.fn();
+const mockAcceptRevocationProposal = vi.fn();
+const mockRejectRevocationProposal = vi.fn();
 
 vi.mock("@/api/identity", () => ({
   listIdentityFindings: (...a: unknown[]) => mockListIdentityFindings(...a),
   getIdentityFinding: vi.fn(),
   suppressIdentityFinding: (...a: unknown[]) => mockSuppressIdentityFinding(...a),
   promoteIdentityFindings: (...a: unknown[]) => mockPromoteIdentityFindings(...a),
+  listIdentityGrants: (...a: unknown[]) => mockListIdentityGrants(...a),
+  getRevocationProposal: (...a: unknown[]) => mockGetRevocationProposal(...a),
+  acceptRevocationProposal: (...a: unknown[]) => mockAcceptRevocationProposal(...a),
+  rejectRevocationProposal: (...a: unknown[]) => mockRejectRevocationProposal(...a),
 }));
+
+import { ApiError } from "@/api/client";
+import type { RevocationProposal } from "@/types/identity_hunt";
+
+function proposal(overrides?: Partial<RevocationProposal>): RevocationProposal {
+  return {
+    targets: [
+      {
+        principal_id: "alice@corp",
+        app_id: "app_slack",
+        provider: "okta",
+        app_display_name: "Slack",
+        scopes: ["openid"],
+        source_finding_ids: ["f1"],
+      },
+    ],
+    rationale: "1 OAuth grant(s) implicated",
+    playbook_name: "Identity revocation: 1 grant(s)",
+    playbook_spec: { steps: [] },
+    status: "proposed",
+    playbook_id: null,
+    decided_by: null,
+    decided_at: null,
+    decision_rationale: "",
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -329,6 +364,10 @@ beforeEach(() => {
     isMutating: false,
     error: null,
     selectedFindingIds: [],
+    revocationProposal: null,
+    revocationInvestigationId: null,
+    revocationMutating: false,
+    revocationError: null,
   });
 });
 
@@ -428,12 +467,125 @@ describe("useIdentityStore.promote", () => {
       total_clusters: 0,
       total_findings: 0,
     });
+    mockGetRevocationProposal.mockRejectedValueOnce(new ApiError(404, "Not Found", null));
 
     const invId = await useIdentityStore.getState().promote(["f1"], "Test investigation");
 
     expect(invId).toBe("inv_abc");
     expect(mockListIdentityFindings).toHaveBeenCalledTimes(1);
     expect(useIdentityStore.getState().selectedFindingIds).toHaveLength(0);
+    // 404 = nothing to revoke — no panel, no error.
+    expect(useIdentityStore.getState().revocationProposal).toBeNull();
+    expect(useIdentityStore.getState().revocationError).toBeNull();
+  });
+
+  it("surfaces the revocation proposal when the promotion carries one", async () => {
+    mockPromoteIdentityFindings.mockResolvedValueOnce({
+      investigation_id: "inv_abc",
+      promoted_finding_ids: ["f1"],
+    });
+    mockListIdentityFindings.mockResolvedValueOnce({
+      clusters: [],
+      findings: [],
+      total_clusters: 0,
+      total_findings: 0,
+    });
+    mockGetRevocationProposal.mockResolvedValueOnce(proposal());
+
+    await useIdentityStore.getState().promote(["f1"]);
+
+    const state = useIdentityStore.getState();
+    expect(mockGetRevocationProposal).toHaveBeenCalledWith("inv_abc");
+    expect(state.revocationProposal?.status).toBe("proposed");
+    expect(state.revocationInvestigationId).toBe("inv_abc");
+  });
+
+  it("does not fail the promote when the proposal fetch errors", async () => {
+    mockPromoteIdentityFindings.mockResolvedValueOnce({
+      investigation_id: "inv_abc",
+      promoted_finding_ids: ["f1"],
+    });
+    mockListIdentityFindings.mockResolvedValueOnce({
+      clusters: [],
+      findings: [],
+      total_clusters: 0,
+      total_findings: 0,
+    });
+    mockGetRevocationProposal.mockRejectedValueOnce(new ApiError(500, "Server Error", null));
+
+    const invId = await useIdentityStore.getState().promote(["f1"]);
+
+    expect(invId).toBe("inv_abc");
+    expect(useIdentityStore.getState().revocationProposal).toBeNull();
+    expect(useIdentityStore.getState().revocationError).toBeTruthy();
+  });
+});
+
+describe("useIdentityStore revocation decisions", () => {
+  it("acceptRevocation updates the stored proposal in place", async () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+    });
+    mockAcceptRevocationProposal.mockResolvedValueOnce(
+      proposal({ status: "accepted", playbook_id: "pb_123", decided_by: "usr_1" }),
+    );
+
+    await useIdentityStore.getState().acceptRevocation("confirmed malicious");
+
+    expect(mockAcceptRevocationProposal).toHaveBeenCalledWith("inv_abc", "confirmed malicious");
+    const state = useIdentityStore.getState();
+    expect(state.revocationProposal?.status).toBe("accepted");
+    expect(state.revocationProposal?.playbook_id).toBe("pb_123");
+    expect(state.revocationMutating).toBe(false);
+  });
+
+  it("acceptRevocation is a no-op without a pending investigation", async () => {
+    await useIdentityStore.getState().acceptRevocation();
+    expect(mockAcceptRevocationProposal).not.toHaveBeenCalled();
+  });
+
+  it("rejectRevocation records the decision", async () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+    });
+    mockRejectRevocationProposal.mockResolvedValueOnce(
+      proposal({ status: "rejected", decision_rationale: "sanctioned app" }),
+    );
+
+    await useIdentityStore.getState().rejectRevocation("sanctioned app");
+
+    expect(useIdentityStore.getState().revocationProposal?.status).toBe("rejected");
+  });
+
+  it("surfaces errors and re-throws on decision failure", async () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+    });
+    mockAcceptRevocationProposal.mockRejectedValueOnce(
+      new ApiError(409, "Conflict", { detail: "already accepted" }),
+    );
+
+    await expect(useIdentityStore.getState().acceptRevocation()).rejects.toBeTruthy();
+    expect(useIdentityStore.getState().revocationError).toBe("already accepted");
+    expect(useIdentityStore.getState().revocationMutating).toBe(false);
+  });
+
+  it("dismissRevocationPanel clears the proposal state", () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+      revocationError: "boom",
+    });
+
+    useIdentityStore.getState().dismissRevocationPanel();
+
+    const state = useIdentityStore.getState();
+    expect(state.revocationProposal).toBeNull();
+    expect(state.revocationInvestigationId).toBeNull();
+    expect(state.revocationError).toBeNull();
   });
 });
 

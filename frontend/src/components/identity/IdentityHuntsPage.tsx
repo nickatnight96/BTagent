@@ -67,6 +67,7 @@ import type {
   IdentityTimelineEntry,
   GrantTableRow,
   IdentityFindingEvidence,
+  RevocationProposal,
 } from "@/types/identity_hunt";
 
 // --------------------------------------------------------------------------- //
@@ -838,6 +839,153 @@ function PromoteModal({
 }
 
 // --------------------------------------------------------------------------- //
+// Revocation proposal modal (#116 Phase C slice 2 — HITL gate)
+// --------------------------------------------------------------------------- //
+
+/**
+ * Decision surface for the revoke-playbook proposal a grant-flavoured
+ * promotion attaches to its investigation. Accept materialises the generated
+ * playbook (senior_analyst+ — ``playbook:create``); reject records the
+ * rationale; "Decide later" leaves the proposal pending on the investigation.
+ * Shown BEFORE navigating to the new investigation so the HITL decision
+ * isn't lost behind the redirect.
+ */
+function RevocationProposalModal({
+  proposal,
+  canDecide,
+  isMutating,
+  error,
+  onAccept,
+  onReject,
+  onDismiss,
+}: {
+  proposal: RevocationProposal;
+  canDecide: boolean;
+  isMutating: boolean;
+  error: string | null;
+  onAccept: (rationale: string) => void;
+  onReject: (rationale: string) => void;
+  onDismiss: () => void;
+}) {
+  const [rationale, setRationale] = useState("");
+  const decided = proposal.status !== "proposed";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      data-testid="identity-revocation-modal"
+    >
+      <div className="w-full max-w-lg rounded-lg border border-slate-700 bg-slate-900 p-6 shadow-xl">
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldOff className="w-4 h-4 text-rose-400" aria-hidden="true" />
+          <h2 className="text-base font-semibold text-slate-100">
+            Revocation playbook proposed
+          </h2>
+        </div>
+        <p className="text-sm text-slate-400 mb-3">{proposal.rationale}</p>
+
+        <ul
+          className="mb-4 max-h-44 overflow-y-auto space-y-1 text-sm"
+          data-testid="identity-revocation-targets"
+        >
+          {proposal.targets.map((t) => (
+            <li
+              key={`${t.provider}:${t.principal_id}:${t.app_id}`}
+              className="rounded-md border border-slate-800 bg-slate-800/50 px-3 py-1.5 text-slate-300"
+              data-testid="identity-revocation-target"
+            >
+              <span className="font-medium">{t.principal_id}</span>
+              {" → "}
+              {t.app_display_name || t.app_id}
+              <span className="ml-2 text-xs text-slate-500">
+                {t.provider} · {t.scopes.length} scope{t.scopes.length === 1 ? "" : "s"}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        {decided ? (
+          <div
+            className="mb-4 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-400"
+            data-testid="identity-revocation-decided"
+          >
+            Proposal {proposal.status}
+            {proposal.playbook_id ? ` — playbook ${proposal.playbook_id} created` : ""}. The
+            playbook itself is HITL-gated again at execution time.
+          </div>
+        ) : (
+          <>
+            {!canDecide && (
+              <div className="mb-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+                Accepting or rejecting requires the <strong>senior analyst</strong> role or
+                above.
+              </div>
+            )}
+            <label className="block text-xs text-slate-400 mb-1">Decision rationale</label>
+            <textarea
+              value={rationale}
+              onChange={(e) => setRationale(e.target.value)}
+              rows={2}
+              placeholder="Why this revocation is (or isn't) warranted"
+              className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500 mb-3"
+              data-testid="identity-revocation-rationale"
+            />
+          </>
+        )}
+
+        {error && (
+          <div
+            className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+            data-testid="identity-revocation-error"
+          >
+            {error}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onDismiss}
+            disabled={isMutating}
+            data-testid="identity-revocation-dismiss"
+          >
+            {decided ? "Continue to investigation" : "Decide later"}
+          </Button>
+          {!decided && canDecide && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isMutating}
+                onClick={() => onReject(rationale)}
+                data-testid="identity-revocation-reject"
+              >
+                Reject
+              </Button>
+              <Button
+                size="sm"
+                disabled={isMutating}
+                onClick={() => onAccept(rationale)}
+                data-testid="identity-revocation-accept"
+              >
+                {isMutating ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <ShieldOff className="w-4 h-4 mr-2" />
+                )}
+                Accept &amp; create playbook
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
 // Main page
 // --------------------------------------------------------------------------- //
 
@@ -858,12 +1006,19 @@ export function IdentityHuntsPage() {
     grants,
     grantsLoading,
     grantsError,
+    revocationProposal,
+    revocationInvestigationId,
+    revocationMutating,
+    revocationError,
     fetchFindings,
     fetchGrants,
     setStateFilter,
     setPage,
     suppress,
     promote,
+    acceptRevocation,
+    rejectRevocation,
+    dismissRevocationPanel,
     clearError,
   } = useIdentityStore();
 
@@ -916,9 +1071,36 @@ export function IdentityHuntsPage() {
     async (findingIds: string[], title: string) => {
       const invId = await promote(findingIds, title || undefined);
       setPromoteTargets(null);
-      navigate(`/investigations/${invId}`);
+      // Grant-flavoured promotions surface a revoke-playbook proposal — hold
+      // the redirect so the HITL decision modal isn't lost. Navigation happens
+      // when the analyst decides (or dismisses) via the modal.
+      if (!useIdentityStore.getState().revocationProposal) {
+        navigate(`/investigations/${invId}`);
+      }
     },
     [promote, navigate],
+  );
+
+  const closeRevocationModal = useCallback(() => {
+    const invId = revocationInvestigationId;
+    dismissRevocationPanel();
+    if (invId) navigate(`/investigations/${invId}`);
+  }, [revocationInvestigationId, dismissRevocationPanel, navigate]);
+
+  const handleAcceptRevocation = useCallback(
+    (rationale: string) => {
+      // Keep the modal open on success so the analyst sees the playbook id;
+      // errors surface inline via revocationError.
+      void acceptRevocation(rationale).catch(() => undefined);
+    },
+    [acceptRevocation],
+  );
+
+  const handleRejectRevocation = useCallback(
+    (rationale: string) => {
+      void rejectRevocation(rationale).catch(() => undefined);
+    },
+    [rejectRevocation],
   );
 
   const handleTabChange = (value: string) => {
@@ -1128,6 +1310,19 @@ export function IdentityHuntsPage() {
           isMutating={isMutating}
           onConfirm={handlePromote}
           onCancel={() => setPromoteTargets(null)}
+        />
+      )}
+
+      {/* ---- Revocation proposal modal (#116 Phase C slice 2) ---- */}
+      {revocationProposal && (
+        <RevocationProposalModal
+          proposal={revocationProposal}
+          canDecide={canPromote}
+          isMutating={revocationMutating}
+          error={revocationError}
+          onAccept={handleAcceptRevocation}
+          onReject={handleRejectRevocation}
+          onDismiss={closeRevocationModal}
         />
       )}
     </div>

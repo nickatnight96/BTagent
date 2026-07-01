@@ -19,6 +19,9 @@ import {
   suppressIdentityFinding,
   promoteIdentityFindings,
   listIdentityGrants,
+  getRevocationProposal,
+  acceptRevocationProposal,
+  rejectRevocationProposal,
 } from "@/api/identity";
 import type { HuntFinding, CreateSuppressionRequest } from "@/types/hunt";
 import type {
@@ -28,6 +31,7 @@ import type {
   GrantTableRow,
   OAuthGrant,
   GrantGraph,
+  RevocationProposal,
 } from "@/types/identity_hunt";
 
 // Vertical spacing between rows in each column of the grant graph layout.
@@ -283,6 +287,17 @@ interface IdentityState {
   grantsLoading: boolean;
   grantsError: string | null;
 
+  /**
+   * Revocation proposal surfaced after a promote (#116 Phase C slice 2).
+   * ``revocationInvestigationId`` anchors the accept / reject calls; both are
+   * null when the last promotion carried no grant-flavoured findings or the
+   * analyst dismissed the panel.
+   */
+  revocationProposal: RevocationProposal | null;
+  revocationInvestigationId: string | null;
+  revocationMutating: boolean;
+  revocationError: string | null;
+
   /** Hydrate identity findings from the backend. */
   fetchFindings: (opts?: { page?: number }) => Promise<void>;
   /** Hydrate the live OAuth grant graph (optionally scoped to a principal). */
@@ -294,6 +309,13 @@ interface IdentityState {
   suppress: (findingId: string, body: CreateSuppressionRequest) => Promise<void>;
   /** Promote one or more findings into a new investigation. */
   promote: (findingIds: string[], title?: string) => Promise<string>;
+
+  /** Accept the pending revocation proposal (HITL) — creates the playbook. */
+  acceptRevocation: (rationale?: string) => Promise<void>;
+  /** Reject the pending revocation proposal with a rationale. */
+  rejectRevocation: (rationale?: string) => Promise<void>;
+  /** Hide the proposal panel without deciding (the proposal stays pending). */
+  dismissRevocationPanel: () => void;
 
   toggleSelected: (findingId: string) => void;
   clearSelection: () => void;
@@ -333,6 +355,11 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
   grants: [],
   grantsLoading: false,
   grantsError: null,
+
+  revocationProposal: null,
+  revocationInvestigationId: null,
+  revocationMutating: false,
+  revocationError: null,
 
   fetchFindings: async (opts) => {
     const { stateFilter, page: currentPage, pageSize } = get();
@@ -400,6 +427,27 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
       const resp = await promoteIdentityFindings(findingIds, title);
       set({ isMutating: false, selectedFindingIds: [] });
       await get().fetchFindings();
+      // #116 Phase C: grant-flavoured promotions carry a revoke-playbook
+      // proposal — surface it for the HITL decision. 404 simply means this
+      // promotion had nothing to revoke; other errors are non-fatal to the
+      // promote itself (the proposal stays reachable via the investigation).
+      try {
+        const proposal = await getRevocationProposal(resp.investigation_id);
+        set({
+          revocationProposal: proposal,
+          revocationInvestigationId: resp.investigation_id,
+          revocationError: null,
+        });
+      } catch (proposalErr) {
+        if (!(proposalErr instanceof ApiError) || proposalErr.status !== 404) {
+          set({
+            revocationError: extractErrorMessage(
+              proposalErr,
+              "Failed to load revocation proposal",
+            ),
+          });
+        }
+      }
       return resp.investigation_id;
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to promote findings");
@@ -407,6 +455,41 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
       throw err;
     }
   },
+
+  acceptRevocation: async (rationale = "") => {
+    const invId = get().revocationInvestigationId;
+    if (!invId) return;
+    set({ revocationMutating: true, revocationError: null });
+    try {
+      const updated = await acceptRevocationProposal(invId, rationale);
+      set({ revocationMutating: false, revocationProposal: updated });
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to accept revocation proposal");
+      set({ revocationMutating: false, revocationError: message });
+      throw err;
+    }
+  },
+
+  rejectRevocation: async (rationale = "") => {
+    const invId = get().revocationInvestigationId;
+    if (!invId) return;
+    set({ revocationMutating: true, revocationError: null });
+    try {
+      const updated = await rejectRevocationProposal(invId, rationale);
+      set({ revocationMutating: false, revocationProposal: updated });
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to reject revocation proposal");
+      set({ revocationMutating: false, revocationError: message });
+      throw err;
+    }
+  },
+
+  dismissRevocationPanel: () =>
+    set({
+      revocationProposal: null,
+      revocationInvestigationId: null,
+      revocationError: null,
+    }),
 
   toggleSelected: (findingId) => {
     const current = get().selectedFindingIds;

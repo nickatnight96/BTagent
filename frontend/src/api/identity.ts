@@ -19,7 +19,7 @@ import type {
   SuppressionRule,
   CreateSuppressionRequest,
 } from "@/types/hunt";
-import type { OAuthGrantListResponse } from "@/types/identity_hunt";
+import type { OAuthGrantListResponse, RevocationProposal } from "@/types/identity_hunt";
 
 const HUNT_BASE = "/v1/hunt";
 const IDENTITY_BASE = "/v1/identity";
@@ -102,4 +102,45 @@ export async function promoteIdentityFindings(
     finding_ids: findingIds,
     title: title ?? null,
   });
+}
+
+// --------------------------------------------------------------------------- //
+// Revocation proposal (#116 Phase C slice 2 — HITL gate)
+// --------------------------------------------------------------------------- //
+
+/**
+ * Fetch the revoke-playbook proposal attached to an investigation.
+ * 404s when the investigation has no proposal (non-grant promotion).
+ */
+export async function getRevocationProposal(
+  investigationId: string,
+): Promise<RevocationProposal> {
+  return api.get<RevocationProposal>(
+    `${IDENTITY_BASE}/investigations/${investigationId}/revocation-proposal`,
+  );
+}
+
+/**
+ * Accept the proposal — the HITL decision that materialises the generated
+ * playbook. Requires ``playbook:create`` (senior_analyst+); 409 once decided.
+ */
+export async function acceptRevocationProposal(
+  investigationId: string,
+  rationale = "",
+): Promise<RevocationProposal> {
+  return api.post<RevocationProposal>(
+    `${IDENTITY_BASE}/investigations/${investigationId}/revocation-proposal/accept`,
+    { rationale },
+  );
+}
+
+/** Reject the proposal with a rationale — same decision authority as accept. */
+export async function rejectRevocationProposal(
+  investigationId: string,
+  rationale = "",
+): Promise<RevocationProposal> {
+  return api.post<RevocationProposal>(
+    `${IDENTITY_BASE}/investigations/${investigationId}/revocation-proposal/reject`,
+    { rationale },
+  );
 }
