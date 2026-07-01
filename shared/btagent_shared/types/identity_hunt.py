@@ -258,3 +258,58 @@ class IdentityDetectionResult(BaseModel):
         default_factory=dict,
         description="Provenance — event IDs, timestamps, geo details, etc.",
     )
+
+
+# ---------------------------------------------------------------------------
+# Revocation proposal (#116 Phase C) — confirmed hit → revoke-playbook (HITL)
+# ---------------------------------------------------------------------------
+
+
+class RevocationProposalStatus(StrEnum):
+    """Lifecycle of a revoke-playbook proposal attached to an investigation."""
+
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class RevocationTarget(BaseModel):
+    """One (principal, app) grant slated for revocation.
+
+    Deduped by ``(provider, principal_id, app_id)`` — several findings about
+    the same grant collapse into one target carrying every source finding ID.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    principal_id: str = Field(..., min_length=1, max_length=512)
+    app_id: str = Field(..., min_length=1, max_length=512)
+    provider: IdentityProvider
+    app_display_name: str = Field(default="", max_length=300)
+    scopes: list[str] = Field(default_factory=list)
+    source_finding_ids: list[str] = Field(default_factory=list)
+
+
+class RevocationProposal(BaseModel):
+    """A revoke-playbook proposal generated when identity grant findings are
+    promoted to an investigation.
+
+    The proposal is *inert data* until a senior analyst accepts it (the HITL
+    gate): acceptance materialises ``playbook_spec`` as a real SOAR playbook
+    whose own first step is a second ``hitl_gate`` guarding execution.
+    ``playbook_spec`` is the playbook as a JSON-safe dict — the backend dumps
+    it to YAML for the playbook service on accept.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    targets: list[RevocationTarget]
+    rationale: str = Field(default="", max_length=8192)
+    playbook_name: str = Field(..., min_length=1, max_length=300)
+    playbook_spec: dict[str, Any]
+    status: RevocationProposalStatus = RevocationProposalStatus.PROPOSED
+    # Set on accept — the materialised playbook's ID.
+    playbook_id: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    decision_rationale: str = Field(default="", max_length=8192)

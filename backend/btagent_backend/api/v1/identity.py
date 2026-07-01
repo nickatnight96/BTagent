@@ -28,21 +28,29 @@ Reuses the Phase 6 hunt RBAC: ``hunt:view`` (analyst+) — same as
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
+import yaml
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from btagent_shared.types.hunt import HuntDomain
 from btagent_shared.types.identity_hunt import (
     IdentityProvider,
     OAuthConsentType,
     OAuthGrant,
+    RevocationProposal,
+    RevocationProposalStatus,
 )
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.auth.scoping import assert_can_access_investigation
+from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_hunt import HuntFindingRow
+from btagent_backend.services.audit_trail import AuditTrail
+from btagent_backend.services.playbook_service import PlaybookService
 
 logger = logging.getLogger("btagent.api.identity")
 
@@ -248,3 +256,189 @@ async def list_identity_grants(
     total = len(items)
     offset = (page - 1) * page_size
     return OAuthGrantListResponse(items=items[offset : offset + page_size], total=total)
+
+
+# --------------------------------------------------------------------------- #
+# Revocation proposal (#116 Phase C slice 2)
+#
+# Promotion of identity grant findings attaches an inert RevocationProposal
+# to the investigation config (see hunt_triage_service.promote_to_investigation).
+# These routes are the HITL gate: a senior analyst reviews the proposal and
+# either accepts it — which materialises the proposal's playbook_spec as a
+# real, runnable SOAR playbook (whose own first step is a second hitl_gate) —
+# or rejects it with a rationale. Both decisions land on the audit chain.
+# --------------------------------------------------------------------------- #
+
+_PROPOSAL_KEY = "revocation_proposal"
+
+_playbook_service = PlaybookService()
+
+
+class RevocationDecisionRequest(BaseModel):
+    rationale: str = Field(default="", max_length=8192)
+
+
+async def _load_investigation_proposal(
+    db: AsyncSession,
+    *,
+    investigation_id: str,
+    user: CurrentUser,
+) -> tuple[InvestigationRow, RevocationProposal]:
+    """Fetch the org-scoped investigation and its revocation proposal (404 on either miss)."""
+    result = await db.execute(
+        select(InvestigationRow).where(InvestigationRow.id == investigation_id)
+    )
+    inv = result.scalar_one_or_none()
+    # 404 on miss OR cross-org — same no-leak posture as the workflows route.
+    if inv is None or inv.org_id != user.org_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found")
+    assert_can_access_investigation(user, inv)
+
+    raw = (inv.config or {}).get(_PROPOSAL_KEY)
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Investigation has no revocation proposal",
+        )
+    try:
+        proposal = RevocationProposal.model_validate(raw)
+    except ValidationError:
+        logger.exception("Malformed revocation proposal on investigation %s", investigation_id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Stored revocation proposal is malformed",
+        ) from None
+    return inv, proposal
+
+
+def _store_proposal(inv: InvestigationRow, proposal: RevocationProposal) -> None:
+    """Write the proposal back into the investigation config.
+
+    Reassigns ``config`` wholesale so SQLAlchemy's JSON change detection
+    (which doesn't track nested mutation) sees the update.
+    """
+    inv.config = {**(inv.config or {}), _PROPOSAL_KEY: proposal.model_dump(mode="json")}
+    inv.updated_at = datetime.now(UTC)
+
+
+@router.get(
+    "/investigations/{investigation_id}/revocation-proposal",
+    response_model=RevocationProposal,
+)
+async def get_revocation_proposal(
+    investigation_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> RevocationProposal:
+    """Read the revoke-playbook proposal attached to an investigation."""
+    user.require_permission("hunt:view")
+    _, proposal = await _load_investigation_proposal(
+        db, investigation_id=investigation_id, user=user
+    )
+    return proposal
+
+
+@router.post(
+    "/investigations/{investigation_id}/revocation-proposal/accept",
+    response_model=RevocationProposal,
+)
+async def accept_revocation_proposal(
+    investigation_id: str,
+    body: RevocationDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> RevocationProposal:
+    """Accept the proposal — the HITL decision that creates the real playbook.
+
+    Gated on ``playbook:create`` (senior_analyst+): accepting *authors* a SOAR
+    playbook, so the decision authority matches the playbook-authoring RBAC.
+    Idempotency: a proposal that has already been decided returns 409 rather
+    than silently re-creating playbooks.
+    """
+    user.require_permission("playbook:create")
+    inv, proposal = await _load_investigation_proposal(
+        db, investigation_id=investigation_id, user=user
+    )
+    if proposal.status is not RevocationProposalStatus.PROPOSED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Revocation proposal already {proposal.status.value}",
+        )
+
+    yaml_str = yaml.safe_dump(proposal.playbook_spec, sort_keys=False)
+    try:
+        playbook = await _playbook_service.create_playbook(
+            db, name=proposal.playbook_name, yaml_str=yaml_str, user_id=user.id
+        )
+    except ValueError as exc:
+        # The spec is generated by build_revocation_proposal, so this only
+        # fires if the generator and the playbook schema drift apart.
+        logger.exception("Generated revocation playbook failed validation")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Generated playbook failed validation: {exc}",
+        ) from None
+
+    proposal.status = RevocationProposalStatus.ACCEPTED
+    proposal.playbook_id = playbook.id
+    proposal.decided_by = user.id
+    proposal.decided_at = datetime.now(UTC)
+    proposal.decision_rationale = body.rationale
+    _store_proposal(inv, proposal)
+
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.HUNT,
+        action="revocation_accept",
+        resource=f"investigation:{inv.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "playbook_id": playbook.id,
+            "target_count": len(proposal.targets),
+            "rationale": body.rationale,
+        },
+    )
+    return proposal
+
+
+@router.post(
+    "/investigations/{investigation_id}/revocation-proposal/reject",
+    response_model=RevocationProposal,
+)
+async def reject_revocation_proposal(
+    investigation_id: str,
+    body: RevocationDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> RevocationProposal:
+    """Reject the proposal — same decision authority as accept."""
+    user.require_permission("playbook:create")
+    inv, proposal = await _load_investigation_proposal(
+        db, investigation_id=investigation_id, user=user
+    )
+    if proposal.status is not RevocationProposalStatus.PROPOSED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Revocation proposal already {proposal.status.value}",
+        )
+
+    proposal.status = RevocationProposalStatus.REJECTED
+    proposal.decided_by = user.id
+    proposal.decided_at = datetime.now(UTC)
+    proposal.decision_rationale = body.rationale
+    _store_proposal(inv, proposal)
+
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.HUNT,
+        action="revocation_reject",
+        resource=f"investigation:{inv.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "target_count": len(proposal.targets),
+            "rationale": body.rationale,
+        },
+    )
+    return proposal
