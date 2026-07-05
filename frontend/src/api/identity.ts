@@ -6,10 +6,9 @@
  * this slice — the identity detectors emit standard ``HuntFinding``s into the
  * existing queue and this client simply constrains the query.
  *
- * TODO (Phase C): When ``GET /api/v1/identity/grants`` lands, add
- * ``listIdentityGrants(principalId?)`` here to power the live OAuth-grant
- * graph visualization.  The backend endpoint should return ``OAuthGrant[]``
- * (see ``shared/btagent_shared/types/identity_hunt.py``).
+ * Phase C adds ``listIdentityGrants`` below, backed by the live
+ * ``GET /api/v1/identity/grants`` read-derive endpoint that surfaces the
+ * OAuth grant graph extracted from identity-domain findings' evidence.
  */
 
 import api from "./client";
@@ -20,8 +19,10 @@ import type {
   SuppressionRule,
   CreateSuppressionRequest,
 } from "@/types/hunt";
+import type { OAuthGrantListResponse, RevocationProposal } from "@/types/identity_hunt";
 
 const HUNT_BASE = "/v1/hunt";
+const IDENTITY_BASE = "/v1/identity";
 
 // --------------------------------------------------------------------------- //
 // Read
@@ -53,6 +54,33 @@ export async function getIdentityFinding(findingId: string): Promise<HuntFinding
   return api.get<HuntFinding>(`${HUNT_BASE}/findings/${findingId}`);
 }
 
+/**
+ * List OAuth grants (the principal × app grant graph) from the live
+ * ``GET /api/v1/identity/grants`` read-derive endpoint.
+ *
+ * The backend derives ``OAuthGrant`` records from identity-domain findings'
+ * evidence, dedupes by ``(provider, principal, app)``, and paginates over
+ * distinct grants — so callers get a clean grant inventory, not raw findings.
+ */
+export async function listIdentityGrants(params?: {
+  principal_id?: string;
+  active?: boolean;
+  provider?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<OAuthGrantListResponse> {
+  const search = new URLSearchParams();
+  if (params?.principal_id) search.set("principal_id", params.principal_id);
+  if (params?.active !== undefined) search.set("active", String(params.active));
+  if (params?.provider) search.set("provider", params.provider);
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.page_size) search.set("page_size", String(params.page_size));
+  const qs = search.toString();
+  return api.get<OAuthGrantListResponse>(
+    `${IDENTITY_BASE}/grants${qs ? `?${qs}` : ""}`,
+  );
+}
+
 // --------------------------------------------------------------------------- //
 // Triage mutations (delegate to existing hunt endpoints)
 // --------------------------------------------------------------------------- //
@@ -74,4 +102,45 @@ export async function promoteIdentityFindings(
     finding_ids: findingIds,
     title: title ?? null,
   });
+}
+
+// --------------------------------------------------------------------------- //
+// Revocation proposal (#116 Phase C slice 2 — HITL gate)
+// --------------------------------------------------------------------------- //
+
+/**
+ * Fetch the revoke-playbook proposal attached to an investigation.
+ * 404s when the investigation has no proposal (non-grant promotion).
+ */
+export async function getRevocationProposal(
+  investigationId: string,
+): Promise<RevocationProposal> {
+  return api.get<RevocationProposal>(
+    `${IDENTITY_BASE}/investigations/${investigationId}/revocation-proposal`,
+  );
+}
+
+/**
+ * Accept the proposal — the HITL decision that materialises the generated
+ * playbook. Requires ``playbook:create`` (senior_analyst+); 409 once decided.
+ */
+export async function acceptRevocationProposal(
+  investigationId: string,
+  rationale = "",
+): Promise<RevocationProposal> {
+  return api.post<RevocationProposal>(
+    `${IDENTITY_BASE}/investigations/${investigationId}/revocation-proposal/accept`,
+    { rationale },
+  );
+}
+
+/** Reject the proposal with a rationale — same decision authority as accept. */
+export async function rejectRevocationProposal(
+  investigationId: string,
+  rationale = "",
+): Promise<RevocationProposal> {
+  return api.post<RevocationProposal>(
+    `${IDENTITY_BASE}/investigations/${investigationId}/revocation-proposal/reject`,
+    { rationale },
+  );
 }

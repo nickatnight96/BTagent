@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   buildPrincipalSummaries,
   buildGrantTableRows,
+  buildGrantGraph,
   useIdentityStore,
   CONSENT_TECHNIQUE_IDS,
 } from "@/stores/identityStore";
@@ -308,13 +309,48 @@ describe("buildGrantTableRows", () => {
 const mockListIdentityFindings = vi.fn();
 const mockSuppressIdentityFinding = vi.fn();
 const mockPromoteIdentityFindings = vi.fn();
+const mockListIdentityGrants = vi.fn();
+const mockGetRevocationProposal = vi.fn();
+const mockAcceptRevocationProposal = vi.fn();
+const mockRejectRevocationProposal = vi.fn();
 
 vi.mock("@/api/identity", () => ({
   listIdentityFindings: (...a: unknown[]) => mockListIdentityFindings(...a),
   getIdentityFinding: vi.fn(),
   suppressIdentityFinding: (...a: unknown[]) => mockSuppressIdentityFinding(...a),
   promoteIdentityFindings: (...a: unknown[]) => mockPromoteIdentityFindings(...a),
+  listIdentityGrants: (...a: unknown[]) => mockListIdentityGrants(...a),
+  getRevocationProposal: (...a: unknown[]) => mockGetRevocationProposal(...a),
+  acceptRevocationProposal: (...a: unknown[]) => mockAcceptRevocationProposal(...a),
+  rejectRevocationProposal: (...a: unknown[]) => mockRejectRevocationProposal(...a),
 }));
+
+import { ApiError } from "@/api/client";
+import type { RevocationProposal } from "@/types/identity_hunt";
+
+function proposal(overrides?: Partial<RevocationProposal>): RevocationProposal {
+  return {
+    targets: [
+      {
+        principal_id: "alice@corp",
+        app_id: "app_slack",
+        provider: "okta",
+        app_display_name: "Slack",
+        scopes: ["openid"],
+        source_finding_ids: ["f1"],
+      },
+    ],
+    rationale: "1 OAuth grant(s) implicated",
+    playbook_name: "Identity revocation: 1 grant(s)",
+    playbook_spec: { steps: [] },
+    status: "proposed",
+    playbook_id: null,
+    decided_by: null,
+    decided_at: null,
+    decision_rationale: "",
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -328,6 +364,10 @@ beforeEach(() => {
     isMutating: false,
     error: null,
     selectedFindingIds: [],
+    revocationProposal: null,
+    revocationInvestigationId: null,
+    revocationMutating: false,
+    revocationError: null,
   });
 });
 
@@ -427,12 +467,125 @@ describe("useIdentityStore.promote", () => {
       total_clusters: 0,
       total_findings: 0,
     });
+    mockGetRevocationProposal.mockRejectedValueOnce(new ApiError(404, "Not Found", null));
 
     const invId = await useIdentityStore.getState().promote(["f1"], "Test investigation");
 
     expect(invId).toBe("inv_abc");
     expect(mockListIdentityFindings).toHaveBeenCalledTimes(1);
     expect(useIdentityStore.getState().selectedFindingIds).toHaveLength(0);
+    // 404 = nothing to revoke — no panel, no error.
+    expect(useIdentityStore.getState().revocationProposal).toBeNull();
+    expect(useIdentityStore.getState().revocationError).toBeNull();
+  });
+
+  it("surfaces the revocation proposal when the promotion carries one", async () => {
+    mockPromoteIdentityFindings.mockResolvedValueOnce({
+      investigation_id: "inv_abc",
+      promoted_finding_ids: ["f1"],
+    });
+    mockListIdentityFindings.mockResolvedValueOnce({
+      clusters: [],
+      findings: [],
+      total_clusters: 0,
+      total_findings: 0,
+    });
+    mockGetRevocationProposal.mockResolvedValueOnce(proposal());
+
+    await useIdentityStore.getState().promote(["f1"]);
+
+    const state = useIdentityStore.getState();
+    expect(mockGetRevocationProposal).toHaveBeenCalledWith("inv_abc");
+    expect(state.revocationProposal?.status).toBe("proposed");
+    expect(state.revocationInvestigationId).toBe("inv_abc");
+  });
+
+  it("does not fail the promote when the proposal fetch errors", async () => {
+    mockPromoteIdentityFindings.mockResolvedValueOnce({
+      investigation_id: "inv_abc",
+      promoted_finding_ids: ["f1"],
+    });
+    mockListIdentityFindings.mockResolvedValueOnce({
+      clusters: [],
+      findings: [],
+      total_clusters: 0,
+      total_findings: 0,
+    });
+    mockGetRevocationProposal.mockRejectedValueOnce(new ApiError(500, "Server Error", null));
+
+    const invId = await useIdentityStore.getState().promote(["f1"]);
+
+    expect(invId).toBe("inv_abc");
+    expect(useIdentityStore.getState().revocationProposal).toBeNull();
+    expect(useIdentityStore.getState().revocationError).toBeTruthy();
+  });
+});
+
+describe("useIdentityStore revocation decisions", () => {
+  it("acceptRevocation updates the stored proposal in place", async () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+    });
+    mockAcceptRevocationProposal.mockResolvedValueOnce(
+      proposal({ status: "accepted", playbook_id: "pb_123", decided_by: "usr_1" }),
+    );
+
+    await useIdentityStore.getState().acceptRevocation("confirmed malicious");
+
+    expect(mockAcceptRevocationProposal).toHaveBeenCalledWith("inv_abc", "confirmed malicious");
+    const state = useIdentityStore.getState();
+    expect(state.revocationProposal?.status).toBe("accepted");
+    expect(state.revocationProposal?.playbook_id).toBe("pb_123");
+    expect(state.revocationMutating).toBe(false);
+  });
+
+  it("acceptRevocation is a no-op without a pending investigation", async () => {
+    await useIdentityStore.getState().acceptRevocation();
+    expect(mockAcceptRevocationProposal).not.toHaveBeenCalled();
+  });
+
+  it("rejectRevocation records the decision", async () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+    });
+    mockRejectRevocationProposal.mockResolvedValueOnce(
+      proposal({ status: "rejected", decision_rationale: "sanctioned app" }),
+    );
+
+    await useIdentityStore.getState().rejectRevocation("sanctioned app");
+
+    expect(useIdentityStore.getState().revocationProposal?.status).toBe("rejected");
+  });
+
+  it("surfaces errors and re-throws on decision failure", async () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+    });
+    mockAcceptRevocationProposal.mockRejectedValueOnce(
+      new ApiError(409, "Conflict", { detail: "already accepted" }),
+    );
+
+    await expect(useIdentityStore.getState().acceptRevocation()).rejects.toBeTruthy();
+    expect(useIdentityStore.getState().revocationError).toBe("already accepted");
+    expect(useIdentityStore.getState().revocationMutating).toBe(false);
+  });
+
+  it("dismissRevocationPanel clears the proposal state", () => {
+    useIdentityStore.setState({
+      revocationProposal: proposal(),
+      revocationInvestigationId: "inv_abc",
+      revocationError: "boom",
+    });
+
+    useIdentityStore.getState().dismissRevocationPanel();
+
+    const state = useIdentityStore.getState();
+    expect(state.revocationProposal).toBeNull();
+    expect(state.revocationInvestigationId).toBeNull();
+    expect(state.revocationError).toBeNull();
   });
 });
 
@@ -456,5 +609,100 @@ describe("useIdentityStore.setStateFilter", () => {
     const { stateFilter, page } = useIdentityStore.getState();
     expect(stateFilter).toBe("promoted");
     expect(page).toBe(1);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// buildGrantGraph (#116 Phase C — live grant graph)
+// --------------------------------------------------------------------------- //
+
+import type { OAuthGrant } from "@/types/identity_hunt";
+
+function grant(overrides: Partial<OAuthGrant> & { id: string }): OAuthGrant {
+  return {
+    org_id: "org_test",
+    app_id: "app_slack",
+    app_display_name: "Slack",
+    principal_id: "alice@example.com",
+    provider: "okta",
+    scopes: ["openid", "profile"],
+    consent_type: "user",
+    granted_at: "2026-06-20T00:00:00Z",
+    last_used: null,
+    revoked_at: null,
+    raw: {},
+    ...overrides,
+  };
+}
+
+describe("buildGrantGraph", () => {
+  it("returns empty nodes/edges for no grants", () => {
+    const g = buildGrantGraph([]);
+    expect(g.nodes).toEqual([]);
+    expect(g.edges).toEqual([]);
+  });
+
+  it("creates one node per distinct principal and app, namespaced by kind", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", principal_id: "alice", app_id: "slack" }),
+      grant({ id: "g2", principal_id: "alice", app_id: "zoom" }),
+      grant({ id: "g3", principal_id: "bob", app_id: "slack" }),
+    ]);
+    const principalNodes = g.nodes.filter((n) => n.kind === "principal");
+    const appNodes = g.nodes.filter((n) => n.kind === "app");
+    expect(principalNodes.map((n) => n.id).sort()).toEqual(["p:alice", "p:bob"]);
+    expect(appNodes.map((n) => n.id).sort()).toEqual(["a:slack", "a:zoom"]);
+  });
+
+  it("lays principals in the left column and apps in the right column", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", principal_id: "alice", app_id: "slack" }),
+      grant({ id: "g2", principal_id: "bob", app_id: "zoom" }),
+    ]);
+    const principals = g.nodes.filter((n) => n.kind === "principal");
+    const apps = g.nodes.filter((n) => n.kind === "app");
+    expect(new Set(principals.map((n) => n.position.x))).toEqual(new Set([0]));
+    // Apps share a single x > principals' x; rows stack vertically.
+    expect(apps.every((n) => n.position.x > 0)).toBe(true);
+    expect(principals.map((n) => n.position.y)).toEqual([0, 90]);
+  });
+
+  it("emits one edge per grant carrying consent_type, scope_count and revoked", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", scopes: ["a", "b", "c"], consent_type: "admin" }),
+      grant({
+        id: "g2",
+        principal_id: "bob",
+        app_id: "legacy",
+        revoked_at: "2026-06-25T00:00:00Z",
+        scopes: [],
+      }),
+    ]);
+    expect(g.edges).toHaveLength(2);
+    const e1 = g.edges.find((e) => e.id === "e:g1")!;
+    expect(e1.source).toBe("p:alice@example.com");
+    expect(e1.target).toBe("a:app_slack");
+    expect(e1.consent_type).toBe("admin");
+    expect(e1.scope_count).toBe(3);
+    expect(e1.revoked).toBe(false);
+    const e2 = g.edges.find((e) => e.id === "e:g2")!;
+    expect(e2.revoked).toBe(true);
+    expect(e2.scope_count).toBe(0);
+  });
+
+  it("prefers a non-empty app display name for the app node label", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", app_id: "app_x", app_display_name: "" }),
+      grant({ id: "g2", app_id: "app_x", app_display_name: "Acme App" }),
+    ]);
+    const appNode = g.nodes.find((n) => n.id === "a:app_x")!;
+    expect(appNode.label).toBe("Acme App");
+  });
+
+  it("does not collide a principal and an app that share a raw id", () => {
+    const g = buildGrantGraph([
+      grant({ id: "g1", principal_id: "shared", app_id: "shared" }),
+    ]);
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(["a:shared", "p:shared"]);
   });
 });

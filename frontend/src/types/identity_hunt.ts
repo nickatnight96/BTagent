@@ -242,3 +242,75 @@ export interface GrantTableRow {
   finding_id: string;
   severity: string;
 }
+
+// --------------------------------------------------------------------------- //
+// Live OAuth-grant graph (#116 Phase C — GET /api/v1/identity/grants)
+// --------------------------------------------------------------------------- //
+
+/** Response shape of ``GET /api/v1/identity/grants``. */
+export interface OAuthGrantListResponse {
+  items: OAuthGrant[];
+  total: number;
+}
+
+/** A node in the principal × app grant graph (consumed by @xyflow/react). */
+export interface GrantGraphNode {
+  id: string;
+  kind: "principal" | "app";
+  /** Human label (UPN / app display name). */
+  label: string;
+  /** Column position — principals left, apps right. */
+  position: { x: number; y: number };
+}
+
+/** An edge: a grant connecting a principal to an app. */
+export interface GrantGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  consent_type: OAuthConsentType;
+  /** Number of scopes the grant carries (drives edge label). */
+  scope_count: number;
+  /** True when the underlying grant has been revoked. */
+  revoked: boolean;
+}
+
+export interface GrantGraph {
+  nodes: GrantGraphNode[];
+  edges: GrantGraphEdge[];
+}
+
+
+// --------------------------------------------------------------------------- //
+// Revocation proposal (#116 Phase C slice 2 — HITL revoke-playbook gate)
+// --------------------------------------------------------------------------- //
+
+export type RevocationProposalStatus = "proposed" | "accepted" | "rejected";
+
+/** One (principal, app) grant slated for revocation. */
+export interface RevocationTarget {
+  principal_id: string;
+  app_id: string;
+  provider: IdentityProvider;
+  app_display_name: string;
+  scopes: string[];
+  source_finding_ids: string[];
+}
+
+/**
+ * Revoke-playbook proposal attached to an investigation on promotion of
+ * identity grant findings (mirrors the RevocationProposal Pydantic model).
+ * Inert until accepted — acceptance materialises ``playbook_spec`` as a
+ * real SOAR playbook whose own first step is a second HITL gate.
+ */
+export interface RevocationProposal {
+  targets: RevocationTarget[];
+  rationale: string;
+  playbook_name: string;
+  playbook_spec: Record<string, unknown>;
+  status: RevocationProposalStatus;
+  playbook_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_rationale: string;
+}

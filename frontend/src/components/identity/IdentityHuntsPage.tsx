@@ -47,6 +47,7 @@ import {
   useIdentityStore,
   buildPrincipalSummaries,
   buildGrantTableRows,
+  // (graph derivation lives in the store; the page only needs the action + state)
   CONSENT_TECHNIQUE_IDS,
 } from "@/stores/identityStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -54,6 +55,7 @@ import { UserRole } from "@/types/config";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
+import { IdentityGrantsGraph } from "./IdentityGrantsGraph";
 import type {
   CreateSuppressionRequest,
   HuntDomain,
@@ -65,6 +67,7 @@ import type {
   IdentityTimelineEntry,
   GrantTableRow,
   IdentityFindingEvidence,
+  RevocationProposal,
 } from "@/types/identity_hunt";
 
 // --------------------------------------------------------------------------- //
@@ -836,6 +839,153 @@ function PromoteModal({
 }
 
 // --------------------------------------------------------------------------- //
+// Revocation proposal modal (#116 Phase C slice 2 — HITL gate)
+// --------------------------------------------------------------------------- //
+
+/**
+ * Decision surface for the revoke-playbook proposal a grant-flavoured
+ * promotion attaches to its investigation. Accept materialises the generated
+ * playbook (senior_analyst+ — ``playbook:create``); reject records the
+ * rationale; "Decide later" leaves the proposal pending on the investigation.
+ * Shown BEFORE navigating to the new investigation so the HITL decision
+ * isn't lost behind the redirect.
+ */
+function RevocationProposalModal({
+  proposal,
+  canDecide,
+  isMutating,
+  error,
+  onAccept,
+  onReject,
+  onDismiss,
+}: {
+  proposal: RevocationProposal;
+  canDecide: boolean;
+  isMutating: boolean;
+  error: string | null;
+  onAccept: (rationale: string) => void;
+  onReject: (rationale: string) => void;
+  onDismiss: () => void;
+}) {
+  const [rationale, setRationale] = useState("");
+  const decided = proposal.status !== "proposed";
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      data-testid="identity-revocation-modal"
+    >
+      <div className="w-full max-w-lg rounded-lg border border-slate-700 bg-slate-900 p-6 shadow-xl">
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldOff className="w-4 h-4 text-rose-400" aria-hidden="true" />
+          <h2 className="text-base font-semibold text-slate-100">
+            Revocation playbook proposed
+          </h2>
+        </div>
+        <p className="text-sm text-slate-400 mb-3">{proposal.rationale}</p>
+
+        <ul
+          className="mb-4 max-h-44 overflow-y-auto space-y-1 text-sm"
+          data-testid="identity-revocation-targets"
+        >
+          {proposal.targets.map((t) => (
+            <li
+              key={`${t.provider}:${t.principal_id}:${t.app_id}`}
+              className="rounded-md border border-slate-800 bg-slate-800/50 px-3 py-1.5 text-slate-300"
+              data-testid="identity-revocation-target"
+            >
+              <span className="font-medium">{t.principal_id}</span>
+              {" → "}
+              {t.app_display_name || t.app_id}
+              <span className="ml-2 text-xs text-slate-500">
+                {t.provider} · {t.scopes.length} scope{t.scopes.length === 1 ? "" : "s"}
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        {decided ? (
+          <div
+            className="mb-4 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-400"
+            data-testid="identity-revocation-decided"
+          >
+            Proposal {proposal.status}
+            {proposal.playbook_id ? ` — playbook ${proposal.playbook_id} created` : ""}. The
+            playbook itself is HITL-gated again at execution time.
+          </div>
+        ) : (
+          <>
+            {!canDecide && (
+              <div className="mb-3 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-400">
+                Accepting or rejecting requires the <strong>senior analyst</strong> role or
+                above.
+              </div>
+            )}
+            <label className="block text-xs text-slate-400 mb-1">Decision rationale</label>
+            <textarea
+              value={rationale}
+              onChange={(e) => setRationale(e.target.value)}
+              rows={2}
+              placeholder="Why this revocation is (or isn't) warranted"
+              className="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500 mb-3"
+              data-testid="identity-revocation-rationale"
+            />
+          </>
+        )}
+
+        {error && (
+          <div
+            className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            role="alert"
+            data-testid="identity-revocation-error"
+          >
+            {error}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onDismiss}
+            disabled={isMutating}
+            data-testid="identity-revocation-dismiss"
+          >
+            {decided ? "Continue to investigation" : "Decide later"}
+          </Button>
+          {!decided && canDecide && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isMutating}
+                onClick={() => onReject(rationale)}
+                data-testid="identity-revocation-reject"
+              >
+                Reject
+              </Button>
+              <Button
+                size="sm"
+                disabled={isMutating}
+                onClick={() => onAccept(rationale)}
+                data-testid="identity-revocation-accept"
+              >
+                {isMutating ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <ShieldOff className="w-4 h-4 mr-2" />
+                )}
+                Accept &amp; create playbook
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
 // Main page
 // --------------------------------------------------------------------------- //
 
@@ -853,11 +1003,22 @@ export function IdentityHuntsPage() {
     isLoading,
     isMutating,
     error,
+    grants,
+    grantsLoading,
+    grantsError,
+    revocationProposal,
+    revocationInvestigationId,
+    revocationMutating,
+    revocationError,
     fetchFindings,
+    fetchGrants,
     setStateFilter,
     setPage,
     suppress,
     promote,
+    acceptRevocation,
+    rejectRevocation,
+    dismissRevocationPanel,
     clearError,
   } = useIdentityStore();
 
@@ -867,7 +1028,8 @@ export function IdentityHuntsPage() {
   // Initial load.
   useEffect(() => {
     void fetchFindings();
-  }, [fetchFindings]);
+    void fetchGrants();
+  }, [fetchFindings, fetchGrants]);
 
   // Re-fetch when filter tab changes.
   useEffect(() => {
@@ -909,9 +1071,36 @@ export function IdentityHuntsPage() {
     async (findingIds: string[], title: string) => {
       const invId = await promote(findingIds, title || undefined);
       setPromoteTargets(null);
-      navigate(`/investigations/${invId}`);
+      // Grant-flavoured promotions surface a revoke-playbook proposal — hold
+      // the redirect so the HITL decision modal isn't lost. Navigation happens
+      // when the analyst decides (or dismisses) via the modal.
+      if (!useIdentityStore.getState().revocationProposal) {
+        navigate(`/investigations/${invId}`);
+      }
     },
     [promote, navigate],
+  );
+
+  const closeRevocationModal = useCallback(() => {
+    const invId = revocationInvestigationId;
+    dismissRevocationPanel();
+    if (invId) navigate(`/investigations/${invId}`);
+  }, [revocationInvestigationId, dismissRevocationPanel, navigate]);
+
+  const handleAcceptRevocation = useCallback(
+    (rationale: string) => {
+      // Keep the modal open on success so the analyst sees the playbook id;
+      // errors surface inline via revocationError.
+      void acceptRevocation(rationale).catch(() => undefined);
+    },
+    [acceptRevocation],
+  );
+
+  const handleRejectRevocation = useCallback(
+    (rationale: string) => {
+      void rejectRevocation(rationale).catch(() => undefined);
+    },
+    [rejectRevocation],
   );
 
   const handleTabChange = (value: string) => {
@@ -946,7 +1135,10 @@ export function IdentityHuntsPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => void fetchFindings()}
+          onClick={() => {
+            void fetchFindings();
+            void fetchGrants();
+          }}
           disabled={isLoading}
           data-testid="identity-refresh"
         >
@@ -1050,7 +1242,14 @@ export function IdentityHuntsPage() {
             />
           ))}
 
-          {/* ---- OAuth-grant table ---- */}
+          {/* ---- Live OAuth-grant graph (Phase C) ---- */}
+          <IdentityGrantsGraph
+            grants={grants}
+            loading={grantsLoading}
+            error={grantsError}
+          />
+
+          {/* ---- OAuth-grant detail table (severity + finding linkage) ---- */}
           <GrantTable rows={grantRows} />
 
           {/* ---- Pagination ---- */}
@@ -1113,33 +1312,40 @@ export function IdentityHuntsPage() {
           onCancel={() => setPromoteTargets(null)}
         />
       )}
+
+      {/* ---- Revocation proposal modal (#116 Phase C slice 2) ---- */}
+      {revocationProposal && (
+        <RevocationProposalModal
+          proposal={revocationProposal}
+          canDecide={canPromote}
+          isMutating={revocationMutating}
+          error={revocationError}
+          onAccept={handleAcceptRevocation}
+          onReject={handleRejectRevocation}
+          onDismiss={closeRevocationModal}
+        />
+      )}
     </div>
   );
 }
 
 // --------------------------------------------------------------------------- //
-// TODO (Phase C) — Live OAuth-grant graph
+// Phase C — Live OAuth-grant graph (LANDED)
 // --------------------------------------------------------------------------- //
 //
-// The live OAuth-grant graph visualization is DEFERRED because it requires a
-// backend endpoint that does not exist in this slice:
+// The live grant graph is implemented above via <IdentityGrantsGraph>, backed
+// by the read-derive endpoint:
 //
-//   GET /api/v1/identity/grants
-//   Query params: ?principal_id=<id>&active=true&page=<n>&page_size=<n>
+//   GET /api/v1/identity/grants?principal_id=&active=&provider=&page=&page_size=
 //   Response: { items: OAuthGrant[], total: number }
 //
-// Where ``OAuthGrant`` mirrors ``shared/btagent_shared/types/identity_hunt.py``::
-//   - app_id, app_display_name, principal_id, provider, scopes,
-//     consent_type, granted_at, last_used, revoked_at, raw
+// The endpoint derives OAuthGrant records from identity-domain findings'
+// evidence (no new table); ``identityStore.buildGrantGraph`` lays them out and
+// the component renders the principal→app node-link diagram, edges coloured by
+// consent_type (pre_authorized = rose, admin = violet, user = blue) and dashed
+// when revoked. The GrantTable is retained as a severity/finding-linkage detail
+// view beneath the graph.
 //
-// Once the endpoint lands, the implementation would:
-// 1. Add ``fetchGrants(principalId)`` to ``identityStore.ts``.
-// 2. Render a node-link graph (react-flow or custom SVG) grouping nodes by
-//    principal → app, with edges labelled by scopes, and node colour by
-//    consent_type (pre_authorized = red, admin = violet, user = blue).
-// 3. Re-poll or subscribe to IDENTITY_GRANT_* WebSocket events for live
-//    updates without a page refresh.
-//
-// For Phase B the GrantTable above surfaces the grant context that already
-// lives in the finding's evidence dict, which provides the same analyst value
-// at zero extra API cost.
+// Follow-ups (not blocking): a first-class oauth_grants table + ingest-side
+// writer (so grants persist independent of finding retention), and
+// IDENTITY_GRANT_* WebSocket events to replace the 30s polling fallback.
