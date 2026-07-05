@@ -255,3 +255,22 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     counts = {"stale_entities": len(stale), "baselines_built": 0}
     logger.info("behavioral_baseline_sweep: %s", counts)
     return counts
+
+
+async def compile_proposal_plan(ctx: dict[str, Any], plan_row_id: str) -> dict[str, str]:
+    """Compile an accepted proposal's HuntInput into its HuntPlan (#120 Phase C).
+
+    Enqueue-on-demand: the pattern-hunt accept route enqueues this on the
+    live-LLM path so the multi-round-trip compile never rides the synchronous
+    HTTP accept (under mock LLM the route compiles inline instead). The
+    service lands ``ready``/``failed`` on the row; either way the single
+    commit happens here.
+    """
+    # Lazy import — the compile path pulls the engine stack.
+    from btagent_backend.services import hunt_plan_service
+
+    async with async_session_factory() as session:
+        row = await hunt_plan_service.compile_and_store(session, plan_row_id=plan_row_id)
+        await session.commit()
+    logger.info("compile_proposal_plan %s: %s", plan_row_id, row.status)
+    return {"plan_row_id": row.id, "status": row.status}
