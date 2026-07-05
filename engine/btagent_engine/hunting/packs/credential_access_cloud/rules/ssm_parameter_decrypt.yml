@@ -1,0 +1,35 @@
+title: SSM SecureString Parameter Decrypted — Potential Secret Access
+id: 88e685e9-abd2-487f-8d27-0132d546f8c9
+status: test
+description: >-
+  Detects GetParameter or GetParameters calls against SSM Parameter Store with
+  WithDecryption=true, which returns the plaintext value of a KMS-encrypted
+  SecureString.  Attackers use this path to read database passwords, API keys,
+  and tokens stored as SecureStrings without touching Secrets Manager.
+references:
+  - https://attack.mitre.org/techniques/T1552/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: ssm.amazonaws.com
+    eventName:
+      - GetParameter
+      - GetParameters
+    requestParameters.withDecryption: true
+  filter_known_automation:
+    userIdentity.arn|contains:
+      - ':assumed-role/PipelineRole'
+      - ':assumed-role/AppRuntimeRole'
+      - ':user/svc-'
+  condition: selection and not filter_known_automation
+falsepositives:
+  - Application instances and pipelines reading their own SecureString parameters — add their roles to filter_known_automation; downstream triage clusters per-principal decrypt volume to surface anomalous access
+level: medium
+tags:
+  - attack.credential-access
+  - attack.t1552
+  - cloud.credential-access

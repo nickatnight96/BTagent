@@ -1,0 +1,34 @@
+title: S3 Bucket Replication or Policy Grants Cross-Account Copy-Out
+id: 3b46015c-6096-474a-8e08-b4c4d90ad348
+status: test
+description: >-
+  Detects PutBucketReplication configuring replication to a destination bucket, or
+  PutBucketPolicy granting a wildcard ("*") or cross-account Principal. Either path
+  silently streams object copies to an attacker-controlled bucket through the S3
+  control plane, exfiltrating data without any VPC egress.
+references:
+  - https://attack.mitre.org/techniques/T1537/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_replication:
+    eventName: PutBucketReplication
+  selection_policy:
+    eventName: PutBucketPolicy
+    requestParameters.bucketPolicy|contains:
+      - '"Principal":"*"'
+      - '"Principal": "*"'
+      - '"AWS":"*"'
+      - ':root"'
+  condition: selection_replication or selection_policy
+falsepositives:
+  - Legitimate cross-region replication or vetted cross-account data-sharing buckets
+    (allowlist the approved destination bucket ARNs / account IDs).
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1537
+  - cloud.exfiltration

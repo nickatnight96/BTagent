@@ -1,0 +1,30 @@
+title: AWS Config Recorder Stopped or Delivery Channel Deleted
+id: 45384d09-cf63-4bda-bf75-865f5d0f3c15
+status: test
+description: >-
+  Detects StopConfigurationRecorder, DeleteConfigurationRecorder, or
+  DeleteDeliveryChannel events that disable AWS Config recording.  Adversaries
+  stop the Config recorder to blind configuration-change auditing before
+  modifying infrastructure, eliminating the evidence trail of their actions.
+references:
+  - https://attack.mitre.org/techniques/T1562/001/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventName:
+      - StopConfigurationRecorder
+      - DeleteConfigurationRecorder
+      - DeleteDeliveryChannel
+  condition: selection
+falsepositives:
+  - Decommissioning a Config recorder during account teardown (rare; correlate
+    with the calling principal, which should be an IaC pipeline, not a human session)
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.t1562.001
+  - cloud.detection-evasion

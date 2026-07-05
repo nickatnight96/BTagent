@@ -1,0 +1,50 @@
+name: Windows LOLBin Behavioral Hunt Pack
+version: 1.0.0
+description: >-
+  Detects Windows living-off-the-land binary (LOLBin) abuse: signed, trusted
+  system utilities (rundll32, regsvr32, mshta, wmic, bitsadmin, certutil) coerced
+  into proxy execution, remote payload retrieval, and on-host deobfuscation.
+  Rules target Windows process_creation telemetry, the most-available source via
+  the CrowdStrike / Splunk connectors, and transpile cleanly to Splunk/Elastic/
+  CrowdStrike today.
+
+rules:
+  - file: rundll32_suspicious_exec.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100. rundll32 invoking javascript: or the
+      url.dll,OpenURL / no-DLL signatures is near-zero baseline; tune on any
+      legacy installers that proxy through url.dll.
+
+  - file: regsvr32_scriptlet_abuse.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100. Squiblydoo (regsvr32 /i:http scrobj.dll)
+      is almost never legitimate; near-zero expected baseline.
+
+  - file: mshta_remote_payload.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100. mshta fetching remote HTA or running
+      inline vbscript:/javascript: is rare in modern environments; tune on any
+      surviving legacy LOB apps that still ship HTA front-ends.
+
+  - file: wmic_process_call_create.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100. wmic process call create is used for
+      both lateral movement and local exec; some legacy management scripts use it,
+      so correlate with parent process and remote /node: targets.
+
+  - file: bitsadmin_download_job.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100. bitsadmin /transfer and Start-BitsTransfer
+      have legitimate patch-management uses; tune on known updater hosts. Volume of
+      repeated jobs is handled by downstream triage clustering, not in-rule aggregation.
+
+  - file: certutil_urlcache_decode.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100. certutil -urlcache (download) and -decode
+      (deobfuscate) are high-fidelity LOLBin signatures; near-zero legitimate baseline.

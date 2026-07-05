@@ -1,0 +1,44 @@
+name: Container / Kubernetes Hunt Pack
+version: 1.0.0
+description: >-
+  Detects Kubernetes / container workload abuse via the Kubernetes audit log:
+  privileged pod creation, exec-into-pod, cluster-admin RBAC binding, service
+  account token mounting, and hostPath node-filesystem escape.  Rules target the
+  kubernetes audit log source (objectRef / verb / requestObject shape) and
+  transpile cleanly to Splunk/Elastic/CrowdStrike; Sentinel/Kusto failure is
+  tolerated because that pipeline targets Windows XDR tables.
+
+rules:
+  - file: k8s_privileged_pod_created.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100.  Privileged / hostPID / hostNetwork
+      pods are a known container-escape primitive — near-zero expected baseline
+      outside system namespaces.  Tune filter on trusted CNI/CSI DaemonSets.
+
+  - file: k8s_exec_into_pod.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100.  pods/exec is routine for some
+      operators/debug workflows — downstream triage clustering handles volume;
+      tune filter on known break-glass / debug service accounts.
+
+  - file: k8s_rbac_clusteradmin_bind.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100.  Binding cluster-admin to a subject
+      is almost never routine — investigate all hits; near-zero baseline.
+
+  - file: k8s_service_account_token_mount.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100.  Auto-mounting an SA token in a
+      sensitive namespace exposes cluster credentials — tune namespace list and
+      trusted workloads after live wiring.
+
+  - file: k8s_hostpath_volume_mount.yml
+    enabled: true
+    notes: >-
+      Ready; enable-on-connector via #100.  hostPath volumes expose the node
+      filesystem and enable escape — tune filter on trusted storage/log-shipper
+      DaemonSets.

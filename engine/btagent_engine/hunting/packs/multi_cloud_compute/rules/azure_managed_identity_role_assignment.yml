@@ -1,0 +1,33 @@
+title: Azure Owner/Contributor Role Assigned to Managed Identity
+id: 982f1bf2-ee69-4bc5-9ca0-fd53db0a5768
+status: test
+description: >-
+  Detects Microsoft.Authorization/roleAssignments/write operations that grant the
+  Owner or Contributor role to a managed identity (ServicePrincipal of type
+  managed identity).  Binding a high-privilege role to a workload identity creates
+  a durable, MFA-less escalation path that is easy to overlook in access reviews.
+references:
+  - https://attack.mitre.org/techniques/T1098/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: azure
+  service: activitylog
+detection:
+  selection:
+    operationName: Microsoft.Authorization/roleAssignments/write
+  privileged_role:
+    properties.roleDefinitionName:
+      - Owner
+      - Contributor
+  managed_identity:
+    properties.principalType: ServicePrincipal
+  condition: selection and privileged_role and managed_identity
+falsepositives:
+  - Approved platform automation granting Contributor to a deployment managed identity — correlate against the change-management ticket and the assigning principal
+level: high
+tags:
+  - attack.persistence
+  - attack.privilege-escalation
+  - attack.t1098
+  - cloud.privilege-escalation

@@ -1,0 +1,51 @@
+# Cloud Data-Exfiltration Hunt Pack (Wave D)
+# Connector-independent slice: Sigma rules target AWS CloudTrail / S3 data-event
+# log sources.  All rules transpile cleanly to Splunk/Elastic/CrowdStrike today;
+# they are enabled now and fire once the #100 CloudTrail/S3 connectors are wired.
+#
+# Loaded by btagent_engine.hunting.load_builtin_pack("data_exfiltration_cloud").
+# The loader discovers Sigma rule files directly under ``rules/`` and matches each
+# manifest ``file:`` entry against the bare basename.
+name: Cloud Data-Exfiltration Hunt Pack
+version: 1.0.0
+description: >-
+  Detects cloud data-exfiltration via the control plane — copy-out paths that move
+  data without generating VPC egress or flow-log evidence: cross-account snapshot
+  shares, S3 replication/policy grants, RDS snapshot exports to S3, cross-region
+  AMI/snapshot staging, and bulk S3 object retrieval.  Sigma rules target CloudTrail
+  and S3 data events; downstream triage clustering supplies volume/rate scoring.
+
+rules:
+  - file: ebs_rds_snapshot_external_share.yml
+    enabled: true
+    notes: >-
+      ModifySnapshotAttribute / ModifyDBSnapshotAttribute sharing a snapshot to an
+      external account (createVolumePermission / restore).  Ready; transpiles cleanly
+      to Splunk/Elastic/CrowdStrike — enable-on-connector via #100.
+
+  - file: s3_bucket_replication_to_external.yml
+    enabled: true
+    notes: >-
+      PutBucketReplication, or PutBucketPolicy granting Principal:* / cross-account
+      access enabling silent copy-out.  Ready; enable-on-connector via #100.
+      Tune approved replication destinations / account IDs after live wiring.
+
+  - file: rds_snapshot_export_to_s3.yml
+    enabled: true
+    notes: >-
+      StartExportTask exporting an RDS snapshot to S3 as potential exfil staging.
+      Ready; enable-on-connector via #100.  Allowlist scheduled analytics export
+      jobs and their destination buckets to suppress benign baseline.
+
+  - file: ec2_ami_copy_cross_region.yml
+    enabled: true
+    notes: >-
+      CopyImage / CopySnapshot relocating an image to a foreign region as a staging
+      step.  Ready; enable-on-connector via #100.  Allowlist DR/golden-AMI pipelines.
+
+  - file: s3_object_get_anomalous_bulk.yml
+    enabled: true
+    notes: >-
+      Single-event GetObject signature (S3 data events) for mass retrieval.  Ready;
+      enable-on-connector via #100.  Per-event signal only — volume/threshold and
+      rare-principal scoring are applied by downstream triage clustering, not here.

@@ -1,0 +1,35 @@
+title: IAM Login Profile Created or Updated on Service Account — Console Persistence
+id: 5d7f28c7-bc2c-4011-aeb3-8893da26f468
+status: test
+description: >-
+  Detects CreateLoginProfile or UpdateLoginProfile events targeting a service /
+  automation account that should be key-only and never have console access.
+  Adding a console password to a programmatic identity gives an attacker an
+  interactive, MFA-free persistence foothold that survives access-key rotation.
+references:
+  - https://attack.mitre.org/techniques/T1098/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: iam.amazonaws.com
+    eventName:
+      - CreateLoginProfile
+      - UpdateLoginProfile
+  service_account_target:
+    requestParameters.userName|contains:
+      - svc-
+      - automation-
+      - service-
+      - -sa
+  condition: selection and service_account_target
+falsepositives:
+  - A naming-convention service account that genuinely requires break-glass console access — document the exception and route per-target via downstream triage; baseline should be near zero for key-only identities
+level: high
+tags:
+  - attack.persistence
+  - attack.t1098
+  - cloud.credential-access

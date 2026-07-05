@@ -1,0 +1,29 @@
+title: EC2 Instance Connect SendSSHPublicKey Grants Transient SSH Access
+id: 6b0d794d-02fc-4b88-8cf0-f784c3bc6435
+status: test
+description: >-
+  Detects SendSSHPublicKey (EC2 Instance Connect) events that push a
+  short-lived public key onto an instance, granting 60-second SSH access via
+  the control plane. This API lets a principal reach an instance over SSH
+  without a pre-provisioned key pair, a stealthy lateral-movement primitive
+  when used by an unexpected principal.
+references:
+  - https://attack.mitre.org/techniques/T1021/004/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: ec2-instance-connect.amazonaws.com
+    eventName: SendSSHPublicKey
+  condition: selection
+falsepositives:
+  - Operators using EC2 Instance Connect for routine maintenance (allowlist the
+    admin principal; novel-principal volume is clustered by downstream triage).
+level: medium
+tags:
+  - attack.lateral-movement
+  - attack.t1021.004
+  - cloud.lateral-movement

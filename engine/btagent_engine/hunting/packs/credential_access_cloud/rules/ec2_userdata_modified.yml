@@ -1,0 +1,34 @@
+title: EC2 Instance UserData Modified — Potential Credential or Script Injection
+id: b7056db7-5442-465a-9ecb-3ed76cb5b519
+status: test
+description: >-
+  Detects ModifyInstanceAttribute events that change the userData attribute of an
+  EC2 instance.  UserData runs as root on next boot, so an attacker who rewrites
+  it can inject credential-harvesting scripts or read instance metadata / IAM
+  role credentials.  The instance must be stopped to change userData, so this is
+  rarely a routine runtime operation.
+references:
+  - https://attack.mitre.org/techniques/T1552/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: ec2.amazonaws.com
+    eventName: ModifyInstanceAttribute
+    requestParameters.attribute: userData
+  filter_known_automation:
+    userIdentity.arn|contains:
+      - ':assumed-role/TerraformDeployRole'
+      - ':assumed-role/PipelineRole'
+      - ':assumed-role/PackerBuildRole'
+  condition: selection and not filter_known_automation
+falsepositives:
+  - Image-build / IaC pipelines that legitimately set userData during provisioning — add their roles to filter_known_automation and correlate that the change came from an automation principal, not an interactive console session
+level: high
+tags:
+  - attack.credential-access
+  - attack.t1552
+  - cloud.credential-access

@@ -1,0 +1,28 @@
+title: Kubernetes DaemonSet Created in kube-system Namespace
+id: 6c7a8dc1-1b42-4161-b558-50bb9d06ef12
+status: test
+description: >-
+  Detects creation of a DaemonSet object within the kube-system namespace.  A
+  DaemonSet schedules a pod on every node, so attackers abuse it to deploy
+  cluster-wide persistence — backdoors, crypto-miners, or credential harvesters —
+  on all current and future nodes, hidden among trusted system workloads.
+references:
+  - https://attack.mitre.org/techniques/T1610/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: kubernetes
+  service: audit
+detection:
+  selection:
+    verb: create
+    objectRef.resource: daemonsets
+    objectRef.namespace: kube-system
+  condition: selection
+falsepositives:
+  - Cluster add-ons (CNI, log/metric agents, CSI drivers) are legitimately delivered as kube-system DaemonSets via the platform pipeline; correlate the actor with the install automation and the image source rather than a human kubectl session.
+level: high
+tags:
+  - attack.persistence
+  - attack.t1610
+  - kubernetes.persistence

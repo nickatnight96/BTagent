@@ -1,0 +1,44 @@
+name: Detection-Evasion (Cloud) Hunt Pack
+version: 1.0.0
+description: >-
+  Detects adversary attempts to disable or blind cloud audit and alerting
+  pipelines on AWS: stopping/deleting AWS Config recorders, disabling GuardDuty
+  detectors or suppressing their findings, deleting CloudWatch alarms and log
+  groups, narrowing CloudTrail event selectors to blind logging without an
+  explicit StopLogging, and deleting VPC flow logs.  Maps primarily to
+  ATT&CK T1562 (Impair Defenses) — Sigma rules target CloudTrail management
+  events via Splunk/Sentinel/Elastic/CrowdStrike.
+
+rules:
+  - file: config_recorder_stopped.yml
+    enabled: true
+    notes: >-
+      StopConfigurationRecorder / DeleteConfigurationRecorder / DeleteDeliveryChannel
+      over CloudTrail management events — near-zero expected baseline.
+      Ready; enable-on-connector via #100.
+  - file: guardduty_detector_disabled.yml
+    enabled: false
+    notes: >-
+      DEFERRED — requires confirmed GuardDuty management-events stream via #100.
+      DeleteDetector / UpdateDetector(enable=false) / suppression-filter creation
+      are GuardDuty control-plane events that are not guaranteed in the baseline
+      CloudTrail feed until the connector confirms ingestion.  Rule transpiles
+      cleanly; enable when the GuardDuty mgmt-events stream is wired.
+  - file: cloudwatch_alarm_or_logs_deleted.yml
+    enabled: true
+    notes: >-
+      DeleteAlarms / DeleteLogGroup / DeleteLogStream / PutRetentionPolicy with a
+      1-day retention — blinds CloudWatch metric alerting and log retention.
+      Ready; enable-on-connector via #100.
+  - file: cloudtrail_event_selector_narrowed.yml
+    enabled: true
+    notes: >-
+      PutEventSelectors that excludes management/data events blinds CloudTrail
+      without an explicit StopLogging.  Investigate all hits; near-zero baseline.
+      Ready; enable-on-connector via #100.
+  - file: vpc_flow_logs_deleted.yml
+    enabled: true
+    notes: >-
+      DeleteFlowLogs removes network-traffic visibility.  Occasional legitimate
+      teardown during VPC decommissioning; correlate with the calling principal.
+      Ready; enable-on-connector via #100.

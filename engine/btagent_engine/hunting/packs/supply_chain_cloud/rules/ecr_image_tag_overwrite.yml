@@ -1,0 +1,37 @@
+title: ECR Image Tag Overwrite — Immutable-Intended Tag Re-Pushed
+id: b9876a1b-875f-4443-b037-8188f70b5a55
+status: test
+description: >-
+  Detects PutImage events that overwrite an existing, intended-immutable container
+  image tag (e.g. ':latest' or a pinned release tag) in Amazon ECR.  Re-pushing over
+  a trusted tag lets an attacker swap the artifact consumed by downstream deploys
+  without changing the reference, a classic build/artifact supply-chain tampering
+  vector.
+references:
+  - https://attack.mitre.org/techniques/T1195/
+author: BTagent (Wave D)
+date: 2026-06-24
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection:
+    eventSource: ecr.amazonaws.com
+    eventName: PutImage
+  pinned_tag:
+    requestParameters.imageTag:
+      - latest
+      - stable
+      - release
+      - production
+      - prod
+  condition: selection and pinned_tag
+falsepositives:
+  - Legitimate CI/CD pipeline re-publishing a rolling ':latest' tag; restrict by
+    enabling ECR tag immutability and allow-listing the publishing pipeline role ARN.
+    Downstream triage clustering handles repeated benign pushes from the same role.
+level: high
+tags:
+  - attack.persistence
+  - attack.t1195
+  - cloud.supply-chain
