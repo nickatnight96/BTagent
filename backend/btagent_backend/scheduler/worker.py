@@ -20,6 +20,7 @@ from btagent_backend.config import get_settings
 from btagent_backend.scheduler.jobs import (
     behavioral_baseline_sweep,
     compile_proposal_plan,
+    execute_hunt_plan,
     run_hunt_pack,
     scheduled_hunt_pack_run,
     stale_suppression_sweep,
@@ -98,9 +99,10 @@ class WorkerSettings:
         scheduled_hunt_pack_run,
         weekly_pattern_scan,
         behavioral_baseline_sweep,
-        # #120 Phase C: enqueue-on-demand from the proposal-accept route
-        # (live-LLM path; mock mode compiles inline in the route).
+        # #120 Phase C: enqueue-on-demand from the proposal accept / execute
+        # routes (live paths; mock mode runs inline in the route).
         compile_proposal_plan,
+        execute_hunt_plan,
     ]
     cron_jobs = [
         cron(
