@@ -274,3 +274,23 @@ async def compile_proposal_plan(ctx: dict[str, Any], plan_row_id: str) -> dict[s
         await session.commit()
     logger.info("compile_proposal_plan %s: %s", plan_row_id, row.status)
     return {"plan_row_id": row.id, "status": row.status}
+
+
+async def execute_hunt_plan(ctx: dict[str, Any], plan_row_id: str) -> dict[str, Any]:
+    """Execute a compiled HuntPlan and ingest its hits (#120 Phase C).
+
+    Enqueue-on-demand from the pattern-hunt execute route on the
+    live-connector path (mock mode executes inline in the route) — live
+    backend searches must not ride the synchronous HTTP request. The single
+    commit happens here.
+    """
+    # Lazy import — the execute path pulls the engine integration stack.
+    from btagent_backend.services import hunt_plan_service
+
+    async with async_session_factory() as session:
+        row, findings_created = await hunt_plan_service.execute_plan_and_ingest(
+            session, plan_row_id=plan_row_id
+        )
+        await session.commit()
+    logger.info("execute_hunt_plan %s: findings=%d", plan_row_id, findings_created)
+    return {"plan_row_id": row.id, "findings_created": findings_created}

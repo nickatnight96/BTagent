@@ -156,3 +156,130 @@ async def get_plan_for_proposal(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def execute_plan_and_ingest(
+    db: AsyncSession,
+    *,
+    plan_row_id: str,
+    lookback_hours: int = 24,
+    max_hits_per_query: int = 100,
+) -> tuple[HuntPlanRow, int]:
+    """Execute a ``ready`` plan's runbook and land hits in the triage inbox.
+
+    Runs the engine plan runner over the compiled per-TTP queries, converts
+    every hit into a ``HuntFinding`` (source/domain ``cross_investigation``,
+    technique = the hit's TTP) via :func:`hunt_triage_service.record_finding`
+    — so cluster-on-insert and active suppressions apply exactly as they do
+    for every other hunt source. Afterwards:
+
+    * the stored plan JSON flips to ``completed`` and gains a ``last_run``
+      summary (run id, findings created, per-TTP hit/error counts);
+    * the proposal's closed-loop ``outcome`` is written back — ``hit`` when
+      any finding landed, ``clean`` otherwise (#120 Phase B feedback column).
+
+    Raises :class:`ValueError` when the row is missing or not ``ready``
+    (routes surface 404/409). Never commits — route / arq job owns that.
+    """
+    from btagent_shared.types.hunt import HuntDomain, HuntPlan, HuntPlanState, HuntSource
+    from btagent_shared.types.pattern_hunt import ProposalOutcome
+
+    row = (
+        await db.execute(select(HuntPlanRow).where(HuntPlanRow.id == plan_row_id))
+    ).scalar_one_or_none()
+    if row is None:
+        raise ValueError(f"Hunt plan row not found: {plan_row_id}")
+    if row.status != STATUS_READY or not row.plan:
+        raise ValueError(f"Hunt plan {plan_row_id} is not ready to execute (status={row.status})")
+
+    # ``last_run`` rides alongside the plan fields in the stored JSON (the
+    # model is extra=forbid) — pop it so a re-execute rehydrates cleanly.
+    plan_data = dict(row.plan)
+    plan_data.pop("last_run", None)
+    plan = HuntPlan.model_validate(plan_data)
+
+    # Lazy engine import — pulls the integration-node stack.
+    from btagent_engine.hunting.plan_runner import run_plan
+    from btagent_engine.node import NodeContext
+
+    ctx = NodeContext(run_id=generate_id("hrun"), org_id=row.org_id)
+    result = await run_plan(
+        plan, ctx, lookback_hours=lookback_hours, max_hits_per_query=max_hits_per_query
+    )
+
+    from btagent_backend.services import hunt_triage_service
+
+    findings_created = 0
+    for hit in result.all_hits:
+        await hunt_triage_service.record_finding(
+            db,
+            org_id=row.org_id,
+            source=HuntSource.CROSS_INVESTIGATION.value,
+            domain=HuntDomain.CROSS_INVESTIGATION.value,
+            title=f"Pattern hunt hit: {hit.ttp_name or hit.ttp_id} ({hit.backend})",
+            description=hit.summary,
+            technique_ids=[hit.ttp_id],
+            entities=[{"kind": e.kind, "value": e.value} for e in hit.entities],
+            observables=(
+                [{"type": hit.observable_type, "value": hit.observable}]
+                if hit.observable and hit.observable_type
+                else []
+            ),
+            evidence={
+                "plan_id": plan.id,
+                "plan_run_id": result.run_id,
+                "proposal_id": row.proposal_id,
+                "backend": hit.backend,
+                "raw": hit.raw,
+            },
+        )
+        findings_created += 1
+
+    # Fold a per-TTP execution summary back into the stored plan JSON and
+    # flip its execution lifecycle to COMPLETED.
+    now = _utcnow()
+    ttp_summary = {
+        t.ttp_id: {
+            "hits": len(t.hits),
+            "errors": [br.error for br in t.backend_results if br.error],
+        }
+        for t in result.ttp_results
+    }
+    plan.state = HuntPlanState.COMPLETED
+    plan.updated_at = now
+    plan_json = plan.model_dump(mode="json")
+    plan_json["last_run"] = {
+        "run_id": result.run_id,
+        "started_at": result.started_at.isoformat(),
+        "completed_at": result.completed_at.isoformat() if result.completed_at else None,
+        "findings_created": findings_created,
+        "error_count": result.error_count,
+        "per_ttp": ttp_summary,
+    }
+    # ``HuntPlan`` is extra=forbid, so the run summary rides *alongside* the
+    # plan fields in the stored JSON, not inside the model. Rehydration pops
+    # it (see the top of this function).
+    row.plan = plan_json
+    row.updated_at = now
+
+    # Closed-loop outcome write-back onto the proposal (#120 Phase B column).
+    proposal_row = (
+        await db.execute(
+            select(PatternHuntProposalRow).where(PatternHuntProposalRow.id == row.proposal_id)
+        )
+    ).scalar_one_or_none()
+    if proposal_row is not None:
+        proposal_row.outcome = (
+            ProposalOutcome.HIT.value if findings_created else ProposalOutcome.CLEAN.value
+        )
+        proposal_row.updated_at = now
+
+    await db.flush()
+    logger.info(
+        "HuntPlan executed: plan=%s run=%s findings=%d errors=%d",
+        plan.id,
+        result.run_id,
+        findings_created,
+        result.error_count,
+    )
+    return row, findings_created
