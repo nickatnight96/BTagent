@@ -10,7 +10,11 @@ dependencies = [
     # ChatLiteLLM moved out of langchain-community (sunset; removed it in
     # 0.4.2) into the standalone langchain-litellm package.
     "langchain-litellm>=0.6.0",
-    "litellm>=1.80.0",
+    # <1.92.0: 1.92.0 added a Rust extension (litellm-rust) with no
+    # cp314 wheels; on CI's Python 3.14 uv falls back to the sdist and
+    # pyo3 0.23.x refuses to build against 3.14. Lift the cap once
+    # litellm publishes 3.14 wheels (or a pyo3>=0.24 sdist).
+    "litellm>=1.80.0,<1.92.0",
     "pydantic>=2.12.0",
     "pyyaml>=6.0.0",
     # Hunt Pack Runner (#112): Sigma -> multi-backend transpile.
