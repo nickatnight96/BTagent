@@ -48,12 +48,16 @@ const mockListProposals = vi.fn();
 const mockDismissProposal = vi.fn();
 const mockSnoozeProposal = vi.fn();
 const mockAcceptProposal = vi.fn();
+const mockGetProposalPlan = vi.fn();
+const mockExecuteProposalPlan = vi.fn();
 
 vi.mock("@/api/pattern", () => ({
   listProposals: (...a: unknown[]) => mockListProposals(...a),
   dismissProposal: (...a: unknown[]) => mockDismissProposal(...a),
   snoozeProposal: (...a: unknown[]) => mockSnoozeProposal(...a),
   acceptProposal: (...a: unknown[]) => mockAcceptProposal(...a),
+  getProposalPlan: (...a: unknown[]) => mockGetProposalPlan(...a),
+  executeProposalPlan: (...a: unknown[]) => mockExecuteProposalPlan(...a),
 }));
 
 import { usePatternStore } from "@/stores/patternStore";
@@ -70,6 +74,9 @@ beforeEach(() => {
     isLoading: false,
     isMutating: false,
     error: null,
+    plansByProposal: {},
+    planBusyId: null,
+    planError: null,
   });
 });
 
@@ -257,5 +264,127 @@ describe("usePatternStore.clearError", () => {
     usePatternStore.setState({ error: "something broke" });
     usePatternStore.getState().clearError();
     expect(usePatternStore.getState().error).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// HuntPlan (#120 Phase C — fetchPlan / executePlan)
+// --------------------------------------------------------------------------- //
+
+import { ApiError } from "@/api/client";
+import type { ProposalHuntPlan } from "@/types/pattern_hunt";
+
+function huntPlan(overrides?: Partial<ProposalHuntPlan>): ProposalHuntPlan {
+  return {
+    id: "hplan_1",
+    org_id: "org_default",
+    proposal_id: "p1",
+    status: "ready",
+    plan: {
+      id: "hunt_1",
+      state: "ready",
+      hypotheses: [{ ttp_id: "T1059.001", ttp_name: "PowerShell", priority: 0.9 }],
+      ttp_entries: [
+        {
+          ttp_id: "T1059.001",
+          ttp_name: "PowerShell",
+          queries: { splunk: { backend: "splunk", query: "index=main" } },
+        },
+      ],
+    },
+    error: "",
+    created_at: "2026-06-01T12:00:00Z",
+    updated_at: "2026-06-01T12:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("usePatternStore.fetchPlan", () => {
+  it("stashes the plan keyed by proposal id", async () => {
+    mockGetProposalPlan.mockResolvedValueOnce(huntPlan());
+
+    await usePatternStore.getState().fetchPlan("p1");
+
+    const state = usePatternStore.getState();
+    expect(state.plansByProposal["p1"]?.status).toBe("ready");
+    expect(state.planBusyId).toBeNull();
+    expect(state.planError).toBeNull();
+  });
+
+  it("clears the entry silently on 404 (not accepted yet)", async () => {
+    usePatternStore.setState({ plansByProposal: { p1: huntPlan() } });
+    mockGetProposalPlan.mockRejectedValueOnce(new ApiError(404, "Not Found", null));
+
+    await usePatternStore.getState().fetchPlan("p1");
+
+    const state = usePatternStore.getState();
+    expect(state.plansByProposal["p1"]).toBeUndefined();
+    expect(state.planError).toBeNull();
+  });
+
+  it("surfaces non-404 errors", async () => {
+    mockGetProposalPlan.mockRejectedValueOnce(new ApiError(500, "Server Error", null));
+
+    await usePatternStore.getState().fetchPlan("p1");
+
+    expect(usePatternStore.getState().planError).toBeTruthy();
+    expect(usePatternStore.getState().planBusyId).toBeNull();
+  });
+});
+
+describe("usePatternStore.executePlan", () => {
+  it("updates the stashed plan and returns findings_created", async () => {
+    const executed = huntPlan();
+    executed.plan = {
+      ...executed.plan!,
+      state: "completed",
+      last_run: {
+        run_id: "hrun_1",
+        started_at: "2026-06-01T12:00:00Z",
+        completed_at: "2026-06-01T12:00:05Z",
+        findings_created: 3,
+        error_count: 0,
+        per_ttp: { "T1059.001": { hits: 3, errors: [] } },
+      },
+    };
+    mockExecuteProposalPlan.mockResolvedValueOnce({
+      plan: executed,
+      queued: false,
+      findings_created: 3,
+    });
+    mockListProposals.mockResolvedValueOnce({ items: [], total: 0 });
+
+    const created = await usePatternStore.getState().executePlan("p1");
+
+    expect(created).toBe(3);
+    const state = usePatternStore.getState();
+    expect(state.plansByProposal["p1"]?.plan?.last_run?.findings_created).toBe(3);
+    // Execution flips the proposal outcome server-side — the list refreshes.
+    expect(mockListProposals).toHaveBeenCalled();
+  });
+
+  it("surfaces errors and re-throws", async () => {
+    mockExecuteProposalPlan.mockRejectedValueOnce(
+      new ApiError(409, "Conflict", { detail: "not ready" }),
+    );
+
+    await expect(usePatternStore.getState().executePlan("p1")).rejects.toBeTruthy();
+    expect(usePatternStore.getState().planError).toBe("not ready");
+    expect(usePatternStore.getState().planBusyId).toBeNull();
+  });
+});
+
+describe("usePatternStore.accept plan hydration", () => {
+  it("fetches the compiled plan after a successful accept", async () => {
+    const original = proposal({ id: "p9" });
+    const updated: PatternHuntProposal = { ...original, state: "accepted" };
+    usePatternStore.setState({ proposals: [original], total: 1, stateFilter: "all" });
+    mockAcceptProposal.mockResolvedValueOnce(updated);
+    mockGetProposalPlan.mockResolvedValueOnce(huntPlan({ proposal_id: "p9" }));
+
+    await usePatternStore.getState().accept("p9");
+
+    expect(mockGetProposalPlan).toHaveBeenCalledWith("p9");
+    expect(usePatternStore.getState().plansByProposal["p9"]?.status).toBe("ready");
   });
 });

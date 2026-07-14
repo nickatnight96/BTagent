@@ -8,9 +8,11 @@
 import api from "./client";
 import type {
   ActionRequest,
+  ExecutePlanResponse,
   PatternHuntProposal,
   PatternHuntProposalListResponse,
   ProposalFilter,
+  ProposalHuntPlan,
 } from "@/types/pattern_hunt";
 
 const BASE = "/v1/pattern";
@@ -71,4 +73,26 @@ export async function acceptProposal(
   body?: ActionRequest,
 ): Promise<PatternHuntProposal> {
   return api.post<PatternHuntProposal>(`${BASE}/proposals/${proposalId}/accept`, body ?? {});
+}
+
+// --------------------------------------------------------------------------- //
+// HuntPlan (#120 Phase C — compiled plan + execution)
+// --------------------------------------------------------------------------- //
+
+/**
+ * Fetch the compiled HuntPlan (or its compile status) for a proposal.
+ * 404s until the proposal has been accepted.
+ */
+export async function getProposalPlan(proposalId: string): Promise<ProposalHuntPlan> {
+  return api.get<ProposalHuntPlan>(`${BASE}/proposals/${proposalId}/plan`);
+}
+
+/**
+ * Execute the compiled plan — hits land in the hunt triage inbox. Inline
+ * under mock connectors (``queued: false`` + counts); queued to the worker
+ * on the live path (``queued: true``, poll ``getProposalPlan`` for
+ * ``last_run``).
+ */
+export async function executeProposalPlan(proposalId: string): Promise<ExecutePlanResponse> {
+  return api.post<ExecutePlanResponse>(`${BASE}/proposals/${proposalId}/plan/execute`, {});
 }
