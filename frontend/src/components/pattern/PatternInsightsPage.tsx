@@ -31,6 +31,7 @@ import {
   Clock,
   ExternalLink,
   Loader2,
+  Play,
   RefreshCw,
   Search,
   XCircle,
@@ -42,7 +43,12 @@ import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Textarea } from "@/components/ds/textarea";
-import type { PatternHuntProposal, ProposalFilter, ProposalState } from "@/types/pattern_hunt";
+import type {
+  PatternHuntProposal,
+  ProposalFilter,
+  ProposalHuntPlan,
+  ProposalState,
+} from "@/types/pattern_hunt";
 
 // --------------------------------------------------------------------------- //
 // RBAC helpers
@@ -342,24 +348,165 @@ function ActionPanel({
 // Proposal card
 // --------------------------------------------------------------------------- //
 
+// --------------------------------------------------------------------------- //
+// HuntPlan panel (#120 Phase C — compiled plan + execution)
+// --------------------------------------------------------------------------- //
+
+const PLAN_STATUS_STYLES: Record<string, string> = {
+  pending: "bg-amber-500/10 text-amber-300 border-amber-500/20",
+  ready: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+  failed: "bg-rose-500/10 text-rose-300 border-rose-500/20",
+};
+
+/**
+ * Compile status + runbook summary + execute control for an accepted
+ * proposal's HuntPlan. ``pending`` shows a refresh affordance (live-LLM
+ * compile runs on the worker); ``ready`` exposes Execute; after a run the
+ * ``last_run`` summary (findings landed in the hunt triage inbox) renders.
+ */
+function HuntPlanPanel({
+  plan,
+  busy,
+  canTriage,
+  onRefresh,
+  onExecute,
+}: {
+  plan: ProposalHuntPlan;
+  busy: boolean;
+  canTriage: boolean;
+  onRefresh: () => void;
+  onExecute: () => void;
+}) {
+  const lastRun = plan.plan?.last_run;
+  return (
+    <div
+      className="rounded-md border border-slate-700/50 bg-slate-900/40 px-3 py-2 space-y-2"
+      data-testid="pattern-plan-panel"
+    >
+      <div className="flex items-center gap-2">
+        <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide flex-1">
+          Hunt plan
+        </p>
+        <span
+          className={`px-1.5 py-0.5 rounded text-[11px] border ${PLAN_STATUS_STYLES[plan.status] ?? ""}`}
+          data-testid="pattern-plan-status"
+        >
+          {plan.status}
+        </span>
+        {plan.status === "pending" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRefresh}
+            disabled={busy}
+            data-testid="pattern-plan-refresh"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </Button>
+        )}
+      </div>
+
+      {plan.status === "failed" && (
+        <p className="text-xs text-rose-300" data-testid="pattern-plan-error">
+          {plan.error || "Compile failed."}
+        </p>
+      )}
+
+      {plan.status === "ready" && plan.plan && (
+        <>
+          <p className="text-xs text-slate-400">
+            {plan.plan.hypotheses.length} hypothes{plan.plan.hypotheses.length === 1 ? "is" : "es"}
+            {" · "}
+            {plan.plan.ttp_entries.length} TTP runbook entr
+            {plan.plan.ttp_entries.length === 1 ? "y" : "ies"}
+          </p>
+          <div className="space-y-1">
+            {plan.plan.ttp_entries.map((entry) => (
+              <div
+                key={entry.ttp_id}
+                className="flex items-center gap-2 text-xs"
+                data-testid="pattern-plan-ttp-row"
+              >
+                <span className="font-mono text-rose-300">{entry.ttp_id}</span>
+                <span className="text-slate-500 truncate">{entry.ttp_name}</span>
+                <span className="ml-auto text-slate-500 shrink-0">
+                  {Object.keys(entry.queries).length} quer
+                  {Object.keys(entry.queries).length === 1 ? "y" : "ies"}
+                  {lastRun?.per_ttp?.[entry.ttp_id] &&
+                    ` · ${lastRun.per_ttp[entry.ttp_id]?.hits ?? 0} hit(s)`}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {lastRun && (
+            <p className="text-xs text-slate-400" data-testid="pattern-plan-last-run">
+              Last run: {lastRun.findings_created} finding
+              {lastRun.findings_created === 1 ? "" : "s"} sent to the hunt inbox
+              {lastRun.error_count > 0 && ` · ${lastRun.error_count} backend error(s)`}
+              {lastRun.completed_at &&
+                ` · ${new Date(lastRun.completed_at).toLocaleString()}`}
+            </p>
+          )}
+
+          {canTriage && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={onExecute}
+              data-testid="pattern-plan-execute"
+            >
+              {busy ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <Play className="w-3.5 h-3.5 mr-1.5" />
+              )}
+              {lastRun ? "Re-execute hunt" : "Execute hunt"}
+            </Button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function ProposalCard({
   proposal,
   maxScore,
   canTriage,
   isMutating,
+  plan,
+  planBusy,
   onDismiss,
   onSnooze,
   onAccept,
+  onFetchPlan,
+  onExecutePlan,
 }: {
   proposal: PatternHuntProposal;
   maxScore: number;
   canTriage: boolean;
   isMutating: boolean;
+  plan: ProposalHuntPlan | undefined;
+  planBusy: boolean;
   onDismiss: (proposalId: string, rationale: string) => Promise<void>;
   onSnooze: (proposalId: string, rationale: string) => Promise<void>;
   onAccept: (proposalId: string) => Promise<void>;
+  onFetchPlan: (proposalId: string) => void;
+  onExecutePlan: (proposalId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+
+  // #120 Phase C: accepted proposals carry a compiled HuntPlan — hydrate it
+  // when the card first expands (accept() already fetches it for the
+  // just-accepted case; this covers cards accepted in earlier sessions).
+  useEffect(() => {
+    if (expanded && proposal.state === "accepted" && !plan) {
+      onFetchPlan(proposal.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, proposal.state, proposal.id]);
 
   // Collect all investigation refs from the IOC members (if any). The
   // PatternHuntProposal schema stores the investigation refs at the
@@ -497,6 +644,17 @@ function ProposalCard({
           {/* Source investigation refs */}
           <InvestigationRefs refs={allRefs} />
 
+          {/* Compiled hunt plan (#120 Phase C) — accepted proposals only */}
+          {proposal.state === "accepted" && plan && (
+            <HuntPlanPanel
+              plan={plan}
+              busy={planBusy}
+              canTriage={canTriage}
+              onRefresh={() => onFetchPlan(proposal.id)}
+              onExecute={() => onExecutePlan(proposal.id)}
+            />
+          )}
+
           {/* Metadata */}
           <p className="text-[11px] text-slate-600">
             Created {new Date(proposal.created_at).toLocaleString()} ·
@@ -583,12 +741,17 @@ export function PatternInsightsPage() {
     isLoading,
     isMutating,
     error,
+    plansByProposal,
+    planBusyId,
+    planError,
     fetchProposals,
     setStateFilter,
     setPage,
     dismiss,
     snooze,
     accept,
+    fetchPlan,
+    executePlan,
     clearError,
   } = usePatternStore();
 
@@ -640,6 +803,20 @@ export function PatternInsightsPage() {
       await accept(proposalId);
     },
     [accept],
+  );
+
+  const handleFetchPlan = useCallback(
+    (proposalId: string) => {
+      void fetchPlan(proposalId);
+    },
+    [fetchPlan],
+  );
+
+  const handleExecutePlan = useCallback(
+    (proposalId: string) => {
+      void executePlan(proposalId).catch(() => undefined);
+    },
+    [executePlan],
   );
 
   const handleTabChange = (value: string) => {
@@ -745,6 +922,17 @@ export function PatternInsightsPage() {
             </Card>
           )}
 
+          {/* ---- Plan-action error (fetch/execute) ---- */}
+          {planError && (
+            <div
+              className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"
+              role="alert"
+              data-testid="pattern-plan-panel-error"
+            >
+              {planError}
+            </div>
+          )}
+
           {/* ---- Proposal cards ---- */}
           {proposals.map((proposal) => (
             <ProposalCard
@@ -753,9 +941,13 @@ export function PatternInsightsPage() {
               maxScore={maxScore}
               canTriage={canTriage}
               isMutating={isMutating}
+              plan={plansByProposal[proposal.id]}
+              planBusy={planBusyId === proposal.id}
               onDismiss={handleDismiss}
               onSnooze={handleSnooze}
               onAccept={handleAccept}
+              onFetchPlan={handleFetchPlan}
+              onExecutePlan={handleExecutePlan}
             />
           ))}
 

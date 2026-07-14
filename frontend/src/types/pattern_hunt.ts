@@ -119,3 +119,51 @@ export interface ProposalSignalSummary {
 
 /** Filter tab union — "all" is the catch-all; others match ProposalState. */
 export type ProposalFilter = ProposalState | "all";
+
+// --------------------------------------------------------------------------- //
+// HuntPlan (#120 Phase C — compiled plan + execution)
+// --------------------------------------------------------------------------- //
+
+/** Compile lifecycle of the stored plan row (NOT the plan's execution state). */
+export type HuntPlanRowStatus = "pending" | "ready" | "failed";
+
+/**
+ * ``GET /pattern/proposals/{id}/plan`` response — compile status plus the
+ * serialised HuntPlan. ``plan`` is null until the compile finishes; after an
+ * execution it additionally carries a ``last_run`` summary object.
+ */
+export interface ProposalHuntPlan {
+  id: string;
+  org_id: string;
+  proposal_id: string;
+  status: HuntPlanRowStatus;
+  plan: {
+    id: string;
+    state: string;
+    hypotheses: Array<{ ttp_id: string; ttp_name: string; priority: number }>;
+    ttp_entries: Array<{
+      ttp_id: string;
+      ttp_name: string;
+      queries: Record<string, { backend: string; query: string }>;
+    }>;
+    last_run?: {
+      run_id: string;
+      started_at: string;
+      completed_at: string | null;
+      findings_created: number;
+      error_count: number;
+      per_ttp: Record<string, { hits: number; errors: string[] }>;
+    };
+    [key: string]: unknown;
+  } | null;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** ``POST /pattern/proposals/{id}/plan/execute`` response. */
+export interface ExecutePlanResponse {
+  plan: ProposalHuntPlan;
+  queued: boolean;
+  findings_created: number | null;
+}

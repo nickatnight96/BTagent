@@ -10,6 +10,8 @@ import { ApiError } from "@/api/client";
 import {
   acceptProposal,
   dismissProposal,
+  executeProposalPlan,
+  getProposalPlan,
   listProposals,
   snoozeProposal,
 } from "@/api/pattern";
@@ -17,6 +19,7 @@ import type {
   ActionRequest,
   PatternHuntProposal,
   ProposalFilter,
+  ProposalHuntPlan,
 } from "@/types/pattern_hunt";
 
 // --------------------------------------------------------------------------- //
@@ -45,10 +48,25 @@ interface PatternState {
   /** Snooze a proposal (reversibly down-weights similar future surfacing). */
   snooze: (proposalId: string, body?: ActionRequest) => Promise<void>;
   /**
-   * Accept a proposal — marks the analyst's intent to run this hunt.
-   * HuntPlan generation is deferred to Phase C.
+   * Accept a proposal — compiles its HuntInput into a HuntPlan server-side
+   * (#120 Phase C). On success the plan is fetched into ``plansByProposal``.
    */
   accept: (proposalId: string, body?: ActionRequest) => Promise<void>;
+
+  /**
+   * Compiled HuntPlans keyed by proposal id (#120 Phase C). Populated after
+   * accept and by ``fetchPlan``; carries compile status + ``last_run`` after
+   * an execution.
+   */
+  plansByProposal: Record<string, ProposalHuntPlan>;
+  /** Proposal id with a plan fetch/execute in flight (drives per-card spinners). */
+  planBusyId: string | null;
+  planError: string | null;
+
+  /** Fetch the plan for a proposal. A 404 (not accepted yet) clears silently. */
+  fetchPlan: (proposalId: string) => Promise<void>;
+  /** Execute the compiled plan — hits land in the hunt triage inbox. */
+  executePlan: (proposalId: string) => Promise<number | null>;
 
   clearError: () => void;
 }
@@ -188,6 +206,10 @@ export const usePatternStore = create<PatternState>((set, get) => ({
             ? Math.max(0, s.total - 1)
             : s.total,
       }));
+      // #120 Phase C: accept kicked a server-side compile (inline under mock
+      // LLM, queued on the live path) — pull the plan so the card can show
+      // compile status immediately. Non-fatal: the accept already succeeded.
+      await get().fetchPlan(proposalId);
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to accept proposal");
       set({ isMutating: false, error: message });
@@ -195,5 +217,53 @@ export const usePatternStore = create<PatternState>((set, get) => ({
     }
   },
 
-  clearError: () => set({ error: null }),
+  plansByProposal: {},
+  planBusyId: null,
+  planError: null,
+
+  fetchPlan: async (proposalId) => {
+    set({ planBusyId: proposalId, planError: null });
+    try {
+      const plan = await getProposalPlan(proposalId);
+      set((s) => ({
+        planBusyId: null,
+        plansByProposal: { ...s.plansByProposal, [proposalId]: plan },
+      }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        // Not accepted yet (or plan row not created) — nothing to show.
+        set((s) => {
+          const next = { ...s.plansByProposal };
+          delete next[proposalId];
+          return { planBusyId: null, plansByProposal: next };
+        });
+        return;
+      }
+      set({
+        planBusyId: null,
+        planError: extractErrorMessage(err, "Failed to load hunt plan"),
+      });
+    }
+  },
+
+  executePlan: async (proposalId) => {
+    set({ planBusyId: proposalId, planError: null });
+    try {
+      const resp = await executeProposalPlan(proposalId);
+      set((s) => ({
+        planBusyId: null,
+        plansByProposal: { ...s.plansByProposal, [proposalId]: resp.plan },
+      }));
+      // Execution flips the proposal outcome (hit/clean) server-side —
+      // refresh the list so the card reflects it.
+      void get().fetchProposals();
+      return resp.findings_created;
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to execute hunt plan");
+      set({ planBusyId: null, planError: message });
+      throw err;
+    }
+  },
+
+  clearError: () => set({ error: null, planError: null }),
 }));
