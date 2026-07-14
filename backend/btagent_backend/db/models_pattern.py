@@ -99,3 +99,48 @@ class PatternHuntProposalRow(Base):
         Index("idx_pattern_proposals_state", "org_id", "state"),
         Index("idx_pattern_proposals_score", "org_id", "score"),
     )
+
+
+class HuntPlanRow(Base):
+    """A compiled (or compiling) HuntPlan for an accepted proposal (#120 Phase C).
+
+    ``status`` is the row-level compile lifecycle — ``pending`` (accept
+    recorded, compile not finished), ``ready`` (``plan`` holds the full
+    serialised :class:`~btagent_shared.types.hunt.HuntPlan`), or ``failed``
+    (``error`` says why; the proposal stays accepted so a re-compile can be
+    wired later). The plan JSON carries its own ``HuntPlanState`` — the two
+    lifecycles are deliberately separate: this row tracks *compilation*, the
+    plan tracks *execution*.
+    """
+
+    __tablename__ = "hunt_plans"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proposal_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("pattern_hunt_proposals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # "pending" | "ready" | "failed" — compile lifecycle, not HuntPlanState.
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    # Serialised HuntPlan (model_dump mode="json"); None until compiled.
+    plan: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_hunt_plans_org_id", "org_id"),
+        # One plan per proposal — accept is idempotent on this.
+        Index("idx_hunt_plans_proposal", "proposal_id", unique=True),
+        Index("idx_hunt_plans_status", "org_id", "status"),
+    )

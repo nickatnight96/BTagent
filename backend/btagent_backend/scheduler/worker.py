@@ -19,6 +19,7 @@ from arq.connections import RedisSettings
 from btagent_backend.config import get_settings
 from btagent_backend.scheduler.jobs import (
     behavioral_baseline_sweep,
+    compile_proposal_plan,
     run_hunt_pack,
     scheduled_hunt_pack_run,
     stale_suppression_sweep,
@@ -28,8 +29,12 @@ from btagent_backend.scheduler.jobs import (
 logger = logging.getLogger("btagent.scheduler.worker")
 
 
-def _redis_settings() -> RedisSettings:
-    """Build arq RedisSettings from the app's ``BTAGENT_REDIS_URL``."""
+def redis_settings() -> RedisSettings:
+    """Build arq RedisSettings from the app's ``BTAGENT_REDIS_URL``.
+
+    Public: the pattern-hunt accept route uses this to enqueue the
+    ``compile_proposal_plan`` job on the live-LLM path.
+    """
     return RedisSettings.from_dsn(get_settings().redis_url)
 
 
@@ -93,6 +98,9 @@ class WorkerSettings:
         scheduled_hunt_pack_run,
         weekly_pattern_scan,
         behavioral_baseline_sweep,
+        # #120 Phase C: enqueue-on-demand from the proposal-accept route
+        # (live-LLM path; mock mode compiles inline in the route).
+        compile_proposal_plan,
     ]
     cron_jobs = [
         cron(
@@ -128,4 +136,4 @@ class WorkerSettings:
     ]
     on_startup = _on_startup
     on_shutdown = _on_shutdown
-    redis_settings = _redis_settings()
+    redis_settings = redis_settings()

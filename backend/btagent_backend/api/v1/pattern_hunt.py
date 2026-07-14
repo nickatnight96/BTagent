@@ -17,6 +17,7 @@ prerequisite for the Pattern Insights UI slice.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 
 from btagent_shared.types.pattern_hunt import ProposalOutcome, ProposalState
@@ -26,7 +27,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
-from btagent_backend.db.models_pattern import PatternHuntProposalRow
+from btagent_backend.db.models_pattern import HuntPlanRow, PatternHuntProposalRow
+from btagent_backend.services import hunt_plan_service
 from btagent_backend.services import pattern_hunt_service as svc
 
 logger = logging.getLogger("btagent.api.pattern_hunt")
@@ -80,6 +82,28 @@ class ActionRequest(BaseModel):
     """Optional rationale for dismiss / snooze / accept transitions."""
 
     rationale: str = ""
+
+
+class HuntPlanResponse(BaseModel):
+    """Compile status + serialised HuntPlan for an accepted proposal (#120 Phase C)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str
+    proposal_id: str
+    # "pending" | "ready" | "failed" — compile lifecycle (the plan JSON's own
+    # HuntPlanState tracks execution).
+    status: str
+    plan: dict | None
+    error: str
+    created_at: datetime
+    updated_at: datetime
+
+
+def _mock_llm_mode() -> bool:
+    """Same flag the engine reasoning nodes read (default: mock on)."""
+    return os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() != "false"
 
 
 # --------------------------------------------------------------------------- #
@@ -208,10 +232,15 @@ async def accept_proposal(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> PatternHuntProposalResponse:
-    """Mark a proposal accepted — signals the analyst wants to run this hunt.
+    """Mark a proposal accepted and kick off HuntPlan compilation (#120 Phase C).
 
-    HuntPlan emission is deferred to Phase C; this endpoint marks the proposal
-    ``accepted`` so the UI can reflect the analyst's intent immediately.
+    Accept records the analyst's intent immediately and creates a ``pending``
+    hunt-plan row (idempotent — re-accepting reuses the existing row). The
+    compile itself runs inline under mock LLM (deterministic, sub-second) and
+    is enqueued to the arq worker on the live-LLM path so the multi-round-trip
+    compile never rides this synchronous request. A compile failure lands on
+    the plan row (``failed`` + error) — the accept itself still succeeds; poll
+    ``GET /pattern/proposals/{id}/plan`` for the outcome.
     """
     user.require_permission("hunt:triage")
     await _load_proposal_scoped(db, proposal_id, user)
@@ -219,7 +248,58 @@ async def accept_proposal(
         row = await svc.set_proposal_state(
             db, proposal_id=proposal_id, state=ProposalState.ACCEPTED
         )
+        plan_row = await hunt_plan_service.create_pending_plan(
+            db, org_id=user.org_id, proposal_id=proposal_id
+        )
+        if plan_row.status == hunt_plan_service.STATUS_PENDING:
+            if _mock_llm_mode():
+                await hunt_plan_service.compile_and_store(db, plan_row_id=plan_row.id)
+            else:
+                await _enqueue_compile(plan_row)
         await db.commit()
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return _proposal_response(row)
+
+
+async def _enqueue_compile(plan_row: HuntPlanRow) -> None:
+    """Enqueue the live-LLM compile job; mark the row failed if arq is down.
+
+    Marking ``failed`` (rather than raising) keeps accept usable when the
+    worker infra is unreachable — the analyst sees a failed compile with the
+    reason instead of a 500 that also rolls back their accept.
+    """
+    try:
+        from arq import create_pool
+
+        from btagent_backend.scheduler.worker import redis_settings
+
+        pool = await create_pool(redis_settings())
+        try:
+            await pool.enqueue_job("compile_proposal_plan", plan_row.id)
+        finally:
+            await pool.aclose()
+    except Exception as exc:  # noqa: BLE001 — infra failure lands on the row
+        logger.exception("Failed to enqueue HuntPlan compile for %s", plan_row.id)
+        plan_row.status = hunt_plan_service.STATUS_FAILED
+        plan_row.error = f"enqueue failed: {type(exc).__name__}: {exc}"
+
+
+@router.get("/proposals/{proposal_id}/plan", response_model=HuntPlanResponse)
+async def get_proposal_plan(
+    proposal_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPlanResponse:
+    """Read the compiled HuntPlan (or its compile status) for a proposal.
+
+    404 until the proposal has been accepted (no plan row exists before that).
+    """
+    user.require_permission("hunt:view")
+    await _load_proposal_scoped(db, proposal_id, user)
+    plan_row = await hunt_plan_service.get_plan_for_proposal(
+        db, org_id=user.org_id, proposal_id=proposal_id
+    )
+    if plan_row is None:
+        raise HTTPException(status_code=404, detail="Proposal has no hunt plan yet")
+    return HuntPlanResponse.model_validate(plan_row)
