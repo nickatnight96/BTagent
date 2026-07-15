@@ -294,3 +294,32 @@ async def execute_hunt_plan(ctx: dict[str, Any], plan_row_id: str) -> dict[str, 
         await session.commit()
     logger.info("execute_hunt_plan %s: findings=%d", plan_row_id, findings_created)
     return {"plan_row_id": row.id, "findings_created": findings_created}
+
+
+async def validate_detection_proposal(
+    ctx: dict[str, Any],
+    row_id: str,
+    org_id: str,
+    backends: list[str] | None = None,
+    lookback_hours: int = 720,
+) -> dict[str, Any]:
+    """Validate a detection proposal against historical telemetry (#113 slice 2).
+
+    Enqueue-on-demand from the CTI validate route on the live-connector path
+    (mock mode validates inline in the route). The single commit happens here.
+    """
+    # Lazy import — the validate path pulls the engine pySigma stack.
+    from btagent_backend.services import cti_detection_service
+
+    async with async_session_factory() as session:
+        row = await cti_detection_service.validate_proposal(
+            session,
+            org_id=org_id,
+            row_id=row_id,
+            backends=backends,
+            lookback_hours=lookback_hours,
+        )
+        await session.commit()
+    verdict = (row.validation or {}).get("verdict", "unknown")
+    logger.info("validate_detection_proposal %s: verdict=%s", row_id, verdict)
+    return {"row_id": row.id, "verdict": verdict}

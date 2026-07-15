@@ -311,3 +311,74 @@ async def set_proposal_state(
     row.updated_at = row.reviewed_at
     await db.flush()
     return row
+
+
+async def validate_proposal(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    row_id: str,
+    backends: list[str] | None = None,
+    lookback_hours: int = 24 * 30,
+) -> DetectionProposalRow:
+    """Validate a proposal's Sigma rule against historical telemetry (#113 slice 2).
+
+    Runs the engine rule validator (transpile per backend + execute through
+    the integration nodes, mock-aware) and stores the serialised outcome +
+    verdict on the row. Read-only with respect to the review lifecycle —
+    validation never changes ``state`` and may run on decided rows too (the
+    PR composer wants a fresh verdict at composition time).
+
+    Raises :class:`LookupError` for unknown / cross-org rows (route → 404).
+    Never commits.
+    """
+    row = (
+        await db.execute(
+            select(DetectionProposalRow).where(
+                DetectionProposalRow.id == row_id,
+                DetectionProposalRow.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise LookupError(f"Detection proposal not found: {row_id}")
+
+    # Lazy engine import — pulls the pySigma / integration-node stack.
+    from btagent_engine.hunting.rule_validator import validate_rule
+    from btagent_engine.node import NodeContext
+
+    ctx = NodeContext(run_id=generate_id("vrun"), org_id=org_id)
+    result = await validate_rule(row.sigma_yaml, backends, ctx, lookback_hours=lookback_hours)
+
+    payload = result.model_dump(mode="json")
+    payload["verdict"] = result.verdict
+    payload["total_hits"] = result.total_hits
+    row.validation = payload
+    row.validated_at = result.validated_at
+    row.updated_at = result.validated_at
+    await db.flush()
+    logger.info(
+        "detection proposal validated: row=%s verdict=%s hits=%d errors=%d",
+        row.id,
+        result.verdict,
+        result.total_hits,
+        result.error_count,
+    )
+    return row
+
+
+async def get_proposal(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    row_id: str,
+) -> DetectionProposalRow | None:
+    """Org-scoped single-row fetch (None on miss or cross-org)."""
+    return (
+        await db.execute(
+            select(DetectionProposalRow).where(
+                DetectionProposalRow.id == row_id,
+                DetectionProposalRow.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
