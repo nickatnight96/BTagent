@@ -122,6 +122,21 @@ class SkippedIndicator(BaseModel):
     reason: str = Field(description="Human-readable explanation of why the indicator was skipped.")
 
 
+class PersistedCounts(BaseModel):
+    """Outcome of upserting a propose call's output into the proposal store.
+
+    ``unchanged`` counts proposals whose stored row an analyst has already
+    decided (accepted / rejected / modified) — a re-import never clobbers a
+    decision (#113 back half, slice 1).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    created: int = 0
+    updated: int = 0
+    unchanged: int = 0
+
+
 class CTIToDetectionResponse(BaseModel):
     """Response payload from the STIX → Sigma proposal endpoint."""
 
@@ -135,12 +150,20 @@ class CTIToDetectionResponse(BaseModel):
         default_factory=list,
         description="Indicators that could not be converted, with the reason.",
     )
+    persisted: PersistedCounts | None = Field(
+        default=None,
+        description=(
+            "Upsert counts when the endpoint persisted the proposals "
+            "(#113 slice 1); None for callers of the pure pipeline."
+        ),
+    )
 
 
 __all__ = [
     "CTIToDetectionRequest",
     "CTIToDetectionResponse",
     "DetectionProposal",
+    "PersistedCounts",
     "ProposalState",
     "SkippedIndicator",
 ]
