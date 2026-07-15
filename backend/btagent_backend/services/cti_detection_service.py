@@ -127,3 +127,187 @@ class CTIDetectionService:
 
 
 __all__ = ["CTIDetectionService"]
+
+
+# ---------------------------------------------------------------------------
+# Persistence + review lifecycle (#113 back half, slice 1)
+#
+# Module-level async helpers following the codebase convention: AsyncSession
+# first, flush-not-commit (the route / job owns the single commit).
+# ---------------------------------------------------------------------------
+
+from datetime import UTC, datetime  # noqa: E402
+
+from btagent_shared.types.detection_proposal import (  # noqa: E402
+    DetectionProposal,
+    ProposalState,
+)
+from btagent_shared.utils.ids import generate_id  # noqa: E402
+from sqlalchemy import func, select  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+
+from btagent_backend.db.models_cti import DetectionProposalRow  # noqa: E402
+
+# States an analyst has explicitly decided — a re-propose never clobbers them.
+_DECIDED_STATES = frozenset(
+    {ProposalState.ACCEPTED.value, ProposalState.REJECTED.value, ProposalState.MODIFIED.value}
+)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+async def persist_proposals(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    proposals: list[DetectionProposal],
+    bundle_id: str | None = None,
+) -> tuple[int, int, int]:
+    """Upsert pipeline proposals into ``detection_proposals``.
+
+    Keyed on ``(org_id, source_stix_id)``:
+
+    * no existing row → insert (``created``)
+    * existing row still ``proposed`` → refresh content (``updated``) — the
+      pipeline's newest view of the indicator wins while nobody has reviewed
+    * existing row already decided → leave untouched (``unchanged``) — an
+      analyst decision is never silently overwritten by a re-import
+
+    Returns ``(created, updated, unchanged)`` counts. Flushes, never commits.
+    """
+    if not proposals:
+        return (0, 0, 0)
+
+    stix_ids = [p.source_stix_id for p in proposals]
+    existing_rows = (
+        (
+            await db.execute(
+                select(DetectionProposalRow).where(
+                    DetectionProposalRow.org_id == org_id,
+                    DetectionProposalRow.source_stix_id.in_(stix_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_stix_id = {row.source_stix_id: row for row in existing_rows}
+
+    created = updated = unchanged = 0
+    now = _utcnow()
+    for proposal in proposals:
+        row = by_stix_id.get(proposal.source_stix_id)
+        if row is None:
+            db.add(
+                DetectionProposalRow(
+                    id=generate_id("dprop"),
+                    org_id=org_id,
+                    proposal_id=proposal.id,
+                    source_stix_id=proposal.source_stix_id,
+                    bundle_id=bundle_id,
+                    title=proposal.title,
+                    sigma_yaml=proposal.sigma_yaml,
+                    technique_ids=list(proposal.technique_ids),
+                    confidence=proposal.confidence,
+                    rationale=proposal.rationale,
+                    state=ProposalState.PROPOSED.value,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            created += 1
+        elif row.state in _DECIDED_STATES:
+            unchanged += 1
+        else:
+            row.proposal_id = proposal.id
+            row.title = proposal.title
+            row.sigma_yaml = proposal.sigma_yaml
+            row.technique_ids = list(proposal.technique_ids)
+            row.confidence = proposal.confidence
+            row.rationale = proposal.rationale
+            row.bundle_id = bundle_id or row.bundle_id
+            row.updated_at = now
+            updated += 1
+
+    await db.flush()
+    logger.info(
+        "detection proposals persisted: created=%d updated=%d unchanged=%d (org=%s bundle=%s)",
+        created,
+        updated,
+        unchanged,
+        org_id,
+        bundle_id or "<none>",
+    )
+    return (created, updated, unchanged)
+
+
+async def list_proposals(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    state: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[DetectionProposalRow], int]:
+    """Org-scoped, paginated proposal listing, newest-updated first."""
+    where = [DetectionProposalRow.org_id == org_id]
+    if state:
+        where.append(DetectionProposalRow.state == state)
+
+    total = (
+        await db.execute(select(func.count()).select_from(DetectionProposalRow).where(*where))
+    ).scalar_one()
+    rows = (
+        (
+            await db.execute(
+                select(DetectionProposalRow)
+                .where(*where)
+                .order_by(DetectionProposalRow.updated_at.desc(), DetectionProposalRow.id)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows), int(total)
+
+
+async def set_proposal_state(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    row_id: str,
+    state: ProposalState,
+    review_rationale: str = "",
+    reviewed_by: str | None = None,
+) -> DetectionProposalRow:
+    """Record an analyst decision on a proposal.
+
+    Only ``proposed`` rows may be decided — re-deciding raises
+    :class:`ValueError` with a message the route surfaces as 409. A missing /
+    cross-org row raises :class:`LookupError` (route surfaces 404, masking
+    tenancy).
+    """
+    row = (
+        await db.execute(
+            select(DetectionProposalRow).where(
+                DetectionProposalRow.id == row_id,
+                DetectionProposalRow.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise LookupError(f"Detection proposal not found: {row_id}")
+    if row.state in _DECIDED_STATES:
+        raise ValueError(f"Detection proposal already {row.state}")
+
+    row.state = state.value
+    row.review_rationale = review_rationale
+    row.reviewed_by = reviewed_by
+    row.reviewed_at = _utcnow()
+    row.updated_at = row.reviewed_at
+    await db.flush()
+    return row
