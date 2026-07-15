@@ -13,6 +13,11 @@ and stays side-effect-free; this module is the side-effectful shell around it:
   ``compile_proposal_plan`` arq job on the live-LLM path, where the multiple
   LLM round-trips must not ride the synchronous HTTP accept.
 * ``get_plan_for_proposal`` — org-scoped read for the API.
+* ``execute_plan_and_ingest`` — runs a ``ready`` plan's runbook, ingests hits,
+  and records a :class:`PlanRunRow` history row per invocation (mirroring
+  ``hunt_pack_runs``). The ``last_run`` blob alongside the plan JSON is kept
+  as the quick-glance summary for backward compatibility.
+* ``list_plan_runs`` — org-scoped, newest-first run history for the API.
 
 Per the codebase convention these helpers never commit — the route / arq job
 owns the single commit.
@@ -22,13 +27,17 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from btagent_shared.types.pattern_hunt import PatternHuntProposal
 from btagent_shared.utils.ids import generate_id
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.db.models_pattern import HuntPlanRow, PatternHuntProposalRow
+from btagent_backend.db.models_pattern import HuntPlanRow, PatternHuntProposalRow, PlanRunRow
+
+if TYPE_CHECKING:  # avoid importing the (pysigma-heavy) engine at module load
+    from btagent_engine.hunting.plan_runner import PlanRunResult
 
 logger = logging.getLogger("btagent.services.hunt_plan")
 
@@ -158,6 +167,64 @@ async def get_plan_for_proposal(
     return result.scalar_one_or_none()
 
 
+def _derive_plan_run_status(result: PlanRunResult) -> str:
+    """Same derivation as ``hunt_pack_run_service._derive_run_status``.
+
+    Counts every TTP×backend execution outcome: ``failed`` when every
+    execution errored (and there was at least one), ``completed_with_errors``
+    for a partial result, ``completed`` otherwise (including an empty runbook
+    — nothing ran, nothing failed).
+    """
+    errored = 0
+    succeeded = 0
+    for ttp in result.ttp_results:
+        for backend in ttp.backend_results:
+            if backend.error:
+                errored += 1
+            else:
+                succeeded += 1
+    if errored == 0:
+        return "completed"
+    if succeeded == 0:
+        return "failed"
+    return "completed_with_errors"
+
+
+async def list_plan_runs(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    plan_row_id: str | None = None,
+    proposal_id: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[PlanRunRow], int]:
+    """Org-scoped plan-run history, newest-first, paginated."""
+    where = [PlanRunRow.org_id == org_id]
+    if plan_row_id:
+        where.append(PlanRunRow.plan_row_id == plan_row_id)
+    if proposal_id:
+        where.append(PlanRunRow.proposal_id == proposal_id)
+
+    total = (
+        await db.execute(select(func.count()).select_from(PlanRunRow).where(*where))
+    ).scalar_one() or 0
+    rows = (
+        (
+            await db.execute(
+                select(PlanRunRow)
+                .where(*where)
+                .order_by(PlanRunRow.started_at.desc(), PlanRunRow.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows), int(total)
+
+
 async def execute_plan_and_ingest(
     db: AsyncSession,
     *,
@@ -175,6 +242,9 @@ async def execute_plan_and_ingest(
 
     * the stored plan JSON flips to ``completed`` and gains a ``last_run``
       summary (run id, findings created, per-TTP hit/error counts);
+    * a :class:`PlanRunRow` history row is recorded — one per invocation, so
+      repeated executions accumulate instead of overwriting (``last_run`` is
+      kept as the backward-compatible quick-glance summary);
     * the proposal's closed-loop ``outcome`` is written back — ``hit`` when
       any finding landed, ``clean`` otherwise (#120 Phase B feedback column).
 
@@ -261,6 +331,26 @@ async def execute_plan_and_ingest(
     # it (see the top of this function).
     row.plan = plan_json
     row.updated_at = now
+
+    # Per-run history row — one per invocation (mirrors hunt_pack_runs).
+    db.add(
+        PlanRunRow(
+            id=generate_id("plrun"),
+            org_id=row.org_id,
+            plan_row_id=row.id,
+            proposal_id=row.proposal_id,
+            plan_id=plan.id,
+            run_id=result.run_id,
+            ttp_stats=ttp_summary,
+            hit_count=len(result.all_hits),
+            error_count=result.error_count,
+            findings_created=findings_created,
+            status=_derive_plan_run_status(result),
+            error=None,
+            started_at=result.started_at,
+            completed_at=result.completed_at,
+        )
+    )
 
     # Closed-loop outcome write-back onto the proposal (#120 Phase B column).
     proposal_row = (

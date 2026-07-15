@@ -101,6 +101,32 @@ class HuntPlanResponse(BaseModel):
     updated_at: datetime
 
 
+class PlanRunResponse(BaseModel):
+    """One HuntPlan execution history row (#120 follow-up, mirrors pack runs)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    org_id: str
+    plan_row_id: str
+    proposal_id: str
+    plan_id: str
+    run_id: str
+    ttp_stats: dict
+    hit_count: int
+    error_count: int
+    findings_created: int
+    status: str
+    error: str | None
+    started_at: datetime
+    completed_at: datetime | None
+
+
+class PlanRunListResponse(BaseModel):
+    items: list[PlanRunResponse]
+    total: int
+
+
 def _mock_llm_mode() -> bool:
     """Same flag the engine reasoning nodes read (default: mock on)."""
     return os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() != "false"
@@ -380,3 +406,35 @@ async def get_proposal_plan(
     if plan_row is None:
         raise HTTPException(status_code=404, detail="Proposal has no hunt plan yet")
     return HuntPlanResponse.model_validate(plan_row)
+
+
+@router.get("/proposals/{proposal_id}/plan/runs", response_model=PlanRunListResponse)
+async def list_proposal_plan_runs(
+    proposal_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> PlanRunListResponse:
+    """Per-run execution history for a proposal's HuntPlan (#120 follow-up).
+
+    Newest-first, paginated. 404 until the proposal has been accepted (no
+    plan row exists before that); an accepted-but-never-executed plan returns
+    an empty list. The plan JSON's ``last_run`` blob stays the quick-glance
+    summary — this is the full history behind it.
+    """
+    user.require_permission("hunt:view")
+    await _load_proposal_scoped(db, proposal_id, user)
+    plan_row = await hunt_plan_service.get_plan_for_proposal(
+        db, org_id=user.org_id, proposal_id=proposal_id
+    )
+    if plan_row is None:
+        raise HTTPException(status_code=404, detail="Proposal has no hunt plan yet")
+    rows, total = await hunt_plan_service.list_plan_runs(
+        db,
+        org_id=user.org_id,
+        plan_row_id=plan_row.id,
+        page=page,
+        page_size=page_size,
+    )
+    return PlanRunListResponse(items=[PlanRunResponse.model_validate(r) for r in rows], total=total)
