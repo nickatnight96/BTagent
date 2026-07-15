@@ -24,6 +24,7 @@ from btagent_shared.hunt import triage
 from btagent_shared.hunt.identity import build_revocation_proposal
 from btagent_shared.types.enums import AuditCategory, AuditOutcome, Severity, UserRole
 from btagent_shared.types.hunt import (
+    HuntDomain,
     HuntFindingState,
     SuppressionState,
 )
@@ -328,6 +329,15 @@ async def record_finding(
     rules = await _active_suppressions(db, org_id=org_id)
     if rules:
         await _apply_suppressions_to(db, finding_row=row, rules=rules)
+
+    # #116 follow-up: identity findings that carry a grant tuple also feed
+    # the first-class oauth_grants store (the ingest-side write path the #216
+    # read-derive endpoint promised). Fail-open inside the service — grant
+    # bookkeeping never breaks finding ingest.
+    if domain == HuntDomain.IDENTITY.value:
+        from btagent_backend.services import identity_grant_service
+
+        await identity_grant_service.upsert_grant_from_finding(db, finding=row)
 
     await db.flush()
     return row
