@@ -148,6 +148,7 @@ class DetectionProposalRecord(BaseModel):
     state: str
     validation: dict | None
     validated_at: datetime | None
+    pr_url: str | None
     review_rationale: str
     reviewed_by: str | None
     reviewed_at: datetime | None
@@ -333,3 +334,61 @@ async def validate_detection_proposal(
     # The queued run updates ``validation`` asynchronously; return the row
     # as-is so the caller can poll GET /cti/proposals for the outcome.
     return DetectionProposalRecord.model_validate(row)
+
+
+class ComposePRRequest(BaseModel):
+    """Accepted proposal rows to ship in one detection-repo PR."""
+
+    row_ids: list[str] = Field(min_length=1, max_length=50)
+    title: str | None = Field(default=None, max_length=300)
+
+
+class ComposePRResponse(BaseModel):
+    pr_url: str
+    branch: str
+    commit: str
+    rule_count: int
+    row_ids: list[str]
+    is_mock: bool
+
+
+@router.post("/proposals/compose-pr", response_model=ComposePRResponse)
+async def compose_detection_pr(
+    body: ComposePRRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> ComposePRResponse:
+    """Ship accepted proposals as one detection-repo pull request.
+
+    The mandatory HITL from issue #113 is enforced twice: every row must be
+    ``accepted`` (a one-shot analyst decision) and this route requires
+    ``hunt:promote`` (senior_analyst+). Rows that already shipped are refused
+    (409) — a rule ships once; the PR URL lands on each row as the back-link.
+    501 when live git mode is enabled but not yet implemented.
+    """
+    user.require_permission("hunt:promote")
+    try:
+        result = await svc.compose_detection_pr(
+            db, org_id=user.org_id, row_ids=body.row_ids, title=body.title
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.HUNT,
+        action="detection_pr_composed",
+        resource=f"detection_pr:{result['pr_url']}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "row_ids": result["row_ids"],
+            "rule_count": result["rule_count"],
+            "branch": result["branch"],
+        },
+    )
+    return ComposePRResponse(**result)

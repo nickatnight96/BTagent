@@ -331,3 +331,136 @@ async def test_validate_untranspilable_rule_reads_error(
     validation = resp.json()["validation"]
     assert validation["verdict"] == "error"
     assert "transpile failed" in validation["backends"][0]["error"]
+
+
+# --------------------------------------------------------------------------- #
+# Detection-repo PR composer (#113 slice 3)
+# --------------------------------------------------------------------------- #
+
+import pytest_asyncio  # noqa: E402
+from btagent_shared.utils.ids import generate_id as _gen_id  # noqa: E402
+
+from btagent_backend.auth.jwt import create_token_pair, hash_password  # noqa: E402
+from btagent_backend.db.models import UserRow  # noqa: E402
+
+
+@pytest_asyncio.fixture
+async def senior_token(db_session: AsyncSession) -> str:
+    from datetime import UTC, datetime
+
+    user = UserRow(
+        id=_gen_id("usr"),
+        org_id=DEFAULT_ORG_ID,
+        username=f"cti_senior_{_gen_id('n')}",
+        email=f"cti_senior_{_gen_id('e')}@btagent.test",
+        password_hash=hash_password("Str0ng!Passw0rd"),
+        role="senior_analyst",
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(user)
+    await db_session.commit()
+    return create_token_pair(user.id, user.username, user.role).access_token
+
+
+async def _accept_all(client, token: str, db, bundle) -> list[str]:
+    ids = sorted(r.id for r in await _rows_for(db, bundle))
+    for rid in ids:
+        resp = await client.post(
+            f"/api/v1/cti/proposals/{rid}/accept", json={}, headers=auth_header(token)
+        )
+        assert resp.status_code == 200, resp.text
+    return ids
+
+
+async def test_compose_pr_ships_accepted_rules(
+    client, analyst_token, senior_token, db_session: AsyncSession, monkeypatch
+):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    from btagent_agents.mcp.servers.git_mcp import MOCK_PR_LEDGER
+
+    MOCK_PR_LEDGER.clear()
+
+    bundle = _bundle("00c1")
+    await _propose(client, analyst_token, bundle)
+    ids = await _accept_all(client, analyst_token, db_session, bundle)
+
+    resp = await client.post(
+        "/api/v1/cti/proposals/compose-pr",
+        json={"row_ids": ids},
+        headers=auth_header(senior_token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["rule_count"] == 2
+    assert body["is_mock"] is True
+    assert body["pr_url"].startswith("https://")
+    assert len(MOCK_PR_LEDGER) == 1
+    paths = MOCK_PR_LEDGER[0]["files"]
+    assert all(f["path"].startswith("rules/t1") for f in paths)
+
+    # PR back-link stamped and surfaced in the listing.
+    listing = await client.get(
+        "/api/v1/cti/proposals?page_size=200", headers=auth_header(analyst_token)
+    )
+    stamped = [i for i in listing.json()["items"] if i["id"] in ids]
+    assert all(i["pr_url"] == body["pr_url"] for i in stamped)
+
+
+async def test_compose_pr_refuses_unaccepted_rows(
+    client, analyst_token, senior_token, db_session: AsyncSession, monkeypatch
+):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    bundle = _bundle("00c2")
+    await _propose(client, analyst_token, bundle)
+    ids = sorted(r.id for r in await _rows_for(db_session, bundle))
+
+    resp = await client.post(
+        "/api/v1/cti/proposals/compose-pr",
+        json={"row_ids": ids},
+        headers=auth_header(senior_token),
+    )
+    assert resp.status_code == 409
+    assert "not accepted" in resp.json()["detail"]
+
+
+async def test_compose_pr_refuses_already_shipped(
+    client, analyst_token, senior_token, db_session: AsyncSession, monkeypatch
+):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    bundle = _bundle("00c3")
+    await _propose(client, analyst_token, bundle)
+    ids = await _accept_all(client, analyst_token, db_session, bundle)
+
+    first = await client.post(
+        "/api/v1/cti/proposals/compose-pr",
+        json={"row_ids": ids},
+        headers=auth_header(senior_token),
+    )
+    assert first.status_code == 200
+    second = await client.post(
+        "/api/v1/cti/proposals/compose-pr",
+        json={"row_ids": ids},
+        headers=auth_header(senior_token),
+    )
+    assert second.status_code == 409
+    assert "already shipped" in second.json()["detail"]
+
+
+async def test_compose_pr_requires_senior(client, analyst_token, monkeypatch):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    resp = await client.post(
+        "/api/v1/cti/proposals/compose-pr",
+        json={"row_ids": ["dprop_x"]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 403
+
+
+async def test_compose_pr_unknown_row_is_404(client, senior_token, monkeypatch):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    resp = await client.post(
+        "/api/v1/cti/proposals/compose-pr",
+        json={"row_ids": ["dprop_missing"]},
+        headers=auth_header(senior_token),
+    )
+    assert resp.status_code == 404

@@ -51,6 +51,9 @@ class DetectionProposalRow(Base):
     # None until POST /cti/proposals/{id}/validate runs.
     validation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Detection-repo PR back-link (#113 slice 3): set by the composer; a
+    # non-null value means the rule already shipped and blocks re-composition.
+    pr_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Review provenance — set when an analyst decides.
     review_rationale: Mapped[str] = mapped_column(Text, default="")
     reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)

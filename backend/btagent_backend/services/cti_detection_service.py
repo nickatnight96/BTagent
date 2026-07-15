@@ -382,3 +382,133 @@ async def get_proposal(
             )
         )
     ).scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Detection-repo PR composer (#113 back half, slice 3)
+# ---------------------------------------------------------------------------
+
+import re as _re  # noqa: E402
+
+_SLUG_RE = _re.compile(r"[^a-z0-9]+")
+
+
+def _rule_slug(title: str) -> str:
+    """Filesystem-safe slug for a rule file name."""
+    slug = _SLUG_RE.sub("_", title.strip().lower()).strip("_")
+    return slug or "rule"
+
+
+def build_pr_files(rows: list[DetectionProposalRow]) -> list[dict[str, str]]:
+    """Map accepted proposal rows to detection-repo file payloads.
+
+    Layout: ``rules/<primary-technique|uncategorized>/<slug>.yml``. Path
+    collisions (same title twice) are disambiguated with the row id suffix
+    so the Git connector's duplicate-path guard never fires spuriously.
+    """
+    files: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for row in rows:
+        technique = (row.technique_ids or ["uncategorized"])[0].lower()
+        path = f"rules/{technique}/{_rule_slug(row.title)}.yml"
+        if path in seen:
+            path = f"rules/{technique}/{_rule_slug(row.title)}_{row.id[-6:].lower()}.yml"
+        seen.add(path)
+        files.append({"path": path, "content": row.sigma_yaml})
+    return files
+
+
+def _pr_body(rows: list[DetectionProposalRow]) -> str:
+    """Markdown PR body summarising each rule + its telemetry verdict."""
+    lines = [
+        "Accepted Sigma rule proposals from the CTI → Detection pipeline (#113).",
+        "",
+        "| Rule | Techniques | Confidence | Telemetry verdict |",
+        "|------|------------|------------|-------------------|",
+    ]
+    for row in rows:
+        verdict = (row.validation or {}).get("verdict", "not validated")
+        techniques = ", ".join(row.technique_ids or []) or "—"
+        lines.append(f"| {row.title} | {techniques} | {row.confidence:.2f} | {verdict} |")
+    lines += [
+        "",
+        "Every rule in this PR was individually accepted by an analyst "
+        "(one-shot review decision) before composition.",
+    ]
+    return "\n".join(lines)
+
+
+async def compose_detection_pr(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    row_ids: list[str],
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Compose a detection-repo PR from accepted proposals (#113 slice 3).
+
+    HITL discipline: only ``accepted`` rows (a one-shot human decision) are
+    eligible, and the route gates on a senior-analyst permission — two human
+    gates before anything reaches the repo. Rows that already shipped
+    (non-null ``pr_url``) are refused; a rule ships once.
+
+    Raises :class:`LookupError` when any row is missing / cross-org (404) and
+    :class:`ValueError` for eligibility violations (409). Never commits.
+    """
+    if not row_ids:
+        raise ValueError("compose_detection_pr needs at least one proposal row id")
+
+    rows = (
+        (
+            await db.execute(
+                select(DetectionProposalRow).where(
+                    DetectionProposalRow.id.in_(row_ids),
+                    DetectionProposalRow.org_id == org_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    found = {r.id for r in rows}
+    missing = [rid for rid in row_ids if rid not in found]
+    if missing:
+        raise LookupError(f"Detection proposal(s) not found: {', '.join(missing)}")
+
+    not_accepted = [r.id for r in rows if r.state != ProposalState.ACCEPTED.value]
+    if not_accepted:
+        raise ValueError(
+            f"Only accepted proposals can ship; not accepted: {', '.join(not_accepted)}"
+        )
+    shipped = [r.id for r in rows if r.pr_url]
+    if shipped:
+        raise ValueError(f"Proposal(s) already shipped in a PR: {', '.join(shipped)}")
+
+    ordered = sorted(rows, key=lambda r: r.id)
+    files = build_pr_files(ordered)
+    now = _utcnow()
+    branch = f"detections/cti-{now.strftime('%Y%m%d')}-{len(ordered)}-rules"
+    pr_title = title or f"detections: {len(ordered)} CTI-derived Sigma rule(s)"
+
+    # Lazy import — the Git connector lives in the agents package (mock-first;
+    # live mode raises NotImplementedError until the rollout PR).
+    from btagent_agents.mcp.servers.git_mcp import GitMCPServer
+
+    envelope = await GitMCPServer().git_open_detection_pr(
+        branch, pr_title, _pr_body(ordered), files
+    )
+
+    pr_url = envelope["pr_url"]
+    for row in ordered:
+        row.pr_url = pr_url
+        row.updated_at = now
+    await db.flush()
+    logger.info("detection PR composed: %s (%d rules, org=%s)", pr_url, len(ordered), org_id)
+    return {
+        "pr_url": pr_url,
+        "branch": envelope["branch"],
+        "commit": envelope["commit"],
+        "rule_count": len(ordered),
+        "row_ids": [r.id for r in ordered],
+        "is_mock": envelope.get("is_mock", False),
+    }
