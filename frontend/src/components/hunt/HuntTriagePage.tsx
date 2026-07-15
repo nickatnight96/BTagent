@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Crosshair,
@@ -20,8 +20,8 @@ import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { SuppressModal, type SuppressModalTarget } from "./SuppressModal";
 import { PromoteModal, type PromoteModalTarget } from "./PromoteModal";
-import { getWSClient } from "@/api/ws";
 import { EventType } from "@/types/events";
+import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
 
 // --------------------------------------------------------------------------- //
 // RBAC
@@ -315,6 +315,14 @@ function Pagination({
 
 const POLL_INTERVAL_MS = 30_000;
 
+/** The finding-lifecycle events every hunt surface refreshes on. */
+export const HUNT_FINDING_EVENTS = [
+  EventType.HUNT_FINDING_CREATED,
+  EventType.HUNT_FINDING_UPDATED,
+  EventType.HUNT_FINDING_SUPPRESSED,
+  EventType.HUNT_FINDING_PROMOTED,
+] as const;
+
 /** Tab labels; each maps 1:1 onto the server-side state filter. */
 const TABS: { id: InboxTab; label: string }[] = [
   { id: "active", label: "Active" },
@@ -357,67 +365,16 @@ export function HuntTriagePage() {
   }, [activeTab]);
 
   // ----- WS live-refresh / polling fallback -----
-  // The global WS client dispatches ALL event types on the same connection
-  // (scoped by investigation_id for investigation events; HUNT_FINDING_* events
-  // don't carry an investigation_id so the eventStore won't forward them).
-  // We subscribe directly to the WS client for HUNT_FINDING_* events and
-  // throttle refetches to avoid hammering the API when a burst arrives.
-  const refetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const scheduleRefetch = useCallback(() => {
-    if (refetchTimerRef.current) return;
-    refetchTimerRef.current = setTimeout(() => {
-      refetchTimerRef.current = null;
+  // Shared hook (extracted from this page's original inline effect): WS
+  // subscription on HUNT_FINDING_* + 1 s debounce + visibility refresh +
+  // 30 s polling safety net.
+  useLiveEventRefresh(
+    useCallback(() => {
       void fetchInbox();
-    }, 1000); // 1 s debounce after burst
-  }, [fetchInbox]);
-
-  useEffect(() => {
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
-
-    try {
-      const ws = getWSClient();
-      const prev = ws.onEvent;
-      ws.onEvent = (ev) => {
-        prev(ev);
-        if (
-          ev.type === EventType.HUNT_FINDING_CREATED ||
-          ev.type === EventType.HUNT_FINDING_UPDATED ||
-          ev.type === EventType.HUNT_FINDING_SUPPRESSED ||
-          ev.type === EventType.HUNT_FINDING_PROMOTED
-        ) {
-          scheduleRefetch();
-        }
-      };
-
-      // Fallback: if the page gains focus after an absence, also refetch.
-      const handleFocus = () => scheduleRefetch();
-      window.addEventListener("visibilitychange", handleFocus);
-
-      // Regardless of WS connectivity, poll every 30 s as a safety net.
-      pollTimer = setInterval(() => {
-        if (document.visibilityState === "visible") {
-          scheduleRefetch();
-        }
-      }, POLL_INTERVAL_MS);
-
-      return () => {
-        ws.onEvent = prev;
-        window.removeEventListener("visibilitychange", handleFocus);
-        if (pollTimer) clearInterval(pollTimer);
-        if (refetchTimerRef.current) {
-          clearTimeout(refetchTimerRef.current);
-          refetchTimerRef.current = null;
-        }
-      };
-    } catch {
-      // WS unavailable (SSR, test env, etc.) — polling only
-      pollTimer = setInterval(() => scheduleRefetch(), POLL_INTERVAL_MS);
-      return () => {
-        if (pollTimer) clearInterval(pollTimer);
-      };
-    }
-  }, [scheduleRefetch]);
+    }, [fetchInbox]),
+    HUNT_FINDING_EVENTS,
+    { pollIntervalMs: POLL_INTERVAL_MS },
+  );
 
   const byCluster = useMemo(() => groupFindingsByCluster(findings), [findings]);
 

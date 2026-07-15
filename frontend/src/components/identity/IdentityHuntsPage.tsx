@@ -28,7 +28,7 @@
  * - hunt:promote  → senior_analyst role or above (promote action).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   KeyRound,
@@ -56,6 +56,8 @@ import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { IdentityGrantsGraph } from "./IdentityGrantsGraph";
+import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
+import { HUNT_FINDING_EVENTS } from "@/components/hunt/HuntTriagePage";
 import type {
   CreateSuppressionRequest,
   HuntDomain,
@@ -1037,18 +1039,17 @@ export function IdentityHuntsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stateFilter]);
 
-  // 30-second polling fallback (WS upgrade deferred to Phase C).
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const scheduleRefetch = useCallback(() => {
-    void fetchFindings();
-  }, [fetchFindings]);
-
-  useEffect(() => {
-    pollTimerRef.current = setInterval(scheduleRefetch, POLL_INTERVAL_MS);
-    return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-  }, [scheduleRefetch]);
+  // Live refresh (#116 Phase C WS upgrade): HUNT_FINDING_* events over the
+  // global WS client with a 30 s polling safety net — identity findings AND
+  // the derived grant graph both re-derive from the findings feed.
+  useLiveEventRefresh(
+    useCallback(() => {
+      void fetchFindings();
+      void fetchGrants();
+    }, [fetchFindings, fetchGrants]),
+    HUNT_FINDING_EVENTS,
+    { pollIntervalMs: POLL_INTERVAL_MS },
+  );
 
   // Client-side aggregation.
   const principalSummaries = buildPrincipalSummaries(findings);
