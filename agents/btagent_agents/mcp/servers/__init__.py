@@ -8,10 +8,12 @@ Available servers:
     OktaMCPServer        -- Okta Identity Platform (System Log + OAuth grants)
     EntraMCPServer       -- Microsoft Entra ID / Azure AD (sign-in + audit + grants)
     GoogleWorkspaceMCPServer -- Google Workspace (login + admin/token activity + tokens)
+    DefenderO365MCPServer -- Microsoft Defender for O365 (email events + quarantine + submissions)
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
 from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
+from btagent_agents.mcp.servers.defender_o365_mcp import DefenderO365MCPServer
 from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
 from btagent_agents.mcp.servers.entra_mcp import EntraMCPServer
 from btagent_agents.mcp.servers.git_mcp import GitMCPServer
@@ -28,5 +30,6 @@ __all__ = [
     "OktaMCPServer",
     "EntraMCPServer",
     "GoogleWorkspaceMCPServer",
+    "DefenderO365MCPServer",
     "GitMCPServer",
 ]
