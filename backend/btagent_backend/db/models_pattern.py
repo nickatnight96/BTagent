@@ -144,3 +144,58 @@ class HuntPlanRow(Base):
         Index("idx_hunt_plans_proposal", "proposal_id", unique=True),
         Index("idx_hunt_plans_status", "org_id", "status"),
     )
+
+
+class PlanRunRow(Base):
+    """History of one HuntPlan execution (#120 follow-up, mirrors hunt_pack_runs).
+
+    One row per ``execute_plan_and_ingest`` invocation. The ``last_run`` blob
+    riding alongside the plan JSON in ``hunt_plans.plan`` remains the
+    quick-glance summary (backward compatible); this table is the full
+    per-run history — what ran, against which TTPs, how it landed, and how
+    many findings it created — so repeated executions stop overwriting each
+    other's record.
+    """
+
+    __tablename__ = "plan_runs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    plan_row_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("hunt_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Denormalised pivots: the proposal the plan compiled from and the
+    # compiled HuntPlan's own id (both already inside the plan JSON, kept as
+    # columns so history queries never parse JSONB).
+    proposal_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The engine runner's transient ``hrun_`` id (PlanRunResult.run_id) —
+    # findings created by this run carry it in ``evidence.plan_run_id``.
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Per-TTP rollup: ``{ttp_id: {"hits": n, "errors": [..]}}`` — same shape
+    # as the plan JSON's ``last_run.per_ttp``.
+    ttp_stats: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    findings_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # ``completed`` | ``completed_with_errors`` | ``failed`` — same derivation
+    # as hunt_pack_runs (every TTP×backend execution errored ⇒ failed).
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # History lists are org-scoped / per-plan and newest-first.
+        Index("idx_plan_runs_org_started", "org_id", "started_at"),
+        Index("idx_plan_runs_plan_row", "plan_row_id", "started_at"),
+        Index("idx_plan_runs_proposal", "org_id", "proposal_id"),
+    )

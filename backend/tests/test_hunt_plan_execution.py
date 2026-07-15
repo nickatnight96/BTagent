@@ -117,7 +117,9 @@ async def test_execute_ingests_findings_and_completes_plan(
         .scalars()
         .all()
     )
-    plan_rows = [r for r in rows if (r.evidence or {}).get("proposal_id")]
+    # Scope to this test's proposal — other suites land cross_investigation
+    # findings in the shared session DB too.
+    plan_rows = [r for r in rows if (r.evidence or {}).get("proposal_id") == accepted_proposal.id]
     assert len(plan_rows) >= body["findings_created"]
     if body["findings_created"]:
         sample = plan_rows[0]

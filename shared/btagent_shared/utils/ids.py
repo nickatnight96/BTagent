@@ -29,6 +29,8 @@ PREFIXES = {
     "hpkrun": "hpkrun",  # Persisted hunt pack-run history row (#112 integration)
     "ws": "ws",  # Weak signal (cross-investigation pattern hunter, #120)
     "phpr": "phpr",  # Pattern-hunt proposal (#120)
+    "hplan": "hplan",  # Compiled hunt plan for an accepted proposal (#120 Phase C)
+    "plrun": "plrun",  # Persisted hunt-plan run history row (#120 follow-up)
 }
 
 
