@@ -17,9 +17,11 @@ By construction this is **read-only and reversible**:
 * No write path; if the identity findings table is empty the response is
   empty too. The grants surface as soon as identity detectors emit findings.
 
-A first-class ``oauth_grants`` table + ingest-side write path is a deliberate
-follow-up. Keeping this slice read-derive lets the UI stop deriving the table
-client-side immediately, while leaving every future choice open.
+The promised first-class ``oauth_grants`` table now exists (#116 follow-up,
+migration 0030): grants are written at ingest time via
+``identity_grant_service.upsert_grant_from_finding`` and this endpoint serves
+the union — the derive pass keeps pre-writer findings visible, and table rows
+overlay it (winning per grant tuple) as the schema-enforced view.
 
 Reuses the Phase 6 hunt RBAC: ``hunt:view`` (analyst+) — same as
 ``list_findings`` it shadows.
@@ -161,21 +163,25 @@ def _naive(dt: datetime) -> datetime:
     return dt.replace(tzinfo=None) if dt.tzinfo is not None else dt
 
 
-def _merge_into(latest: dict[str, OAuthGrant], grant: OAuthGrant, row_created_at: datetime) -> None:
+def _merge_into(
+    latest: dict[str, tuple[OAuthGrant, datetime]],
+    grant: OAuthGrant,
+    row_created_at: datetime,
+) -> None:
     """Keep the freshest grant per dedup key.
 
-    Picks the one whose source finding has the newer ``created_at`` so a
+    Picks the one whose **source finding** has the newer ``created_at`` so a
     later detector run that observes refreshed scopes / a revocation wins
-    over an older snapshot.
+    over an older snapshot. The anchor is tracked alongside the grant —
+    comparing the new row's ``created_at`` against the stored grant's own
+    ``granted_at``/``last_used`` (as an earlier revision did) let an *older*
+    finding overwrite a newer revocation whenever grants were issued long
+    before either observation.
     """
     existing = latest.get(grant.id)
-    if existing is None:
-        latest[grant.id] = grant
-        return
-    existing_anchor = _naive(existing.last_used or existing.granted_at)
     new_anchor = _naive(row_created_at)
-    if new_anchor >= existing_anchor:
-        latest[grant.id] = grant
+    if existing is None or new_anchor >= _naive(existing[1]):
+        latest[grant.id] = (grant, row_created_at)
 
 
 # --------------------------------------------------------------------------- #
@@ -216,11 +222,6 @@ async def list_identity_grants(
 
     coerced_provider = _coerce_provider(provider) if provider else None
 
-    # Org + domain narrow at the SQL layer; principal/provider/active filter
-    # in Python alongside the dedup loop so the implementation stays portable
-    # across SQLite (tests) and Postgres (prod). Identity-domain finding
-    # volumes are small enough — bounded by detector outputs — that this is
-    # a non-issue at the expected order of magnitude.
     stmt = (
         select(HuntFindingRow)
         .where(HuntFindingRow.org_id == user.org_id)
@@ -232,7 +233,7 @@ async def list_identity_grants(
     rows = list(rows_result.scalars().all())
 
     default_provider = coerced_provider or IdentityProvider.OKTA
-    latest: dict[str, OAuthGrant] = {}
+    latest: dict[str, tuple[OAuthGrant, datetime]] = {}
     for row in rows:
         grant = _grant_from_evidence(row, default_provider=default_provider)
         if grant is None:
@@ -247,9 +248,45 @@ async def list_identity_grants(
             continue
         _merge_into(latest, grant, row.created_at)
 
+    # First-class store overlay (#116 follow-up): rows written at ingest time
+    # by ``identity_grant_service.upsert_grant_from_finding`` are the fresher,
+    # schema-enforced view of each grant — they win per dedup key over the
+    # derived snapshot. Pre-writer grants (findings that never passed through
+    # record_finding after the writer landed) survive via the derive pass
+    # above, so mixed states serve the union rather than dropping history.
+    from btagent_backend.services import identity_grant_service
+
+    table_rows, _ = await identity_grant_service.list_grants(
+        db,
+        org_id=user.org_id,
+        principal_id=principal_id,
+        provider=coerced_provider.value if coerced_provider else None,
+        active=active,
+        page=1,
+        page_size=200,
+    )
+    for r in table_rows:
+        table_grant = OAuthGrant(
+            id=f"oag_{r.provider}_{r.principal_id}_{r.app_id}"[:200],
+            org_id=r.org_id,
+            app_id=r.app_id,
+            app_display_name=r.app_display_name or "",
+            principal_id=r.principal_id,
+            provider=IdentityProvider(r.provider),
+            scopes=list(r.scopes or []),
+            consent_type=_coerce_consent(r.consent_type),
+            granted_at=r.granted_at,
+            last_used=r.last_used,
+            revoked_at=r.revoked_at,
+            raw={},
+        )
+        # Table rows are the schema-enforced, ingest-time view — they win
+        # over any derived snapshot of the same grant unconditionally.
+        latest[table_grant.id] = (table_grant, r.observed_at)
+
     # Stable sort: most-recently-granted first, then by id for tie-breaks.
     items = sorted(
-        latest.values(),
+        (g for g, _anchor in latest.values()),
         key=lambda g: (_naive(g.last_used or g.granted_at), g.id),
         reverse=True,
     )

@@ -165,13 +165,25 @@ async def seeded_identity_findings(db_session):
 async def test_grants_endpoint_returns_dedup_org_scoped_list(
     client, analyst_token, seeded_identity_findings
 ):
-    resp = await client.get("/api/v1/identity/grants", headers=auth_header(analyst_token))
+    resp = await client.get(
+        "/api/v1/identity/grants?page_size=200", headers=auth_header(analyst_token)
+    )
     assert resp.status_code == 200
     body = resp.json()
     # 5 seeded grants in DEFAULT_ORG_ID, but (alice, slack, okta) appears
-    # twice so dedup to 4. Cross-tenant row excluded, non-grant row skipped.
-    assert body["total"] == 4
-    assert len(body["items"]) == 4
+    # twice so this fixture contributes exactly 4 distinct grants. Assert by
+    # id containment rather than org-wide totals — other suites in the shared
+    # session DB legitimately add their own grants (first-class store, #116).
+    fixture_ids = {
+        "oag_okta_alice@example.com_app_slack",
+        "oag_entra_alice@example.com_app_slack",
+        "oag_okta_alice@example.com_app_zoom",
+        "oag_okta_bob@example.com_app_legacy",
+    }
+    listed_ids = {g["id"] for g in body["items"]}
+    assert fixture_ids <= listed_ids
+    # The duplicated (alice, slack, okta) rows collapsed to one item.
+    assert sum(1 for g in body["items"] if g["id"] == "oag_okta_alice@example.com_app_slack") == 1
 
     # The newer (alice, slack, okta) view wins — scopes from the fresher row.
     slack_okta = next(
@@ -233,7 +245,11 @@ async def test_active_filter_excludes_revoked(client, analyst_token, seeded_iden
     items = resp.json()["items"]
     assert items
     assert all(g["revoked_at"] is None for g in items)
-    assert not any(g["app_id"] == "app_legacy" for g in items)
+    # bob's app_legacy grant is revoked — it must not appear for bob. (Other
+    # suites may reuse the app id under different principals; scope the check.)
+    assert not any(
+        g["app_id"] == "app_legacy" and g["principal_id"] == "bob@example.com" for g in items
+    )
 
 
 async def test_active_false_returns_only_revoked(client, analyst_token, seeded_identity_findings):
@@ -268,22 +284,26 @@ async def test_unknown_provider_filter_yields_empty(
 
 
 async def test_pagination_is_over_distinct_grants(client, analyst_token, seeded_identity_findings):
+    # Scope to alice so the expected universe is exactly this fixture's three
+    # distinct grants (slack/okta collapsed from two findings, slack/entra,
+    # zoom/okta) regardless of what other suites wrote for the org.
+    params = {"principal_id": "alice@example.com"}
     resp = await client.get(
         "/api/v1/identity/grants",
-        params={"page": 1, "page_size": 2},
+        params={**params, "page": 1, "page_size": 2},
         headers=auth_header(analyst_token),
     )
     body = resp.json()
-    assert body["total"] == 4
+    assert body["total"] == 3
     assert len(body["items"]) == 2
 
     resp2 = await client.get(
         "/api/v1/identity/grants",
-        params={"page": 2, "page_size": 2},
+        params={**params, "page": 2, "page_size": 2},
         headers=auth_header(analyst_token),
     )
     body2 = resp2.json()
-    assert len(body2["items"]) == 2
+    assert len(body2["items"]) == 1
     # Distinct pages — no overlap.
     page1_ids = {g["id"] for g in body["items"]}
     page2_ids = {g["id"] for g in body2["items"]}
