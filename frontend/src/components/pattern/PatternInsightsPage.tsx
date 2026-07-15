@@ -23,7 +23,7 @@
  * Polling: 30-second interval (no WS for Phase B).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -43,6 +43,8 @@ import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Textarea } from "@/components/ds/textarea";
+import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
+import { HUNT_FINDING_EVENTS } from "@/components/hunt/HuntTriagePage";
 import type {
   PatternHuntProposal,
   ProposalFilter,
@@ -760,18 +762,17 @@ export function PatternInsightsPage() {
     void fetchProposals();
   }, [fetchProposals]);
 
-  // 30-second polling fallback.
-  const scheduleRefetch = useCallback(() => {
-    void fetchProposals();
-  }, [fetchProposals]);
-
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    pollTimerRef.current = setInterval(scheduleRefetch, POLL_INTERVAL_MS);
-    return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-  }, [scheduleRefetch]);
+  // Live refresh (#120 Phase C WS upgrade): plan executions land
+  // HUNT_FINDING_* events (there is no dedicated proposal-surfaced event
+  // yet), and the hook keeps the 30 s polling safety net for the weekly
+  // scan's new proposals.
+  useLiveEventRefresh(
+    useCallback(() => {
+      void fetchProposals();
+    }, [fetchProposals]),
+    HUNT_FINDING_EVENTS,
+    { pollIntervalMs: POLL_INTERVAL_MS },
+  );
 
   // Re-fetch when filter tab changes.
   useEffect(() => {
