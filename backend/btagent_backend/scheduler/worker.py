@@ -24,6 +24,7 @@ from btagent_backend.scheduler.jobs import (
     run_hunt_pack,
     scheduled_hunt_pack_run,
     stale_suppression_sweep,
+    validate_detection_proposal,
     weekly_pattern_scan,
 )
 
@@ -103,6 +104,8 @@ class WorkerSettings:
         # routes (live paths; mock mode runs inline in the route).
         compile_proposal_plan,
         execute_hunt_plan,
+        # #113 slice 2: enqueue-on-demand from the CTI validate route.
+        validate_detection_proposal,
     ]
     cron_jobs = [
         cron(

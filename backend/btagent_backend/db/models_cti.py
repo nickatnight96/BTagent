@@ -46,6 +46,11 @@ class DetectionProposalRow(Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
     # ``ProposalState`` value (proposed / accepted / rejected / modified).
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    # Historical-telemetry validation outcome (#113 slice 2): serialised
+    # RuleValidationResult (per-backend hit counts / errors + verdict).
+    # None until POST /cti/proposals/{id}/validate runs.
+    validation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Review provenance — set when an analyst decides.
     review_rationale: Mapped[str] = mapped_column(Text, default="")
     reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -146,6 +146,8 @@ class DetectionProposalRecord(BaseModel):
     confidence: float
     rationale: str
     state: str
+    validation: dict | None
+    validated_at: datetime | None
     review_rationale: str
     reviewed_by: str | None
     reviewed_at: datetime | None
@@ -252,3 +254,82 @@ async def reject_detection_proposal(
     return await _review(
         db, user=user, row_id=row_id, state=ProposalState.REJECTED, rationale=body.rationale
     )
+
+
+class ProposalValidateRequest(BaseModel):
+    """Optional overrides for the historical-telemetry validation run."""
+
+    backends: list[str] | None = Field(
+        default=None,
+        description="Backend names to validate against; omit for all supported.",
+    )
+    lookback_hours: int = Field(default=24 * 30, ge=1, le=24 * 365)
+
+
+def _mock_connectors_mode() -> bool:
+    """Same flag the engine integration nodes read (default: mock on)."""
+    import os
+
+    return os.getenv("BTAGENT_MOCK_CONNECTORS", "true").strip().lower() == "true"
+
+
+@router.post("/proposals/{row_id}/validate", response_model=DetectionProposalRecord)
+async def validate_detection_proposal(
+    row_id: str,
+    body: ProposalValidateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> DetectionProposalRecord:
+    """Validate the proposal's Sigma rule against historical telemetry.
+
+    Transpiles per backend and executes over the lookback window through the
+    engine integration nodes; the per-backend hit counts + verdict
+    (``matched`` / ``clean`` / ``error``) land on the row's ``validation``
+    field. Inline under mock connectors; enqueued to the arq worker on the
+    live path (503 when the queue is unreachable — validation state is then
+    unchanged). Does not alter the review state.
+    """
+    user.require_permission("hunt:run")
+
+    if _mock_connectors_mode():
+        try:
+            row = await svc.validate_proposal(
+                db,
+                org_id=user.org_id,
+                row_id=row_id,
+                backends=body.backends,
+                lookback_hours=body.lookback_hours,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return DetectionProposalRecord.model_validate(row)
+
+    # Live path: confirm the row exists (404 masking), then queue the run.
+    row = await svc.get_proposal(db, org_id=user.org_id, row_id=row_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Detection proposal not found: {row_id}")
+    try:
+        from arq import create_pool
+
+        from btagent_backend.scheduler.worker import redis_settings
+
+        pool = await create_pool(redis_settings())
+        try:
+            await pool.enqueue_job(
+                "validate_detection_proposal",
+                row_id,
+                user.org_id,
+                body.backends,
+                body.lookback_hours,
+            )
+        finally:
+            await pool.aclose()
+    except Exception as exc:  # noqa: BLE001 — infra failure surfaces as 503
+        logger.exception("Failed to enqueue proposal validation for %s", row_id)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not queue proposal validation: {type(exc).__name__}",
+        ) from exc
+    # The queued run updates ``validation`` asynchronously; return the row
+    # as-is so the caller can poll GET /cti/proposals for the outcome.
+    return DetectionProposalRecord.model_validate(row)

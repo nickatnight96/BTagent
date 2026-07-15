@@ -264,3 +264,70 @@ async def test_cross_org_proposal_masked_404(client, analyst_token, db_session: 
     assert resp.status_code == 404
     listing = await client.get("/api/v1/cti/proposals", headers=auth_header(analyst_token))
     assert all(i["id"] != row.id for i in listing.json()["items"])
+
+
+# --------------------------------------------------------------------------- #
+# Historical telemetry validation (#113 slice 2)
+# --------------------------------------------------------------------------- #
+
+
+async def test_validate_stores_verdict_on_row(
+    client, analyst_token, db_session: AsyncSession, monkeypatch
+):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    bundle = _bundle("00b1")
+    await _propose(client, analyst_token, bundle)
+    row_id = (await _rows_for(db_session, bundle))[0].id
+
+    resp = await client.post(
+        f"/api/v1/cti/proposals/{row_id}/validate",
+        json={"backends": ["splunk", "crowdstrike"], "lookback_hours": 720},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    validation = body["validation"]
+    assert validation is not None
+    assert validation["verdict"] in {"matched", "clean", "error"}
+    assert {b["backend"] for b in validation["backends"]} == {"splunk", "crowdstrike"}
+    assert body["validated_at"] is not None
+    # Review lifecycle untouched.
+    assert body["state"] == "proposed"
+
+    # Surfaces in the listing too.
+    listing = await client.get(
+        "/api/v1/cti/proposals?page_size=200", headers=auth_header(analyst_token)
+    )
+    row = next(i for i in listing.json()["items"] if i["id"] == row_id)
+    assert row["validation"]["verdict"] == validation["verdict"]
+
+
+async def test_validate_unknown_row_is_404(client, analyst_token, monkeypatch):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    resp = await client.post(
+        "/api/v1/cti/proposals/dprop_missing/validate",
+        json={},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 404
+
+
+async def test_validate_untranspilable_rule_reads_error(
+    client, analyst_token, db_session: AsyncSession, monkeypatch
+):
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    bundle = _bundle("00b2")
+    await _propose(client, analyst_token, bundle)
+    row = (await _rows_for(db_session, bundle))[0]
+    row.sigma_yaml = "just: a\nplain: mapping\n"
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/v1/cti/proposals/{row.id}/validate",
+        json={"backends": ["splunk"]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    validation = resp.json()["validation"]
+    assert validation["verdict"] == "error"
+    assert "transpile failed" in validation["backends"][0]["error"]
