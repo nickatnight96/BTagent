@@ -14,6 +14,7 @@ Available servers:
     ZeekMCPServer        -- Zeek / Corelight (log-stream search + notices + behavioral summary)
     CloudTrailMCPServer  -- AWS CloudTrail + GuardDuty (events + findings + principal summary)
     JiraMCPServer        -- Jira Service Management (IR ticket sink: create/comment/transition)
+    SlackMCPServer       -- Slack (IC comms bridge: incident channels + messages + pins)
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -29,6 +30,7 @@ from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
 from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
 from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
+from btagent_agents.mcp.servers.slack_mcp import SlackMCPServer
 from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
 from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
 
@@ -46,5 +48,6 @@ __all__ = [
     "ZeekMCPServer",
     "CloudTrailMCPServer",
     "JiraMCPServer",
+    "SlackMCPServer",
     "GitMCPServer",
 ]
