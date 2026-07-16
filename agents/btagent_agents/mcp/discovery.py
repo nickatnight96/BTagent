@@ -46,6 +46,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
     from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
     from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
+    from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
 
     _SERVER_CLASSES["splunk"] = SplunkMCPServer
     _SERVER_CLASSES["crowdstrike"] = CrowdStrikeMCPServer
@@ -57,6 +58,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["defender_o365"] = DefenderO365MCPServer
     _SERVER_CLASSES["defender_endpoint"] = DefenderEndpointMCPServer
     _SERVER_CLASSES["sentinelone"] = SentinelOneMCPServer
+    _SERVER_CLASSES["zeek"] = ZeekMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 

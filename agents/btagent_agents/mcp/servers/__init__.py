@@ -11,6 +11,7 @@ Available servers:
     DefenderO365MCPServer -- Microsoft Defender for O365 (email events + quarantine + submissions)
     DefenderEndpointMCPServer -- Microsoft Defender for Endpoint (KQL hunting + alerts + isolation)
     SentinelOneMCPServer -- SentinelOne (Deep Visibility + threats + agents + mitigation)
+    ZeekMCPServer        -- Zeek / Corelight (log-stream search + notices + behavioral summary)
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -25,6 +26,7 @@ from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
 from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
 from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
+from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
 
 __all__ = [
     "SplunkMCPServer",
@@ -37,5 +39,6 @@ __all__ = [
     "DefenderO365MCPServer",
     "DefenderEndpointMCPServer",
     "SentinelOneMCPServer",
+    "ZeekMCPServer",
     "GitMCPServer",
 ]
