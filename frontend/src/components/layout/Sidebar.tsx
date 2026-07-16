@@ -24,6 +24,7 @@ import {
   Cloud,
   ScanSearch,
   UserSearch,
+  Plug,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -153,6 +154,12 @@ const navItems: NavItem[] = [
     path: "/policies",
     icon: <Lock className="w-5 h-5" />,
     testId: "nav-policies-link",
+  },
+  {
+    label: "Integrations",
+    path: "/integrations",
+    icon: <Plug className="w-5 h-5" />,
+    testId: "nav-integrations-link",
   },
   {
     label: "SSO Linking",
