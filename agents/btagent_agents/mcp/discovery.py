@@ -47,6 +47,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
     from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
     from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
+    from btagent_agents.mcp.servers.slack_mcp import SlackMCPServer
     from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
     from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
 
@@ -63,6 +64,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["zeek"] = ZeekMCPServer
     _SERVER_CLASSES["cloudtrail"] = CloudTrailMCPServer
     _SERVER_CLASSES["jira"] = JiraMCPServer
+    _SERVER_CLASSES["slack"] = SlackMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 
