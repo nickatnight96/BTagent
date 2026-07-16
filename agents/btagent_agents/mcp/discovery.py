@@ -199,12 +199,20 @@ def get_tool_descriptions_text() -> str:
 async def mcp_router_tool(
     tool_name: str,
     arguments: str = "{}",
+    hitl_approved: bool = False,
 ) -> dict[str, Any]:
     """Route a tool call to the appropriate MCP server.
 
     Instead of injecting every MCP tool into the agent context (which wastes
     tokens), the agent calls this single router tool specifying which MCP tool
     to invoke and what arguments to pass.
+
+    Every dispatch is policy-checked against the connector manifests
+    (:mod:`btagent_agents.mcp.policy`, #100 Layer 3): HITL-gated actions are
+    refused with a ``hitl_required`` envelope until the HITL resume path
+    re-invokes with ``hitl_approved=True``, capabilities whose declared
+    TLP egress ranks below the active context classification are refused
+    with ``tlp_blocked``, and undeclared tools are refused outright.
 
     Use ``get_tool_descriptions_text()`` to see which tools are available.
 
@@ -213,9 +221,11 @@ async def mcp_router_tool(
             "cs_get_detections").
         arguments: JSON-encoded arguments for the tool.  Each tool has
             its own schema -- see the tool catalog for details.
+        hitl_approved: Set ONLY by the HITL resume path after an analyst
+            approves a gated action; never set speculatively.
 
     Returns:
-        The result from the invoked MCP tool, or an error dict.
+        The result from the invoked MCP tool, or an error / policy dict.
     """
     # Parse arguments
     try:
@@ -226,6 +236,14 @@ async def mcp_router_tool(
             "message": f"Invalid JSON arguments: {exc}",
             "tool_name": tool_name,
         }
+
+    # Manifest policy gate (#100 Layer 3) — HITL / TLP / undeclared.
+    from btagent_agents.mcp.policy import evaluate_tool_call
+
+    verdict = evaluate_tool_call(tool_name, hitl_approved=hitl_approved)
+    if not verdict.allowed:
+        logger.warning("mcp policy refused %s: %s (%s)", tool_name, verdict.status, verdict.reason)
+        return verdict.to_envelope()
 
     # Look up dispatch target
     if not _TOOL_DISPATCH:
