@@ -264,6 +264,14 @@ async def mcp_router_tool(
     # Invoke
     try:
         result = await method(**args)
+        # OCSF contract check (#100 Layer 2) — refuse results that claim
+        # event classes their manifest doesn't declare (connector bug).
+        from btagent_agents.mcp.ocsf import validate_ocsf_claims
+
+        violation = validate_ocsf_claims(tool_name, result)
+        if violation is not None:
+            logger.error("mcp ocsf violation for %s: %s", tool_name, violation["message"])
+            return violation
         return result
     except TypeError as exc:
         return {
