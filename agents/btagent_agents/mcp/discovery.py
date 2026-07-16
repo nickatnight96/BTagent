@@ -36,6 +36,7 @@ def _ensure_servers_loaded() -> None:
         return
 
     from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
+    from btagent_agents.mcp.servers.defender_endpoint_mcp import DefenderEndpointMCPServer
     from btagent_agents.mcp.servers.defender_o365_mcp import DefenderO365MCPServer
     from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
     from btagent_agents.mcp.servers.entra_mcp import EntraMCPServer
@@ -53,6 +54,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["entra"] = EntraMCPServer
     _SERVER_CLASSES["gws"] = GoogleWorkspaceMCPServer
     _SERVER_CLASSES["defender_o365"] = DefenderO365MCPServer
+    _SERVER_CLASSES["defender_endpoint"] = DefenderEndpointMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 
