@@ -44,6 +44,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
     from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
     from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
+    from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
     from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
 
     _SERVER_CLASSES["splunk"] = SplunkMCPServer
@@ -55,6 +56,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["gws"] = GoogleWorkspaceMCPServer
     _SERVER_CLASSES["defender_o365"] = DefenderO365MCPServer
     _SERVER_CLASSES["defender_endpoint"] = DefenderEndpointMCPServer
+    _SERVER_CLASSES["sentinelone"] = SentinelOneMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 

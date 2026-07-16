@@ -10,6 +10,7 @@ Available servers:
     GoogleWorkspaceMCPServer -- Google Workspace (login + admin/token activity + tokens)
     DefenderO365MCPServer -- Microsoft Defender for O365 (email events + quarantine + submissions)
     DefenderEndpointMCPServer -- Microsoft Defender for Endpoint (KQL hunting + alerts + isolation)
+    SentinelOneMCPServer -- SentinelOne (Deep Visibility + threats + agents + mitigation)
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -22,6 +23,7 @@ from btagent_agents.mcp.servers.git_mcp import GitMCPServer
 from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
 from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
+from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
 from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
 
 __all__ = [
@@ -34,5 +36,6 @@ __all__ = [
     "GoogleWorkspaceMCPServer",
     "DefenderO365MCPServer",
     "DefenderEndpointMCPServer",
+    "SentinelOneMCPServer",
     "GitMCPServer",
 ]
