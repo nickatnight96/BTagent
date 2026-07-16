@@ -52,8 +52,11 @@ def admin_refresh_token(client: httpx.Client) -> str:
 @pytest.fixture(scope="module")
 def analyst_token(client: httpx.Client, admin_token: str) -> str:
     """Create analyst user if needed, then authenticate and return token."""
-    # Try to register analyst (may already exist)
-    client.post(
+    # Register the analyst (201) or find it already present (409). Anything
+    # else means the user doesn't exist and every downstream login in this
+    # module will fail with "Invalid username or password" — assert here so
+    # the root cause is visible at the fixture, not nine tests later.
+    resp = client.post(
         "/api/v1/auth/register",
         headers={"Authorization": f"Bearer {admin_token}"},
         json={
@@ -62,6 +65,9 @@ def analyst_token(client: httpx.Client, admin_token: str) -> str:
             "password": "AnalystPass123",
             "role": "analyst",
         },
+    )
+    assert resp.status_code in (201, 409), (
+        f"Analyst register failed: {resp.status_code} {resp.text}"
     )
     # Login as analyst
     resp = client.post(
@@ -153,7 +159,9 @@ class TestA01BrokenAccessControl:
             )
             assert resp2.status_code == 403
 
-    def test_jwt_tampered_payload_rejected(self, client: httpx.Client, analyst_token: str):
+    def test_jwt_tampered_payload_rejected(
+        self, client: httpx.Client, analyst_token: str
+    ):
         """A01-07: JWT with tampered payload (role escalation) is rejected."""
         parts = analyst_token.split(".")
         # Decode payload
@@ -162,9 +170,7 @@ class TestA01BrokenAccessControl:
         # Tamper: change role to admin
         payload["role"] = "admin"
         tampered_payload = (
-            base64.urlsafe_b64encode(json.dumps(payload).encode())
-            .decode()
-            .rstrip("=")
+            base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
         )
         tampered_token = f"{parts[0]}.{tampered_payload}.{parts[2]}"
 
@@ -213,9 +219,7 @@ class TestA02CryptographicFailures:
         """A02-02: JWT with alg=none must be rejected."""
         # Craft token with alg=none
         none_header = (
-            base64.urlsafe_b64encode(
-                json.dumps({"alg": "none", "typ": "JWT"}).encode()
-            )
+            base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode())
             .decode()
             .rstrip("=")
         )
@@ -263,9 +267,7 @@ class TestA02CryptographicFailures:
 class TestA03Injection:
     """A03:2021 -- Injection tests."""
 
-    def test_sqli_in_investigation_title(
-        self, client: httpx.Client, admin_token: str
-    ):
+    def test_sqli_in_investigation_title(self, client: httpx.Client, admin_token: str):
         """A03-01: SQL injection in investigation title is safely stored."""
         resp = client.post(
             "/api/v1/investigations",

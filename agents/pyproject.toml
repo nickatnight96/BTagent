@@ -14,6 +14,7 @@ dependencies = [
     # cp314 wheels; on CI's Python 3.14 uv falls back to the sdist and
     # pyo3 0.23.x refuses to build against 3.14. Lift the cap once
     # litellm publishes 3.14 wheels (or a pyo3>=0.24 sdist).
+    # Last checked 2026-07-16: latest is still 1.92.0, wheels cp310-cp313.
     "litellm>=1.80.0,<1.92.0",
     "pydantic>=2.12.0",
     "pyyaml>=6.0.0",
