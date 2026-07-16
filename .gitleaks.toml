@@ -45,4 +45,8 @@ regexes = [
     '''Admin-P@ss-123!''',
     '''Analyst-P@ss-456!''',
     '''AnalystPass123''',
+    # Fake AWS access-key ids from a superseded CloudTrail-fixture commit
+    # (branch history only; current fixtures use a FAKEKEY prefix instead).
+    '''AKIAEXAMPLE00STOLEN0''',
+    '''ASIAEXAMPLE00OPSADM0''',
 ]
