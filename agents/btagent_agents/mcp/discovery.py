@@ -35,6 +35,7 @@ def _ensure_servers_loaded() -> None:
     if _SERVER_CLASSES:
         return
 
+    from btagent_agents.mcp.servers.cloudtrail_mcp import CloudTrailMCPServer
     from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
     from btagent_agents.mcp.servers.defender_endpoint_mcp import DefenderEndpointMCPServer
     from btagent_agents.mcp.servers.defender_o365_mcp import DefenderO365MCPServer
@@ -59,6 +60,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["defender_endpoint"] = DefenderEndpointMCPServer
     _SERVER_CLASSES["sentinelone"] = SentinelOneMCPServer
     _SERVER_CLASSES["zeek"] = ZeekMCPServer
+    _SERVER_CLASSES["cloudtrail"] = CloudTrailMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 
