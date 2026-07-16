@@ -13,6 +13,7 @@ Available servers:
     SentinelOneMCPServer -- SentinelOne (Deep Visibility + threats + agents + mitigation)
     ZeekMCPServer        -- Zeek / Corelight (log-stream search + notices + behavioral summary)
     CloudTrailMCPServer  -- AWS CloudTrail + GuardDuty (events + findings + principal summary)
+    JiraMCPServer        -- Jira Service Management (IR ticket sink: create/comment/transition)
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -24,6 +25,7 @@ from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
 from btagent_agents.mcp.servers.entra_mcp import EntraMCPServer
 from btagent_agents.mcp.servers.git_mcp import GitMCPServer
 from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
+from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
 from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
 from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
@@ -43,5 +45,6 @@ __all__ = [
     "SentinelOneMCPServer",
     "ZeekMCPServer",
     "CloudTrailMCPServer",
+    "JiraMCPServer",
     "GitMCPServer",
 ]
