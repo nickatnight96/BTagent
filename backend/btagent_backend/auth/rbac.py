@@ -131,6 +131,11 @@ PERMISSIONS: dict[str, UserRole] = {
     # requires CISO sign-off (admin).
     "policy:view": UserRole.SENIOR_ANALYST,
     "policy:manage": UserRole.ADMIN,
+    # Connector catalog (#100 Layer 3 — read-only capability introspection).
+    # Analysts browse installed connectors + their declared capabilities to
+    # understand what data/actions are available; the manifests carry no
+    # secrets so ANALYST view is safe.
+    "connector:view": UserRole.ANALYST,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,
