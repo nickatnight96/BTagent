@@ -12,9 +12,11 @@ Available servers:
     DefenderEndpointMCPServer -- Microsoft Defender for Endpoint (KQL hunting + alerts + isolation)
     SentinelOneMCPServer -- SentinelOne (Deep Visibility + threats + agents + mitigation)
     ZeekMCPServer        -- Zeek / Corelight (log-stream search + notices + behavioral summary)
+    CloudTrailMCPServer  -- AWS CloudTrail + GuardDuty (events + findings + principal summary)
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
+from btagent_agents.mcp.servers.cloudtrail_mcp import CloudTrailMCPServer
 from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
 from btagent_agents.mcp.servers.defender_endpoint_mcp import DefenderEndpointMCPServer
 from btagent_agents.mcp.servers.defender_o365_mcp import DefenderO365MCPServer
@@ -40,5 +42,6 @@ __all__ = [
     "DefenderEndpointMCPServer",
     "SentinelOneMCPServer",
     "ZeekMCPServer",
+    "CloudTrailMCPServer",
     "GitMCPServer",
 ]
