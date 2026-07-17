@@ -521,6 +521,47 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "servicenow": ConnectorManifest(
+        name="servicenow",
+        version="0.1.0",
+        description="ServiceNow SecOps — security-incident (SIR) sink.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.BASIC,
+        queries=[
+            _query(
+                "snow_get_security_incident",
+                "SIR record read-back (fields, work notes, history).",
+                [],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+        actions=[
+            ActionCapability(
+                id="snow_create_security_incident",
+                description="Open a security-incident (SIR) record.",
+                tlp_egress=TLP.AMBER_STRICT,
+                hitl_required=False,
+                reversible=True,
+                blast_radius=BlastRadius.NONE,
+            ),
+            ActionCapability(
+                id="snow_add_work_note",
+                description="Append a SIR work note.",
+                tlp_egress=TLP.AMBER_STRICT,
+                hitl_required=False,
+                reversible=True,
+                blast_radius=BlastRadius.NONE,
+            ),
+            ActionCapability(
+                id="snow_update_state",
+                description="Drive the SIR lifecycle state machine.",
+                tlp_egress=TLP.AMBER_STRICT,
+                hitl_required=False,
+                reversible=True,
+                blast_radius=BlastRadius.NONE,
+            ),
+        ],
+    ),
     "slack": ConnectorManifest(
         name="slack",
         version="0.1.0",
