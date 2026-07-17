@@ -277,6 +277,45 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "cortex": ConnectorManifest(
+        name="cortex",
+        version="0.1.0",
+        description="Palo Alto Cortex XDR — XQL, incidents, endpoints, isolation.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.API_KEY,
+        queries=[
+            _query(
+                "cortex_xql_query",
+                "XQL event search over endpoint telemetry.",
+                [_O.PROCESS_ACTIVITY, _O.NETWORK_ACTIVITY, _O.DNS_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+                cost=CostClass.MODERATE,
+            ),
+            _query(
+                "cortex_list_incidents",
+                "Incidents with severity + status lifecycle.",
+                [_O.DETECTION_FINDING],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "cortex_get_endpoint",
+                "Endpoint record (connection + isolation state).",
+                [_O.DEVICE_INVENTORY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+        actions=[
+            ActionCapability(
+                id="cortex_isolate_endpoint",
+                description="Network-isolate / unisolate an endpoint.",
+                tlp_egress=TLP.AMBER_STRICT,
+                cost_class=CostClass.EXPENSIVE,
+                hitl_required=True,
+                reversible=True,
+                blast_radius=BlastRadius.SINGLE_HOST,
+            ),
+        ],
+    ),
     # ------------------------------------------------------------------ #
     # Tier-1 email / EDR / network / cloud
     # ------------------------------------------------------------------ #

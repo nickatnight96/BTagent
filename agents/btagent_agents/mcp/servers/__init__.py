@@ -16,10 +16,12 @@ Available servers:
     JiraMCPServer        -- Jira Service Management (IR ticket sink: create/comment/transition)
     SlackMCPServer       -- Slack (IC comms bridge: incident channels + messages + pins)
     DuoMCPServer         -- Cisco Duo MFA (auth logs + users + admin activity) [Tier-2]
+    CortexXDRMCPServer   -- Palo Alto Cortex XDR (XQL + incidents + endpoints + isolation) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
 from btagent_agents.mcp.servers.cloudtrail_mcp import CloudTrailMCPServer
+from btagent_agents.mcp.servers.cortex_mcp import CortexXDRMCPServer
 from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
 from btagent_agents.mcp.servers.defender_endpoint_mcp import DefenderEndpointMCPServer
 from btagent_agents.mcp.servers.defender_o365_mcp import DefenderO365MCPServer
@@ -52,5 +54,6 @@ __all__ = [
     "JiraMCPServer",
     "SlackMCPServer",
     "DuoMCPServer",
+    "CortexXDRMCPServer",
     "GitMCPServer",
 ]
