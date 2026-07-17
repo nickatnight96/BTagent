@@ -103,3 +103,20 @@ def resolve_secret(value: str) -> str:
 def resolve_secret_cached(value: str) -> str:
     """Cached version of resolve_secret. 5-min TTL managed externally."""
     return resolve_secret(value)
+
+
+def is_secret_reference(value: str) -> bool:
+    """True when ``value`` is exactly one secret/env reference token.
+
+    Used by the credential-reference store (#100) to refuse raw secret
+    material: only a single complete ``${secret:...}`` / ``${env:VAR}`` /
+    ``${VAR}`` reference is a valid credential *reference*. A string that
+    merely contains a reference amid other text, or is raw material, returns
+    ``False`` — the actual secret must live in the resolver's backend
+    (Vault / AWS SM / env), never in the reference store.
+    """
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    match = SECRET_PATTERN.fullmatch(stripped)
+    return match is not None

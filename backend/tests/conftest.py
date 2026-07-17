@@ -79,6 +79,7 @@ get_settings.cache_clear()
 # imports, their JSONB columns survive untouched and SQLite chokes on them
 # at table-creation time (``JSONB cannot render in SQLite``).
 import btagent_backend.db.models_behavioral  # noqa: E402, F401
+import btagent_backend.db.models_connector  # noqa: E402, F401
 import btagent_backend.db.models_cti  # noqa: E402, F401
 import btagent_backend.db.models_hunt  # noqa: E402, F401
 import btagent_backend.db.models_identity  # noqa: E402, F401
