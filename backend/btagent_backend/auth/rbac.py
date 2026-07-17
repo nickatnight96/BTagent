@@ -136,6 +136,12 @@ PERMISSIONS: dict[str, UserRole] = {
     # understand what data/actions are available; the manifests carry no
     # secrets so ANALYST view is safe.
     "connector:view": UserRole.ANALYST,
+    # Connector credential references (#100). Viewing a binding reveals only
+    # the ${secret:...} reference string (never material), so senior_analyst
+    # may audit which connectors are wired; writing/removing a binding changes
+    # what credentials a connector resolves and so is admin-only.
+    "credential:view": UserRole.SENIOR_ANALYST,
+    "credential:manage": UserRole.ADMIN,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,

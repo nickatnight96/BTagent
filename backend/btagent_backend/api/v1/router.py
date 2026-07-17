@@ -7,6 +7,7 @@ from btagent_backend.api.v1.auth import router as auth_router
 from btagent_backend.api.v1.behavioral import router as behavioral_router
 from btagent_backend.api.v1.config import router as config_router
 from btagent_backend.api.v1.connectors import router as connectors_router
+from btagent_backend.api.v1.credentials import router as credentials_router
 from btagent_backend.api.v1.cti_detection import router as cti_detection_router
 from btagent_backend.api.v1.health import router as health_router
 from btagent_backend.api.v1.hunt_findings import router as hunt_router
@@ -52,6 +53,7 @@ api_v1_router.include_router(webhooks_router)
 api_v1_router.include_router(workflows_router)
 api_v1_router.include_router(behavioral_router)
 api_v1_router.include_router(connectors_router)
+api_v1_router.include_router(credentials_router)
 api_v1_router.include_router(cti_detection_router)
 api_v1_router.include_router(identity_router)
 api_v1_router.include_router(pattern_hunt_router)
