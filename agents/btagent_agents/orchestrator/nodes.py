@@ -895,6 +895,113 @@ def _parse_hitl_response(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Node: enrich_node (delegates to the Enrichment plugin)
+# ---------------------------------------------------------------------------
+
+
+def enrich_node(state: InvestigationState) -> dict[str, Any]:
+    """Enrich the investigation's IOCs using the Enrichment plugin.
+
+    Delegates to the enrichment plugin's ``bulk_enrich`` tool, which fans each
+    recorded IOC out to the relevant CTI sources (VirusTotal / Shodan /
+    GreyNoise / AbuseIPDB / MISP, mock-first) and returns per-IOC verdicts and
+    a confidence score. Each result is merged back onto its IOC under an
+    ``enrichment`` key, the CTI confidence replaces the auto-extraction
+    placeholder, and the malicious verdicts drive a short summary message.
+
+    ``iocs`` has no state reducer (last-value-wins), so the full updated list
+    is returned; the merge is keyed on ``(type, value)`` and preserves IOCs
+    the enricher didn't return.
+    """
+    investigation_id = state.get("investigation_id", "")
+    iocs: list[dict] = list(state.get("iocs", []))
+    existing_timeline: list[dict] = list(state.get("timeline", []))
+
+    if not iocs:
+        return {
+            "messages": [
+                AIMessage(content=("**Enrich Agent**\nNo IOCs recorded yet — nothing to enrich."))
+            ],
+            "current_agent": "enrich",
+            "status": InvestigationStatus.INVESTIGATING,
+        }
+
+    updated_iocs = iocs
+    malicious_count = 0
+    try:
+        from btagent_agents.plugins.enrichment.tools.enrichment_executor import (
+            bulk_enrich,
+        )
+
+        payload = json.dumps(
+            [{"type": i.get("type", ""), "value": i.get("value", "")} for i in iocs]
+        )
+        result = bulk_enrich.invoke({"iocs_json": payload})
+
+        # Index enrichment results by (type, value) — enrich_ioc lowercases the
+        # type and strips the value, so match on the same normalisation.
+        by_key: dict[tuple[str, str], dict] = {}
+        for res in result.get("results", []):
+            key = (str(res.get("ioc_type", "")), str(res.get("ioc_value", "")))
+            by_key[key] = res
+
+        merged: list[dict] = []
+        for ioc in iocs:
+            new_ioc = dict(ioc)
+            enr = by_key.get((str(ioc.get("type", "")).lower(), str(ioc.get("value", "")).strip()))
+            if enr is not None:
+                is_malicious = any(
+                    src.get("verdict") == "malicious" for src in enr.get("source_results", [])
+                )
+                if is_malicious:
+                    malicious_count += 1
+                new_ioc["confidence"] = enr.get("confidence", ioc.get("confidence", 0.5))
+                new_ioc["enrichment"] = {
+                    "confidence": enr.get("confidence"),
+                    "malicious": is_malicious,
+                    "sources_queried": enr.get("sources_queried", []),
+                    "mitre_techniques": enr.get("mitre_techniques", []),
+                    "summary": enr.get("summary", ""),
+                    "enriched_at": enr.get("enriched_at", ""),
+                }
+            merged.append(new_ioc)
+        updated_iocs = merged
+
+        content = (
+            "**Enrich Agent**\n"
+            f"Enriched {result.get('enriched', 0)} of "
+            f"{result.get('total', len(iocs))} IOCs against CTI sources; "
+            f"{malicious_count} flagged malicious."
+        )
+    except Exception as exc:
+        content = f"**Enrich Agent** — enrichment error: {exc}"
+
+    now_iso = datetime.now(UTC).isoformat()
+    timeline_entry = {
+        "id": generate_id("tl"),
+        "investigation_id": investigation_id,
+        "timestamp": now_iso,
+        "description": f"Enriched {len(iocs)} IOC(s); {malicious_count} malicious.",
+        "actor": "enrich_agent",
+        "event_type": "iocs_enriched",
+    }
+
+    _emit_event(
+        "agent_status",
+        investigation_id,
+        {"agent": "enrich", "action": "iocs_enriched", "malicious_count": malicious_count},
+    )
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "iocs": updated_iocs,
+        "timeline": existing_timeline + [timeline_entry],
+        "current_agent": "enrich",
+        "status": InvestigationStatus.INVESTIGATING,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Node: report_node (delegates to ReportAgent subgraph)
 # ---------------------------------------------------------------------------
 

@@ -13,6 +13,7 @@ from langgraph.graph.state import CompiledStateGraph as CompiledGraph
 from btagent_agents.orchestrator.edges import after_hitl, route_to_agent, should_continue
 from btagent_agents.orchestrator.nodes import (
     coordination_node,
+    enrich_node,
     hitl_checkpoint_node,
     mitigation_node,
     query_node,
@@ -24,28 +25,19 @@ from btagent_agents.orchestrator.nodes import (
 from btagent_agents.orchestrator.state import InvestigationState
 
 # ---------------------------------------------------------------------------
-# Placeholder nodes for phase-2 agents (enrich, contain, report)
+# Agent nodes: enrich + report delegate to their plugins; contain is the
+# remaining phase-2 placeholder (automated containment execution).
 # ---------------------------------------------------------------------------
 
 
 def _enrich_node(state: InvestigationState) -> dict[str, Any]:
-    """Placeholder: IOC enrichment agent (phase 2).
+    """Delegate to the Enrichment plugin via nodes.enrich_node.
 
-    Will call CTI tools (VirusTotal, OTX, MISP, Shodan) via MCP.
+    Fans the investigation's IOCs out to the CTI sources (VirusTotal, Shodan,
+    GreyNoise, AbuseIPDB, MISP) through the enrichment plugin's ``bulk_enrich``
+    tool and merges the verdicts + confidence back onto each IOC.
     """
-    return {
-        "messages": [
-            AIMessage(
-                content=(
-                    "**Enrich Agent** (placeholder)\n"
-                    "IOC enrichment is not yet implemented. "
-                    "IOCs have been recorded and are available for manual lookup."
-                )
-            )
-        ],
-        "current_agent": "enrich",
-        "status": InvestigationStatus.INVESTIGATING,
-    }
+    return enrich_node(state)
 
 
 def _contain_node(state: InvestigationState) -> dict[str, Any]:
