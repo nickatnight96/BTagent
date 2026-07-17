@@ -1,9 +1,9 @@
 """Tests for the connector catalog API (#100 Layer 3, read-only introspection).
 
-Covers the catalog service (memoised enumeration of engine INTEGRATION-node
-manifests) and the GET /connectors + GET /connectors/{name} endpoints:
-list shape + summary fields, OCSF-emit and has_actions filters, detail
-manifest round-trip, 404 for unknown connectors, RBAC + auth.
+Covers the catalog service (memoised union of engine INTEGRATION-node manifests
+and agents-side MCP manifests) and the GET /connectors + GET /connectors/{name}
+endpoints: list shape + summary fields, OCSF-emit and has_actions filters,
+detail manifest round-trip, 404 for unknown connectors, RBAC + auth.
 """
 
 from __future__ import annotations
@@ -25,6 +25,28 @@ EXPECTED = {
     "virustotal",
 }
 
+# A sample of MCP-only connectors that must also surface through the catalog
+# (identity / email / cloud / ticketing / CNAPP — the Tier-1/Tier-2 fleet).
+EXPECTED_MCP_ONLY = {
+    "okta",
+    "entra",
+    "gws",
+    "defender_o365",
+    "defender_endpoint",
+    "sentinelone",
+    "zeek",
+    "cloudtrail",
+    "jira",
+    "slack",
+    "duo",
+    "cortex",
+    "servicenow",
+    "gcp",
+    "proofpoint",
+    "wiz",
+    "git",
+}
+
 
 # --------------------------------------------------------------------------- #
 # Catalog service
@@ -34,6 +56,23 @@ EXPECTED = {
 def test_catalog_covers_expected_connectors() -> None:
     names = set(connector_catalog.get_catalog())
     assert EXPECTED.issubset(names)
+
+
+def test_catalog_includes_mcp_connectors() -> None:
+    """The agents-side MCP connectors are unioned into the catalog (#100)."""
+    names = set(connector_catalog.get_catalog())
+    assert EXPECTED_MCP_ONLY.issubset(names)
+
+
+def test_catalog_engine_wins_on_name_clash() -> None:
+    """Overlapping names (e.g. crowdstrike) keep the engine manifest.
+
+    The engine crowdstrike manifest carries the ``isolate_host`` HITL action;
+    the MCP one does not, so this pins the merge precedence.
+    """
+    m = connector_catalog.get_manifest("crowdstrike")
+    assert m is not None
+    assert "isolate_host" in {a.id for a in m.actions}
 
 
 def test_catalog_is_memoised() -> None:
@@ -63,6 +102,12 @@ async def test_list_connectors(client, analyst_token) -> None:
     assert cs["action_count"] >= 1  # isolate_host
     assert cs["has_hitl_actions"] is True
     assert "detection_finding" in cs["ocsf_emits"]
+
+    # An MCP-only connector surfaces too (Okta, an identity connector).
+    assert EXPECTED_MCP_ONLY.issubset(names)
+    okta = next(c for c in body["items"] if c["name"] == "okta")
+    assert okta["query_count"] >= 1
+    assert "authentication" in okta["ocsf_emits"]
 
 
 async def test_list_filters_by_emits(client, analyst_token) -> None:
