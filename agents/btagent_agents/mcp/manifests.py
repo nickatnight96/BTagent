@@ -533,6 +533,34 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "mimecast": ConnectorManifest(
+        name="mimecast",
+        version="0.1.0",
+        description="Mimecast email gateway — messages, held queue, URL clicks.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.CUSTOM,
+        queries=[
+            _query(
+                "mimecast_message_events_search",
+                "Message-tracking events (verdicts + delivery).",
+                [_O.EMAIL_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+                cost=CostClass.MODERATE,
+            ),
+            _query(
+                "mimecast_list_held_messages",
+                "Hold-review (quarantine) queue + release lifecycle.",
+                [_O.EMAIL_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "mimecast_click_logs_search",
+                "URL Protect click logs (permit/warn/block).",
+                [_O.EMAIL_ACTIVITY, _O.HTTP_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     "proofpoint": ConnectorManifest(
         name="proofpoint",
         version="0.1.0",

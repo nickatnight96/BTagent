@@ -43,6 +43,7 @@ class EmailSecurityProvider(StrEnum):
     DEFENDER_O365 = "defender_o365"
     GOOGLE_WORKSPACE = "google_workspace"
     PROOFPOINT = "proofpoint"  # Proofpoint TAP (Tier-2 #100)
+    MIMECAST = "mimecast"  # Mimecast email gateway (Tier-2 #100)
     GENERIC = "generic"
 
 
