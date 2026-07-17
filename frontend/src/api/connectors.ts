@@ -62,3 +62,35 @@ export async function listConnectors(params?: {
 export async function getConnector(name: string): Promise<ConnectorManifest> {
   return api.get<ConnectorManifest>(`/v1/connectors/${name}`);
 }
+
+// --- Credential bindings (references only; secret material never stored) ---
+
+export interface ConnectorCredential {
+  connector_name: string;
+  secret_ref: string;
+  label: string;
+  created_by: string;
+  updated_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CredentialListResponse {
+  items: ConnectorCredential[];
+  total: number;
+}
+
+export async function listCredentials(): Promise<CredentialListResponse> {
+  return api.get<CredentialListResponse>("/v1/credentials");
+}
+
+export async function upsertCredential(
+  connectorName: string,
+  body: { secret_ref: string; label?: string },
+): Promise<ConnectorCredential> {
+  return api.put<ConnectorCredential>(`/v1/credentials/${connectorName}`, body);
+}
+
+export async function deleteCredential(connectorName: string): Promise<void> {
+  await api.delete(`/v1/credentials/${connectorName}`);
+}
