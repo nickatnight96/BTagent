@@ -477,6 +477,34 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "gcp": ConnectorManifest(
+        name="gcp",
+        version="0.1.0",
+        description="GCP Cloud Audit Logs + Security Command Center — control-plane telemetry.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.OAUTH2,
+        queries=[
+            _query(
+                "gcp_audit_log_search",
+                "Cloud Audit Logs entry search.",
+                [_O.API_ACTIVITY, _O.AUDIT_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+                cost=CostClass.MODERATE,
+            ),
+            _query(
+                "gcp_scc_list_findings",
+                "Security Command Center findings.",
+                [_O.DETECTION_FINDING],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "gcp_audit_principal_summary",
+                "Per-principal behavioral rollup.",
+                [_O.API_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     # ------------------------------------------------------------------ #
     # Tier-1 sinks (collaboration writes: BlastRadius.NONE, HITL opt-out)
     # ------------------------------------------------------------------ #

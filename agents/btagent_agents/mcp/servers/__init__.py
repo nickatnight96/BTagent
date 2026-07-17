@@ -18,6 +18,7 @@ Available servers:
     DuoMCPServer         -- Cisco Duo MFA (auth logs + users + admin activity) [Tier-2]
     CortexXDRMCPServer   -- Palo Alto Cortex XDR (XQL + incidents + endpoints + isolation) [Tier-2]
     ServiceNowMCPServer  -- ServiceNow SecOps (SIR create + work notes + lifecycle) [Tier-2]
+    GCPCloudAuditMCPServer -- GCP Cloud Audit Logs + SCC (audit search + findings + summary) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -29,6 +30,7 @@ from btagent_agents.mcp.servers.defender_o365_mcp import DefenderO365MCPServer
 from btagent_agents.mcp.servers.duo_mcp import DuoMCPServer
 from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
 from btagent_agents.mcp.servers.entra_mcp import EntraMCPServer
+from btagent_agents.mcp.servers.gcp_mcp import GCPCloudAuditMCPServer
 from btagent_agents.mcp.servers.git_mcp import GitMCPServer
 from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
 from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
@@ -58,5 +60,6 @@ __all__ = [
     "DuoMCPServer",
     "CortexXDRMCPServer",
     "ServiceNowMCPServer",
+    "GCPCloudAuditMCPServer",
     "GitMCPServer",
 ]

@@ -43,6 +43,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.duo_mcp import DuoMCPServer
     from btagent_agents.mcp.servers.elastic_mcp import ElasticMCPServer
     from btagent_agents.mcp.servers.entra_mcp import EntraMCPServer
+    from btagent_agents.mcp.servers.gcp_mcp import GCPCloudAuditMCPServer
     from btagent_agents.mcp.servers.git_mcp import GitMCPServer
     from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
     from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
@@ -71,6 +72,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["slack"] = SlackMCPServer
     _SERVER_CLASSES["duo"] = DuoMCPServer
     _SERVER_CLASSES["servicenow"] = ServiceNowMCPServer
+    _SERVER_CLASSES["gcp"] = GCPCloudAuditMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 
