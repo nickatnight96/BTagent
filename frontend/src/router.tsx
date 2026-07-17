@@ -90,6 +90,11 @@ const TLPPolicyPage = lazy(() =>
 const MfaSettingsPage = lazy(() =>
   import("@/components/auth/MfaSettingsPage").then((m) => ({ default: m.MfaSettingsPage })),
 );
+const IntegrationsPage = lazy(() =>
+  import("@/components/connectors/IntegrationsPage").then((m) => ({
+    default: m.IntegrationsPage,
+  })),
+);
 const SSOIdentitiesPage = lazy(() =>
   import("@/components/auth/SSOIdentitiesPage").then((m) => ({ default: m.SSOIdentitiesPage })),
 );
@@ -235,6 +240,10 @@ export const router = createBrowserRouter([
       {
         path: "security",
         element: lazyRoute(MfaSettingsPage),
+      },
+      {
+        path: "integrations",
+        element: lazyRoute(IntegrationsPage),
       },
       {
         path: "sso-identities",
