@@ -533,6 +533,34 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "zscaler": ConnectorManifest(
+        name="zscaler",
+        version="0.1.0",
+        description="Zscaler ZIA secure web gateway — web logs, url/user summaries.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.CUSTOM,
+        queries=[
+            _query(
+                "zscaler_weblog_search",
+                "Web-transaction log search (allow/block, category, threat).",
+                [_O.HTTP_ACTIVITY, _O.NETWORK_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+                cost=CostClass.MODERATE,
+            ),
+            _query(
+                "zscaler_url_summary",
+                "Per-destination behavioral rollup.",
+                [_O.HTTP_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "zscaler_user_summary",
+                "Per-user behavioral rollup (web-exfil signal).",
+                [_O.HTTP_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     "mimecast": ConnectorManifest(
         name="mimecast",
         version="0.1.0",
