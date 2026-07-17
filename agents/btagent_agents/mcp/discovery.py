@@ -54,6 +54,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
     from btagent_agents.mcp.servers.slack_mcp import SlackMCPServer
     from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
+    from btagent_agents.mcp.servers.wiz_mcp import WizMCPServer
     from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
 
     _SERVER_CLASSES["splunk"] = SplunkMCPServer
@@ -75,6 +76,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["servicenow"] = ServiceNowMCPServer
     _SERVER_CLASSES["gcp"] = GCPCloudAuditMCPServer
     _SERVER_CLASSES["proofpoint"] = ProofpointMCPServer
+    _SERVER_CLASSES["wiz"] = WizMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 

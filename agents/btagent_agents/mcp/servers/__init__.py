@@ -20,6 +20,7 @@ Available servers:
     ServiceNowMCPServer  -- ServiceNow SecOps (SIR create + work notes + lifecycle) [Tier-2]
     GCPCloudAuditMCPServer -- GCP Cloud Audit Logs + SCC (audit search + findings + summary) [Tier-2]
     ProofpointMCPServer  -- Proofpoint TAP (message events + URL clicks + VAP summary) [Tier-2]
+    WizMCPServer         -- Wiz CNAPP (posture issues + vulns + resource summary) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -42,6 +43,7 @@ from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
 from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
 from btagent_agents.mcp.servers.slack_mcp import SlackMCPServer
 from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
+from btagent_agents.mcp.servers.wiz_mcp import WizMCPServer
 from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
 
 __all__ = [
@@ -64,5 +66,6 @@ __all__ = [
     "ServiceNowMCPServer",
     "GCPCloudAuditMCPServer",
     "ProofpointMCPServer",
+    "WizMCPServer",
     "GitMCPServer",
 ]
