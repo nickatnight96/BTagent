@@ -19,6 +19,7 @@ Available servers:
     CortexXDRMCPServer   -- Palo Alto Cortex XDR (XQL + incidents + endpoints + isolation) [Tier-2]
     ServiceNowMCPServer  -- ServiceNow SecOps (SIR create + work notes + lifecycle) [Tier-2]
     GCPCloudAuditMCPServer -- GCP Cloud Audit Logs + SCC (audit search + findings + summary) [Tier-2]
+    ProofpointMCPServer  -- Proofpoint TAP (message events + URL clicks + VAP summary) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -35,6 +36,7 @@ from btagent_agents.mcp.servers.git_mcp import GitMCPServer
 from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
 from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
 from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
+from btagent_agents.mcp.servers.proofpoint_mcp import ProofpointMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
 from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
 from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
@@ -61,5 +63,6 @@ __all__ = [
     "CortexXDRMCPServer",
     "ServiceNowMCPServer",
     "GCPCloudAuditMCPServer",
+    "ProofpointMCPServer",
     "GitMCPServer",
 ]

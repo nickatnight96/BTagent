@@ -505,6 +505,34 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "proofpoint": ConnectorManifest(
+        name="proofpoint",
+        version="0.1.0",
+        description="Proofpoint TAP — message events, URL clicks, VAP summary.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.BASIC,
+        queries=[
+            _query(
+                "pfpt_message_events_search",
+                "TAP message events (delivered + blocked, verdicts).",
+                [_O.EMAIL_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+                cost=CostClass.MODERATE,
+            ),
+            _query(
+                "pfpt_click_events_search",
+                "TAP URL-click events (permitted + blocked).",
+                [_O.EMAIL_ACTIVITY, _O.HTTP_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "pfpt_vap_summary",
+                "Very-Attacked-People per-recipient rollup.",
+                [_O.EMAIL_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     # ------------------------------------------------------------------ #
     # Tier-1 sinks (collaboration writes: BlastRadius.NONE, HITL opt-out)
     # ------------------------------------------------------------------ #
