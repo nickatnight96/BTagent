@@ -36,6 +36,7 @@ class IdentityProvider(StrEnum):
     OKTA = "okta"
     ENTRA = "entra"
     GOOGLE_WORKSPACE = "google_workspace"
+    DUO = "duo"  # Cisco Duo MFA (Tier-2 #100)
     GENERIC = "generic"  # local / on-prem / not yet classified
 
 
