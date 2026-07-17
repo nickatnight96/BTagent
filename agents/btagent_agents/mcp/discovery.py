@@ -48,6 +48,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
     from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
     from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
+    from btagent_agents.mcp.servers.proofpoint_mcp import ProofpointMCPServer
     from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
     from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
     from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
@@ -73,6 +74,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["duo"] = DuoMCPServer
     _SERVER_CLASSES["servicenow"] = ServiceNowMCPServer
     _SERVER_CLASSES["gcp"] = GCPCloudAuditMCPServer
+    _SERVER_CLASSES["proofpoint"] = ProofpointMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 

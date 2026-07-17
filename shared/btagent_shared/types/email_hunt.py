@@ -42,6 +42,7 @@ class EmailSecurityProvider(StrEnum):
 
     DEFENDER_O365 = "defender_o365"
     GOOGLE_WORKSPACE = "google_workspace"
+    PROOFPOINT = "proofpoint"  # Proofpoint TAP (Tier-2 #100)
     GENERIC = "generic"
 
 
@@ -99,6 +100,18 @@ class ThreatSubmissionStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     UNKNOWN = "unknown"
+
+
+class ClickDisposition(StrEnum):
+    """What the URL-defense gateway did when a recipient clicked a link.
+
+    ``blocked`` means the gateway interstitial stopped the navigation;
+    ``permitted`` means the click went through (the message-was-clicked
+    signal that turns a delivered-phish into an active-incident).
+    """
+
+    BLOCKED = "blocked"
+    PERMITTED = "permitted"
 
 
 # ---------------------------------------------------------------------------
@@ -170,4 +183,31 @@ class EmailThreatSubmission(BaseModel):
     recipient: str = Field(default="", max_length=512)
     subject: str = Field(default="", max_length=1024)
     submitted_at: datetime
+    raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmailClickEvent(BaseModel):
+    """One URL-click observation from an email URL-defense gateway.
+
+    Distinct from :class:`EmailMessageEvent` — a click is a *post-delivery*
+    action on a rewritten link (Proofpoint URL Defense, ATP Safe Links). A
+    ``permitted`` click on a ``phish``/``malware`` URL is the strongest
+    "delivered phish is now an active incident" signal in phishing triage.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=1, max_length=200)
+    org_id: str = Field(..., min_length=1, max_length=200)
+    provider: EmailSecurityProvider
+    # Provider message id — joins a click back to its message event.
+    internet_message_id: str = Field(default="", max_length=512)
+    url: str = Field(default="", max_length=4096)
+    verdict: EmailThreatVerdict = EmailThreatVerdict.NONE
+    disposition: ClickDisposition = ClickDisposition.PERMITTED
+    sender: str = Field(default="", max_length=512)
+    recipient: str = Field(default="", max_length=512)
+    sender_ip: str = Field(default="", max_length=64)
+    campaign_id: str = Field(default="", max_length=200)
+    clicked_at: datetime
     raw: dict[str, Any] = Field(default_factory=dict)
