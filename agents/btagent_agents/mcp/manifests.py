@@ -249,6 +249,34 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    # Tier-2 identity MFA (cloud MFA -> TLP.AMBER_STRICT).
+    "duo": ConnectorManifest(
+        name="duo",
+        version="0.1.0",
+        description="Cisco Duo MFA — auth logs, users, admin activity.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.CUSTOM,
+        queries=[
+            _query(
+                "duo_auth_log_search",
+                "Authentication logs (MFA approve/deny/fraud).",
+                [_O.AUTHENTICATION],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "duo_list_users",
+                "Enrolled users (status, phones, bypass-code count).",
+                [_O.USER_INVENTORY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "duo_admin_log_search",
+                "Administrator activity (bypass/admin/policy changes).",
+                [_O.AUDIT_ACTIVITY, _O.ENTITY_MANAGEMENT],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     # ------------------------------------------------------------------ #
     # Tier-1 email / EDR / network / cloud
     # ------------------------------------------------------------------ #
