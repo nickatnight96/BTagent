@@ -47,6 +47,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.git_mcp import GitMCPServer
     from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
     from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
+    from btagent_agents.mcp.servers.mimecast_mcp import MimecastMCPServer
     from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
     from btagent_agents.mcp.servers.proofpoint_mcp import ProofpointMCPServer
     from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
@@ -77,6 +78,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["gcp"] = GCPCloudAuditMCPServer
     _SERVER_CLASSES["proofpoint"] = ProofpointMCPServer
     _SERVER_CLASSES["wiz"] = WizMCPServer
+    _SERVER_CLASSES["mimecast"] = MimecastMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 

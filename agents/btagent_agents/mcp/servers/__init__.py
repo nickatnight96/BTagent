@@ -21,6 +21,7 @@ Available servers:
     GCPCloudAuditMCPServer -- GCP Cloud Audit Logs + SCC (audit search + findings + summary) [Tier-2]
     ProofpointMCPServer  -- Proofpoint TAP (message events + URL clicks + VAP summary) [Tier-2]
     WizMCPServer         -- Wiz CNAPP (posture issues + vulns + resource summary) [Tier-2]
+    MimecastMCPServer    -- Mimecast email gateway (messages + held queue + URL clicks) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -36,6 +37,7 @@ from btagent_agents.mcp.servers.gcp_mcp import GCPCloudAuditMCPServer
 from btagent_agents.mcp.servers.git_mcp import GitMCPServer
 from btagent_agents.mcp.servers.gws_mcp import GoogleWorkspaceMCPServer
 from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
+from btagent_agents.mcp.servers.mimecast_mcp import MimecastMCPServer
 from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
 from btagent_agents.mcp.servers.proofpoint_mcp import ProofpointMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
@@ -67,5 +69,6 @@ __all__ = [
     "GCPCloudAuditMCPServer",
     "ProofpointMCPServer",
     "WizMCPServer",
+    "MimecastMCPServer",
     "GitMCPServer",
 ]
