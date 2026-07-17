@@ -505,6 +505,34 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "wiz": ConnectorManifest(
+        name="wiz",
+        version="0.1.0",
+        description="Wiz CNAPP — posture issues, vulnerabilities, resource summary.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.OAUTH2,
+        queries=[
+            _query(
+                "wiz_list_issues",
+                "Cloud-posture / toxic-combination issues.",
+                [_O.DETECTION_FINDING],
+                tlp=TLP.AMBER_STRICT,
+                cost=CostClass.MODERATE,
+            ),
+            _query(
+                "wiz_list_vulnerabilities",
+                "Vulnerability findings (CVE + exploit + asset).",
+                [_O.VULNERABILITY_FINDING],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "wiz_resource_summary",
+                "Per-resource posture rollup (exposed-plus-exploitable).",
+                [_O.DEVICE_INVENTORY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     "proofpoint": ConnectorManifest(
         name="proofpoint",
         version="0.1.0",
