@@ -17,6 +17,7 @@ Available servers:
     SlackMCPServer       -- Slack (IC comms bridge: incident channels + messages + pins)
     DuoMCPServer         -- Cisco Duo MFA (auth logs + users + admin activity) [Tier-2]
     CortexXDRMCPServer   -- Palo Alto Cortex XDR (XQL + incidents + endpoints + isolation) [Tier-2]
+    ServiceNowMCPServer  -- ServiceNow SecOps (SIR create + work notes + lifecycle) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -34,6 +35,7 @@ from btagent_agents.mcp.servers.jira_mcp import JiraMCPServer
 from btagent_agents.mcp.servers.okta_mcp import OktaMCPServer
 from btagent_agents.mcp.servers.sentinel_mcp import SentinelMCPServer
 from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
+from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
 from btagent_agents.mcp.servers.slack_mcp import SlackMCPServer
 from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
 from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
@@ -55,5 +57,6 @@ __all__ = [
     "SlackMCPServer",
     "DuoMCPServer",
     "CortexXDRMCPServer",
+    "ServiceNowMCPServer",
     "GitMCPServer",
 ]
