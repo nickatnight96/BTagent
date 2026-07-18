@@ -57,6 +57,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
     from btagent_agents.mcp.servers.wiz_mcp import WizMCPServer
     from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
+    from btagent_agents.mcp.servers.zscaler_mcp import ZscalerMCPServer
 
     _SERVER_CLASSES["splunk"] = SplunkMCPServer
     _SERVER_CLASSES["crowdstrike"] = CrowdStrikeMCPServer
@@ -79,6 +80,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["proofpoint"] = ProofpointMCPServer
     _SERVER_CLASSES["wiz"] = WizMCPServer
     _SERVER_CLASSES["mimecast"] = MimecastMCPServer
+    _SERVER_CLASSES["zscaler"] = ZscalerMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 
