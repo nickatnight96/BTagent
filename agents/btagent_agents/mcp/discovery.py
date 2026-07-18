@@ -55,6 +55,7 @@ def _ensure_servers_loaded() -> None:
     from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
     from btagent_agents.mcp.servers.slack_mcp import SlackMCPServer
     from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
+    from btagent_agents.mcp.servers.vectra_mcp import VectraMCPServer
     from btagent_agents.mcp.servers.wiz_mcp import WizMCPServer
     from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
     from btagent_agents.mcp.servers.zscaler_mcp import ZscalerMCPServer
@@ -81,6 +82,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["wiz"] = WizMCPServer
     _SERVER_CLASSES["mimecast"] = MimecastMCPServer
     _SERVER_CLASSES["zscaler"] = ZscalerMCPServer
+    _SERVER_CLASSES["vectra"] = VectraMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 

@@ -533,6 +533,34 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "vectra": ConnectorManifest(
+        name="vectra",
+        version="0.1.0",
+        description="Vectra AI NDR — network detections, host risk, host summary.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.API_KEY,
+        queries=[
+            _query(
+                "vectra_list_detections",
+                "Scored network detections (C2/lateral/exfil/recon).",
+                [_O.DETECTION_FINDING, _O.NETWORK_ACTIVITY],
+                tlp=TLP.AMBER_STRICT,
+                cost=CostClass.MODERATE,
+            ),
+            _query(
+                "vectra_list_hosts",
+                "Host risk inventory (threat/certainty scores).",
+                [_O.DEVICE_INVENTORY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "vectra_host_summary",
+                "Per-host detection rollup + risk quadrant.",
+                [_O.DETECTION_FINDING],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     "zscaler": ConnectorManifest(
         name="zscaler",
         version="0.1.0",
