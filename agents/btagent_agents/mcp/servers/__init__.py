@@ -24,9 +24,11 @@ Available servers:
     MimecastMCPServer    -- Mimecast email gateway (messages + held queue + URL clicks) [Tier-2]
     ZscalerMCPServer     -- Zscaler ZIA web proxy (web logs + url/user summaries) [Tier-2]
     VectraMCPServer      -- Vectra AI NDR (network detections + host risk + summary) [Tier-2]
+    CanaryMCPServer      -- Thinkst Canary deception (incidents + devices + summary) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
+from btagent_agents.mcp.servers.canary_mcp import CanaryMCPServer
 from btagent_agents.mcp.servers.cloudtrail_mcp import CloudTrailMCPServer
 from btagent_agents.mcp.servers.cortex_mcp import CortexXDRMCPServer
 from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
@@ -76,5 +78,6 @@ __all__ = [
     "MimecastMCPServer",
     "ZscalerMCPServer",
     "VectraMCPServer",
+    "CanaryMCPServer",
     "GitMCPServer",
 ]

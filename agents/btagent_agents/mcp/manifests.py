@@ -533,6 +533,33 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    "canary": ConnectorManifest(
+        name="canary",
+        version="0.1.0",
+        description="Thinkst Canary — deception incidents, device inventory, per-IP summary.",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.API_KEY,
+        queries=[
+            _query(
+                "canary_list_incidents",
+                "Triggered deception incidents (high-fidelity intruder signals).",
+                [_O.DETECTION_FINDING],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "canary_list_devices",
+                "Deployed canary + canarytoken inventory.",
+                [_O.DEVICE_INVENTORY],
+                tlp=TLP.AMBER_STRICT,
+            ),
+            _query(
+                "canary_incident_summary",
+                "Per-attacker-IP rollup across the deception grid.",
+                [_O.DETECTION_FINDING],
+                tlp=TLP.AMBER_STRICT,
+            ),
+        ],
+    ),
     "vectra": ConnectorManifest(
         name="vectra",
         version="0.1.0",
