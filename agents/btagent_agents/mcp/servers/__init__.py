@@ -23,6 +23,7 @@ Available servers:
     WizMCPServer         -- Wiz CNAPP (posture issues + vulns + resource summary) [Tier-2]
     MimecastMCPServer    -- Mimecast email gateway (messages + held queue + URL clicks) [Tier-2]
     ZscalerMCPServer     -- Zscaler ZIA web proxy (web logs + url/user summaries) [Tier-2]
+    VectraMCPServer      -- Vectra AI NDR (network detections + host risk + summary) [Tier-2]
     GitMCPServer         -- Detection-rule repository (HITL-gated PR composer surface)
 """
 
@@ -46,6 +47,7 @@ from btagent_agents.mcp.servers.sentinelone_mcp import SentinelOneMCPServer
 from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
 from btagent_agents.mcp.servers.slack_mcp import SlackMCPServer
 from btagent_agents.mcp.servers.splunk_mcp import SplunkMCPServer
+from btagent_agents.mcp.servers.vectra_mcp import VectraMCPServer
 from btagent_agents.mcp.servers.wiz_mcp import WizMCPServer
 from btagent_agents.mcp.servers.zeek_mcp import ZeekMCPServer
 from btagent_agents.mcp.servers.zscaler_mcp import ZscalerMCPServer
@@ -73,5 +75,6 @@ __all__ = [
     "WizMCPServer",
     "MimecastMCPServer",
     "ZscalerMCPServer",
+    "VectraMCPServer",
     "GitMCPServer",
 ]
