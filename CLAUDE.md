@@ -54,7 +54,7 @@ make fmt        # ruff format
 - Orchestrator routes tasks to worker subgraphs (Triage, Query, Enrich, Knowledge)
 - Plugins: 4 registered plugins (triage, query, enrichment, knowledge)
 - Hooks: HITL, EventEmitter, PromptBudget, EvidenceChain, ScopeEnforcement, Classification
-- MCP: 9 SIEM/EDR/CTI connectors as MCP servers with circuit breaker + connection pooling
+- MCP: 20+ SIEM/EDR/identity/email/cloud/ticketing connectors as MCP servers with circuit breaker + connection pooling; each declares a capability manifest (#100) enforcing HITL/TLP/OCSF policy at dispatch
 - LLM: Task-appropriate model routing (Haiku→triage, Sonnet→query, Opus→analysis)
 - Context: 4-layer cascade (externalize → compress → prune → summarize)
 
@@ -70,6 +70,31 @@ make fmt        # ruff format
 - `playbooks` / `playbook_executions` — SOAR playbook definitions and execution history
 - `mitre_tactics` / `mitre_techniques` / `mitre_groups` — ATT&CK matrix data
 
-## Phase 2 MCP Servers (9 total)
-- Splunk, CrowdStrike, Sentinel, Elastic (Phase 1)
-- VirusTotal, Shodan, GreyNoise, AbuseIPDB, MISP (Phase 2)
+## MCP Connectors (#100 connector strategy)
+The agents-side MCP server registry (`agents/btagent_agents/mcp/servers/`,
+registered in `discovery._SERVER_CLASSES`) plus the engine's CTI-enrichment
+integration nodes. Every connector is mock-first (`BTAGENT_MOCK_CONNECTORS`
+default), resolves secrets lazily via `${secret:...}` / `${env:...}` refs, and
+guards live mode behind `NotImplementedError`. Each declares a
+`ConnectorManifest` (`mcp/manifests.py`) — the drift-locked source of truth for
+its query/action capabilities, TLP egress, OCSF emit classes, and HITL gating.
+
+- **SIEM:** Splunk, Microsoft Sentinel, Elastic
+- **EDR / XDR:** CrowdStrike, Defender for Endpoint, SentinelOne, Palo Alto Cortex XDR
+- **Identity:** Okta, Microsoft Entra ID, Google Workspace, Cisco Duo
+- **Email security:** Defender for O365, Proofpoint TAP, Mimecast
+- **Web proxy:** Zscaler ZIA
+- **Network:** Zeek / Corelight
+- **Cloud audit / posture:** AWS CloudTrail+GuardDuty, GCP Cloud Audit+SCC, Wiz (CNAPP)
+- **Ticketing / comms:** Jira Service Management, ServiceNow SecOps, Slack
+- **Detection repo:** Git (HITL-gated PR composer)
+- **CTI enrichment (engine nodes):** VirusTotal, Shodan, GreyNoise, AbuseIPDB, MISP
+
+All connectors surface (read-only, RBAC-gated) via `GET /connectors` and the
+frontend Settings → Integrations catalog; per-org credential *references* bind
+through the credential-reference API (raw material stays in Vault/AWS/env).
+
+Containment actions (`cs_isolate_host`, `mde_isolate_machine`,
+`s1_mitigate_threat`, `cortex_isolate_endpoint`) and the detection-repo PR
+composer are HITL-gated; on-prem telemetry declares `TLP.RED`, org-tenant
+clouds `TLP.AMBER_STRICT`.
