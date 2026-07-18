@@ -463,19 +463,20 @@ async def set_proposal_state(
     :func:`_suppressed_cluster_ids` reads on the next scan so the same cluster
     shape doesn't keep resurfacing. Accept marks the hunt as launched.
 
-    Codex #218: when an analyst provides a ``triage_rationale`` we append it to
-    the proposal's ``rationale`` (preceded by a delimited marker so the
-    generated "why this surfaced" text remains intact). A dedicated
-    ``triage_rationale`` column would be cleaner (Phase C TODO) but a
-    migration is out of scope for this fix.
+    Codex #218 / Phase C: when an analyst provides a ``triage_rationale`` we
+    accumulate it in the dedicated ``triage_rationale`` column (each transition
+    delimited by a state marker) so the generated ``rationale`` — the "why this
+    surfaced" text — stays pristine.
     """
     row = await db.get(PatternHuntProposalRow, proposal_id)
     if row is None:
         raise ValueError(f"Pattern-hunt proposal not found: {proposal_id}")
     row.state = state.value
     if triage_rationale.strip():
-        marker = f"\n\n--- Analyst rationale ({state.value}) ---\n"
-        row.rationale = (row.rationale or "") + marker + triage_rationale.strip()
+        marker = f"--- Analyst rationale ({state.value}) ---\n"
+        entry = marker + triage_rationale.strip()
+        existing = (row.triage_rationale or "").strip()
+        row.triage_rationale = f"{existing}\n\n{entry}" if existing else entry
     row.updated_at = _utcnow()
     await db.flush()
     return row

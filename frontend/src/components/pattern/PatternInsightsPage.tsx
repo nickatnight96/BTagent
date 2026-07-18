@@ -582,6 +582,21 @@ function ProposalCard({
             </p>
           </div>
 
+          {/* Analyst triage notes — accumulated across transitions */}
+          {proposal.triage_rationale && (
+            <div>
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">
+                Analyst notes
+              </p>
+              <p
+                className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap"
+                data-testid="pattern-triage-rationale"
+              >
+                {proposal.triage_rationale}
+              </p>
+            </div>
+          )}
+
           {/* Hunt input detail — TTPs */}
           {proposal.hunt_input.ttps.length > 0 && (
             <div>

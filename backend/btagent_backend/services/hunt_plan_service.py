@@ -61,6 +61,7 @@ def row_to_proposal(row: PatternHuntProposalRow) -> PatternHuntProposal:
             "cluster_id": row.cluster_id,
             "hunt_input": row.hunt_input or {},
             "rationale": row.rationale or "",
+            "triage_rationale": row.triage_rationale or "",
             "state": row.state,
             "outcome": row.outcome,
             "created_at": row.created_at,

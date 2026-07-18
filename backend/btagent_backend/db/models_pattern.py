@@ -80,6 +80,11 @@ class PatternHuntProposalRow(Base):
     # Serialised HuntInput (model_dump) — the ready-to-run hunt payload.
     hunt_input: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     rationale: Mapped[str] = mapped_column(Text, default="")
+    # Analyst triage notes accumulated across dismiss/snooze/accept
+    # transitions — kept separate from the generated ``rationale`` so the
+    # "why this surfaced" text stays pristine (#218 Phase C). Null until an
+    # analyst first provides a note.
+    triage_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     # ``ProposalState`` value.
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
     # ``ProposalOutcome`` value — nullable; only set when a launched hunt

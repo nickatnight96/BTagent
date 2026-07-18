@@ -67,6 +67,7 @@ class PatternHuntProposalResponse(BaseModel):
     score: float
     hunt_input: dict
     rationale: str
+    triage_rationale: str
     state: str
     outcome: str | None
     created_at: datetime
@@ -163,6 +164,7 @@ def _proposal_response(row: PatternHuntProposalRow) -> PatternHuntProposalRespon
         score=row.score,
         hunt_input=row.hunt_input or {},
         rationale=row.rationale or "",
+        triage_rationale=row.triage_rationale or "",
         state=row.state,
         outcome=row.outcome,
         created_at=row.created_at,
