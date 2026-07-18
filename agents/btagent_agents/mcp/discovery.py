@@ -35,6 +35,7 @@ def _ensure_servers_loaded() -> None:
     if _SERVER_CLASSES:
         return
 
+    from btagent_agents.mcp.servers.canary_mcp import CanaryMCPServer
     from btagent_agents.mcp.servers.cloudtrail_mcp import CloudTrailMCPServer
     from btagent_agents.mcp.servers.cortex_mcp import CortexXDRMCPServer
     from btagent_agents.mcp.servers.crowdstrike_mcp import CrowdStrikeMCPServer
@@ -83,6 +84,7 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["mimecast"] = MimecastMCPServer
     _SERVER_CLASSES["zscaler"] = ZscalerMCPServer
     _SERVER_CLASSES["vectra"] = VectraMCPServer
+    _SERVER_CLASSES["canary"] = CanaryMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
 
 
