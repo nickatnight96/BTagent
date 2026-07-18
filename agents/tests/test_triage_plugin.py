@@ -25,13 +25,14 @@ def test_capabilities_include_classification_and_scoring() -> None:
     assert "severity_scoring" in meta.capabilities
 
 
-def test_get_tools_registers_all_four_tools() -> None:
+def test_get_tools_registers_all_tools() -> None:
     names = {t.name for t in TriagePlugin().get_tools()}
     assert names == {
         "alert_classifier",
         "severity_scorer",
         "phishing_triage",
         "deception_triage",
+        "ndr_triage",
     }
 
 
