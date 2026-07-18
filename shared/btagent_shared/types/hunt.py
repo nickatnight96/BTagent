@@ -360,6 +360,7 @@ class HuntDomain(StrEnum):
     CLOUD = "cloud"
     CROSS_INVESTIGATION = "cross_investigation"
     AGENTIC = "agentic"
+    EMAIL = "email"
 
 
 class HuntSource(StrEnum):
@@ -376,6 +377,7 @@ class HuntSource(StrEnum):
     CLOUD = "cloud"
     CROSS_INVESTIGATION = "cross_investigation"
     AGENTIC = "agentic"
+    EMAIL_SECURITY = "email_security"
     MANUAL = "manual"
 
 
