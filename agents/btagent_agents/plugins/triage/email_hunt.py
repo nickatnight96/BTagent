@@ -34,6 +34,7 @@ the runner keys off the payload, not the source:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from btagent_shared.hunt.email import phishing_incidents_to_findings
@@ -42,6 +43,30 @@ from btagent_shared.types.hunt_finding import RecordFindingRequest
 from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_agents.plugins.triage.tools.phishing_correlator import correlate_email_threats
+
+logger = logging.getLogger("btagent.hunt.email")
+
+# Which tool on each email connector yields which telemetry stream. Keyed by
+# ``server_id`` so a new email connector only has to add an entry here. A
+# ``None`` slot means the connector does not expose that stream (e.g. Defender
+# for O365 has no post-delivery URL-click feed).
+_EMAIL_CONNECTOR_METHODS: dict[str, dict[str, str | None]] = {
+    "defender_o365": {
+        "messages": "o365_email_events_search",
+        "clicks": None,
+        "quarantine": "o365_list_quarantine",
+    },
+    "proofpoint": {
+        "messages": "pfpt_message_events_search",
+        "clicks": "pfpt_click_events_search",
+        "quarantine": None,
+    },
+    "mimecast": {
+        "messages": "mimecast_message_events_search",
+        "clicks": "mimecast_click_logs_search",
+        "quarantine": "mimecast_list_held_messages",
+    },
+}
 
 
 class EmailHuntRunResult(BaseModel):
@@ -115,3 +140,75 @@ def run_email_hunt(
         counts_by_severity=counts_by_severity,
         most_targeted_recipients=list(correlation.get("most_targeted_recipients", [])),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Live connector gathering (async, mock-first via the connectors themselves)
+# --------------------------------------------------------------------------- #
+
+
+async def gather_email_envelopes(
+    servers: list[Any],
+    *,
+    start: str,
+    end: str,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Pull message / click / quarantine envelopes from email connectors.
+
+    For each server, calls whichever of its message-search, click-search, and
+    quarantine/held tools exist (per :data:`_EMAIL_CONNECTOR_METHODS`, keyed by
+    ``server_id``) over the ``[start, end]`` window. A connector whose
+    ``server_id`` is unknown, or a single tool call that raises, is logged and
+    skipped so one flaky provider never sinks the whole hunt.
+
+    The connectors are themselves mock-first, so this is safe to run in CI; it
+    is the only I/O boundary in the email vertical.
+    """
+    envelopes: list[dict[str, Any]] = []
+    for server in servers or []:
+        server_id = getattr(server, "server_id", "")
+        method_map = _EMAIL_CONNECTOR_METHODS.get(server_id)
+        if method_map is None:
+            logger.warning("email hunt: no method map for connector %r — skipping", server_id)
+            continue
+        for stream, method_name in method_map.items():
+            if not method_name:
+                continue
+            method = getattr(server, method_name, None)
+            if method is None:
+                logger.warning(
+                    "email hunt: connector %r missing expected tool %r", server_id, method_name
+                )
+                continue
+            try:
+                envelope = await method(start, end, limit=limit)
+            except Exception as exc:  # noqa: BLE001 - one provider must not sink the hunt
+                logger.warning(
+                    "email hunt: %s.%s failed (%s) — skipping that stream",
+                    server_id,
+                    method_name,
+                    exc,
+                )
+                continue
+            if isinstance(envelope, dict):
+                envelopes.append(envelope)
+    return envelopes
+
+
+async def run_email_hunt_over_connectors(
+    servers: list[Any],
+    *,
+    start: str,
+    end: str,
+    limit: int = 200,
+) -> EmailHuntRunResult:
+    """Gather from the email connectors and run the hunt end-to-end.
+
+    The single entry point a runner / scheduled job calls: pulls every
+    connector's telemetry over the window, then correlates + maps it into
+    findings. Persisting the findings is the caller's job (a later slice wires
+    ``POST /hunt/findings``).
+    """
+    envelopes = await gather_email_envelopes(servers, start=start, end=end, limit=limit)
+    return run_email_hunt_from_envelopes(envelopes)
