@@ -64,6 +64,20 @@ def test_catalog_includes_mcp_connectors() -> None:
     assert EXPECTED_MCP_ONLY.issubset(names)
 
 
+def test_catalog_covers_every_mcp_manifest() -> None:
+    """Every registered MCP manifest surfaces in the catalog (drift guard).
+
+    Uses the live MANIFESTS registry rather than a hardcoded list, so a
+    newly-added connector is covered automatically — if the union ever drops
+    one (or the import degrades to engine-only), this fails.
+    """
+    from btagent_agents.mcp.manifests import MANIFESTS
+
+    names = set(connector_catalog.get_catalog())
+    missing = sorted(set(MANIFESTS) - names)
+    assert missing == [], f"MCP manifests not surfaced by the catalog: {missing}"
+
+
 def test_catalog_engine_wins_on_name_clash() -> None:
     """Overlapping names (e.g. crowdstrike) keep the engine manifest.
 
