@@ -10,6 +10,7 @@ import yaml
 from btagent_agents.plugins.base import DefensivePlugin, DefensivePluginMetadata
 from btagent_agents.plugins.triage.tools.alert_classifier import alert_classifier
 from btagent_agents.plugins.triage.tools.deception_correlator import deception_triage
+from btagent_agents.plugins.triage.tools.ndr_correlator import ndr_triage
 from btagent_agents.plugins.triage.tools.phishing_correlator import phishing_triage
 from btagent_agents.plugins.triage.tools.severity_scorer import severity_scorer
 
@@ -45,7 +46,7 @@ class TriagePlugin(DefensivePlugin):
 
     def get_tools(self) -> list[Any]:
         """Return LangChain tool instances for triage operations."""
-        return [alert_classifier, severity_scorer, phishing_triage, deception_triage]
+        return [alert_classifier, severity_scorer, phishing_triage, deception_triage, ndr_triage]
 
     def get_system_prompt(self) -> str:
         """Return the triage agent system prompt.
