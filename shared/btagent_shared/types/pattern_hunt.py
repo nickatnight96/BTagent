@@ -159,6 +159,9 @@ class PatternHuntProposal(BaseModel):
     cluster_id: str
     hunt_input: HuntInput
     rationale: str = Field(default="", max_length=4096)
+    # Analyst triage notes accumulated across transitions — kept separate from
+    # the generated ``rationale`` above so that text stays pristine (#218).
+    triage_rationale: str = Field(default="", max_length=8192)
     state: ProposalState = ProposalState.PROPOSED
     outcome: ProposalOutcome | None = None
     created_at: datetime

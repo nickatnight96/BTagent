@@ -204,6 +204,73 @@ async def test_set_state_raises_on_unknown_proposal(db_session):
 
 
 # --------------------------------------------------------------------------- #
+# Analyst triage rationale — dedicated column, generated rationale stays clean
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_one_proposal(db_session) -> PatternHuntProposalRow:
+    for i in range(3):
+        await _add_investigation(db_session, inv_id=f"inv_tr_{i}", closed_offset_days=i + 1)
+        await _add_ioc(
+            db_session, inv_id=f"inv_tr_{i}", ioc_type="domain", value=f"n{i}.triage-c2.net"
+        )
+    await svc.scan_corpus(db_session, now=NOW)
+    return (
+        (
+            await db_session.execute(
+                select(PatternHuntProposalRow).where(
+                    PatternHuntProposalRow.cluster_id.like("%triage-c2-net%")
+                )
+            )
+        )
+        .scalars()
+        .one()
+    )
+
+
+async def test_triage_rationale_written_to_dedicated_column(db_session):
+    prop = await _seed_one_proposal(db_session)
+    generated = prop.rationale  # the "why this surfaced" text
+
+    await svc.dismiss_proposal(
+        db_session, proposal_id=prop.id, triage_rationale="Known-good beaconing to CDN."
+    )
+
+    refreshed = await db_session.get(PatternHuntProposalRow, prop.id)
+    # The analyst note lands in the dedicated column with a state marker...
+    assert "Known-good beaconing to CDN." in refreshed.triage_rationale
+    assert "dismissed" in refreshed.triage_rationale
+    # ...and the generated rationale is left pristine.
+    assert refreshed.rationale == generated
+    assert "Known-good" not in refreshed.rationale
+
+
+async def test_triage_rationale_accumulates_across_transitions(db_session):
+    prop = await _seed_one_proposal(db_session)
+
+    await svc.snooze_proposal(
+        db_session, proposal_id=prop.id, triage_rationale="Snooze for a week."
+    )
+    await svc.dismiss_proposal(
+        db_session, proposal_id=prop.id, triage_rationale="Confirmed benign."
+    )
+
+    refreshed = await db_session.get(PatternHuntProposalRow, prop.id)
+    assert "Snooze for a week." in refreshed.triage_rationale
+    assert "Confirmed benign." in refreshed.triage_rationale
+    # Both transition markers present.
+    assert "snoozed" in refreshed.triage_rationale
+    assert "dismissed" in refreshed.triage_rationale
+
+
+async def test_empty_triage_rationale_leaves_column_null(db_session):
+    prop = await _seed_one_proposal(db_session)
+    await svc.dismiss_proposal(db_session, proposal_id=prop.id)  # no rationale
+    refreshed = await db_session.get(PatternHuntProposalRow, prop.id)
+    assert refreshed.triage_rationale is None
+
+
+# --------------------------------------------------------------------------- #
 # cmdline + asn extraction from enrichment
 # --------------------------------------------------------------------------- #
 

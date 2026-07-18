@@ -84,6 +84,9 @@ export interface PatternHuntProposal {
     };
   };
   rationale: string;
+  /** Analyst triage notes accumulated across transitions (kept separate from
+   * the generated `rationale` so that text stays pristine). */
+  triage_rationale: string;
   state: ProposalState;
   outcome: ProposalOutcome | null;
   created_at: string;

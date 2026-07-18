@@ -32,6 +32,7 @@ function proposal(
       },
     },
     rationale: `Test rationale for ${overrides.id}`,
+    triage_rationale: "",
     state: "proposed",
     outcome: null,
     created_at: "2026-06-01T12:00:00Z",
