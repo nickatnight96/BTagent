@@ -123,6 +123,15 @@ export interface EmailHuntRunResponse {
   counts_by_severity: Record<string, number>;
 }
 
+/** Response from POST /hunt/deception/run — a deception-hunt run summary. */
+export interface DeceptionHuntRunResponse {
+  total_incidents: number;
+  active_intruder_count: number;
+  findings_emitted: number;
+  findings_created: number;
+  counts_by_severity: Record<string, number>;
+}
+
 export interface CreateSuppressionRequest {
   name: string;
   reason: string;
