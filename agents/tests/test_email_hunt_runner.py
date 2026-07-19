@@ -21,8 +21,10 @@ from btagent_agents.mcp.servers.mimecast_mcp import MimecastMCPServer
 from btagent_agents.mcp.servers.proofpoint_mcp import ProofpointMCPServer
 from btagent_agents.plugins.triage.email_hunt import (
     EmailHuntRunResult,
+    gather_email_envelopes,
     run_email_hunt,
     run_email_hunt_from_envelopes,
+    run_email_hunt_over_connectors,
 )
 
 # Wide window so every connector's fixtures (dated mid-2026) fall inside it.
@@ -162,3 +164,74 @@ def test_run_email_hunt_none_args_are_safe(bad: object) -> None:
     # Defensive: the low-level entry tolerates None for any stream.
     result = run_email_hunt(None, None, None)
     assert result.total_incidents == 0
+
+
+# --------------------------------------------------------------------------- #
+# Live connector gathering
+# --------------------------------------------------------------------------- #
+
+
+class _BrokenServer:
+    """A stand-in email connector whose message search always raises."""
+
+    server_id = "defender_o365"
+
+    async def o365_email_events_search(self, *a, **k):
+        raise RuntimeError("connector unavailable")
+
+    async def o365_list_quarantine(self, *a, **k):
+        return {"messages": []}
+
+
+class _UnknownServer:
+    server_id = "totally_unknown_connector"
+
+
+class TestGatherEmailEnvelopes:
+    async def test_gathers_streams_across_connectors(self) -> None:
+        servers = [
+            DefenderO365MCPServer(mock_mode=True),
+            ProofpointMCPServer(mock_mode=True),
+            MimecastMCPServer(mock_mode=True),
+        ]
+        envelopes = await gather_email_envelopes(servers, start=_WINDOW[0], end=_WINDOW[1])
+        # o365: messages+quarantine (2); pfpt: messages+clicks (2); mimecast:
+        # messages+clicks+quarantine (3) = 7 envelopes.
+        assert len(envelopes) == 7
+        # Each envelope carries exactly one recognised payload key.
+        keyed = [e for e in envelopes if {"events", "clicks", "messages"} & set(e)]
+        assert len(keyed) == 7
+
+    async def test_unknown_connector_skipped(self) -> None:
+        envelopes = await gather_email_envelopes(
+            [_UnknownServer()], start=_WINDOW[0], end=_WINDOW[1]
+        )
+        assert envelopes == []
+
+    async def test_failing_tool_call_is_tolerated(self) -> None:
+        # The broken message search is skipped; the working quarantine call still
+        # contributes its (empty) envelope.
+        envelopes = await gather_email_envelopes(
+            [_BrokenServer()], start=_WINDOW[0], end=_WINDOW[1]
+        )
+        assert all("events" not in e for e in envelopes)
+        assert any("messages" in e for e in envelopes)
+
+
+class TestRunOverConnectors:
+    async def test_end_to_end_over_all_connectors(self) -> None:
+        servers = [
+            DefenderO365MCPServer(mock_mode=True),
+            ProofpointMCPServer(mock_mode=True),
+            MimecastMCPServer(mock_mode=True),
+        ]
+        result = await run_email_hunt_over_connectors(servers, start=_WINDOW[0], end=_WINDOW[1])
+        assert isinstance(result, EmailHuntRunResult)
+        assert result.findings
+        assert all(f.domain.value == "email" for f in result.findings)
+        assert sum(result.counts_by_severity.values()) == len(result.findings)
+
+    async def test_no_servers_is_empty(self) -> None:
+        result = await run_email_hunt_over_connectors([], start=_WINDOW[0], end=_WINDOW[1])
+        assert result.findings == []
+        assert result.total_incidents == 0
