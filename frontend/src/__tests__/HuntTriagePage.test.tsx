@@ -21,6 +21,7 @@ const mockPromoteFindings = vi.fn();
 const mockPromoteCluster = vi.fn();
 const mockListSuppressions = vi.fn();
 const mockCreateSuppression = vi.fn();
+const mockRunEmailHunt = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
   listFindings: (...a: unknown[]) => mockListFindings(...a),
@@ -30,6 +31,7 @@ vi.mock("@/api/hunt", () => ({
   promoteCluster: (...a: unknown[]) => mockPromoteCluster(...a),
   listSuppressions: (...a: unknown[]) => mockListSuppressions(...a),
   createSuppression: (...a: unknown[]) => mockCreateSuppression(...a),
+  runEmailHunt: (...a: unknown[]) => mockRunEmailHunt(...a),
   getFinding: vi.fn(),
 }));
 
@@ -383,5 +385,34 @@ describe("HuntTriagePage", () => {
     renderPage(<HuntTriagePage />);
     const err = await screen.findByTestId("hunt-triage-error");
     expect(err).toHaveTextContent("Network failure");
+  });
+
+  // ---- Run email hunt (email vertical, slice 6) ----
+
+  it("runs an email hunt and refreshes the inbox", async () => {
+    mockListFindings.mockResolvedValue(EMPTY_INBOX);
+    mockRunEmailHunt.mockResolvedValue({
+      window: { start: "s", end: "e" },
+      total_incidents: 2,
+      active_incident_count: 1,
+      findings_emitted: 2,
+      findings_created: 2,
+      counts_by_severity: { critical: 1, high: 1, medium: 0, low: 0, info: 0 },
+    });
+    renderPage(<HuntTriagePage />);
+
+    const runBtn = await screen.findByTestId("hunt-run-email");
+    // The initial mount fetch has already run; count refreshes after the click.
+    const beforeFetches = mockListFindings.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.click(runBtn);
+    });
+
+    await waitFor(() => expect(mockRunEmailHunt).toHaveBeenCalledTimes(1));
+    // The inbox was re-fetched to surface the newly-landed findings.
+    await waitFor(() =>
+      expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
+    );
   });
 });

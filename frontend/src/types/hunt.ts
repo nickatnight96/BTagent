@@ -113,6 +113,16 @@ export interface SuppressionListResponse {
   total: number;
 }
 
+/** Response from POST /hunt/email/run — an email-hunt run summary. */
+export interface EmailHuntRunResponse {
+  window: { start: string; end: string };
+  total_incidents: number;
+  active_incident_count: number;
+  findings_emitted: number;
+  findings_created: number;
+  counts_by_severity: Record<string, number>;
+}
+
 export interface CreateSuppressionRequest {
   name: string;
   reason: string;
