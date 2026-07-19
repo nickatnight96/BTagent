@@ -325,7 +325,20 @@ class Settings(BaseSettings):
         """
         if self.hunt_schedule_enabled is None:
             self.hunt_schedule_enabled = self.mock_connectors
+        if self.email_hunt_schedule_enabled is None:
+            self.email_hunt_schedule_enabled = self.mock_connectors
         return self
+
+    # Email-hunt scheduler (email vertical). Same derive-from-mocks gate as
+    # ``hunt_schedule_enabled``: the email connectors are mock-first, so with
+    # mocks off the live gather refuses per-tool and lands zero findings — the
+    # gate stays off to avoid a spammy empty tick until the connectors are
+    # live-wired. An operator with live email connectors can force it on via
+    # ``BTAGENT_EMAIL_HUNT_SCHEDULE_ENABLED=true``. Left ``None`` so the
+    # post-init validator distinguishes "unset" (derive) from an explicit flag.
+    email_hunt_schedule_enabled: bool | None = None
+    email_hunt_scan_interval_hours: int = 6
+    email_hunt_lookback_hours: int = 24
 
     # Cross-Investigation Pattern Hunter (#120). The weekly scan walks the
     # closed-investigation pgvector corpus and surfaces cross-case weak-signal

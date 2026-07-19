@@ -144,3 +144,74 @@ async def test_scheduled_cron_skips_and_warns_when_disabled(monkeypatch, caplog)
         assert "BTAGENT_HUNT_SCHEDULE_ENABLED=true" in warnings[0].message
     finally:
         get_settings.cache_clear()
+
+
+# --- email-hunt scheduled scan (email vertical, slice 7) ---
+
+
+async def test_email_hunt_scan_skips_and_warns_when_disabled(monkeypatch, caplog):
+    """With email_hunt_schedule_enabled false (mocks off) the cron no-ops with
+    one warning and never touches the connectors (which would refuse live)."""
+    import logging
+
+    from btagent_backend.config import get_settings
+    from btagent_backend.scheduler import jobs
+
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "false")
+    get_settings.cache_clear()
+    try:
+        with caplog.at_level(logging.WARNING, logger="btagent.scheduler.jobs"):
+            result = await jobs.scheduled_email_hunt_scan({})
+        assert result == {
+            "total_incidents": 0,
+            "findings_created": 0,
+            "findings_emitted": 0,
+        }
+        warnings = [r for r in caplog.records if "email hunt schedule disabled" in r.message]
+        assert len(warnings) == 1
+        assert "BTAGENT_EMAIL_HUNT_SCHEDULE_ENABLED=true" in warnings[0].message
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_email_hunt_scan_lands_findings_when_enabled(monkeypatch, caplog, db_session):
+    """With mocks on, the scan gathers the mock email connectors and lands
+    ``email``-domain findings in the inbox."""
+    from contextlib import asynccontextmanager
+
+    from sqlalchemy import select
+
+    from btagent_backend.config import get_settings
+    from btagent_backend.db.models_hunt import HuntFindingRow
+    from btagent_backend.scheduler import jobs
+
+    @asynccontextmanager
+    async def _session_cm():
+        yield db_session
+
+    monkeypatch.setattr(jobs, "async_session_factory", _session_cm)
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    # A wide lookback so the connectors' mid-2026 fixtures fall in the window.
+    monkeypatch.setenv("BTAGENT_EMAIL_HUNT_LOOKBACK_HOURS", "12000")
+    get_settings.cache_clear()
+    try:
+        result = await jobs.scheduled_email_hunt_scan({})
+        assert result["findings_created"] >= 1
+        assert result["findings_emitted"] == result["findings_created"]
+
+        rows = (
+            (
+                await db_session.execute(
+                    select(HuntFindingRow).where(
+                        HuntFindingRow.org_id == DEFAULT_ORG_ID,
+                        HuntFindingRow.domain == "email",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert rows
+        assert all(r.source == "email_security" for r in rows)
+    finally:
+        get_settings.cache_clear()
