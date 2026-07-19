@@ -9,6 +9,7 @@ and over-broad-suppression invariants stay in one place.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 
 from btagent_shared.types.enums import Severity
 from btagent_shared.types.hunt import HuntDomain, HuntFindingState, SuppressionState
@@ -28,6 +29,7 @@ from btagent_shared.types.hunt_finding import (
     SuppressionRule,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -37,7 +39,7 @@ from btagent_backend.db.models_hunt import (
     HuntPackRunRow,
     SuppressionRuleRow,
 )
-from btagent_backend.services import hunt_pack_run_service
+from btagent_backend.services import email_hunt_run_service, hunt_pack_run_service
 from btagent_backend.services import hunt_triage_service as svc
 
 logger = logging.getLogger("btagent.api.hunt_findings")
@@ -156,6 +158,59 @@ async def record_finding(
     return svc.row_to_finding(row)
 
 
+class EmailHuntRunRequest(BaseModel):
+    """Trigger an email hunt over a time window.
+
+    Supply ``lookback_hours`` (default 24h back from now) or an explicit
+    ``start`` / ``end`` ISO-8601 pair; the explicit pair wins when both are
+    given.
+    """
+
+    lookback_hours: int = Field(default=24, ge=1, le=8760)
+    start: str | None = Field(
+        default=None, description="ISO-8601 window start (overrides lookback)"
+    )
+    end: str | None = Field(default=None, description="ISO-8601 window end (overrides lookback)")
+
+
+class EmailHuntRunResponse(BaseModel):
+    window: dict[str, str]
+    total_incidents: int
+    active_incident_count: int
+    findings_emitted: int
+    findings_created: int
+    counts_by_severity: dict[str, int]
+
+
+@router.post("/email/run", response_model=EmailHuntRunResponse, status_code=201)
+async def run_email_hunt(
+    body: EmailHuntRunRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Run an email hunt across the email connectors and land its findings.
+
+    Gathers Defender for O365 / Proofpoint / Mimecast telemetry over the
+    window, correlates it into phishing incidents, maps those into
+    ``email``-domain hunt findings, and persists them into the triage inbox
+    (clustered + suppression-checked on insert). Mock-first: returns the
+    deterministic fixture-driven findings until the connectors are live-wired.
+    """
+    user.require_permission("hunt:create")
+
+    if body.start and body.end:
+        start, end = body.start, body.end
+    else:
+        now = datetime.now(UTC)
+        start = (now - timedelta(hours=body.lookback_hours)).isoformat()
+        end = now.isoformat()
+
+    summary = await email_hunt_run_service.run_email_hunt_and_ingest(
+        db, org_id=user.org_id, start=start, end=end
+    )
+    return EmailHuntRunResponse(**{k: summary[k] for k in EmailHuntRunResponse.model_fields})
+
+
 @router.get("/findings", response_model=HuntFindingClusterListResponse)
 async def list_findings(
     include_suppressed: bool = Query(False),
@@ -171,7 +226,7 @@ async def list_findings(
     ),
     domain: str | None = Query(
         None,
-        pattern="^(sigma|behavioral|identity|cloud|cross_investigation|agentic)$",
+        pattern="^(sigma|behavioral|identity|cloud|cross_investigation|agentic|email)$",
         description=(
             "Optional ``HuntDomain`` filter applied server-side before pagination. "
             "Used by the per-domain hunt views (/cloud-hunts, /identity-hunts, …) "

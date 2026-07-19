@@ -69,6 +69,10 @@ async def test_active_suppression_marks_email_findings_suppressed(db_session):
     # Suppress the phishing technique (every email finding carries T1566), then
     # run: the findings still land as rows but in the ``suppressed`` state
     # (suppression flags on insert, it does not drop rows).
+    # This test verifies suppression *flags* findings, not the over-broad
+    # guard. Since the in-memory DB is shared across tests, other email
+    # findings can make a T1566/email_security match read as over-broad, so
+    # acknowledge it as admin to keep the test order-independent.
     await hunt_triage_service.create_suppression(
         db_session,
         org_id=DEFAULT_ORG_ID,
@@ -76,6 +80,8 @@ async def test_active_suppression_marks_email_findings_suppressed(db_session):
         reason="test — mute the phishing technique",
         match=SuppressionMatch(source=HuntSource.EMAIL_SECURITY, technique_ids=["T1566"]),
         created_by=None,
+        acknowledge_overbroad=True,
+        caller_role="admin",
     )
     summary = await svc.run_email_hunt_and_ingest(
         db_session, org_id=DEFAULT_ORG_ID, start=_START, end=_END
