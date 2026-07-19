@@ -140,6 +140,49 @@ async def scheduled_email_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+async def scheduled_deception_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
+    """Run a deception hunt over the Canary connector and land findings.
+
+    The cron entry point that gives the deception-hunt vertical a hands-free
+    cadence: gathers Thinkst Canary incidents, correlates them into ranked
+    deception incidents, maps those into ``deception``-domain findings, and
+    persists them (clustered + suppression-checked on insert). Mirrors
+    :func:`scheduled_email_hunt_scan` but has no lookback window — the Canary
+    connector exposes no time filter.
+
+    Gate: ``deception_hunt_schedule_enabled`` derives from ``mock_connectors``
+    — the Canary connector is mock-first, so with mocks off the live gather
+    refuses and would land zero findings. One warning per tick surfaces the
+    misconfig rather than spamming. Org scope: v1 ingests into the default org.
+    The thin shell owns the single commit; the logic is in
+    :mod:`deception_hunt_run_service`.
+    """
+    settings = get_settings()
+
+    if not settings.deception_hunt_schedule_enabled:
+        logger.warning(
+            "deception hunt schedule disabled: live Canary connector not configured; "
+            "set BTAGENT_DECEPTION_HUNT_SCHEDULE_ENABLED=true to override"
+        )
+        return {"total_incidents": 0, "findings_created": 0, "findings_emitted": 0}
+
+    from btagent_backend.services import deception_hunt_run_service
+
+    async with async_session_factory() as session:
+        summary = await deception_hunt_run_service.run_deception_hunt_and_ingest(
+            session, org_id=DEFAULT_ORG_ID
+        )
+        await session.commit()
+
+    counts = {
+        "total_incidents": int(summary["total_incidents"]),
+        "findings_created": int(summary["findings_created"]),
+        "findings_emitted": int(summary["findings_emitted"]),
+    }
+    logger.info("scheduled_deception_hunt_scan: %s", counts)
+    return counts
+
+
 async def run_hunt_pack(
     ctx: dict[str, Any],
     *,
