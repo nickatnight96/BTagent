@@ -3,6 +3,7 @@
 import api from "./client";
 import type {
   CreateSuppressionRequest,
+  EmailHuntRunResponse,
   HuntFinding,
   HuntFindingClusterListResponse,
   PromoteClusterRequest,
@@ -67,6 +68,13 @@ export async function createSuppression(
   body: CreateSuppressionRequest,
 ): Promise<SuppressionRule> {
   return api.post<SuppressionRule>(`${BASE}/suppressions`, body);
+}
+
+/** Run an email hunt across the email connectors; findings land in the inbox. */
+export async function runEmailHunt(
+  body?: { lookback_hours?: number; start?: string; end?: string },
+): Promise<EmailHuntRunResponse> {
+  return api.post<EmailHuntRunResponse>(`${BASE}/email/run`, body ?? {});
 }
 
 /** Bulk-suppress a cluster (one rule covering the cluster's pattern). */

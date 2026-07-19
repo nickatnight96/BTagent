@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Mail,
 } from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
 import { UserRole } from "@/types/config";
@@ -18,6 +19,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
+import { runEmailHunt } from "@/api/hunt";
 import { SuppressModal, type SuppressModalTarget } from "./SuppressModal";
 import { PromoteModal, type PromoteModalTarget } from "./PromoteModal";
 import { EventType } from "@/types/events";
@@ -356,6 +358,19 @@ export function HuntTriagePage() {
   const [suppressTarget, setSuppressTarget] = useState<SuppressModalTarget | null>(null);
   const [promoteTarget, setPromoteTarget] = useState<PromoteModalTarget | null>(null);
 
+  // ----- Run an email hunt on demand (email vertical) -----
+  const [isRunningEmail, setIsRunningEmail] = useState(false);
+  const handleRunEmailHunt = useCallback(async () => {
+    setIsRunningEmail(true);
+    try {
+      await runEmailHunt();
+      // New email findings clustered on insert — refresh to surface them.
+      await fetchInbox();
+    } finally {
+      setIsRunningEmail(false);
+    }
+  }, [fetchInbox]);
+
   // ----- Initial load + re-fetch when tab changes -----
   // A single effect keyed on `activeTab` covers both cases: mounting triggers it
   // with the initial tab value, and switching tabs triggers it again.
@@ -411,20 +426,37 @@ export function HuntTriagePage() {
             </p>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void fetchInbox()}
-          disabled={isLoading}
-          data-testid="hunt-refresh"
-        >
-          {isLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4" />
-          )}
-          <span className="ml-2 hidden sm:inline">Refresh</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void handleRunEmailHunt()}
+            disabled={isRunningEmail}
+            data-testid="hunt-run-email"
+            title="Gather email-security telemetry and land phishing findings in the inbox"
+          >
+            {isRunningEmail ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Mail className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Run email hunt</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void fetchInbox()}
+            disabled={isLoading}
+            data-testid="hunt-refresh"
+          >
+            {isLoading ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Refresh</span>
+          </Button>
+        </div>
       </div>
 
       {/* ---- State filter tabs ---- */}
