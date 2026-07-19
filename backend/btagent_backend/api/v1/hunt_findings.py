@@ -39,7 +39,11 @@ from btagent_backend.db.models_hunt import (
     HuntPackRunRow,
     SuppressionRuleRow,
 )
-from btagent_backend.services import email_hunt_run_service, hunt_pack_run_service
+from btagent_backend.services import (
+    deception_hunt_run_service,
+    email_hunt_run_service,
+    hunt_pack_run_service,
+)
 from btagent_backend.services import hunt_triage_service as svc
 
 logger = logging.getLogger("btagent.api.hunt_findings")
@@ -211,6 +215,36 @@ async def run_email_hunt(
     return EmailHuntRunResponse(**{k: summary[k] for k in EmailHuntRunResponse.model_fields})
 
 
+class DeceptionHuntRunResponse(BaseModel):
+    total_incidents: int
+    active_intruder_count: int
+    findings_emitted: int
+    findings_created: int
+    counts_by_severity: dict[str, int]
+
+
+@router.post("/deception/run", response_model=DeceptionHuntRunResponse, status_code=201)
+async def run_deception_hunt(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Run a deception hunt over the Thinkst Canary connector and land findings.
+
+    Gathers canary incidents, correlates them into ranked deception incidents,
+    maps those into ``deception``-domain hunt findings, and persists them into
+    the triage inbox (clustered + suppression-checked on insert). Deception is
+    the fleet's highest-fidelity signal — every canary trip is a near-zero-
+    false-positive intruder signal. Mock-first until the connector is
+    live-wired.
+    """
+    user.require_permission("hunt:create")
+
+    summary = await deception_hunt_run_service.run_deception_hunt_and_ingest(
+        db, org_id=user.org_id
+    )
+    return DeceptionHuntRunResponse(**{k: summary[k] for k in DeceptionHuntRunResponse.model_fields})
+
+
 @router.get("/findings", response_model=HuntFindingClusterListResponse)
 async def list_findings(
     include_suppressed: bool = Query(False),
@@ -226,7 +260,7 @@ async def list_findings(
     ),
     domain: str | None = Query(
         None,
-        pattern="^(sigma|behavioral|identity|cloud|cross_investigation|agentic|email)$",
+        pattern="^(sigma|behavioral|identity|cloud|cross_investigation|agentic|email|deception)$",
         description=(
             "Optional ``HuntDomain`` filter applied server-side before pagination. "
             "Used by the per-domain hunt views (/cloud-hunts, /identity-hunts, …) "
