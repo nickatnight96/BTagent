@@ -13,6 +13,7 @@ yet (no per-job Redis state), but keep the signature so jobs can later read
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from btagent_backend.config import get_settings
@@ -90,6 +91,52 @@ async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
         "failed_packs": sum(1 for r in run_rows if r.status == "failed"),
     }
     logger.info("scheduled_hunt_pack_run: %s", counts)
+    return counts
+
+
+async def scheduled_email_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
+    """Run an email hunt over the email connectors and land findings (email vertical).
+
+    The cron entry point that gives the email-hunt vertical a hands-free
+    cadence: gathers Defender for O365 / Proofpoint / Mimecast telemetry over
+    the configured lookback window, correlates it into phishing incidents, maps
+    those into ``email``-domain findings, and persists them (clustered +
+    suppression-checked on insert). Mirrors :func:`scheduled_hunt_pack_run`.
+
+    Gate: ``email_hunt_schedule_enabled`` derives from ``mock_connectors`` — the
+    email connectors are mock-first, so with mocks off the live gather refuses
+    per-tool and would land zero findings. One warning per tick surfaces the
+    misconfig rather than spamming. Org scope: v1 ingests into the default org.
+    The thin shell owns the single commit; the logic is in
+    :mod:`email_hunt_run_service`.
+    """
+    settings = get_settings()
+
+    if not settings.email_hunt_schedule_enabled:
+        logger.warning(
+            "email hunt schedule disabled: live email connectors not configured; "
+            "set BTAGENT_EMAIL_HUNT_SCHEDULE_ENABLED=true to override"
+        )
+        return {"total_incidents": 0, "findings_created": 0, "findings_emitted": 0}
+
+    from btagent_backend.services import email_hunt_run_service
+
+    now = datetime.now(UTC)
+    start = (now - timedelta(hours=settings.email_hunt_lookback_hours)).isoformat()
+    end = now.isoformat()
+
+    async with async_session_factory() as session:
+        summary = await email_hunt_run_service.run_email_hunt_and_ingest(
+            session, org_id=DEFAULT_ORG_ID, start=start, end=end
+        )
+        await session.commit()
+
+    counts = {
+        "total_incidents": int(summary["total_incidents"]),
+        "findings_created": int(summary["findings_created"]),
+        "findings_emitted": int(summary["findings_emitted"]),
+    }
+    logger.info("scheduled_email_hunt_scan: %s", counts)
     return counts
 
 
