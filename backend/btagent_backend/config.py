@@ -327,6 +327,8 @@ class Settings(BaseSettings):
             self.hunt_schedule_enabled = self.mock_connectors
         if self.email_hunt_schedule_enabled is None:
             self.email_hunt_schedule_enabled = self.mock_connectors
+        if self.deception_hunt_schedule_enabled is None:
+            self.deception_hunt_schedule_enabled = self.mock_connectors
         return self
 
     # Email-hunt scheduler (email vertical). Same derive-from-mocks gate as
@@ -339,6 +341,17 @@ class Settings(BaseSettings):
     email_hunt_schedule_enabled: bool | None = None
     email_hunt_scan_interval_hours: int = 6
     email_hunt_lookback_hours: int = 24
+
+    # Deception-hunt scheduler (deception vertical). Same derive-from-mocks gate
+    # as the email scheduler: the Canary connector is mock-first, so with mocks
+    # off the live gather refuses and lands zero findings — the gate stays off to
+    # avoid a spammy empty tick until the connector is live-wired. An operator
+    # with a live Canary console can force it on via
+    # ``BTAGENT_DECEPTION_HUNT_SCHEDULE_ENABLED=true``. Left ``None`` so the
+    # post-init validator distinguishes "unset" (derive) from an explicit flag.
+    # No lookback: the Canary connector has no time-window filter.
+    deception_hunt_schedule_enabled: bool | None = None
+    deception_hunt_scan_interval_hours: int = 6
 
     # Cross-Investigation Pattern Hunter (#120). The weekly scan walks the
     # closed-investigation pgvector corpus and surfaces cross-case weak-signal
