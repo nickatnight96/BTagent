@@ -239,10 +239,10 @@ async def run_deception_hunt(
     """
     user.require_permission("hunt:create")
 
-    summary = await deception_hunt_run_service.run_deception_hunt_and_ingest(
-        db, org_id=user.org_id
+    summary = await deception_hunt_run_service.run_deception_hunt_and_ingest(db, org_id=user.org_id)
+    return DeceptionHuntRunResponse(
+        **{k: summary[k] for k in DeceptionHuntRunResponse.model_fields}
     )
-    return DeceptionHuntRunResponse(**{k: summary[k] for k in DeceptionHuntRunResponse.model_fields})
 
 
 @router.get("/findings", response_model=HuntFindingClusterListResponse)
