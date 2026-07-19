@@ -22,6 +22,7 @@ const mockPromoteCluster = vi.fn();
 const mockListSuppressions = vi.fn();
 const mockCreateSuppression = vi.fn();
 const mockRunEmailHunt = vi.fn();
+const mockRunDeceptionHunt = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
   listFindings: (...a: unknown[]) => mockListFindings(...a),
@@ -32,6 +33,7 @@ vi.mock("@/api/hunt", () => ({
   listSuppressions: (...a: unknown[]) => mockListSuppressions(...a),
   createSuppression: (...a: unknown[]) => mockCreateSuppression(...a),
   runEmailHunt: (...a: unknown[]) => mockRunEmailHunt(...a),
+  runDeceptionHunt: (...a: unknown[]) => mockRunDeceptionHunt(...a),
   getFinding: vi.fn(),
 }));
 
@@ -411,6 +413,32 @@ describe("HuntTriagePage", () => {
 
     await waitFor(() => expect(mockRunEmailHunt).toHaveBeenCalledTimes(1));
     // The inbox was re-fetched to surface the newly-landed findings.
+    await waitFor(() =>
+      expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
+    );
+  });
+
+  // ---- Run deception hunt (deception vertical, slice 4) ----
+
+  it("runs a deception hunt and refreshes the inbox", async () => {
+    mockListFindings.mockResolvedValue(EMPTY_INBOX);
+    mockRunDeceptionHunt.mockResolvedValue({
+      total_incidents: 3,
+      active_intruder_count: 1,
+      findings_emitted: 3,
+      findings_created: 3,
+      counts_by_severity: { critical: 2, high: 0, medium: 1, low: 0, info: 0 },
+    });
+    renderPage(<HuntTriagePage />);
+
+    const runBtn = await screen.findByTestId("hunt-run-deception");
+    const beforeFetches = mockListFindings.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.click(runBtn);
+    });
+
+    await waitFor(() => expect(mockRunDeceptionHunt).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
     );

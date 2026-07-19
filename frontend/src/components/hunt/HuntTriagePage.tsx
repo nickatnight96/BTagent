@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Loader2,
   Mail,
+  Bird,
 } from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
 import { UserRole } from "@/types/config";
@@ -19,7 +20,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
-import { runEmailHunt } from "@/api/hunt";
+import { runEmailHunt, runDeceptionHunt } from "@/api/hunt";
 import { SuppressModal, type SuppressModalTarget } from "./SuppressModal";
 import { PromoteModal, type PromoteModalTarget } from "./PromoteModal";
 import { EventType } from "@/types/events";
@@ -371,6 +372,19 @@ export function HuntTriagePage() {
     }
   }, [fetchInbox]);
 
+  // ----- Run a deception hunt on demand (deception vertical) -----
+  const [isRunningDeception, setIsRunningDeception] = useState(false);
+  const handleRunDeceptionHunt = useCallback(async () => {
+    setIsRunningDeception(true);
+    try {
+      await runDeceptionHunt();
+      // New deception findings clustered on insert — refresh to surface them.
+      await fetchInbox();
+    } finally {
+      setIsRunningDeception(false);
+    }
+  }, [fetchInbox]);
+
   // ----- Initial load + re-fetch when tab changes -----
   // A single effect keyed on `activeTab` covers both cases: mounting triggers it
   // with the initial tab value, and switching tabs triggers it again.
@@ -441,6 +455,21 @@ export function HuntTriagePage() {
               <Mail className="w-4 h-4" />
             )}
             <span className="ml-2 hidden sm:inline">Run email hunt</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void handleRunDeceptionHunt()}
+            disabled={isRunningDeception}
+            data-testid="hunt-run-deception"
+            title="Gather Thinkst Canary telemetry and land deception findings in the inbox"
+          >
+            {isRunningDeception ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Bird className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Run deception hunt</span>
           </Button>
           <Button
             variant="ghost"

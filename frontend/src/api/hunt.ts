@@ -3,6 +3,7 @@
 import api from "./client";
 import type {
   CreateSuppressionRequest,
+  DeceptionHuntRunResponse,
   EmailHuntRunResponse,
   HuntFinding,
   HuntFindingClusterListResponse,
@@ -75,6 +76,11 @@ export async function runEmailHunt(
   body?: { lookback_hours?: number; start?: string; end?: string },
 ): Promise<EmailHuntRunResponse> {
   return api.post<EmailHuntRunResponse>(`${BASE}/email/run`, body ?? {});
+}
+
+/** Run a deception hunt over the Canary connector; findings land in the inbox. */
+export async function runDeceptionHunt(): Promise<DeceptionHuntRunResponse> {
+  return api.post<DeceptionHuntRunResponse>(`${BASE}/deception/run`, {});
 }
 
 /** Bulk-suppress a cluster (one rule covering the cluster's pattern). */
