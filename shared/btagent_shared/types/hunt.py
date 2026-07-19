@@ -362,6 +362,7 @@ class HuntDomain(StrEnum):
     AGENTIC = "agentic"
     EMAIL = "email"
     DECEPTION = "deception"
+    NDR = "ndr"
 
 
 class HuntSource(StrEnum):
@@ -380,6 +381,7 @@ class HuntSource(StrEnum):
     AGENTIC = "agentic"
     EMAIL_SECURITY = "email_security"
     DECEPTION = "deception"
+    NDR = "ndr"
     MANUAL = "manual"
 
 
