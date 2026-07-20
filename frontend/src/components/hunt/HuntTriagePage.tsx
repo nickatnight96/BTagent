@@ -13,6 +13,7 @@ import {
   Radar,
   Zap,
   Clock,
+  Bot,
 } from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
 import { UserRole } from "@/types/config";
@@ -27,6 +28,7 @@ import {
   runEmailHunt,
   runDeceptionHunt,
   runNdrHunt,
+  runAgenticHunt,
   runAllHunts,
   listHuntVerticals,
 } from "@/api/hunt";
@@ -407,6 +409,19 @@ export function HuntTriagePage() {
     }
   }, [fetchInbox]);
 
+  // ----- Run an agentic-misuse hunt on demand (agentic vertical) -----
+  const [isRunningAgentic, setIsRunningAgentic] = useState(false);
+  const handleRunAgenticHunt = useCallback(async () => {
+    setIsRunningAgentic(true);
+    try {
+      await runAgenticHunt();
+      // New agentic findings clustered on insert — refresh to surface them.
+      await fetchInbox();
+    } finally {
+      setIsRunningAgentic(false);
+    }
+  }, [fetchInbox]);
+
   // ----- Run every vertical in one sweep (email + deception + NDR) -----
   const [isRunningAll, setIsRunningAll] = useState(false);
   const handleRunAllHunts = useCallback(async () => {
@@ -516,7 +531,13 @@ export function HuntTriagePage() {
             variant="ghost"
             size="sm"
             onClick={() => void handleRunAllHunts()}
-            disabled={isRunningAll || isRunningEmail || isRunningDeception || isRunningNdr}
+            disabled={
+              isRunningAll ||
+              isRunningEmail ||
+              isRunningDeception ||
+              isRunningNdr ||
+              isRunningAgentic
+            }
             data-testid="hunt-run-all"
             title="Run every findings vertical (email + deception + NDR) in one sweep"
           >
@@ -574,6 +595,22 @@ export function HuntTriagePage() {
             )}
             <span className="ml-2 hidden sm:inline">Run NDR hunt</span>
             {scheduleBadge("ndr")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void handleRunAgenticHunt()}
+            disabled={isRunningAgentic}
+            data-testid="hunt-run-agentic"
+            title="Scan agentic-AI telemetry for prompt injection, shadow agents, and identity abuse"
+          >
+            {isRunningAgentic ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Bot className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Run agentic hunt</span>
+            {scheduleBadge("agentic")}
           </Button>
           <Button
             variant="ghost"

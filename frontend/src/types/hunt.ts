@@ -141,6 +141,16 @@ export interface NdrHuntRunResponse {
   counts_by_severity: Record<string, number>;
 }
 
+/** Response from POST /hunt/agentic/run — an agentic-misuse hunt run summary. */
+export interface AgenticHuntRunResponse {
+  total_events: number;
+  total_identities: number;
+  total_workloads: number;
+  findings_emitted: number;
+  findings_created: number;
+  counts_by_severity: Record<string, number>;
+}
+
 /** One vertical's slice of a combined all-hunts sweep. */
 export interface VerticalRunSummary {
   findings_emitted: number;
