@@ -43,6 +43,7 @@ from btagent_backend.services import (
     deception_hunt_run_service,
     email_hunt_run_service,
     hunt_pack_run_service,
+    ndr_hunt_run_service,
 )
 from btagent_backend.services import hunt_triage_service as svc
 
@@ -245,6 +246,32 @@ async def run_deception_hunt(
     )
 
 
+class NdrHuntRunResponse(BaseModel):
+    total_hosts: int
+    campaign_count: int
+    findings_emitted: int
+    findings_created: int
+    counts_by_severity: dict[str, int]
+
+
+@router.post("/ndr/run", response_model=NdrHuntRunResponse, status_code=201)
+async def run_ndr_hunt(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Run an NDR hunt over the Vectra AI connector and land findings.
+
+    Gathers Vectra network detections, correlates them into ranked per-host
+    kill-chain campaign rollups, maps those into ``ndr``-domain hunt findings,
+    and persists them into the triage inbox (clustered + suppression-checked on
+    insert). Mock-first until the connector is live-wired.
+    """
+    user.require_permission("hunt:create")
+
+    summary = await ndr_hunt_run_service.run_ndr_hunt_and_ingest(db, org_id=user.org_id)
+    return NdrHuntRunResponse(**{k: summary[k] for k in NdrHuntRunResponse.model_fields})
+
+
 @router.get("/findings", response_model=HuntFindingClusterListResponse)
 async def list_findings(
     include_suppressed: bool = Query(False),
@@ -260,7 +287,7 @@ async def list_findings(
     ),
     domain: str | None = Query(
         None,
-        pattern="^(sigma|behavioral|identity|cloud|cross_investigation|agentic|email|deception)$",
+        pattern="^(sigma|behavioral|identity|cloud|cross_investigation|agentic|email|deception|ndr)$",
         description=(
             "Optional ``HuntDomain`` filter applied server-side before pagination. "
             "Used by the per-domain hunt views (/cloud-hunts, /identity-hunts, …) "
