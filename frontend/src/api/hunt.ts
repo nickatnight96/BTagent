@@ -6,6 +6,7 @@ import type {
   CreateSuppressionRequest,
   DeceptionHuntRunResponse,
   EmailHuntRunResponse,
+  HuntVerticalListResponse,
   NdrHuntRunResponse,
   HuntFinding,
   HuntFindingClusterListResponse,
@@ -93,6 +94,11 @@ export async function runNdrHunt(): Promise<NdrHuntRunResponse> {
 /** Run every findings vertical (email + deception + NDR) in one sweep. */
 export async function runAllHunts(): Promise<AllHuntsRunResponse> {
   return api.post<AllHuntsRunResponse>(`${BASE}/all/run`, {});
+}
+
+/** The manual-runnable findings-vertical catalog + their schedule status. */
+export async function listHuntVerticals(): Promise<HuntVerticalListResponse> {
+  return api.get<HuntVerticalListResponse>(`${BASE}/verticals`);
 }
 
 /** Bulk-suppress a cluster (one rule covering the cluster's pattern). */
