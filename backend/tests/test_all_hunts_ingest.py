@@ -63,10 +63,16 @@ async def test_run_all_created_matches_persisted_rows(db_session):
     summary = await svc.run_all_hunts_and_ingest(
         db_session, org_id=DEFAULT_ORG_ID, start=_WIDE["start"], end=_WIDE["end"]
     )
+    # Scope the count to the sweep's own domains: other findings-verticals
+    # (e.g. the agentic hunt) can leak committed rows into the shared org from
+    # earlier test files, and the sweep never touches those domains.
     rows = (
         (
             await db_session.execute(
-                select(HuntFindingRow).where(HuntFindingRow.org_id == DEFAULT_ORG_ID)
+                select(HuntFindingRow).where(
+                    HuntFindingRow.org_id == DEFAULT_ORG_ID,
+                    HuntFindingRow.domain.in_(("email", "deception", "ndr")),
+                )
             )
         )
         .scalars()
