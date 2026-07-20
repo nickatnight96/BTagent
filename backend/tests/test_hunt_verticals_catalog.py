@@ -20,12 +20,19 @@ def test_catalog_lists_every_vertical():
     catalog = svc.list_hunt_verticals()
     assert [v["name"] for v in catalog] == list(svc.VERTICAL_NAMES)
     by_name = {v["name"]: v for v in catalog}
-    assert set(by_name) == {"email", "deception", "ndr"}
+    assert set(by_name) == {"email", "deception", "ndr", "agentic"}
     for name, v in by_name.items():
         assert v["run_route"] == f"/hunt/{name}/run"
         assert v["domain"] == name
         assert isinstance(v["scan_interval_hours"], int)
-        assert v["scan_interval_hours"] > 0
+    # Scheduled verticals carry a positive cadence.
+    for name in ("email", "deception", "ndr"):
+        assert by_name[name]["scheduled"] is True
+        assert by_name[name]["scan_interval_hours"] > 0
+    # Agentic is manual-only: no cron, so never schedule-enabled and no cadence.
+    assert by_name["agentic"]["scheduled"] is False
+    assert by_name["agentic"]["schedule_enabled"] is False
+    assert by_name["agentic"]["scan_interval_hours"] == 0
     # Email is the only windowed vertical (its run route takes a lookback/window).
     assert by_name["email"]["windowed"] is True
     assert by_name["deception"]["windowed"] is False
@@ -36,7 +43,11 @@ def test_schedule_enabled_tracks_mock_derivation(monkeypatch):
     monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
     get_settings.cache_clear()
     try:
-        assert all(v["schedule_enabled"] for v in svc.list_hunt_verticals())
+        # Only scheduled verticals derive their gate from mocks; manual-only
+        # ones (agentic) are always off.
+        scheduled = [v for v in svc.list_hunt_verticals() if v["scheduled"]]
+        assert scheduled
+        assert all(v["schedule_enabled"] for v in scheduled)
     finally:
         get_settings.cache_clear()
 
@@ -55,9 +66,10 @@ async def test_get_verticals_route(client, analyst_token):
     resp = await client.get("/api/v1/hunt/verticals", headers=auth_header(analyst_token))
     assert resp.status_code == 200, resp.text
     verticals = resp.json()["verticals"]
-    assert {v["name"] for v in verticals} == {"email", "deception", "ndr"}
+    assert {v["name"] for v in verticals} == {"email", "deception", "ndr", "agentic"}
     for v in verticals:
         assert v["run_route"] == f"/hunt/{v['name']}/run"
+        assert isinstance(v["scheduled"], bool)
         assert isinstance(v["schedule_enabled"], bool)
         assert isinstance(v["scan_interval_hours"], int)
 

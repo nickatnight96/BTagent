@@ -375,6 +375,7 @@ class HuntVertical(BaseModel):
     source: str
     run_route: str
     windowed: bool
+    scheduled: bool
     schedule_enabled: bool
     scan_interval_hours: int
 

@@ -22,6 +22,10 @@ from btagent_backend.config import get_settings
 # Each entry pins one vertical to its run route + the config fields that gate its
 # cron. ``windowed`` flags the email vertical as the only time-windowed one (its
 # run route accepts a lookback / explicit window; the others are windowless).
+# ``schedule_flag`` / ``interval_field`` are ``None`` for manual-only verticals
+# (no cron); ``scheduled`` records whether the vertical has a cron at all, so a
+# consumer can tell "runs on a cadence but currently disabled" from "never runs
+# automatically".
 _VERTICALS: tuple[dict[str, Any], ...] = (
     {
         "name": "email",
@@ -29,6 +33,7 @@ _VERTICALS: tuple[dict[str, Any], ...] = (
         "source": "email_security",
         "run_route": "/hunt/email/run",
         "windowed": True,
+        "scheduled": True,
         "schedule_flag": "email_hunt_schedule_enabled",
         "interval_field": "email_hunt_scan_interval_hours",
     },
@@ -38,6 +43,7 @@ _VERTICALS: tuple[dict[str, Any], ...] = (
         "source": "deception",
         "run_route": "/hunt/deception/run",
         "windowed": False,
+        "scheduled": True,
         "schedule_flag": "deception_hunt_schedule_enabled",
         "interval_field": "deception_hunt_scan_interval_hours",
     },
@@ -47,8 +53,21 @@ _VERTICALS: tuple[dict[str, Any], ...] = (
         "source": "ndr",
         "run_route": "/hunt/ndr/run",
         "windowed": False,
+        "scheduled": True,
         "schedule_flag": "ndr_hunt_schedule_enabled",
         "interval_field": "ndr_hunt_scan_interval_hours",
+    },
+    # Agentic-AI misuse (#121): manual-only — no live telemetry connector yet,
+    # so no cron. Surfaced here so the catalog lists every runnable vertical.
+    {
+        "name": "agentic",
+        "domain": "agentic",
+        "source": "agentic",
+        "run_route": "/hunt/agentic/run",
+        "windowed": False,
+        "scheduled": False,
+        "schedule_flag": None,
+        "interval_field": None,
     },
 )
 
@@ -66,6 +85,8 @@ def list_hunt_verticals() -> list[dict[str, Any]]:
     settings = get_settings()
     catalog: list[dict[str, Any]] = []
     for v in _VERTICALS:
+        flag = v["schedule_flag"]
+        interval = v["interval_field"]
         catalog.append(
             {
                 "name": v["name"],
@@ -73,8 +94,10 @@ def list_hunt_verticals() -> list[dict[str, Any]]:
                 "source": v["source"],
                 "run_route": v["run_route"],
                 "windowed": v["windowed"],
-                "schedule_enabled": bool(getattr(settings, v["schedule_flag"])),
-                "scan_interval_hours": int(getattr(settings, v["interval_field"])),
+                "scheduled": v["scheduled"],
+                # Manual-only verticals (flag is None) never run on a cron.
+                "schedule_enabled": bool(getattr(settings, flag)) if flag else False,
+                "scan_interval_hours": int(getattr(settings, interval)) if interval else 0,
             }
         )
     return catalog
