@@ -2,6 +2,7 @@
 
 import api from "./client";
 import type {
+  AgenticHuntRunResponse,
   AllHuntsRunResponse,
   CreateSuppressionRequest,
   DeceptionHuntRunResponse,
@@ -89,6 +90,11 @@ export async function runDeceptionHunt(): Promise<DeceptionHuntRunResponse> {
 /** Run an NDR hunt over the Vectra connector; findings land in the inbox. */
 export async function runNdrHunt(): Promise<NdrHuntRunResponse> {
   return api.post<NdrHuntRunResponse>(`${BASE}/ndr/run`, {});
+}
+
+/** Run an agentic-misuse hunt; findings land in the inbox. */
+export async function runAgenticHunt(): Promise<AgenticHuntRunResponse> {
+  return api.post<AgenticHuntRunResponse>(`${BASE}/agentic/run`, {});
 }
 
 /** Run every findings vertical (email + deception + NDR) in one sweep. */
