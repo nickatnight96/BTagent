@@ -44,6 +44,7 @@ from btagent_backend.services import (
     deception_hunt_run_service,
     email_hunt_run_service,
     hunt_pack_run_service,
+    hunt_vertical_catalog,
     ndr_hunt_run_service,
 )
 from btagent_backend.services import hunt_triage_service as svc
@@ -335,6 +336,36 @@ async def run_all_hunts(
         total_findings_emitted=summary["total_findings_emitted"],
         total_findings_created=summary["total_findings_created"],
         counts_by_severity=summary["counts_by_severity"],
+    )
+
+
+class HuntVertical(BaseModel):
+    name: str
+    domain: str
+    source: str
+    run_route: str
+    windowed: bool
+    schedule_enabled: bool
+    scan_interval_hours: int
+
+
+class HuntVerticalListResponse(BaseModel):
+    verticals: list[HuntVertical]
+
+
+@router.get("/verticals", response_model=HuntVerticalListResponse)
+async def get_hunt_verticals(
+    user: CurrentUser = Depends(get_current_user),
+):
+    """List the manual-runnable findings verticals and their schedule status.
+
+    Read-only reflection of config: each entry carries its ``run_route`` plus
+    the derived ``schedule_enabled`` gate and ``scan_interval_hours`` cadence,
+    so an operator can see which proactive hunts exist and which are on a cron.
+    """
+    user.require_permission("hunt:view")
+    return HuntVerticalListResponse(
+        verticals=[HuntVertical(**v) for v in hunt_vertical_catalog.list_hunt_verticals()]
     )
 
 
