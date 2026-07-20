@@ -40,6 +40,7 @@ from btagent_backend.db.models_hunt import (
     SuppressionRuleRow,
 )
 from btagent_backend.services import (
+    agentic_hunt_run_service,
     all_hunts_run_service,
     deception_hunt_run_service,
     email_hunt_run_service,
@@ -272,6 +273,35 @@ async def run_ndr_hunt(
 
     summary = await ndr_hunt_run_service.run_ndr_hunt_and_ingest(db, org_id=user.org_id)
     return NdrHuntRunResponse(**{k: summary[k] for k in NdrHuntRunResponse.model_fields})
+
+
+class AgenticHuntRunResponse(BaseModel):
+    total_events: int
+    total_identities: int
+    total_workloads: int
+    findings_emitted: int
+    findings_created: int
+    counts_by_severity: dict[str, int]
+
+
+@router.post("/agentic/run", response_model=AgenticHuntRunResponse, status_code=201)
+async def run_agentic_hunt(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Run an agentic-AI misuse hunt and land its findings (#121).
+
+    Runs the connector-independent detectors (prompt-injection, shadow agent /
+    MCP discovery, agent-identity abuse) over the demo observation bundle, maps
+    their output into ``agentic``-domain hunt findings, and persists them into
+    the triage inbox (clustered + suppression-checked on insert). Mock-first:
+    the agentic domain has no live telemetry connector yet, so this runs over a
+    deterministic synthetic bundle until agent-platform connectors are wired.
+    """
+    user.require_permission("hunt:create")
+
+    summary = await agentic_hunt_run_service.run_agentic_hunt_and_ingest(db, org_id=user.org_id)
+    return AgenticHuntRunResponse(**{k: summary[k] for k in AgenticHuntRunResponse.model_fields})
 
 
 class VerticalRunSummary(BaseModel):
