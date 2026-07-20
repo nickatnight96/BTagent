@@ -42,6 +42,7 @@ from btagent_backend.db.models_hunt import (
 from btagent_backend.services import (
     agentic_hunt_run_service,
     all_hunts_run_service,
+    cloud_hunt_run_service,
     deception_hunt_run_service,
     email_hunt_run_service,
     hunt_pack_run_service,
@@ -302,6 +303,37 @@ async def run_agentic_hunt(
 
     summary = await agentic_hunt_run_service.run_agentic_hunt_and_ingest(db, org_id=user.org_id)
     return AgenticHuntRunResponse(**{k: summary[k] for k in AgenticHuntRunResponse.model_fields})
+
+
+class CloudHuntRunResponse(BaseModel):
+    total_identities: int
+    total_workloads: int
+    total_cloudtrail_events: int
+    total_resource_events: int
+    findings_emitted: int
+    findings_created: int
+    counts_by_severity: dict[str, int]
+
+
+@router.post("/cloud/run", response_model=CloudHuntRunResponse, status_code=201)
+async def run_cloud_hunt(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Run a cloud control-plane hunt and land its findings (#117).
+
+    Runs the connector-independent detectors (cross-account trust abuse, shadow
+    workloads, overprivileged identities, and — on the live path — STS chaining,
+    IAM persistence, snapshot share, CloudTrail tamper) over the demo observation
+    bundle, maps their output into ``cloud``-domain hunt findings, and persists
+    them into the triage inbox (clustered + suppression-checked on insert).
+    Mock-first: the cloud domain has no live control-plane connector yet, so this
+    runs over a deterministic synthetic bundle until connectors are wired.
+    """
+    user.require_permission("hunt:create")
+
+    summary = await cloud_hunt_run_service.run_cloud_hunt_and_ingest(db, org_id=user.org_id)
+    return CloudHuntRunResponse(**{k: summary[k] for k in CloudHuntRunResponse.model_fields})
 
 
 class VerticalRunSummary(BaseModel):
