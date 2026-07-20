@@ -40,6 +40,7 @@ from btagent_backend.db.models_hunt import (
     SuppressionRuleRow,
 )
 from btagent_backend.services import (
+    all_hunts_run_service,
     deception_hunt_run_service,
     email_hunt_run_service,
     hunt_pack_run_service,
@@ -270,6 +271,71 @@ async def run_ndr_hunt(
 
     summary = await ndr_hunt_run_service.run_ndr_hunt_and_ingest(db, org_id=user.org_id)
     return NdrHuntRunResponse(**{k: summary[k] for k in NdrHuntRunResponse.model_fields})
+
+
+class VerticalRunSummary(BaseModel):
+    findings_emitted: int
+    findings_created: int
+    counts_by_severity: dict[str, int]
+
+
+class AllHuntsRunResponse(BaseModel):
+    verticals: dict[str, VerticalRunSummary]
+    total_findings_emitted: int
+    total_findings_created: int
+    counts_by_severity: dict[str, int]
+
+
+class AllHuntsRunRequest(BaseModel):
+    """Trigger a combined sweep. The window applies to the email vertical only.
+
+    Supply ``lookback_hours`` (default 24h back from now) or an explicit
+    ``start`` / ``end`` ISO-8601 pair; the explicit pair wins when both are
+    given. Deception and NDR are windowless and ignore these.
+    """
+
+    lookback_hours: int = Field(default=24, ge=1, le=8760)
+    start: str | None = Field(
+        default=None, description="ISO-8601 email-window start (overrides lookback)"
+    )
+    end: str | None = Field(
+        default=None, description="ISO-8601 email-window end (overrides lookback)"
+    )
+
+
+@router.post("/all/run", response_model=AllHuntsRunResponse, status_code=201)
+async def run_all_hunts(
+    body: AllHuntsRunRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Run every findings-vertical hunt (email, deception, NDR) in one sweep.
+
+    Fans out over all three verticals in sequence against the same session and
+    lands their findings in the triage inbox (clustered + suppression-checked on
+    insert), returning a per-vertical breakdown plus the aggregate rollup. Each
+    vertical's gather is failure-tolerant, so a single down connector degrades
+    that vertical to zero findings rather than sinking the sweep. Mock-first
+    until the connectors are live-wired.
+    """
+    user.require_permission("hunt:create")
+
+    body = body or AllHuntsRunRequest()
+    summary = await all_hunts_run_service.run_all_hunts_and_ingest(
+        db,
+        org_id=user.org_id,
+        lookback_hours=body.lookback_hours,
+        start=body.start,
+        end=body.end,
+    )
+    return AllHuntsRunResponse(
+        verticals={
+            name: VerticalRunSummary(**vsummary) for name, vsummary in summary["verticals"].items()
+        },
+        total_findings_emitted=summary["total_findings_emitted"],
+        total_findings_created=summary["total_findings_created"],
+        counts_by_severity=summary["counts_by_severity"],
+    )
 
 
 @router.get("/findings", response_model=HuntFindingClusterListResponse)

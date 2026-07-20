@@ -141,6 +141,21 @@ export interface NdrHuntRunResponse {
   counts_by_severity: Record<string, number>;
 }
 
+/** One vertical's slice of a combined all-hunts sweep. */
+export interface VerticalRunSummary {
+  findings_emitted: number;
+  findings_created: number;
+  counts_by_severity: Record<string, number>;
+}
+
+/** Response from POST /hunt/all/run — a combined sweep over every vertical. */
+export interface AllHuntsRunResponse {
+  verticals: Record<string, VerticalRunSummary>;
+  total_findings_emitted: number;
+  total_findings_created: number;
+  counts_by_severity: Record<string, number>;
+}
+
 export interface CreateSuppressionRequest {
   name: string;
   reason: string;

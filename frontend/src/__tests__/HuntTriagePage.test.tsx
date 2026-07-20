@@ -24,6 +24,7 @@ const mockCreateSuppression = vi.fn();
 const mockRunEmailHunt = vi.fn();
 const mockRunDeceptionHunt = vi.fn();
 const mockRunNdrHunt = vi.fn();
+const mockRunAllHunts = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
   listFindings: (...a: unknown[]) => mockListFindings(...a),
@@ -36,6 +37,7 @@ vi.mock("@/api/hunt", () => ({
   runEmailHunt: (...a: unknown[]) => mockRunEmailHunt(...a),
   runDeceptionHunt: (...a: unknown[]) => mockRunDeceptionHunt(...a),
   runNdrHunt: (...a: unknown[]) => mockRunNdrHunt(...a),
+  runAllHunts: (...a: unknown[]) => mockRunAllHunts(...a),
   getFinding: vi.fn(),
 }));
 
@@ -467,6 +469,33 @@ describe("HuntTriagePage", () => {
     });
 
     await waitFor(() => expect(mockRunNdrHunt).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
+    );
+  });
+
+  it("runs all hunts in one sweep and refreshes the inbox", async () => {
+    mockListFindings.mockResolvedValue(EMPTY_INBOX);
+    mockRunAllHunts.mockResolvedValue({
+      verticals: {
+        email: { findings_emitted: 1, findings_created: 1, counts_by_severity: { high: 1 } },
+        deception: { findings_emitted: 1, findings_created: 1, counts_by_severity: { critical: 1 } },
+        ndr: { findings_emitted: 2, findings_created: 2, counts_by_severity: { high: 2 } },
+      },
+      total_findings_emitted: 4,
+      total_findings_created: 4,
+      counts_by_severity: { critical: 1, high: 3 },
+    });
+    renderPage(<HuntTriagePage />);
+
+    const runBtn = await screen.findByTestId("hunt-run-all");
+    const beforeFetches = mockListFindings.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.click(runBtn);
+    });
+
+    await waitFor(() => expect(mockRunAllHunts).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
     );
