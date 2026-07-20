@@ -5,6 +5,7 @@ import type {
   CreateSuppressionRequest,
   DeceptionHuntRunResponse,
   EmailHuntRunResponse,
+  NdrHuntRunResponse,
   HuntFinding,
   HuntFindingClusterListResponse,
   PromoteClusterRequest,
@@ -81,6 +82,11 @@ export async function runEmailHunt(
 /** Run a deception hunt over the Canary connector; findings land in the inbox. */
 export async function runDeceptionHunt(): Promise<DeceptionHuntRunResponse> {
   return api.post<DeceptionHuntRunResponse>(`${BASE}/deception/run`, {});
+}
+
+/** Run an NDR hunt over the Vectra connector; findings land in the inbox. */
+export async function runNdrHunt(): Promise<NdrHuntRunResponse> {
+  return api.post<NdrHuntRunResponse>(`${BASE}/ndr/run`, {});
 }
 
 /** Bulk-suppress a cluster (one rule covering the cluster's pattern). */

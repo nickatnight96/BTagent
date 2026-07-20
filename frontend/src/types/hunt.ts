@@ -132,6 +132,15 @@ export interface DeceptionHuntRunResponse {
   counts_by_severity: Record<string, number>;
 }
 
+/** Response from POST /hunt/ndr/run — an NDR-hunt run summary. */
+export interface NdrHuntRunResponse {
+  total_hosts: number;
+  campaign_count: number;
+  findings_emitted: number;
+  findings_created: number;
+  counts_by_severity: Record<string, number>;
+}
+
 export interface CreateSuppressionRequest {
   name: string;
   reason: string;

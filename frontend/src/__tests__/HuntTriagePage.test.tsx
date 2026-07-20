@@ -23,6 +23,7 @@ const mockListSuppressions = vi.fn();
 const mockCreateSuppression = vi.fn();
 const mockRunEmailHunt = vi.fn();
 const mockRunDeceptionHunt = vi.fn();
+const mockRunNdrHunt = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
   listFindings: (...a: unknown[]) => mockListFindings(...a),
@@ -34,6 +35,7 @@ vi.mock("@/api/hunt", () => ({
   createSuppression: (...a: unknown[]) => mockCreateSuppression(...a),
   runEmailHunt: (...a: unknown[]) => mockRunEmailHunt(...a),
   runDeceptionHunt: (...a: unknown[]) => mockRunDeceptionHunt(...a),
+  runNdrHunt: (...a: unknown[]) => mockRunNdrHunt(...a),
   getFinding: vi.fn(),
 }));
 
@@ -439,6 +441,32 @@ describe("HuntTriagePage", () => {
     });
 
     await waitFor(() => expect(mockRunDeceptionHunt).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
+    );
+  });
+
+  // ---- Run NDR hunt (NDR vertical, slice 4) ----
+
+  it("runs an NDR hunt and refreshes the inbox", async () => {
+    mockListFindings.mockResolvedValue(EMPTY_INBOX);
+    mockRunNdrHunt.mockResolvedValue({
+      total_hosts: 2,
+      campaign_count: 1,
+      findings_emitted: 2,
+      findings_created: 2,
+      counts_by_severity: { critical: 1, high: 0, medium: 1, low: 0, info: 0 },
+    });
+    renderPage(<HuntTriagePage />);
+
+    const runBtn = await screen.findByTestId("hunt-run-ndr");
+    const beforeFetches = mockListFindings.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.click(runBtn);
+    });
+
+    await waitFor(() => expect(mockRunNdrHunt).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
     );
