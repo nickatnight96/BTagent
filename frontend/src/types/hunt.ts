@@ -173,6 +173,8 @@ export interface HuntVertical {
   source: HuntSource;
   run_route: string;
   windowed: boolean;
+  /** Whether the vertical has a cron at all (false = manual-only). */
+  scheduled: boolean;
   schedule_enabled: boolean;
   scan_interval_hours: number;
 }
