@@ -25,6 +25,7 @@ const mockRunEmailHunt = vi.fn();
 const mockRunDeceptionHunt = vi.fn();
 const mockRunNdrHunt = vi.fn();
 const mockRunAllHunts = vi.fn();
+const mockListHuntVerticals = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
   listFindings: (...a: unknown[]) => mockListFindings(...a),
@@ -38,6 +39,7 @@ vi.mock("@/api/hunt", () => ({
   runDeceptionHunt: (...a: unknown[]) => mockRunDeceptionHunt(...a),
   runNdrHunt: (...a: unknown[]) => mockRunNdrHunt(...a),
   runAllHunts: (...a: unknown[]) => mockRunAllHunts(...a),
+  listHuntVerticals: (...a: unknown[]) => mockListHuntVerticals(...a),
   getFinding: vi.fn(),
 }));
 
@@ -147,6 +149,8 @@ describe("HuntTriagePage", () => {
       pageSize: 50,
     });
     mockListSuppressions.mockResolvedValue({ items: [], total: 0 });
+    // Default: no verticals reported scheduled (badges off) unless a test overrides.
+    mockListHuntVerticals.mockResolvedValue({ verticals: [] });
   });
 
   // ---- 1. Suppress dialog blocks submit when rationale is blank ----
@@ -499,5 +503,38 @@ describe("HuntTriagePage", () => {
     await waitFor(() =>
       expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
     );
+  });
+
+  it("badges a run button when its vertical is scheduled", async () => {
+    mockListFindings.mockResolvedValue(EMPTY_INBOX);
+    mockListHuntVerticals.mockResolvedValue({
+      verticals: [
+        {
+          name: "ndr",
+          domain: "ndr",
+          source: "ndr",
+          run_route: "/hunt/ndr/run",
+          windowed: false,
+          schedule_enabled: true,
+          scan_interval_hours: 6,
+        },
+        {
+          name: "email",
+          domain: "email",
+          source: "email_security",
+          run_route: "/hunt/email/run",
+          windowed: true,
+          schedule_enabled: false,
+          scan_interval_hours: 6,
+        },
+      ],
+    });
+    renderPage(<HuntTriagePage />);
+
+    // NDR reported scheduled → badge shows its cadence.
+    const badge = await screen.findByTestId("hunt-schedule-ndr");
+    expect(badge.textContent).toContain("6h");
+    // Email reported not scheduled → no badge.
+    expect(screen.queryByTestId("hunt-schedule-email")).toBeNull();
   });
 });

@@ -156,6 +156,22 @@ export interface AllHuntsRunResponse {
   counts_by_severity: Record<string, number>;
 }
 
+/** One findings-vertical entry from GET /hunt/verticals. */
+export interface HuntVertical {
+  name: string;
+  domain: HuntDomain;
+  source: HuntSource;
+  run_route: string;
+  windowed: boolean;
+  schedule_enabled: boolean;
+  scan_interval_hours: number;
+}
+
+/** Response from GET /hunt/verticals — the manual-runnable vertical catalog. */
+export interface HuntVerticalListResponse {
+  verticals: HuntVertical[];
+}
+
 export interface CreateSuppressionRequest {
   name: string;
   reason: string;

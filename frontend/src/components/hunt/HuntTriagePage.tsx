@@ -12,17 +12,24 @@ import {
   Bird,
   Radar,
   Zap,
+  Clock,
 } from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
 import { UserRole } from "@/types/config";
 import { SeverityBadge } from "@/components/ds/severity-badge";
-import type { HuntFinding, HuntFindingCluster } from "@/types/hunt";
+import type { HuntFinding, HuntFindingCluster, HuntVertical } from "@/types/hunt";
 import { useHuntStore, groupFindingsByCluster, type InboxTab } from "@/stores/huntStore";
 import { useAuthStore } from "@/stores/authStore";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
-import { runEmailHunt, runDeceptionHunt, runNdrHunt, runAllHunts } from "@/api/hunt";
+import {
+  runEmailHunt,
+  runDeceptionHunt,
+  runNdrHunt,
+  runAllHunts,
+  listHuntVerticals,
+} from "@/api/hunt";
 import { SuppressModal, type SuppressModalTarget } from "./SuppressModal";
 import { PromoteModal, type PromoteModalTarget } from "./PromoteModal";
 import { EventType } from "@/types/events";
@@ -413,6 +420,25 @@ export function HuntTriagePage() {
     }
   }, [fetchInbox]);
 
+  // ----- Findings-vertical schedule status (GET /hunt/verticals) -----
+  // Fetched once on mount to badge each run button with its cron cadence.
+  // Failure-tolerant: a fetch error just leaves the badges off.
+  const [schedules, setSchedules] = useState<Record<string, HuntVertical>>({});
+  useEffect(() => {
+    let active = true;
+    void listHuntVerticals()
+      .then((resp) => {
+        if (!active) return;
+        setSchedules(Object.fromEntries(resp.verticals.map((v) => [v.name, v])));
+      })
+      .catch(() => {
+        /* schedule badges are best-effort; ignore */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   // ----- Initial load + re-fetch when tab changes -----
   // A single effect keyed on `activeTab` covers both cases: mounting triggers it
   // with the initial tab value, and switching tabs triggers it again.
@@ -451,6 +477,23 @@ export function HuntTriagePage() {
   // PR #202), so the returned clusters ARE the current tab's page and
   // totalClusters is exact for the tab — no client-side re-filtering.
   const filteredClusters = clusters;
+
+  // A small "on a cron" badge for a vertical's run button. Renders only when
+  // GET /hunt/verticals reported that vertical's schedule as enabled.
+  const scheduleBadge = (name: string) => {
+    const v = schedules[name];
+    if (!v?.schedule_enabled) return null;
+    return (
+      <span
+        data-testid={`hunt-schedule-${name}`}
+        title={`Also scheduled every ${v.scan_interval_hours}h`}
+        className="ml-1 inline-flex items-center gap-0.5 text-[10px] text-emerald-400"
+      >
+        <Clock className="w-3 h-3" aria-hidden="true" />
+        {v.scan_interval_hours}h
+      </span>
+    );
+  };
 
   return (
     <div className="flex flex-col h-full" data-testid="hunt-triage">
@@ -498,6 +541,7 @@ export function HuntTriagePage() {
               <Mail className="w-4 h-4" />
             )}
             <span className="ml-2 hidden sm:inline">Run email hunt</span>
+            {scheduleBadge("email")}
           </Button>
           <Button
             variant="ghost"
@@ -513,6 +557,7 @@ export function HuntTriagePage() {
               <Bird className="w-4 h-4" />
             )}
             <span className="ml-2 hidden sm:inline">Run deception hunt</span>
+            {scheduleBadge("deception")}
           </Button>
           <Button
             variant="ghost"
@@ -528,6 +573,7 @@ export function HuntTriagePage() {
               <Radar className="w-4 h-4" />
             )}
             <span className="ml-2 hidden sm:inline">Run NDR hunt</span>
+            {scheduleBadge("ndr")}
           </Button>
           <Button
             variant="ghost"
