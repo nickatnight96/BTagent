@@ -183,6 +183,46 @@ async def scheduled_deception_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+async def scheduled_ndr_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
+    """Run an NDR hunt over the Vectra connector and land findings.
+
+    The cron entry point that gives the NDR-hunt vertical a hands-free cadence:
+    gathers Vectra network detections, correlates them into ranked per-host
+    kill-chain campaign rollups, maps those into ``ndr``-domain findings, and
+    persists them (clustered + suppression-checked on insert). Mirrors
+    :func:`scheduled_deception_hunt_scan` — no lookback window (the Vectra
+    connector exposes no time filter).
+
+    Gate: ``ndr_hunt_schedule_enabled`` derives from ``mock_connectors`` — the
+    Vectra connector is mock-first, so with mocks off the live gather refuses
+    and would land zero findings. One warning per tick surfaces the misconfig
+    rather than spamming. Org scope: v1 ingests into the default org. The thin
+    shell owns the single commit; the logic is in :mod:`ndr_hunt_run_service`.
+    """
+    settings = get_settings()
+
+    if not settings.ndr_hunt_schedule_enabled:
+        logger.warning(
+            "ndr hunt schedule disabled: live Vectra connector not configured; "
+            "set BTAGENT_NDR_HUNT_SCHEDULE_ENABLED=true to override"
+        )
+        return {"total_hosts": 0, "findings_created": 0, "findings_emitted": 0}
+
+    from btagent_backend.services import ndr_hunt_run_service
+
+    async with async_session_factory() as session:
+        summary = await ndr_hunt_run_service.run_ndr_hunt_and_ingest(session, org_id=DEFAULT_ORG_ID)
+        await session.commit()
+
+    counts = {
+        "total_hosts": int(summary["total_hosts"]),
+        "findings_created": int(summary["findings_created"]),
+        "findings_emitted": int(summary["findings_emitted"]),
+    }
+    logger.info("scheduled_ndr_hunt_scan: %s", counts)
+    return counts
+
+
 async def run_hunt_pack(
     ctx: dict[str, Any],
     *,
