@@ -11,6 +11,7 @@ import {
   Mail,
   Bird,
   Radar,
+  Zap,
 } from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
 import { UserRole } from "@/types/config";
@@ -21,7 +22,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
-import { runEmailHunt, runDeceptionHunt, runNdrHunt } from "@/api/hunt";
+import { runEmailHunt, runDeceptionHunt, runNdrHunt, runAllHunts } from "@/api/hunt";
 import { SuppressModal, type SuppressModalTarget } from "./SuppressModal";
 import { PromoteModal, type PromoteModalTarget } from "./PromoteModal";
 import { EventType } from "@/types/events";
@@ -399,6 +400,19 @@ export function HuntTriagePage() {
     }
   }, [fetchInbox]);
 
+  // ----- Run every vertical in one sweep (email + deception + NDR) -----
+  const [isRunningAll, setIsRunningAll] = useState(false);
+  const handleRunAllHunts = useCallback(async () => {
+    setIsRunningAll(true);
+    try {
+      await runAllHunts();
+      // Findings from all three verticals clustered on insert — refresh once.
+      await fetchInbox();
+    } finally {
+      setIsRunningAll(false);
+    }
+  }, [fetchInbox]);
+
   // ----- Initial load + re-fetch when tab changes -----
   // A single effect keyed on `activeTab` covers both cases: mounting triggers it
   // with the initial tab value, and switching tabs triggers it again.
@@ -455,6 +469,21 @@ export function HuntTriagePage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void handleRunAllHunts()}
+            disabled={isRunningAll || isRunningEmail || isRunningDeception || isRunningNdr}
+            data-testid="hunt-run-all"
+            title="Run every findings vertical (email + deception + NDR) in one sweep"
+          >
+            {isRunningAll ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Zap className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Run all hunts</span>
+          </Button>
           <Button
             variant="ghost"
             size="sm"

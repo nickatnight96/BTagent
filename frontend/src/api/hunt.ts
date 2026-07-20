@@ -2,6 +2,7 @@
 
 import api from "./client";
 import type {
+  AllHuntsRunResponse,
   CreateSuppressionRequest,
   DeceptionHuntRunResponse,
   EmailHuntRunResponse,
@@ -87,6 +88,11 @@ export async function runDeceptionHunt(): Promise<DeceptionHuntRunResponse> {
 /** Run an NDR hunt over the Vectra connector; findings land in the inbox. */
 export async function runNdrHunt(): Promise<NdrHuntRunResponse> {
   return api.post<NdrHuntRunResponse>(`${BASE}/ndr/run`, {});
+}
+
+/** Run every findings vertical (email + deception + NDR) in one sweep. */
+export async function runAllHunts(): Promise<AllHuntsRunResponse> {
+  return api.post<AllHuntsRunResponse>(`${BASE}/all/run`, {});
 }
 
 /** Bulk-suppress a cluster (one rule covering the cluster's pattern). */
