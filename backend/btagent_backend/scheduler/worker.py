@@ -25,6 +25,7 @@ from btagent_backend.scheduler.jobs import (
     scheduled_deception_hunt_scan,
     scheduled_email_hunt_scan,
     scheduled_hunt_pack_run,
+    scheduled_ndr_hunt_scan,
     stale_suppression_sweep,
     validate_detection_proposal,
     weekly_pattern_scan,
@@ -95,6 +96,19 @@ def _deception_hunt_cron_hours() -> set[int]:
     return set(range(0, 24, interval))
 
 
+def _ndr_hunt_cron_hours() -> set[int]:
+    """Hours-of-day the scheduled NDR-hunt cron fires on.
+
+    Same wall-clock cadence expansion as :func:`_hunt_pack_cron_hours`, driven
+    by ``BTAGENT_NDR_HUNT_SCAN_INTERVAL_HOURS`` (default 6 → 00:00, 06:00,
+    12:00, 18:00). An interval ≤0 or >24 clamps to a single daily run.
+    """
+    interval = get_settings().ndr_hunt_scan_interval_hours
+    if interval <= 0 or interval > 24:
+        return {0}
+    return set(range(0, 24, interval))
+
+
 async def _on_startup(ctx: dict) -> None:
     logger.info("BTagent scheduler worker started")
 
@@ -128,6 +142,7 @@ class WorkerSettings:
         scheduled_hunt_pack_run,
         scheduled_email_hunt_scan,
         scheduled_deception_hunt_scan,
+        scheduled_ndr_hunt_scan,
         weekly_pattern_scan,
         behavioral_baseline_sweep,
         # #120 Phase C: enqueue-on-demand from the proposal accept / execute
@@ -166,6 +181,16 @@ class WorkerSettings:
         cron(
             scheduled_deception_hunt_scan,
             hour=_deception_hunt_cron_hours(),
+            minute=0,
+            unique=True,
+        ),
+        # NDR-hunt vertical: gather the Vectra connector + land per-host
+        # kill-chain campaign findings on a wall-clock cadence. Gated on
+        # ``ndr_hunt_schedule_enabled`` (derives from mocks) inside the job;
+        # ``unique=True`` so a tick runs exactly once across replicas.
+        cron(
+            scheduled_ndr_hunt_scan,
+            hour=_ndr_hunt_cron_hours(),
             minute=0,
             unique=True,
         ),
