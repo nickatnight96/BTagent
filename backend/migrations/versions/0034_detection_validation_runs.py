@@ -57,9 +57,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "idx_detection_validation_runs_run_id", table_name="detection_validation_runs"
-    )
+    op.drop_index("idx_detection_validation_runs_run_id", table_name="detection_validation_runs")
     op.drop_index(
         "idx_detection_validation_runs_org_created", table_name="detection_validation_runs"
     )
