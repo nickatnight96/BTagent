@@ -123,6 +123,11 @@ const DetectionValidationPage = lazy(() =>
     default: m.DetectionValidationPage,
   })),
 );
+const DetectionProposalsPage = lazy(() =>
+  import("@/components/detection/DetectionProposalsPage").then((m) => ({
+    default: m.DetectionProposalsPage,
+  })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -273,6 +278,10 @@ export const router = createBrowserRouter([
       {
         path: "detection-validation",
         element: lazyRoute(DetectionValidationPage),
+      },
+      {
+        path: "detection-proposals",
+        element: lazyRoute(DetectionProposalsPage),
       },
     ],
   },

@@ -25,6 +25,7 @@ import {
   ScanSearch,
   UserSearch,
   ShieldCheck,
+  FlaskConical,
   Plug,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
@@ -113,6 +114,12 @@ const navItems: NavItem[] = [
     path: "/detection-validation",
     icon: <ShieldCheck className="w-5 h-5" />,
     testId: "nav-detection-validation-link",
+  },
+  {
+    label: "Detection Proposals",
+    path: "/detection-proposals",
+    icon: <FlaskConical className="w-5 h-5" />,
+    testId: "nav-detection-proposals-link",
   },
   {
     label: "Correlation",
