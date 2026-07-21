@@ -118,6 +118,11 @@ const IdentityHuntsPage = lazy(() =>
     default: m.IdentityHuntsPage,
   })),
 );
+const DetectionValidationPage = lazy(() =>
+  import("@/components/validation/DetectionValidationPage").then((m) => ({
+    default: m.DetectionValidationPage,
+  })),
+);
 
 /** Fallback shown while a route chunk is being fetched. */
 function RouteFallback() {
@@ -264,6 +269,10 @@ export const router = createBrowserRouter([
       {
         path: "identity-hunts",
         element: lazyRoute(IdentityHuntsPage),
+      },
+      {
+        path: "detection-validation",
+        element: lazyRoute(DetectionValidationPage),
       },
     ],
   },

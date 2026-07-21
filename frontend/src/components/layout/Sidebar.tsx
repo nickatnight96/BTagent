@@ -24,6 +24,7 @@ import {
   Cloud,
   ScanSearch,
   UserSearch,
+  ShieldCheck,
   Plug,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
@@ -106,6 +107,12 @@ const navItems: NavItem[] = [
     path: "/identity-hunts",
     icon: <UserSearch className="w-5 h-5" />,
     testId: "nav-identity-hunts-link",
+  },
+  {
+    label: "Detection Validation",
+    path: "/detection-validation",
+    icon: <ShieldCheck className="w-5 h-5" />,
+    testId: "nav-detection-validation-link",
   },
   {
     label: "Correlation",
