@@ -17,6 +17,7 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
 } from "@/api/notifications";
+import { getWSClient } from "@/api/ws";
 import type { AppNotification } from "@/types/notification";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -46,6 +47,19 @@ export function NotificationBell() {
     void refresh();
     const t = setInterval(() => void refresh(), POLL_INTERVAL_MS);
     return () => clearInterval(t);
+  }, [refresh]);
+
+  // Real-time delivery: the WS hub forwards per-user notifications as
+  // {type:"notification"} messages. Refresh on arrival so the badge and panel
+  // update immediately; the 30 s poll above stays as the fallback when the
+  // socket is down.
+  useEffect(() => {
+    const ws = getWSClient();
+    const previous = ws.onNotification;
+    ws.onNotification = () => void refresh();
+    return () => {
+      ws.onNotification = previous;
+    };
   }, [refresh]);
 
   // Close the panel on an outside click.
