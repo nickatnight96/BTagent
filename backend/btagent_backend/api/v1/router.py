@@ -19,6 +19,7 @@ from btagent_backend.api.v1.knowledge import router as knowledge_router
 from btagent_backend.api.v1.mfa import router as mfa_router
 from btagent_backend.api.v1.mitigation import router as mitigation_router
 from btagent_backend.api.v1.mitre import router as mitre_router
+from btagent_backend.api.v1.notifications import router as notifications_router
 from btagent_backend.api.v1.pattern_hunt import router as pattern_hunt_router
 from btagent_backend.api.v1.playbooks import router as playbooks_router
 from btagent_backend.api.v1.reports import router as reports_router
@@ -59,6 +60,7 @@ api_v1_router.include_router(cti_detection_router)
 api_v1_router.include_router(identity_router)
 api_v1_router.include_router(pattern_hunt_router)
 api_v1_router.include_router(validation_router)
+api_v1_router.include_router(notifications_router)
 
 # Health at root level (no /api/v1 prefix)
 health_router_root = health_router
