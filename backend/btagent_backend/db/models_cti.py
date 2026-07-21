@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for the CTI → Detection pipeline (#113).
 
-One table, org-scoped + indexed:
+Two tables, org-scoped + indexed:
 
 * ``detection_proposals`` — a persisted Sigma rule proposal derived from a
   STIX indicator, carrying the analyst review lifecycle. Uniqueness is
@@ -9,6 +9,10 @@ One table, org-scoped + indexed:
   has already decided (accepted / rejected) keeps its decision — only
   still-``proposed`` rows are refreshed (see
   :func:`btagent_backend.services.cti_detection_service.persist_proposals`).
+* ``stix_bundles`` — the raw STIX 2.1 bundle behind a propose call, kept so a
+  later request can re-run the pipeline by ``stix_bundle_id`` instead of
+  re-uploading the bundle. Uniqueness is ``(org_id, bundle_id)``: re-importing
+  the same bundle upserts its stored copy.
 """
 
 from datetime import datetime
@@ -70,4 +74,36 @@ class DetectionProposalRow(Base):
         # Upsert key: one proposal per (org, source indicator).
         Index("idx_detection_proposals_source", "org_id", "source_stix_id", unique=True),
         Index("idx_detection_proposals_state", "org_id", "state"),
+    )
+
+
+class StixBundleRow(Base):
+    """A raw STIX 2.1 bundle persisted for later bundle-by-id re-processing."""
+
+    __tablename__ = "stix_bundles"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # The bundle's own STIX id (``bundle--...``) — the key a ``stix_bundle_id``
+    # propose request resolves against. Unique per org so re-imports upsert.
+    bundle_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    # The verbatim bundle dict (``{"type": "bundle", "objects": [...]}``).
+    bundle: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # TLP the bundle was imported under (provenance; the pipeline re-gates on
+    # the bundle's own object markings + the caller's active TLP at resolve time).
+    tlp: Mapped[str] = mapped_column(String(16), nullable=False, default="green")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        # Upsert key: one stored bundle per (org, bundle id).
+        Index("idx_stix_bundles_org_bundle", "org_id", "bundle_id", unique=True),
     )
