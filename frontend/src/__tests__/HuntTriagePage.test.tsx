@@ -26,6 +26,7 @@ const mockRunDeceptionHunt = vi.fn();
 const mockRunNdrHunt = vi.fn();
 const mockRunAllHunts = vi.fn();
 const mockRunAgenticHunt = vi.fn();
+const mockRunCloudHunt = vi.fn();
 const mockListHuntVerticals = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
@@ -41,6 +42,7 @@ vi.mock("@/api/hunt", () => ({
   runNdrHunt: (...a: unknown[]) => mockRunNdrHunt(...a),
   runAllHunts: (...a: unknown[]) => mockRunAllHunts(...a),
   runAgenticHunt: (...a: unknown[]) => mockRunAgenticHunt(...a),
+  runCloudHunt: (...a: unknown[]) => mockRunCloudHunt(...a),
   listHuntVerticals: (...a: unknown[]) => mockListHuntVerticals(...a),
   getFinding: vi.fn(),
 }));
@@ -500,6 +502,32 @@ describe("HuntTriagePage", () => {
     });
 
     await waitFor(() => expect(mockRunAgenticHunt).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
+    );
+  });
+
+  it("runs a cloud hunt and refreshes the inbox", async () => {
+    mockListFindings.mockResolvedValue(EMPTY_INBOX);
+    mockRunCloudHunt.mockResolvedValue({
+      total_identities: 1,
+      total_workloads: 2,
+      total_cloudtrail_events: 0,
+      total_resource_events: 0,
+      findings_emitted: 3,
+      findings_created: 3,
+      counts_by_severity: { critical: 1, high: 2 },
+    });
+    renderPage(<HuntTriagePage />);
+
+    const runBtn = await screen.findByTestId("hunt-run-cloud");
+    const beforeFetches = mockListFindings.mock.calls.length;
+
+    await act(async () => {
+      fireEvent.click(runBtn);
+    });
+
+    await waitFor(() => expect(mockRunCloudHunt).toHaveBeenCalledTimes(1));
     await waitFor(() =>
       expect(mockListFindings.mock.calls.length).toBeGreaterThan(beforeFetches)
     );

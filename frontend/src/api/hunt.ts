@@ -4,6 +4,7 @@ import api from "./client";
 import type {
   AgenticHuntRunResponse,
   AllHuntsRunResponse,
+  CloudHuntRunResponse,
   CreateSuppressionRequest,
   DeceptionHuntRunResponse,
   EmailHuntRunResponse,
@@ -95,6 +96,11 @@ export async function runNdrHunt(): Promise<NdrHuntRunResponse> {
 /** Run an agentic-misuse hunt; findings land in the inbox. */
 export async function runAgenticHunt(): Promise<AgenticHuntRunResponse> {
   return api.post<AgenticHuntRunResponse>(`${BASE}/agentic/run`, {});
+}
+
+/** Run a cloud control-plane hunt; findings land in the inbox. */
+export async function runCloudHunt(): Promise<CloudHuntRunResponse> {
+  return api.post<CloudHuntRunResponse>(`${BASE}/cloud/run`, {});
 }
 
 /** Run every findings vertical (email + deception + NDR) in one sweep. */

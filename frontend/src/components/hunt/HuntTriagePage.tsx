@@ -14,6 +14,7 @@ import {
   Zap,
   Clock,
   Bot,
+  Cloud,
 } from "lucide-react";
 import { Severity as ConfigSeverity } from "@/types/config";
 import { UserRole } from "@/types/config";
@@ -29,6 +30,7 @@ import {
   runDeceptionHunt,
   runNdrHunt,
   runAgenticHunt,
+  runCloudHunt,
   runAllHunts,
   listHuntVerticals,
 } from "@/api/hunt";
@@ -422,6 +424,19 @@ export function HuntTriagePage() {
     }
   }, [fetchInbox]);
 
+  // ----- Run a cloud control-plane hunt on demand (cloud vertical) -----
+  const [isRunningCloud, setIsRunningCloud] = useState(false);
+  const handleRunCloudHunt = useCallback(async () => {
+    setIsRunningCloud(true);
+    try {
+      await runCloudHunt();
+      // New cloud findings clustered on insert — refresh to surface them.
+      await fetchInbox();
+    } finally {
+      setIsRunningCloud(false);
+    }
+  }, [fetchInbox]);
+
   // ----- Run every vertical in one sweep (email + deception + NDR) -----
   const [isRunningAll, setIsRunningAll] = useState(false);
   const handleRunAllHunts = useCallback(async () => {
@@ -536,7 +551,8 @@ export function HuntTriagePage() {
               isRunningEmail ||
               isRunningDeception ||
               isRunningNdr ||
-              isRunningAgentic
+              isRunningAgentic ||
+              isRunningCloud
             }
             data-testid="hunt-run-all"
             title="Run every findings vertical (email + deception + NDR) in one sweep"
@@ -611,6 +627,22 @@ export function HuntTriagePage() {
             )}
             <span className="ml-2 hidden sm:inline">Run agentic hunt</span>
             {scheduleBadge("agentic")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void handleRunCloudHunt()}
+            disabled={isRunningCloud}
+            data-testid="hunt-run-cloud"
+            title="Scan cloud control-plane telemetry for trust abuse, shadow workloads, and IAM persistence"
+          >
+            {isRunningCloud ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Cloud className="w-4 h-4" />
+            )}
+            <span className="ml-2 hidden sm:inline">Run cloud hunt</span>
+            {scheduleBadge("cloud")}
           </Button>
           <Button
             variant="ghost"
