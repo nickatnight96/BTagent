@@ -7,6 +7,7 @@ import { Badge } from "@/components/ds/badge";
 import { Button } from "@/components/ds/button";
 import { Avatar, AvatarFallback } from "@/components/ds/avatar";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 interface HeaderProps {
   title: string;
@@ -56,6 +57,7 @@ export function Header({ title }: HeaderProps) {
       </div>
 
       <div className="flex items-center gap-2">
+        {user && <NotificationBell />}
         <ThemeToggle />
         {user && (
           <div className="flex items-center gap-3" data-testid="header-user">
