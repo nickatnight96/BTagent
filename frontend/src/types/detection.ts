@@ -33,3 +33,13 @@ export interface DetectionProposalListResponse {
   items: DetectionProposal[];
   total: number;
 }
+
+/** Response from POST /cti/proposals/compose-pr. */
+export interface ComposePRResponse {
+  pr_url: string;
+  branch: string;
+  commit: string;
+  rule_count: number;
+  row_ids: string[];
+  is_mock: boolean;
+}
