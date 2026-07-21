@@ -151,6 +151,17 @@ export interface AgenticHuntRunResponse {
   counts_by_severity: Record<string, number>;
 }
 
+/** Response from POST /hunt/cloud/run — a cloud control-plane hunt run summary. */
+export interface CloudHuntRunResponse {
+  total_identities: number;
+  total_workloads: number;
+  total_cloudtrail_events: number;
+  total_resource_events: number;
+  findings_emitted: number;
+  findings_created: number;
+  counts_by_severity: Record<string, number>;
+}
+
 /** One vertical's slice of a combined all-hunts sweep. */
 export interface VerticalRunSummary {
   findings_emitted: number;
