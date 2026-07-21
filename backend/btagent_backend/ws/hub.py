@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 
@@ -16,11 +17,13 @@ from btagent_backend.auth.middleware import CurrentUser
 
 from .protocol import (
     BACKPRESSURE_QUEUE_LIMIT,
+    NOTIFICATION_CHANNEL_PREFIX,
     ServerMessage,
     ServerMessageType,
     global_channel,
     investigation_channel,
     is_critical,
+    notification_channel,
 )
 
 logger = logging.getLogger("btagent.ws.hub")
@@ -304,6 +307,9 @@ class WebSocketHub:
         # Subscribe to the global channel at startup
         await pubsub.psubscribe(f"{investigation_channel('*')}")
         await pubsub.subscribe(global_channel())
+        # Per-user in-app notifications (NotificationService.send_inapp) —
+        # forwarded to that user's connections only.
+        await pubsub.psubscribe(f"{notification_channel('*')}")
 
         try:
             async for message in pubsub.listen():
@@ -334,6 +340,16 @@ class WebSocketHub:
         so without this check a RED-tagged event from ``task_manager`` or a
         legacy agent hook would still reach subscribers.
         """
+        # Per-user notification channels carry a plain notification dict (not
+        # an EventEnvelope) and are user-targeted, so they take a dedicated
+        # branch before envelope parsing. Payloads are authored by
+        # NotificationService (title/message metadata), and delivery is scoped
+        # to the channel's own user — the same data that user already reads
+        # via GET /notifications.
+        if channel.startswith(f"{NOTIFICATION_CHANNEL_PREFIX}:"):
+            await self._dispatch_notification(channel, raw_json)
+            return
+
         try:
             envelope = EventEnvelope.model_validate_json(raw_json)
         except Exception:
@@ -386,6 +402,35 @@ class WebSocketHub:
         if client.org_id is None or event_org_id is None:
             return True
         return client.org_id == event_org_id
+
+    async def _dispatch_notification(self, channel: str, raw_json: str) -> None:
+        """Forward a per-user notification to that user's connections only.
+
+        The channel suffix IS the target user id
+        (``btagent:notifications:{user_id}``), so delivery is inherently
+        user-scoped — no org filter needed. The payload is wrapped in a
+        ``ServerMessage`` (``type="notification"``) so the browser client can
+        distinguish it from agent EventEnvelopes. Enqueued as critical: bell
+        pings are rare and small, and must survive backpressure drops.
+        """
+        user_id = channel.removeprefix(f"{NOTIFICATION_CHANNEL_PREFIX}:")
+        if not user_id:
+            return
+
+        try:
+            payload = json.loads(raw_json)
+        except Exception:
+            logger.warning("Ignoring unparsable notification on channel %s", channel)
+            return
+        if not isinstance(payload, dict):
+            return
+
+        message = ServerMessage(type=ServerMessageType.NOTIFICATION, data=payload).model_dump_json()
+
+        async with self._lock:
+            targets = list(self._user_connections.get(user_id, []))
+        for client in targets:
+            await self._enqueue(client, message, critical=True)
 
     # ------------------------------------------------------------------
     # Internal: per-client sender loop with backpressure

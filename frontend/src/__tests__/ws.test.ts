@@ -68,3 +68,85 @@ describe("WebSocketClient — Phase C2 cookie auth", () => {
     expect(url).not.toMatch(/[?&]token=/);
   });
 });
+
+/**
+ * Message routing: ServerMessage {type:"notification"} goes to onNotification;
+ * everything else takes the EventEnvelope → onEvent path.
+ */
+describe("WebSocketClient — notification message routing", () => {
+  let instances: FakeRoutingWS[];
+  let originalWebSocket: typeof WebSocket;
+
+  class FakeRoutingWS {
+    static OPEN = 1;
+    static CLOSED = 3;
+    static CONNECTING = 0;
+    static CLOSING = 2;
+    readyState = FakeRoutingWS.OPEN;
+    onopen: ((e: Event) => void) | null = null;
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    onclose: ((e: CloseEvent) => void) | null = null;
+    onerror: ((e: Event) => void) | null = null;
+    constructor(_url: string) {
+      instances.push(this);
+    }
+    close() {}
+    send() {}
+  }
+
+  beforeEach(() => {
+    instances = [];
+    originalWebSocket = globalThis.WebSocket;
+    // @ts-expect-error — overriding the global for the test
+    globalThis.WebSocket = FakeRoutingWS;
+  });
+
+  afterEach(() => {
+    globalThis.WebSocket = originalWebSocket;
+    vi.restoreAllMocks();
+  });
+
+  it("routes {type:'notification'} to onNotification, not onEvent", () => {
+    const onEvent = vi.fn();
+    const onNotification = vi.fn();
+    const client = new WebSocketClient({
+      url: "ws://localhost:8000/ws",
+      onEvent,
+      onNotification,
+    });
+    client.connect();
+
+    const payload = { id: "ntf_1", title: "Critical finding", read: false };
+    instances[0]!.onmessage?.({
+      data: JSON.stringify({ type: "notification", data: payload }),
+    } as MessageEvent);
+
+    expect(onNotification).toHaveBeenCalledTimes(1);
+    expect(onNotification).toHaveBeenCalledWith(payload);
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it("routes non-notification messages to onEvent", () => {
+    const onEvent = vi.fn();
+    const onNotification = vi.fn();
+    const client = new WebSocketClient({
+      url: "ws://localhost:8000/ws",
+      onEvent,
+      onNotification,
+    });
+    client.connect();
+
+    instances[0]!.onmessage?.({
+      data: JSON.stringify({
+        event_id: "evt_1",
+        event_type: "output",
+        investigation_id: "inv_1",
+        timestamp: "2026-07-21T12:00:00Z",
+        payload: { text: "hi" },
+      }),
+    } as MessageEvent);
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onNotification).not.toHaveBeenCalled();
+  });
+});

@@ -14,6 +14,11 @@ from pydantic import BaseModel, Field
 
 CHANNEL_PREFIX = "btagent:events"
 
+# Per-user in-app notification channel — the one NotificationService.send_inapp
+# publishes to. Kept as a distinct prefix from CHANNEL_PREFIX because the
+# payload is a plain notification dict, not an EventEnvelope.
+NOTIFICATION_CHANNEL_PREFIX = "btagent:notifications"
+
 
 def investigation_channel(investigation_id: str) -> str:
     return f"{CHANNEL_PREFIX}:{investigation_id}"
@@ -21,6 +26,10 @@ def investigation_channel(investigation_id: str) -> str:
 
 def global_channel() -> str:
     return f"{CHANNEL_PREFIX}:global"
+
+
+def notification_channel(user_id: str) -> str:
+    return f"{NOTIFICATION_CHANNEL_PREFIX}:{user_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +65,9 @@ class ServerMessageType(StrEnum):
     SUBSCRIBED = "subscribed"
     UNSUBSCRIBED = "unsubscribed"
     PONG = "pong"
+    # A per-user in-app notification forwarded from the notification channel
+    # (data = the notification dict NotificationService.send_inapp published).
+    NOTIFICATION = "notification"
 
 
 class ServerMessage(BaseModel):

@@ -13,6 +13,15 @@ vi.mock("@/api/notifications", () => ({
   markAllNotificationsRead: (...a: unknown[]) => markAllNotificationsRead(...a),
 }));
 
+// Stable fake WS client so the bell can register its onNotification handler.
+const fakeWSClient: { onNotification: (n: unknown) => void } = {
+  onNotification: () => {},
+};
+
+vi.mock("@/api/ws", () => ({
+  getWSClient: () => fakeWSClient,
+}));
+
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 function renderBell(ui: ReactElement) {
@@ -83,5 +92,20 @@ describe("NotificationBell", () => {
     renderBell(<NotificationBell />);
     await waitFor(() => expect(listNotifications).toHaveBeenCalled());
     expect(screen.queryByTestId("notification-unread-badge")).toBeNull();
+  });
+
+  it("refreshes when a WS notification arrives", async () => {
+    renderBell(<NotificationBell />);
+    await waitFor(() => expect(listNotifications).toHaveBeenCalled());
+    const before = listNotifications.mock.calls.length;
+
+    // Simulate the hub pushing a per-user notification over the socket.
+    await act(async () => {
+      fakeWSClient.onNotification({ id: "ntf_live", title: "Live", read: false });
+    });
+
+    await waitFor(() =>
+      expect(listNotifications.mock.calls.length).toBeGreaterThan(before),
+    );
   });
 });

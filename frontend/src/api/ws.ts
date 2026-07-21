@@ -1,6 +1,8 @@
 import { EventEnvelope, envelopeToEvent, AgentEvent } from "@/types/events";
+import type { AppNotification } from "@/types/notification";
 
 type OnEventCallback = (event: AgentEvent) => void;
+type OnNotificationCallback = (notification: AppNotification) => void;
 type OnConnectCallback = () => void;
 type OnDisconnectCallback = (code: number, reason: string) => void;
 type OnErrorCallback = (error: Event) => void;
@@ -8,6 +10,7 @@ type OnErrorCallback = (error: Event) => void;
 interface WebSocketClientOptions {
   url?: string;
   onEvent?: OnEventCallback;
+  onNotification?: OnNotificationCallback;
   onConnect?: OnConnectCallback;
   onDisconnect?: OnDisconnectCallback;
   onError?: OnErrorCallback;
@@ -45,6 +48,7 @@ export class WebSocketClient {
   // construction — e.g. the investigation workspace swaps `onEvent` per
   // mounted investigation and detaches it on unmount.
   onEvent: OnEventCallback;
+  onNotification: OnNotificationCallback;
   onConnect: OnConnectCallback;
   onDisconnect: OnDisconnectCallback;
   onError: OnErrorCallback;
@@ -53,6 +57,7 @@ export class WebSocketClient {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     this.url = options.url ?? `${wsProtocol}//${window.location.host}/ws`;
     this.onEvent = options.onEvent ?? (() => {});
+    this.onNotification = options.onNotification ?? (() => {});
     this.onConnect = options.onConnect ?? (() => {});
     this.onDisconnect = options.onDisconnect ?? (() => {});
     this.onError = options.onError ?? (() => {});
@@ -88,8 +93,17 @@ export class WebSocketClient {
 
     this.ws.onmessage = (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data as string) as EventEnvelope;
-        const agentEvent = envelopeToEvent(data);
+        const parsed = JSON.parse(event.data as string) as {
+          type?: string;
+          data?: unknown;
+        };
+        // Per-user in-app notifications arrive as ServerMessage
+        // {type:"notification", data:{...}} — not EventEnvelopes.
+        if (parsed?.type === "notification" && parsed.data) {
+          this.onNotification(parsed.data as AppNotification);
+          return;
+        }
+        const agentEvent = envelopeToEvent(parsed as EventEnvelope);
         this.onEvent(agentEvent);
       } catch {
         console.warn("[WS] Failed to parse message:", event.data);
