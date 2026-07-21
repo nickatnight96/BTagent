@@ -8,7 +8,7 @@ Covers:
 * Determinism — identical input produces identical output.
 * MITRE technique tags attached when kill_chain_phases present.
 * API endpoint ``POST /api/v1/cti/propose-detections`` — 200 with proposals,
-  403 on TLP:RED, 422 on malformed, 501 on bundle_id path.
+  403 on TLP:RED, 422 on malformed, 404 on unknown bundle_id.
 
 The fixture STIX bundle contains 5 indicators of different types:
   1. IPv4 address  (ip)
@@ -614,8 +614,9 @@ async def test_api_propose_detections_active_tlp_red_403(client, analyst_token):
 
 
 @pytest.mark.asyncio
-async def test_api_propose_detections_bundle_id_501(client, analyst_token):
-    """POST /api/v1/cti/propose-detections returns 501 for bundle_id path."""
+async def test_api_propose_detections_unknown_bundle_id_404(client, analyst_token):
+    """An unknown stix_bundle_id now 404s (bundle-by-id resolution, #113 — the
+    former 501 stub is replaced by the stix_bundles store)."""
     from helpers import auth_header
 
     resp = await client.post(
@@ -626,7 +627,7 @@ async def test_api_propose_detections_bundle_id_501(client, analyst_token):
         },
         headers=auth_header(analyst_token),
     )
-    assert resp.status_code == 501, resp.text
+    assert resp.status_code == 404, resp.text
 
 
 @pytest.mark.asyncio

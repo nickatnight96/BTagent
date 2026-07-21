@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.services import cti_detection_service as svc
+from btagent_backend.services import stix_bundle_store
 from btagent_backend.services.audit_trail import AuditTrail
 from btagent_backend.services.cti_detection_service import CTIDetectionService
 
@@ -65,8 +66,8 @@ async def propose_detections(
 
     The endpoint refuses TLP:RED bundles (HTTP 403) and bundles that are
     not valid STIX 2.1 (HTTP 422).  Exactly one of ``stix_bundle`` or
-    ``stix_bundle_id`` must be supplied; passing ``stix_bundle_id`` without
-    a persisted bundle resolution path returns HTTP 501.
+    ``stix_bundle_id`` must be supplied; ``stix_bundle_id`` resolves a bundle
+    previously stored by an inline-bundle propose call (HTTP 404 if unknown).
 
     RBAC: ``hunt:create`` (analyst+).
     """
@@ -85,17 +86,19 @@ async def propose_detections(
             detail="Supply exactly one of 'stix_bundle' or 'stix_bundle_id', not both.",
         )
 
-    # Inline TLP gate for bundle_id (deferred path)
+    # Resolve the bundle: inline dict, or a previously-stored bundle by id.
     if body.stix_bundle_id is not None:
-        raise HTTPException(
-            status_code=501,
-            detail=(
-                "Bundle-by-id resolution is not yet implemented. "
-                "Pass the raw bundle dict in 'stix_bundle' instead."
-            ),
+        stored = await stix_bundle_store.get_bundle(
+            db, org_id=user.org_id, bundle_id=body.stix_bundle_id
         )
-
-    bundle: dict[str, Any] = body.stix_bundle  # type: ignore[assignment]
+        if stored is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No stored STIX bundle with id {body.stix_bundle_id!r}.",
+            )
+        bundle: dict[str, Any] = stored
+    else:
+        bundle = body.stix_bundle  # type: ignore[assignment]
 
     try:
         response = _service.propose_from_bundle(bundle=bundle, active_tlp=body.active_tlp)
@@ -122,6 +125,14 @@ async def propose_detections(
         bundle_id=bundle.get("id"),
     )
     response.persisted = PersistedCounts(created=created, updated=updated, unchanged=unchanged)
+
+    # Persist the raw bundle so a later request can re-run by stix_bundle_id.
+    # Only for the inline path (a resolved-by-id bundle is already stored);
+    # ad-hoc bundles with no id are skipped inside store_bundle.
+    if body.stix_bundle is not None:
+        await stix_bundle_store.store_bundle(
+            db, org_id=user.org_id, bundle=bundle, tlp=body.active_tlp.value
+        )
     return response
 
 
