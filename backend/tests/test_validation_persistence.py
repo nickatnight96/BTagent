@@ -93,14 +93,17 @@ async def test_persist_is_queryable_and_org_scoped(db_session):
 
 async def test_persist_does_not_commit(db_session):
     # The writer flushes (so the row is visible in-session) but must not commit;
-    # a rollback afterwards discards it.
+    # a rollback afterwards discards it. Scope the check to this report's own
+    # run_id: other test files (e.g. the validation API) commit runs into the
+    # shared org, so a whole-org query would see their leaked rows.
     await svc.persist_validation_report(db_session, _report(), org_id=DEFAULT_ORG_ID)
     await db_session.rollback()
     rows = (
         (
             await db_session.execute(
                 select(DetectionValidationRunRow).where(
-                    DetectionValidationRunRow.org_id == DEFAULT_ORG_ID
+                    DetectionValidationRunRow.org_id == DEFAULT_ORG_ID,
+                    DetectionValidationRunRow.run_id == "valrun_TESTREPORT",
                 )
             )
         )

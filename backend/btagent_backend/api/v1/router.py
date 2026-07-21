@@ -27,6 +27,7 @@ from btagent_backend.api.v1.saml import router as saml_router
 from btagent_backend.api.v1.sso import router as sso_router
 from btagent_backend.api.v1.tlp_policies import router as tlp_policies_router
 from btagent_backend.api.v1.triage import router as triage_router
+from btagent_backend.api.v1.validation import router as validation_router
 from btagent_backend.api.v1.webhooks import router as webhooks_router
 from btagent_backend.api.v1.workflows import router as workflows_router
 
@@ -57,6 +58,7 @@ api_v1_router.include_router(credentials_router)
 api_v1_router.include_router(cti_detection_router)
 api_v1_router.include_router(identity_router)
 api_v1_router.include_router(pattern_hunt_router)
+api_v1_router.include_router(validation_router)
 
 # Health at root level (no /api/v1 prefix)
 health_router_root = health_router
