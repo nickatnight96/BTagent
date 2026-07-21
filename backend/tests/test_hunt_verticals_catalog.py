@@ -20,7 +20,7 @@ def test_catalog_lists_every_vertical():
     catalog = svc.list_hunt_verticals()
     assert [v["name"] for v in catalog] == list(svc.VERTICAL_NAMES)
     by_name = {v["name"]: v for v in catalog}
-    assert set(by_name) == {"email", "deception", "ndr", "agentic"}
+    assert set(by_name) == {"email", "deception", "ndr", "agentic", "cloud"}
     for name, v in by_name.items():
         assert v["run_route"] == f"/hunt/{name}/run"
         assert v["domain"] == name
@@ -29,10 +29,11 @@ def test_catalog_lists_every_vertical():
     for name in ("email", "deception", "ndr"):
         assert by_name[name]["scheduled"] is True
         assert by_name[name]["scan_interval_hours"] > 0
-    # Agentic is manual-only: no cron, so never schedule-enabled and no cadence.
-    assert by_name["agentic"]["scheduled"] is False
-    assert by_name["agentic"]["schedule_enabled"] is False
-    assert by_name["agentic"]["scan_interval_hours"] == 0
+    # Agentic + cloud are manual-only: no cron, never schedule-enabled, no cadence.
+    for name in ("agentic", "cloud"):
+        assert by_name[name]["scheduled"] is False
+        assert by_name[name]["schedule_enabled"] is False
+        assert by_name[name]["scan_interval_hours"] == 0
     # Email is the only windowed vertical (its run route takes a lookback/window).
     assert by_name["email"]["windowed"] is True
     assert by_name["deception"]["windowed"] is False
@@ -66,7 +67,7 @@ async def test_get_verticals_route(client, analyst_token):
     resp = await client.get("/api/v1/hunt/verticals", headers=auth_header(analyst_token))
     assert resp.status_code == 200, resp.text
     verticals = resp.json()["verticals"]
-    assert {v["name"] for v in verticals} == {"email", "deception", "ndr", "agentic"}
+    assert {v["name"] for v in verticals} == {"email", "deception", "ndr", "agentic", "cloud"}
     for v in verticals:
         assert v["run_route"] == f"/hunt/{v['name']}/run"
         assert isinstance(v["scheduled"], bool)

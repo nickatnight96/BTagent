@@ -69,6 +69,18 @@ _VERTICALS: tuple[dict[str, Any], ...] = (
         "schedule_flag": None,
         "interval_field": None,
     },
+    # Cloud control-plane (#117): manual-only — no live control-plane connector
+    # wired yet (CloudTrail / IAM / resource-event ingest deferred to #100).
+    {
+        "name": "cloud",
+        "domain": "cloud",
+        "source": "cloud",
+        "run_route": "/hunt/cloud/run",
+        "windowed": False,
+        "scheduled": False,
+        "schedule_flag": None,
+        "interval_field": None,
+    },
 )
 
 # Public tuple of vertical names, in catalog order — the coverage anchor.
