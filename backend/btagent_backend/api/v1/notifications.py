@@ -19,12 +19,12 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
-from btagent_backend.db.models import NotificationRow
+from btagent_backend.db.models import NotificationPrefRow, NotificationRow
 from btagent_backend.services.notification_service import NotificationService
 
 logger = logging.getLogger("btagent.api.notifications")
@@ -54,6 +54,54 @@ class NotificationListResponse(BaseModel):
 
 class MarkAllReadResponse(BaseModel):
     marked: int
+
+
+class NotificationPrefs(BaseModel):
+    """Per-user mute list — notification ``type`` values to skip in-app."""
+
+    muted_types: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description="Notification type values the user has muted (e.g. 'noise_digest').",
+    )
+
+
+@router.get("/preferences", response_model=NotificationPrefs)
+async def get_preferences(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> NotificationPrefs:
+    """The current user's mute list (empty when never configured)."""
+    pref = await db.get(NotificationPrefRow, user.id)
+    return NotificationPrefs(muted_types=list(pref.muted_types or []) if pref else [])
+
+
+@router.put("/preferences", response_model=NotificationPrefs)
+async def put_preferences(
+    body: NotificationPrefs,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> NotificationPrefs:
+    """Replace the current user's mute list (self-scoped; lazily creates the row).
+
+    Muting affects in-app delivery only — enforced inside
+    ``NotificationService.send_inapp`` so every producer respects it.
+    """
+    # Dedup + drop empties while preserving order; cap entry length.
+    cleaned: list[str] = []
+    for t in body.muted_types:
+        t = t.strip()[:50]
+        if t and t not in cleaned:
+            cleaned.append(t)
+
+    pref = await db.get(NotificationPrefRow, user.id)
+    if pref is None:
+        pref = NotificationPrefRow(user_id=user.id, muted_types=cleaned)
+        db.add(pref)
+    else:
+        pref.muted_types = cleaned
+    await db.flush()
+    return NotificationPrefs(muted_types=cleaned)
 
 
 @router.get("", response_model=NotificationListResponse)

@@ -107,22 +107,22 @@ async def notify_workflow_paused_approvers(
     service = NotificationService(settings or get_settings(), redis=redis)
     rows: list[NotificationRow] = []
     for user_id in approver_ids:
-        rows.append(
-            await service.send_inapp(
-                db,
-                user_id=user_id,
-                notification={
-                    "type": "hitl_checkpoint",
-                    "title": "Approval Requested",
-                    "message": (
-                        f"Workflow '{workflow.name}' is awaiting approval at step "
-                        f"'{run.paused_node_id}' (run {run.id})."
-                    ),
-                    "investigation_id": run.investigation_id,
-                    "link": f"/workflows/{workflow.id}",
-                },
-            )
+        row = await service.send_inapp(
+            db,
+            user_id=user_id,
+            notification={
+                "type": "hitl_checkpoint",
+                "title": "Approval Requested",
+                "message": (
+                    f"Workflow '{workflow.name}' is awaiting approval at step "
+                    f"'{run.paused_node_id}' (run {run.id})."
+                ),
+                "investigation_id": run.investigation_id,
+                "link": f"/workflows/{workflow.id}",
+            },
         )
+        if row is not None:  # skipped when the user muted this type
+            rows.append(row)
     return rows
 
 

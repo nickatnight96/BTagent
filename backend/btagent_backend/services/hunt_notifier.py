@@ -70,20 +70,20 @@ async def notify_critical_findings(
     message = _summary_message(critical)
     created: list[NotificationRow] = []
     for user_id in recipients:
-        created.append(
-            await service.send_inapp(
-                db,
-                user_id=user_id,
-                notification={
-                    "type": "critical_finding",
-                    "title": "Critical Hunt Findings",
-                    "message": message,
-                    "investigation_id": None,
-                    # Bell click lands on the triage inbox where the rows are.
-                    "link": "/hunt",
-                },
-            )
+        row = await service.send_inapp(
+            db,
+            user_id=user_id,
+            notification={
+                "type": "critical_finding",
+                "title": "Critical Hunt Findings",
+                "message": message,
+                "investigation_id": None,
+                # Bell click lands on the triage inbox where the rows are.
+                "link": "/hunt",
+            },
         )
+        if row is not None:  # skipped when the user muted this type
+            created.append(row)
     return created
 
 
@@ -122,19 +122,19 @@ async def notify_newly_noisy_rules(
     service = NotificationService(settings or get_settings(), redis=redis)
     created: list[NotificationRow] = []
     for user_id in recipients:
-        created.append(
-            await service.send_inapp(
-                db,
-                user_id=user_id,
-                notification={
-                    "type": "noise_digest",
-                    "title": "Newly Noisy Rules",
-                    "message": message,
-                    "investigation_id": None,
-                    "link": "/hunt",
-                },
-            )
+        row = await service.send_inapp(
+            db,
+            user_id=user_id,
+            notification={
+                "type": "noise_digest",
+                "title": "Newly Noisy Rules",
+                "message": message,
+                "investigation_id": None,
+                "link": "/hunt",
+            },
         )
+        if row is not None:  # skipped when the user muted this type
+            created.append(row)
     return created
 
 

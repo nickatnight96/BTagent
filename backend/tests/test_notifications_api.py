@@ -108,3 +108,80 @@ async def test_link_round_trips_through_the_api(client, analyst_token, sample_us
     listing = await client.get("/api/v1/notifications", headers=auth_header(analyst_token))
     items = {i["id"]: i for i in listing.json()["items"]}
     assert items[others[0].id]["link"] is None
+
+
+async def test_preferences_round_trip_with_dedup(client, analyst_token, sample_user):
+    resp = await client.get("/api/v1/notifications/preferences", headers=auth_header(analyst_token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"muted_types": []}
+
+    resp = await client.put(
+        "/api/v1/notifications/preferences",
+        json={"muted_types": ["noise_digest", " noise_digest ", "", "critical_finding"]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"muted_types": ["noise_digest", "critical_finding"]}
+
+    resp = await client.get("/api/v1/notifications/preferences", headers=auth_header(analyst_token))
+    assert resp.json() == {"muted_types": ["noise_digest", "critical_finding"]}
+
+
+async def test_muted_type_is_skipped_at_the_send_chokepoint(
+    client, analyst_token, sample_user, db_session
+):
+    from btagent_backend.config import get_settings
+    from btagent_backend.services.notification_service import NotificationService
+
+    resp = await client.put(
+        "/api/v1/notifications/preferences",
+        json={"muted_types": ["noise_digest"]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    service = NotificationService(get_settings())
+    muted = await service.send_inapp(
+        db_session,
+        user_id=sample_user.id,
+        notification={"type": "noise_digest", "title": "Muted", "message": "m"},
+    )
+    assert muted is None
+
+    delivered = await service.send_inapp(
+        db_session,
+        user_id=sample_user.id,
+        notification={"type": "critical_finding", "title": "Not muted", "message": "m"},
+    )
+    assert delivered is not None
+    assert delivered.type == "critical_finding"
+
+
+async def test_producer_fanout_respects_mutes(client, admin_token, admin_user, db_session):
+    """A senior who muted noise_digest is skipped by the digest fan-out."""
+    from types import SimpleNamespace
+
+    from btagent_backend.services.hunt_notifier import notify_newly_noisy_rules
+
+    resp = await client.put(
+        "/api/v1/notifications/preferences",
+        json={"muted_types": ["noise_digest"]},
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    rule = SimpleNamespace(
+        pack_id="p", rule_id="r", rule_title="Muted digest probe", hit_rate=1.0, runs_observed=3
+    )
+    from btagent_backend.db.models import DEFAULT_ORG_ID
+
+    rows = await notify_newly_noisy_rules(db_session, org_id=DEFAULT_ORG_ID, rules=[rule])
+    assert admin_user.id not in {r.user_id for r in rows}
+
+    # Reset so later tests in the shared org see the admin unmuted.
+    resp = await client.put(
+        "/api/v1/notifications/preferences",
+        json={"muted_types": []},
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 200, resp.text
