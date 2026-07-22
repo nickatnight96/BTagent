@@ -262,9 +262,14 @@ export async function runVersion(
   workflowId: string,
   versionNumber: number,
   data: RunWorkflowRequest = {},
+  options?: { background?: boolean },
 ): Promise<WorkflowRun> {
+  // background=true offloads execution to the worker: the response comes
+  // back immediately with status=running; the outcome lands in run history
+  // and the trigger user's notification bell.
+  const qs = options?.background ? "?background=true" : "";
   return api.post<WorkflowRun>(
-    `/v1/workflows/${workflowId}/versions/${versionNumber}/run`,
+    `/v1/workflows/${workflowId}/versions/${versionNumber}/run${qs}`,
     data,
   );
 }

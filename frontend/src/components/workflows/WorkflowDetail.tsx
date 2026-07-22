@@ -114,6 +114,7 @@ export function WorkflowDetail() {
   const [launchInvestigation, setLaunchInvestigation] = useState<string>("");
   const [launchTlp, setLaunchTlp] = useState<"" | TLP>("");
   const [launchPayload, setLaunchPayload] = useState("{}");
+  const [launchBackground, setLaunchBackground] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
 
@@ -194,6 +195,7 @@ export function WorkflowDetail() {
     setLaunchInvestigation("");
     setLaunchTlp("");
     setLaunchPayload("{}");
+    setLaunchBackground(false);
     setLaunchError(null);
     setLaunchOpen(true);
     // Lazy-load the investigation list the first time the dialog opens.
@@ -224,7 +226,7 @@ export function WorkflowDetail() {
       const body: RunWorkflowRequest = { trigger_payload: payload };
       if (launchInvestigation) body.investigation_id = launchInvestigation;
       if (launchTlp) body.active_tlp = launchTlp;
-      await runVersion(id, Number(launchVersion), body);
+      await runVersion(id, Number(launchVersion), body, { background: launchBackground });
       setLaunchOpen(false);
       await load();
     } catch (e) {
@@ -232,7 +234,7 @@ export function WorkflowDetail() {
     } finally {
       setLaunching(false);
     }
-  }, [id, launchVersion, launchInvestigation, launchTlp, launchPayload, load]);
+  }, [id, launchVersion, launchInvestigation, launchTlp, launchPayload, launchBackground, load]);
 
   if (!id) {
     return (
@@ -561,6 +563,22 @@ export function WorkflowDetail() {
                 data-testid="launch-payload"
               />
             </div>
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={launchBackground}
+                onChange={(e) => setLaunchBackground(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-sky-500"
+                data-testid="launch-background"
+              />
+              <span>
+                Run in background
+                <span className="block text-xs text-muted-foreground">
+                  Returns immediately; the outcome lands in run history and your
+                  notification bell.
+                </span>
+              </span>
+            </label>
             {launchError && (
               <div
                 className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive"
