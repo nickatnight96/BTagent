@@ -29,24 +29,15 @@ from typing import Any
 
 from btagent_shared.types.workflow import WorkflowRunStatus
 from redis.asyncio import Redis
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.auth.rbac import PERMISSIONS, ROLE_HIERARCHY
 from btagent_backend.config import Settings, get_settings
-from btagent_backend.db.models import NotificationRow, UserRow
+from btagent_backend.db.models import NotificationRow
 from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow
 from btagent_backend.services.notification_service import NotificationService
+from btagent_backend.services.role_targeting import user_ids_with_permission
 
 logger = logging.getLogger("btagent.services.hitl_notifier")
-
-# Roles whose rank meets the hitl:approve threshold (senior_analyst+ today).
-# Derived from the RBAC table so a future permission change propagates here.
-_APPROVER_ROLES: tuple[str, ...] = tuple(
-    role.value
-    for role, rank in ROLE_HIERARCHY.items()
-    if rank >= ROLE_HIERARCHY[PERMISSIONS["hitl:approve"]]
-)
 
 
 async def notify_workflow_paused(
@@ -96,22 +87,18 @@ async def notify_workflow_paused_approvers(
 ) -> list[NotificationRow]:
     """Fan the pause out to every org user who can approve the gate.
 
-    Targets users in the run's org whose role grants ``hitl:approve``,
-    excluding ``triggered_by`` (already notified with the trigger-facing
-    message by :func:`notify_workflow_paused`). Returns the created rows
-    (empty when the run isn't paused or nobody qualifies). Flushes but
-    never commits.
+    Targets users in the run's org whose role grants ``hitl:approve``
+    (resolved through :mod:`role_targeting`), excluding ``triggered_by``
+    (already notified with the trigger-facing message by
+    :func:`notify_workflow_paused`). Returns the created rows (empty when
+    the run isn't paused or nobody qualifies). Flushes but never commits.
     """
     if run.status != WorkflowRunStatus.PAUSED.value:
         return []
 
-    result = await db.execute(
-        select(UserRow.id).where(
-            UserRow.org_id == run.org_id,
-            UserRow.role.in_(_APPROVER_ROLES),
-        )
+    approver_ids = await user_ids_with_permission(
+        db, org_id=run.org_id, permission="hitl:approve", exclude=(run.triggered_by,)
     )
-    approver_ids = [uid for (uid,) in result.all() if uid != run.triggered_by]
     if not approver_ids:
         return []
 

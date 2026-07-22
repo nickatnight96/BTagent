@@ -354,6 +354,10 @@ async def persist_hunt_findings(
     Each is clustered + suppression-checked on insert via
     :func:`record_finding`. Used by the Hunt Pack Runner's scheduled job to
     land its hits in the triage queue. Returns the created rows (not committed).
+
+    Unsuppressed **critical** rows additionally notify the org's hunt
+    seniors in-app (best-effort; the notification rows ride this same
+    uncommitted transaction, so a rolled-back ingest leaves no phantoms).
     """
     rows: list[HuntFindingRow] = []
     for req in findings:
@@ -373,6 +377,13 @@ async def persist_hunt_findings(
                 evidence=req.evidence,
             )
         )
+
+    # Local import: hunt_notifier depends on role targeting + notifications,
+    # and importing it at module scope would put those on this module's (very
+    # hot) import path for every consumer that only wants triage reads.
+    from btagent_backend.services.hunt_notifier import notify_critical_findings_best_effort
+
+    await notify_critical_findings_best_effort(db, org_id=org_id, rows=rows)
     return rows
 
 
