@@ -19,7 +19,10 @@ from sqlalchemy import select
 from btagent_backend.db.models import DEFAULT_ORG_ID, NotificationRow
 from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow
 from btagent_backend.services import workflow_service
-from btagent_backend.services.hitl_notifier import notify_workflow_paused
+from btagent_backend.services.hitl_notifier import (
+    notify_workflow_paused,
+    notify_workflow_paused_approvers,
+)
 from tests.helpers import auth_header
 
 # --------------------------------------------------------------------------- #
@@ -104,6 +107,38 @@ async def test_redis_push_targets_trigger_users_channel(db_session, sample_user)
 
 
 # --------------------------------------------------------------------------- #
+# Approver fan-out
+# --------------------------------------------------------------------------- #
+# The default org is shared across the test session, so other files' senior+
+# users may also appear in the fan-out — assertions are membership-based,
+# never exact-count.
+
+
+async def test_approver_fanout_reaches_senior_roles(db_session, sample_user, admin_user):
+    wf, run = await _seed_workflow_and_run(db_session, triggered_by=sample_user.id)
+    rows = await notify_workflow_paused_approvers(db_session, workflow=wf, run=run)
+    targets = {r.user_id for r in rows}
+    assert admin_user.id in targets
+    assert sample_user.id not in targets  # analyst — not an approver
+    assert all(r.title == "Approval Requested" for r in rows)
+    assert all(r.type == "hitl_checkpoint" for r in rows)
+    assert all(run.id in r.message for r in rows)
+
+
+async def test_approver_fanout_excludes_the_triggering_approver(db_session, admin_user):
+    wf, run = await _seed_workflow_and_run(db_session, triggered_by=admin_user.id)
+    rows = await notify_workflow_paused_approvers(db_session, workflow=wf, run=run)
+    assert admin_user.id not in {r.user_id for r in rows}
+
+
+async def test_approver_fanout_noop_when_not_paused(db_session, sample_user, admin_user):
+    wf, run = await _seed_workflow_and_run(
+        db_session, status="succeeded", triggered_by=sample_user.id, paused_node_id=None
+    )
+    assert await notify_workflow_paused_approvers(db_session, workflow=wf, run=run) == []
+
+
+# --------------------------------------------------------------------------- #
 # Route level — reuses the pausing workflow from the resume-API suite
 # --------------------------------------------------------------------------- #
 
@@ -135,7 +170,7 @@ async def _pause_notifications(db_session, user_id: str) -> list[NotificationRow
 
 
 async def test_run_route_creates_pause_notification(
-    client: AsyncClient, admin_token: str, analyst_token: str, sample_user, db_session
+    client: AsyncClient, admin_token: str, analyst_token: str, sample_user, admin_user, db_session
 ):
     resp = await client.post(
         "/api/v1/workflows",
@@ -157,6 +192,13 @@ async def test_run_route_creates_pause_notification(
     rows = await _pause_notifications(db_session, sample_user.id)
     assert len(rows) == 1
     assert run["id"] in rows[0].message
+
+    # The admin (an approver) gets the approval-requested fan-out for this run.
+    admin_rows = [
+        r for r in await _pause_notifications(db_session, admin_user.id) if run["id"] in r.message
+    ]
+    assert len(admin_rows) == 1
+    assert admin_rows[0].title == "Approval Requested"
 
     # Approving through to completion must NOT add a second notification.
     resp = await client.post(
