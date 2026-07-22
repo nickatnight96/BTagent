@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Info,
   Loader2,
+  Settings2,
   ShieldAlert,
   XCircle,
 } from "lucide-react";
@@ -27,11 +28,22 @@ import {
   listNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  getNotificationPrefs,
+  putNotificationPrefs,
 } from "@/api/notifications";
 import { getWSClient } from "@/api/ws";
 import type { AppNotification } from "@/types/notification";
 
 const POLL_INTERVAL_MS = 30_000;
+
+/** Mutable notification types, with analyst-facing labels. */
+const MUTABLE_TYPES: { type: string; label: string }[] = [
+  { type: "hitl_checkpoint", label: "HITL approvals" },
+  { type: "critical_finding", label: "Critical findings" },
+  { type: "investigation_complete", label: "Investigation completed" },
+  { type: "investigation_failed", label: "Investigation failed" },
+  { type: "noise_digest", label: "Noise digest" },
+];
 
 /** Compact relative timestamp for dropdown rows ("just now" / "5m ago"). */
 export function relativeTime(iso: string, now: Date = new Date()): string {
@@ -70,6 +82,8 @@ export function NotificationBell() {
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showPrefs, setShowPrefs] = useState(false);
+  const [mutedTypes, setMutedTypes] = useState<string[] | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const refresh = useCallback(async () => {
@@ -152,6 +166,36 @@ export function NotificationBell() {
     await refresh();
   }, [refresh]);
 
+  const handleTogglePrefs = useCallback(async () => {
+    const next = !showPrefs;
+    setShowPrefs(next);
+    if (next && mutedTypes === null) {
+      try {
+        const prefs = await getNotificationPrefs();
+        setMutedTypes(prefs.muted_types);
+      } catch {
+        setMutedTypes([]); // best-effort — start from "nothing muted"
+      }
+    }
+  }, [showPrefs, mutedTypes]);
+
+  const handleToggleMute = useCallback(
+    async (type: string) => {
+      const current = mutedTypes ?? [];
+      const next = current.includes(type)
+        ? current.filter((t) => t !== type)
+        : [...current, type];
+      setMutedTypes(next); // optimistic
+      try {
+        const saved = await putNotificationPrefs({ muted_types: next });
+        setMutedTypes(saved.muted_types);
+      } catch {
+        setMutedTypes(current); // roll back on failure
+      }
+    },
+    [mutedTypes],
+  );
+
   return (
     <div className="relative" ref={containerRef} data-testid="notification-bell">
       <Button
@@ -179,17 +223,66 @@ export function NotificationBell() {
         >
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="text-sm font-medium text-foreground">Notifications</span>
-            <button
-              type="button"
-              onClick={() => void handleMarkAll()}
-              disabled={unread === 0}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
-              data-testid="notification-mark-all"
-            >
-              <CheckCheck className="w-3 h-3" />
-              Mark all read
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void handleMarkAll()}
+                disabled={unread === 0}
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
+                data-testid="notification-mark-all"
+              >
+                <CheckCheck className="w-3 h-3" />
+                Mark all read
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleTogglePrefs()}
+                className={`flex items-center text-xs hover:text-foreground ${
+                  showPrefs ? "text-foreground" : "text-muted-foreground"
+                }`}
+                aria-label="Notification preferences"
+                data-testid="notification-prefs-toggle"
+              >
+                <Settings2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
+
+          {showPrefs && (
+            <div
+              className="border-b border-border px-3 py-2"
+              data-testid="notification-prefs-panel"
+            >
+              <p className="mb-1.5 text-[11px] text-muted-foreground">
+                Muted types are skipped for you entirely (in-app only).
+              </p>
+              {mutedTypes === null ? (
+                <div className="flex justify-center py-2 text-muted-foreground">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                </div>
+              ) : (
+                MUTABLE_TYPES.map(({ type, label }) => {
+                  const muted = mutedTypes.includes(type);
+                  return (
+                    <label
+                      key={type}
+                      className="flex cursor-pointer items-center justify-between py-1 text-xs text-foreground"
+                    >
+                      {label}
+                      <input
+                        type="checkbox"
+                        checked={!muted}
+                        onChange={() => void handleToggleMute(type)}
+                        className="h-3.5 w-3.5 accent-sky-500"
+                        aria-label={`Deliver ${label}`}
+                        data-testid={`notification-pref-${type}`}
+                      />
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          )}
 
           <div className="max-h-96 overflow-auto">
             {isLoading && items.length === 0 ? (
