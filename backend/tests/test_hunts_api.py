@@ -262,9 +262,7 @@ async def test_generate_hunt_plan_from_adversary(client: AsyncClient, analyst_to
     assert first["state"] == "not_started"
 
 
-async def test_generate_hunt_plan_from_ttps_pins_backends(
-    client: AsyncClient, analyst_token: str
-):
+async def test_generate_hunt_plan_from_ttps_pins_backends(client: AsyncClient, analyst_token: str):
     resp = await client.post(
         "/api/v1/hunts/plan",
         json={"ttps": ["T1059.001"], "backends": ["splunk"]},
@@ -279,9 +277,7 @@ async def test_generate_hunt_plan_from_ttps_pins_backends(
 
 
 async def test_hunt_plan_requires_a_target(client: AsyncClient, analyst_token: str):
-    resp = await client.post(
-        "/api/v1/hunts/plan", json={}, headers=auth_header(analyst_token)
-    )
+    resp = await client.post("/api/v1/hunts/plan", json={}, headers=auth_header(analyst_token))
     assert resp.status_code == 422
 
 
