@@ -219,3 +219,25 @@ export interface SuppressClusterRequest {
 export interface PromoteClusterRequest {
   title?: string | null;
 }
+
+/** One chronically-hitting pack rule — advisory suppression candidate (#112). */
+export interface NoisyRule {
+  pack_id: string;
+  pack_name: string;
+  rule_id: string;
+  rule_title: string;
+  runs_observed: number;
+  runs_hit: number;
+  hit_rate: number;
+  total_hits: number;
+  avg_hits_per_run: number;
+  last_hit_at: string | null;
+}
+
+/** Response from GET /hunt/noise-baseline. */
+export interface NoiseBaseline {
+  items: NoisyRule[];
+  runs_analyzed: number;
+  min_runs: number;
+  hit_rate_threshold: number;
+}

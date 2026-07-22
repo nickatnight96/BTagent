@@ -28,6 +28,7 @@ const mockRunAllHunts = vi.fn();
 const mockRunAgenticHunt = vi.fn();
 const mockRunCloudHunt = vi.fn();
 const mockListHuntVerticals = vi.fn();
+const mockGetNoiseBaseline = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
   listFindings: (...a: unknown[]) => mockListFindings(...a),
@@ -44,6 +45,7 @@ vi.mock("@/api/hunt", () => ({
   runAgenticHunt: (...a: unknown[]) => mockRunAgenticHunt(...a),
   runCloudHunt: (...a: unknown[]) => mockRunCloudHunt(...a),
   listHuntVerticals: (...a: unknown[]) => mockListHuntVerticals(...a),
+  getNoiseBaseline: (...a: unknown[]) => mockGetNoiseBaseline(...a),
   getFinding: vi.fn(),
 }));
 
@@ -155,6 +157,13 @@ describe("HuntTriagePage", () => {
     mockListSuppressions.mockResolvedValue({ items: [], total: 0 });
     // Default: no verticals reported scheduled (badges off) unless a test overrides.
     mockListHuntVerticals.mockResolvedValue({ verticals: [] });
+    // Default: quiet noise baseline — the advisory panel renders nothing.
+    mockGetNoiseBaseline.mockResolvedValue({
+      items: [],
+      runs_analyzed: 0,
+      min_runs: 3,
+      hit_rate_threshold: 0.8,
+    });
   });
 
   // ---- 1. Suppress dialog blocks submit when rationale is blank ----

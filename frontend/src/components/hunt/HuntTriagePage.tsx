@@ -36,6 +36,7 @@ import {
 } from "@/api/hunt";
 import { SuppressModal, type SuppressModalTarget } from "./SuppressModal";
 import { PromoteModal, type PromoteModalTarget } from "./PromoteModal";
+import { NoisyRulesPanel } from "./NoisyRulesPanel";
 import { EventType } from "@/types/events";
 import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
 
@@ -692,6 +693,9 @@ export function HuntTriagePage() {
       {/* ---- Content ---- */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-3">
+          {/* #112 noise baseline — advisory, renders nothing when quiet. */}
+          <NoisyRulesPanel />
+
           {error && (
             <div
               className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive"

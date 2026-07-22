@@ -12,6 +12,7 @@ import type {
   NdrHuntRunResponse,
   HuntFinding,
   HuntFindingClusterListResponse,
+  NoiseBaseline,
   PromoteClusterRequest,
   PromoteFindingsResponse,
   SuppressionListResponse,
@@ -130,4 +131,9 @@ export async function promoteCluster(
     `${BASE}/clusters/${clusterId}/promote`,
     body,
   );
+}
+
+/** Chronically-hitting pack rules — advisory suppression candidates (#112). */
+export async function getNoiseBaseline(): Promise<NoiseBaseline> {
+  return api.get<NoiseBaseline>(`${BASE}/noise-baseline`);
 }
