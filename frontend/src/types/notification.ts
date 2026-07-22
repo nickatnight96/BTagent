@@ -6,6 +6,8 @@ export interface AppNotification {
   title: string;
   message: string;
   investigation_id: string | null;
+  /** App-relative deep-link target (e.g. "/hunt"); investigation fallback when null. */
+  link: string | null;
   read: boolean;
   created_at: string;
 }

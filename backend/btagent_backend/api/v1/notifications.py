@@ -40,6 +40,7 @@ class NotificationRecord(BaseModel):
     title: str
     message: str
     investigation_id: str | None
+    link: str | None
     read: bool
     created_at: datetime
 

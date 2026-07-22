@@ -130,9 +130,13 @@ export function NotificationBell() {
           /* non-fatal */
         }
       }
-      if (n.investigation_id) {
+      // Producers may attach an app-relative deep link (triage inbox,
+      // workflow detail, ...); the investigation view stays the fallback.
+      const target =
+        n.link ?? (n.investigation_id ? `/investigations/${n.investigation_id}` : null);
+      if (target) {
         setOpen(false);
-        navigate(`/investigations/${n.investigation_id}`);
+        navigate(target);
       }
       await refresh();
     },

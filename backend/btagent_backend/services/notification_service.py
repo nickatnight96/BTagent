@@ -379,6 +379,7 @@ class NotificationService:
             title=notification.get("title", ""),
             message=notification.get("message", ""),
             investigation_id=notification.get("investigation_id"),
+            link=notification.get("link"),
             read=False,
         )
         db.add(row)
@@ -393,6 +394,7 @@ class NotificationService:
                     "title": row.title,
                     "message": row.message,
                     "investigation_id": row.investigation_id,
+                    "link": row.link,
                     "read": False,
                     "created_at": row.created_at.isoformat() if row.created_at else None,
                 }

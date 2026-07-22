@@ -72,6 +72,7 @@ async def test_paused_run_notifies_triggering_analyst(db_session, sample_user):
     assert "Containment sweep" in row.message
     assert "'iso'" in row.message
     assert run.id in row.message
+    assert row.link == f"/workflows/{wf.id}"  # bell deep-link to run history
 
 
 async def test_non_paused_run_is_noop(db_session, sample_user):
@@ -123,6 +124,7 @@ async def test_approver_fanout_reaches_senior_roles(db_session, sample_user, adm
     assert all(r.title == "Approval Requested" for r in rows)
     assert all(r.type == "hitl_checkpoint" for r in rows)
     assert all(run.id in r.message for r in rows)
+    assert all(r.link == f"/workflows/{wf.id}" for r in rows)
 
 
 async def test_approver_fanout_excludes_the_triggering_approver(db_session, admin_user):

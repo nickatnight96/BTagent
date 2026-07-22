@@ -332,6 +332,10 @@ class NotificationRow(Base):
         ForeignKey("investigations.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # In-app route the bell navigates to on click (e.g. "/hunt",
+    # "/workflows/wf_x"). Falls back to the investigation deep-link when
+    # absent. App-relative paths only — never a full URL.
+    link: Mapped[str | None] = mapped_column(String(512), nullable=True)
     read: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
