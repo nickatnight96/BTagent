@@ -21,6 +21,7 @@ from btagent_backend.scheduler.jobs import (
     behavioral_baseline_sweep,
     compile_proposal_plan,
     execute_hunt_plan,
+    execute_workflow_run,
     noise_digest_sweep,
     run_hunt_pack,
     scheduled_deception_hunt_scan,
@@ -153,6 +154,8 @@ class WorkerSettings:
         execute_hunt_plan,
         # #113 slice 2: enqueue-on-demand from the CTI validate route.
         validate_detection_proposal,
+        # Background workflow execution: enqueue-on-demand from the run route.
+        execute_workflow_run,
     ]
     cron_jobs = [
         cron(

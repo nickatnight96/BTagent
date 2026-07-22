@@ -49,6 +49,24 @@ logger = logging.getLogger("btagent.api.workflows")
 router = APIRouter(prefix="/workflows", tags=["workflows"])
 
 
+async def _enqueue_background_run(run_id: str) -> None:
+    """Queue a background run for the arq worker (module-level for tests).
+
+    Raises on broker failure — the route converts that to a 503 after
+    marking the already-persisted run row failed, so no orphaned
+    ``running`` row survives an enqueue outage.
+    """
+    from arq import create_pool
+
+    from btagent_backend.scheduler.worker import redis_settings
+
+    pool = await create_pool(redis_settings())
+    try:
+        await pool.enqueue_job("execute_workflow_run", run_id)
+    finally:
+        await pool.aclose()
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -432,6 +450,13 @@ async def run_version(
     workflow_id: str,
     version_number: int,
     body: RunWorkflowRequest,
+    background: bool = Query(
+        False,
+        description=(
+            "Execute on the worker instead of inline: returns immediately with "
+            "status=running; poll the run or watch the bell for the outcome."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
@@ -491,6 +516,42 @@ async def run_version(
         resolved_autonomy = AutonomyLevel(investigation.autonomy_level)
     else:
         resolved_autonomy = AutonomyLevel.L2_SUPERVISED
+
+    if background:
+        # Persist a running row (pre-flight 422s still apply), then hand off
+        # to the arq worker. Outcome lands on the row + the bell; the caller
+        # polls GET .../runs/{id}.
+        try:
+            run = await workflow_run_service.create_pending_run(
+                db,
+                workflow=wf,
+                version=version,
+                trigger_payload=body.trigger_payload,
+                triggered_by=user.id,
+                active_tlp=resolved_tlp,
+                agent_autonomy=resolved_autonomy,
+                investigation_id=investigation.id if investigation is not None else None,
+            )
+        except WorkflowNotExecutable as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        # Commit BEFORE enqueueing: the worker may pick the job up instantly,
+        # and its own session must see the row (otherwise the idempotency
+        # check skips it and the run would be stuck ``running`` forever).
+        await db.commit()
+        try:
+            await _enqueue_background_run(run.id)
+        except Exception as exc:  # noqa: BLE001 — broker outage surfaces as 503
+            logger.exception("Failed to enqueue background run %s", run.id)
+            run.status = WorkflowRunStatus.FAILED.value
+            run.error = f"Could not queue background execution: {type(exc).__name__}"
+            # Commit the failed mark too — an HTTPException would otherwise
+            # roll it back and leave an orphaned ``running`` row.
+            await db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="Could not queue background execution; the run was marked failed.",
+            ) from exc
+        return _to_run_response(run)
 
     try:
         run = await workflow_run_service.execute_version(
