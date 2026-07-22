@@ -39,6 +39,8 @@ export interface SigmaDraft {
 }
 
 export interface HuntPackage {
+  /** Persisted-store id (hpkg_*); null on dumps predating persistence. */
+  id?: string | null;
   source_label: string;
   extracted_ioc_count: number;
   deduped_count: number;
@@ -61,4 +63,36 @@ export async function generateHuntPackage(
   req: HuntPackageRequest
 ): Promise<HuntPackage> {
   return api.post<HuntPackage>("/v1/hunts/package", req);
+}
+
+// --- Package history (#99) — mirrors HuntPackageSummary in api/v1/hunts.py --- //
+
+export interface HuntPackageSummary {
+  id: string;
+  source_label: string;
+  extracted_ioc_count: number;
+  deduped_count: number;
+  techniques: string[];
+  mock_mode: boolean;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface HuntPackageListResponse {
+  items: HuntPackageSummary[];
+  total: number;
+}
+
+export async function listHuntPackages(
+  params: { page?: number; page_size?: number } = {}
+): Promise<HuntPackageListResponse> {
+  const sp = new URLSearchParams();
+  if (params.page) sp.set("page", String(params.page));
+  if (params.page_size) sp.set("page_size", String(params.page_size));
+  const q = sp.toString();
+  return api.get<HuntPackageListResponse>(`/v1/hunts/packages${q ? `?${q}` : ""}`);
+}
+
+export async function getHuntPackage(id: string): Promise<HuntPackage> {
+  return api.get<HuntPackage>(`/v1/hunts/packages/${id}`);
 }
