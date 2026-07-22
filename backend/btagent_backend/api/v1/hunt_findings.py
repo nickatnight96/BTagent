@@ -48,6 +48,7 @@ from btagent_backend.services import (
     hunt_pack_run_service,
     hunt_vertical_catalog,
     ndr_hunt_run_service,
+    noise_baseline,
 )
 from btagent_backend.services import hunt_triage_service as svc
 
@@ -662,6 +663,32 @@ async def list_pack_runs(
     return HuntPackRunListResponse(
         items=[_pack_run_response(r) for r in rows],
         total=total,
+    )
+
+
+@router.get("/noise-baseline")
+async def get_noise_baseline(
+    lookback_runs: int = Query(50, ge=1, le=500, description="Most recent pack runs to analyse."),
+    min_runs: int = Query(3, ge=1, le=100, description="Minimum observations before a verdict."),
+    hit_rate_threshold: float = Query(
+        0.8, ge=0.0, le=1.0, description="Fraction of runs a rule must hit in to be flagged."
+    ),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Chronically-hitting pack rules — advisory suppression candidates (#112).
+
+    Read-only analysis over the org's pack-run history (``rule_stats``);
+    nothing is suppressed automatically — the analyst acts through the
+    existing suppression API. RBAC: ``hunt:view``.
+    """
+    user.require_permission("hunt:view")
+    return await noise_baseline.noise_baseline(
+        db,
+        org_id=user.org_id,
+        lookback_runs=lookback_runs,
+        min_runs=min_runs,
+        hit_rate_threshold=hit_rate_threshold,
     )
 
 
