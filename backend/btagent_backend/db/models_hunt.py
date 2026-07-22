@@ -245,3 +245,39 @@ class NoiseDigestStateRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+
+class HuntPackageRow(Base):
+    """A persisted hunt package (#99 / EPIC-2 UC-2.2).
+
+    ``POST /hunts/package`` used to return a transient object that vanished
+    when the analyst navigated away; this row makes the artifact durable so
+    packages are listable, re-openable, and attachable to cases later. The
+    full package is stored as JSON; a few columns are denormalised for the
+    history list.
+    """
+
+    __tablename__ = "hunt_packages"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    source_label: Mapped[str] = mapped_column(String(200), nullable=False, default="advisory")
+    extracted_ioc_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deduped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # ATT&CK technique ids derived from the extracted indicators.
+    techniques: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    mock_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The full HuntPackage model_dump (queries, sigma drafts, retro report).
+    package: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    __table_args__ = (Index("idx_hunt_packages_org_created", "org_id", "created_at"),)

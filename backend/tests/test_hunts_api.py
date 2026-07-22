@@ -95,3 +95,55 @@ async def test_correlate_requires_auth(client: AsyncClient):
         json={"entity_type": "ip", "entity_value": "10.1.42.17"},
     )
     assert resp.status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Package persistence + history (#99 follow-through)
+# --------------------------------------------------------------------------- #
+
+
+async def test_generated_package_is_persisted_and_reopenable(
+    client: AsyncClient, analyst_token: str
+):
+    """POST /hunts/package stores the artifact; the id round-trips via the
+    history list, and the detail route returns the same package."""
+    resp = await client.post(
+        "/api/v1/hunts/package",
+        json={"text": _ADVISORY, "source_label": "persisted-advisory-probe"},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    generated = resp.json()
+    assert generated["id"], "generated package must carry the persisted id"
+
+    listing = await client.get("/api/v1/hunts/packages", headers=auth_header(analyst_token))
+    assert listing.status_code == 200, listing.text
+    items = {i["id"]: i for i in listing.json()["items"]}
+    assert generated["id"] in items
+    summary = items[generated["id"]]
+    assert summary["source_label"] == "persisted-advisory-probe"
+    assert summary["extracted_ioc_count"] == generated["extracted_ioc_count"]
+    assert summary["techniques"] == generated["derived_techniques"]
+
+    detail = await client.get(
+        f"/api/v1/hunts/packages/{generated['id']}", headers=auth_header(analyst_token)
+    )
+    assert detail.status_code == 200, detail.text
+    reopened = detail.json()
+    assert reopened["id"] == generated["id"]
+    assert reopened["source_label"] == "persisted-advisory-probe"
+    assert reopened["extracted_ioc_count"] == generated["extracted_ioc_count"]
+    assert reopened["sigma_drafts"] == generated["sigma_drafts"]
+    assert reopened["queries"] == generated["queries"]
+
+
+async def test_package_detail_404_on_unknown_id(client: AsyncClient, analyst_token: str):
+    resp = await client.get(
+        "/api/v1/hunts/packages/hpkg_DOESNOTEXIST", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 404
+
+
+async def test_package_history_requires_auth(client: AsyncClient):
+    assert (await client.get("/api/v1/hunts/packages")).status_code in (401, 403)
+    assert (await client.get("/api/v1/hunts/packages/hpkg_x")).status_code in (401, 403)
