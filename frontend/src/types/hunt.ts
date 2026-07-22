@@ -49,6 +49,8 @@ export interface SuppressionMatch {
   technique_ids: string[];
   entity_values: string[];
   observable_values: string[];
+  /** Detection-rule ids matched against evidence.rule_id (pack provenance). */
+  rule_ids?: string[];
 }
 
 export interface HuntFinding {
