@@ -38,6 +38,7 @@ from btagent_backend.auth.scoping import assert_can_access_investigation
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow, WorkflowVersionRow
 from btagent_backend.services import workflow_run_service, workflow_service
+from btagent_backend.services.hitl_notifier import notify_workflow_paused_best_effort
 from btagent_backend.services.workflow_run_service import (
     RunNotResumable,
     WorkflowNotExecutable,
@@ -504,6 +505,8 @@ async def run_version(
         )
     except WorkflowNotExecutable as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    if run.status == WorkflowRunStatus.PAUSED.value:
+        await notify_workflow_paused_best_effort(db, workflow=wf, run=run)
     return _to_run_response(run)
 
 
@@ -574,4 +577,8 @@ async def resume_run(
         )
     except RunNotResumable as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+    # A resume can pause again at a LATER gate — that also needs the
+    # triggering analyst's attention.
+    if run.status == WorkflowRunStatus.PAUSED.value:
+        await notify_workflow_paused_best_effort(db, workflow=wf, run=run)
     return _to_run_response(run)
