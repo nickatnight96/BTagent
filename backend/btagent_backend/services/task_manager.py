@@ -26,6 +26,7 @@ from sqlalchemy import select, update
 from btagent_backend.config import get_settings
 from btagent_backend.db.engine import async_session_factory
 from btagent_backend.db.models import InvestigationRow
+from btagent_backend.services.investigation_notifier import notify_investigation_outcome
 
 if TYPE_CHECKING:
     # Type-only imports: resolved by static checkers, never executed at runtime
@@ -475,6 +476,7 @@ class TaskManager:
         investigation.
         """
         emitter: RedisEmitter | None = None
+        started = time.monotonic()
         try:
             # 1. Create RedisEmitter for this investigation.
             emitter = RedisEmitter(investigation_id, self._redis_url)
@@ -531,7 +533,16 @@ class TaskManager:
                 final_status,
             )
 
-            # 7. Auto-index investigation into knowledge base.
+            # 7. Notify the assigned analyst (in-app + Slack, best-effort).
+            findings = final_state.get("findings")
+            await self._notify_outcome(
+                investigation_id,
+                final_status=final_status,
+                duration_seconds=time.monotonic() - started,
+                finding_count=len(findings) if isinstance(findings, list) else 0,
+            )
+
+            # 8. Auto-index investigation into knowledge base.
             await self._on_investigation_complete(investigation_id)
 
         except asyncio.CancelledError:
@@ -565,6 +576,12 @@ class TaskManager:
                         "Failed to emit INVESTIGATION_FAILED for %s",
                         investigation_id,
                     )
+            await self._notify_outcome(
+                investigation_id,
+                final_status=InvestigationStatus.FAILED.value,
+                error=error_msg,
+                duration_seconds=time.monotonic() - started,
+            )
         finally:
             # Clean up the emitter and remove the task reference.
             if emitter is not None:
@@ -573,6 +590,53 @@ class TaskManager:
                 except Exception:
                     pass
             self._tasks.pop(investigation_id, None)
+
+    # ------------------------------------------------------------------
+    # Internal: outcome notification
+    # ------------------------------------------------------------------
+
+    async def _notify_outcome(
+        self,
+        investigation_id: str,
+        *,
+        final_status: str,
+        error: str | None = None,
+        duration_seconds: float | None = None,
+        finding_count: int = 0,
+    ) -> None:
+        """Notify the assigned analyst of a terminal outcome (best-effort).
+
+        Runs with its own session + short-lived Redis connection because it
+        executes inside the background task, outside any request scope. Any
+        failure is swallowed after logging: an investigation must never be
+        marked failed (or its completion flow disturbed) because the
+        notification couldn't be stored or pushed.
+        """
+        redis: Redis | None = None
+        try:
+            redis = Redis.from_url(self._redis_url, decode_responses=True)
+            async with async_session_factory() as session:
+                await notify_investigation_outcome(
+                    session,
+                    investigation_id=investigation_id,
+                    final_status=final_status,
+                    error=error,
+                    duration_seconds=duration_seconds,
+                    finding_count=finding_count,
+                    redis=redis,
+                )
+                await session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to send outcome notification for investigation %s",
+                investigation_id,
+            )
+        finally:
+            if redis is not None:
+                try:
+                    await redis.aclose()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Internal: knowledge auto-indexing on completion

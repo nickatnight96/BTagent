@@ -197,8 +197,12 @@ class NotificationService:
         summary: dict[str, Any],
         *,
         user_id: str | None = None,
-    ) -> None:
-        """Notify when investigation completes."""
+    ) -> NotificationRow | None:
+        """Notify when investigation completes.
+
+        Returns the created in-app :class:`NotificationRow` when ``user_id``
+        was given, else ``None`` (Slack-only path).
+        """
         status = summary.get("status", "completed")
         finding_count = summary.get("finding_count", 0)
         duration = summary.get("duration", "unknown")
@@ -240,7 +244,7 @@ class NotificationService:
         )
 
         if user_id:
-            await self.send_inapp(
+            return await self.send_inapp(
                 db,
                 user_id=user_id,
                 notification={
@@ -253,6 +257,57 @@ class NotificationService:
                     "investigation_id": investigation_id,
                 },
             )
+        return None
+
+    async def notify_investigation_failed(
+        self,
+        db: AsyncSession,
+        investigation_id: str,
+        *,
+        error: str,
+        user_id: str | None = None,
+    ) -> NotificationRow | None:
+        """Notify when an investigation fails (unexpected engine error)."""
+        blocks = [
+            {
+                "type": "header",
+                "text": {
+                    "type": "plain_text",
+                    "text": ":x: Investigation Failed",
+                },
+            },
+            {
+                "type": "section",
+                "fields": [
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Investigation:*\n`{investigation_id}`",
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Error:*\n{error}",
+                    },
+                ],
+            },
+        ]
+
+        await self.send_slack(
+            blocks,
+            text=f"Investigation {investigation_id} failed: {error}",
+        )
+
+        if user_id:
+            return await self.send_inapp(
+                db,
+                user_id=user_id,
+                notification={
+                    "type": "investigation_failed",
+                    "title": "Investigation Failed",
+                    "message": f"Investigation stopped with an error: {error}",
+                    "investigation_id": investigation_id,
+                },
+            )
+        return None
 
     # ------------------------------------------------------------------
     # Slack
