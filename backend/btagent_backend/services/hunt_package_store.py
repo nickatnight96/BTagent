@@ -77,6 +77,15 @@ async def list_packages(
     return list(rows), int(total)
 
 
+async def link_investigation(
+    db: AsyncSession, *, row: HuntPackageRow, investigation_id: str
+) -> None:
+    """Record package → case lineage after a promote (flush, no commit)."""
+    row.investigation_id = investigation_id
+    await db.flush()
+    logger.info("hunt package %s promoted to investigation %s", row.id, investigation_id)
+
+
 async def get_package(db: AsyncSession, *, org_id: str, package_id: str) -> HuntPackageRow | None:
     """Fetch one package; ``None`` on miss OR cross-org access (route 404s)."""
     result = await db.execute(

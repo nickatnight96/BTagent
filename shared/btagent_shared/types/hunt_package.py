@@ -29,6 +29,10 @@ class HuntPackage(BaseModel):
     # but not (yet) stored; set by the backend store on save so the caller
     # can re-open the package from history.
     id: str | None = None
+    # Investigation this package was promoted into (inv_...); None until
+    # the analyst opens a case from it. Row-level lineage set by the
+    # backend on read, never part of the generated artifact itself.
+    investigation_id: str | None = None
     source_label: str = Field(
         default="advisory",
         description="Where the package came from (advisory title / filename).",
