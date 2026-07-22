@@ -18,3 +18,8 @@ export interface NotificationListResponse {
   /** Whole-store unread count (the bell badge). */
   unread: number;
 }
+
+/** Per-user mute list — notification type values skipped in-app. */
+export interface NotificationPrefs {
+  muted_types: string[];
+}

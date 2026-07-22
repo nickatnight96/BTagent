@@ -6,11 +6,15 @@ import type { ReactElement } from "react";
 const listNotifications = vi.fn();
 const markNotificationRead = vi.fn();
 const markAllNotificationsRead = vi.fn();
+const getNotificationPrefs = vi.fn();
+const putNotificationPrefs = vi.fn();
 
 vi.mock("@/api/notifications", () => ({
   listNotifications: (...a: unknown[]) => listNotifications(...a),
   markNotificationRead: (...a: unknown[]) => markNotificationRead(...a),
   markAllNotificationsRead: (...a: unknown[]) => markAllNotificationsRead(...a),
+  getNotificationPrefs: (...a: unknown[]) => getNotificationPrefs(...a),
+  putNotificationPrefs: (...a: unknown[]) => putNotificationPrefs(...a),
 }));
 
 // Stable fake WS client so the bell can register its onNotification handler.
@@ -135,6 +139,87 @@ describe("NotificationBell", () => {
     });
     await waitFor(() =>
       expect(navigateSpy).toHaveBeenCalledWith("/investigations/inv_9"),
+    );
+  });
+
+  it("loads prefs and renders mute toggles behind the gear", async () => {
+    getNotificationPrefs.mockResolvedValue({ muted_types: ["noise_digest"] });
+    renderBell(<NotificationBell />);
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("notification-bell-button"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("notification-prefs-toggle"));
+    });
+    expect(await screen.findByTestId("notification-prefs-panel")).toBeTruthy();
+    // Muted type renders unchecked (checkbox = "deliver this type").
+    const digest = (await screen.findByTestId(
+      "notification-pref-noise_digest",
+    )) as HTMLInputElement;
+    expect(digest.checked).toBe(false);
+    const critical = screen.getByTestId(
+      "notification-pref-critical_finding",
+    ) as HTMLInputElement;
+    expect(critical.checked).toBe(true);
+  });
+
+  it("toggling a type PUTs the updated mute list (and unmute removes it)", async () => {
+    getNotificationPrefs.mockResolvedValue({ muted_types: ["noise_digest"] });
+    putNotificationPrefs
+      .mockResolvedValueOnce({ muted_types: ["noise_digest", "critical_finding"] })
+      .mockResolvedValueOnce({ muted_types: ["critical_finding"] });
+    renderBell(<NotificationBell />);
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("notification-bell-button"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("notification-prefs-toggle"));
+    });
+    await screen.findByTestId("notification-pref-critical_finding");
+
+    // Mute critical_finding: PUT with both types.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("notification-pref-critical_finding"));
+    });
+    await waitFor(() =>
+      expect(putNotificationPrefs).toHaveBeenCalledWith({
+        muted_types: ["noise_digest", "critical_finding"],
+      }),
+    );
+
+    // Unmute noise_digest: PUT without it.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("notification-pref-noise_digest"));
+    });
+    await waitFor(() =>
+      expect(putNotificationPrefs).toHaveBeenLastCalledWith({
+        muted_types: ["critical_finding"],
+      }),
+    );
+  });
+
+  it("rolls the toggle back when the PUT fails", async () => {
+    getNotificationPrefs.mockResolvedValue({ muted_types: [] });
+    putNotificationPrefs.mockRejectedValue(new Error("500"));
+    renderBell(<NotificationBell />);
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("notification-bell-button"));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("notification-prefs-toggle"));
+    });
+    const digest = (await screen.findByTestId(
+      "notification-pref-noise_digest",
+    )) as HTMLInputElement;
+    expect(digest.checked).toBe(true);
+    await act(async () => {
+      fireEvent.click(digest);
+    });
+    // PUT failed — checkbox returns to delivered state.
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId("notification-pref-noise_digest") as HTMLInputElement).checked,
+      ).toBe(true),
     );
   });
 

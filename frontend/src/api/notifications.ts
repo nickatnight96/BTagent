@@ -1,7 +1,7 @@
 /** In-app notifications API client. */
 
 import api from "./client";
-import type { NotificationListResponse } from "@/types/notification";
+import type { NotificationListResponse, NotificationPrefs } from "@/types/notification";
 
 const BASE = "/v1/notifications";
 
@@ -27,4 +27,16 @@ export async function markNotificationRead(id: string): Promise<void> {
 /** Mark all of the current user's notifications read; returns the count marked. */
 export async function markAllNotificationsRead(): Promise<{ marked: number }> {
   return api.post<{ marked: number }>(`${BASE}/read-all`, {});
+}
+
+/** The current user's notification mute list. */
+export async function getNotificationPrefs(): Promise<NotificationPrefs> {
+  return api.get<NotificationPrefs>(`${BASE}/preferences`);
+}
+
+/** Replace the current user's notification mute list. */
+export async function putNotificationPrefs(
+  prefs: NotificationPrefs,
+): Promise<NotificationPrefs> {
+  return api.put<NotificationPrefs>(`${BASE}/preferences`, prefs);
 }
