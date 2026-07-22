@@ -241,3 +241,26 @@ async def test_reject_records_decision_without_playbook(
         f"{_proposal_url(inv_id)}/accept", headers=auth_header(senior_token), json={}
     )
     assert resp.status_code == 409
+
+
+async def test_promote_with_proposal_notifies_playbook_authors(
+    client, senior_token, senior_user, db_session: AsyncSession
+):
+    """#116 Phase C follow-up: attaching a revocation proposal on promote
+    leaves a decider notification (playbook:create holders) deep-linking to
+    the investigation."""
+    from btagent_backend.db.models import NotificationRow
+
+    inv_id = await _promote(client, senior_token, db_session, [_finding()])
+
+    result = await db_session.execute(
+        select(NotificationRow).where(
+            NotificationRow.user_id == senior_user.id,
+            NotificationRow.type == "hitl_checkpoint",
+            NotificationRow.investigation_id == inv_id,
+        )
+    )
+    rows = list(result.scalars().all())
+    assert len(rows) == 1
+    assert rows[0].title == "Revocation Playbook Proposed"
+    assert rows[0].link == f"/investigations/{inv_id}"

@@ -795,6 +795,8 @@ async def promote_to_investigation(
     revocation = build_revocation_proposal(findings)
     if revocation is not None:
         config["revocation_proposal"] = revocation.model_dump(mode="json")
+        # Deciders (playbook:create holders) are notified after the flush
+        # below, once the investigation id exists.
 
     inv = InvestigationRow(
         id=generate_id("inv"),
@@ -811,6 +813,21 @@ async def promote_to_investigation(
     )
     db.add(inv)
     await db.flush()
+
+    if revocation is not None:
+        # Local import: keeps the notifier stack off this module's hot read
+        # path (same pattern as the critical-finding notifier below).
+        from btagent_backend.services.hitl_notifier import (
+            notify_revocation_proposed_best_effort,
+        )
+
+        await notify_revocation_proposed_best_effort(
+            db,
+            org_id=org_id,
+            investigation_id=inv.id,
+            investigation_title=inv_title,
+            target_count=len(revocation.targets),
+        )
 
     touched_clusters: set[str] = set()
     for r in rows:
