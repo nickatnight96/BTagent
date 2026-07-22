@@ -694,7 +694,7 @@ export function HuntTriagePage() {
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-3">
           {/* #112 noise baseline — advisory, renders nothing when quiet. */}
-          <NoisyRulesPanel />
+          <NoisyRulesPanel canSuppress={canTriage} />
 
           {error && (
             <div
