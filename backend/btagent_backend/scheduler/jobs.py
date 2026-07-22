@@ -453,3 +453,41 @@ async def validate_detection_proposal(
     verdict = (row.validation or {}).get("verdict", "unknown")
     logger.info("validate_detection_proposal %s: verdict=%s", row_id, verdict)
     return {"row_id": row.id, "verdict": verdict}
+
+
+async def noise_digest_sweep(ctx: dict[str, Any]) -> dict[str, int]:
+    """Daily newly-noisy digest (#112): diff the noise baseline per org.
+
+    For every org with pack-run history, compares the current noise baseline
+    against the stored ``noise_digest_state`` and notifies hunt seniors about
+    rules that turned chronically noisy since the previous sweep. The arq
+    redis (``ctx["redis"]``) rides along for the real-time WS push; the DB
+    rows are the source of truth either way.
+    """
+    from sqlalchemy import select as _select
+
+    from btagent_backend.db.models_hunt import HuntPackRunRow
+    from btagent_backend.services.noise_digest import run_noise_digest
+
+    totals = {"orgs": 0, "noisy": 0, "new": 0, "notified": 0}
+    async with async_session_factory() as session:
+        org_ids = [
+            org_id
+            for (org_id,) in (
+                await session.execute(_select(HuntPackRunRow.org_id).distinct())
+            ).all()
+        ]
+        for org_id in org_ids:
+            result = await run_noise_digest(session, org_id=org_id, redis=ctx.get("redis"))
+            totals["orgs"] += 1
+            for key in ("noisy", "new", "notified"):
+                totals[key] += result[key]
+        await session.commit()
+    logger.info(
+        "noise_digest_sweep: orgs=%d noisy=%d new=%d notified=%d",
+        totals["orgs"],
+        totals["noisy"],
+        totals["new"],
+        totals["notified"],
+    )
+    return totals

@@ -77,10 +77,11 @@ describe("NoisyRulesPanel", () => {
     expect(screen.getByText(/nothing is suppressed automatically/i)).toBeTruthy();
   });
 
-  it("one-click suppress creates a rule_ids-targeted suppression", async () => {
+  it("one-click suppress creates a pack-scoped rule_ids suppression and refreshes", async () => {
     getNoiseBaseline.mockResolvedValue(NOISY);
     createSuppression.mockResolvedValue({ id: "sup_1" });
-    render(<NoisyRulesPanel canSuppress />);
+    const onSuppressed = vi.fn();
+    render(<NoisyRulesPanel canSuppress onSuppressed={onSuppressed} />);
     const toggle = await screen.findByTestId("noisy-rules-toggle");
     await act(async () => {
       fireEvent.click(toggle);
@@ -92,11 +93,18 @@ describe("NoisyRulesPanel", () => {
     const body = createSuppression.mock.calls[0]?.[0] as {
       name: string;
       reason: string;
-      match: { rule_ids: string[] };
+      match: { rule_ids: string[]; source: string; domain: string };
     };
     expect(body.match.rule_ids).toEqual(["r1"]);
+    // Pack-scoped: identity hunts reuse detector ids in evidence.rule_id,
+    // so the match must pin source+domain (Codex review on #324).
+    expect(body.match.source).toBe("hunt_pack");
+    expect(body.match.domain).toBe("sigma");
     expect(body.name).toContain("Encoded PowerShell");
     expect(body.reason).toContain("hit 100% of 12 runs");
+    // Parent gets the refresh signal — the backend already suppressed
+    // matching findings, so the inbox must not keep showing them.
+    expect(onSuppressed).toHaveBeenCalledTimes(1);
     // The row flips to a suppressed badge; the button is gone.
     expect(await screen.findByTestId("noisy-rule-muted-r1")).toBeTruthy();
     expect(screen.queryByTestId("noisy-rule-suppress-r1")).toBeNull();

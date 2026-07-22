@@ -87,6 +87,57 @@ async def notify_critical_findings(
     return created
 
 
+async def notify_newly_noisy_rules(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    rules: list,  # NoisyRule models from services.noise_baseline
+    redis: Any | None = None,
+    settings: Settings | None = None,
+) -> list[NotificationRow]:
+    """One digest notification per hunt senior for newly-noisy rules (#112).
+
+    Called by the scheduled noise-digest sweep with the rules that turned
+    chronically noisy since the previous run. Advisory: the bell entry
+    deep-links to the triage page where the Noisy Rules panel offers the
+    one-click rule suppression. Flushes but never commits.
+    """
+    if not rules:
+        return []
+    recipients = await user_ids_with_permission(db, org_id=org_id, permission="hunt:promote")
+    if not recipients:
+        return []
+
+    first = rules[0]
+    detail = (
+        f"'{first.rule_title}' (hit {round(first.hit_rate * 100)}% of {first.runs_observed} runs)"
+    )
+    if len(rules) == 1:
+        message = f"A pack rule turned chronically noisy: {detail}."
+    else:
+        message = (
+            f"{len(rules)} pack rules turned chronically noisy: {detail} and {len(rules) - 1} more."
+        )
+
+    service = NotificationService(settings or get_settings(), redis=redis)
+    created: list[NotificationRow] = []
+    for user_id in recipients:
+        created.append(
+            await service.send_inapp(
+                db,
+                user_id=user_id,
+                notification={
+                    "type": "noise_digest",
+                    "title": "Newly Noisy Rules",
+                    "message": message,
+                    "investigation_id": None,
+                    "link": "/hunt",
+                },
+            )
+        )
+    return created
+
+
 async def notify_critical_findings_best_effort(
     db: AsyncSession,
     *,

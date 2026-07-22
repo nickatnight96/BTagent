@@ -221,3 +221,27 @@ class HuntPackRunRow(Base):
         Index("idx_hunt_pack_runs_org_started", "org_id", "started_at"),
         Index("idx_hunt_pack_runs_pack_id", "pack_id"),
     )
+
+
+class NoiseDigestStateRow(Base):
+    """Per-org memory of the last noise-digest run (#112).
+
+    Stores the set of ``"pack_id:rule_id"`` keys the previous digest saw as
+    chronically noisy, so the scheduled sweep only notifies about rules that
+    are NEW since last time. A rule that goes quiet is dropped from the set,
+    so if it later turns noisy again the digest re-notifies — regressions
+    are signal, not repeats.
+    """
+
+    __tablename__ = "noise_digest_state"
+
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    # Sorted list of "pack_id:rule_id" keys from the last digest.
+    noisy_keys: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
