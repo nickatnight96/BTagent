@@ -12,7 +12,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.config import Settings
-from btagent_backend.db.models import NotificationRow
+from btagent_backend.db.models import NotificationPrefRow, NotificationRow
 
 logger = logging.getLogger("btagent.services.notifications")
 
@@ -370,8 +370,19 @@ class NotificationService:
         *,
         user_id: str,
         notification: dict[str, Any],
-    ) -> NotificationRow:
-        """Store in-app notification in DB and push via Redis WebSocket channel."""
+    ) -> NotificationRow | None:
+        """Store in-app notification in DB and push via Redis WebSocket channel.
+
+        Respects the user's mute preferences: a type the user muted (see
+        :class:`NotificationPrefRow`) is silently skipped and ``None`` is
+        returned — the single chokepoint every producer flows through.
+        """
+        ntf_type = notification.get("type", "info")
+        pref = await db.get(NotificationPrefRow, user_id)
+        if pref is not None and ntf_type in (pref.muted_types or []):
+            logger.debug("Notification type %s muted by user %s — skipping", ntf_type, user_id)
+            return None
+
         row = NotificationRow(
             id=generate_id("ntf"),
             user_id=user_id,

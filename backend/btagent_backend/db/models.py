@@ -346,6 +346,27 @@ class NotificationRow(Base):
     )
 
 
+class NotificationPrefRow(Base):
+    """Per-user notification preferences — muted in-app notification types.
+
+    Enforced at the ``NotificationService.send_inapp`` chokepoint, so every
+    producer (investigation outcomes, HITL pauses, critical findings, noise
+    digests, future ones) respects a mute without knowing about it. Muting
+    affects in-app delivery only; nothing here touches audit or Slack.
+    """
+
+    __tablename__ = "notification_prefs"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Notification ``type`` values the user has muted (e.g. "noise_digest").
+    muted_types: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class OrgConfigRow(Base):
     __tablename__ = "org_config"
 
