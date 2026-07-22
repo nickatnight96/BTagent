@@ -4,13 +4,24 @@
  * Loads the current user's notifications from `GET /notifications` (initial +
  * 30 s poll), shows an unread badge, and opens a dropdown panel where an
  * analyst can read individual notifications (marking them read) or clear the
- * whole queue. Real-time delivery over the WebSocket hub is a follow-up; this
- * poll keeps the badge fresh in the meantime.
+ * whole queue. Real-time delivery arrives over the WebSocket hub (the poll is
+ * the fallback when the socket is down). Rows carry a per-type accent icon
+ * and a compact relative timestamp so the queue scans at a glance.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, CheckCheck, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Bell,
+  CheckCheck,
+  CheckCircle2,
+  Info,
+  Loader2,
+  ShieldAlert,
+  XCircle,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ds/button";
 import {
   listNotifications,
@@ -21,6 +32,37 @@ import { getWSClient } from "@/api/ws";
 import type { AppNotification } from "@/types/notification";
 
 const POLL_INTERVAL_MS = 30_000;
+
+/** Compact relative timestamp for dropdown rows ("just now" / "5m ago"). */
+export function relativeTime(iso: string, now: Date = new Date()): string {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const seconds = Math.max(0, Math.floor((now.getTime() - then) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+/** Per-type accent icon so an analyst can scan the queue by category. */
+function typeAccent(type: string): { Icon: LucideIcon; className: string } {
+  switch (type) {
+    case "hitl_checkpoint":
+      return { Icon: ShieldAlert, className: "text-amber-400" };
+    case "investigation_complete":
+      return { Icon: CheckCircle2, className: "text-emerald-400" };
+    case "investigation_failed":
+      return { Icon: XCircle, className: "text-rose-400" };
+    case "critical_finding":
+      return { Icon: AlertTriangle, className: "text-rose-400" };
+    default:
+      return { Icon: Info, className: "text-sky-400" };
+  }
+}
 
 export function NotificationBell() {
   const navigate = useNavigate();
@@ -158,29 +200,45 @@ export function NotificationBell() {
                 No notifications.
               </div>
             ) : (
-              items.map((n) => (
-                <button
-                  type="button"
-                  key={n.id}
-                  onClick={() => void handleItemClick(n)}
-                  className={`flex w-full flex-col items-start gap-0.5 border-b border-border/50 px-3 py-2 text-left hover:bg-muted/40 ${
-                    n.read ? "opacity-60" : ""
-                  }`}
-                  data-testid={`notification-item-${n.id}`}
-                >
-                  <div className="flex w-full items-center gap-2">
-                    {!n.read && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+              items.map((n) => {
+                const { Icon, className } = typeAccent(n.type);
+                return (
+                  <button
+                    type="button"
+                    key={n.id}
+                    onClick={() => void handleItemClick(n)}
+                    className={`flex w-full flex-col items-start gap-0.5 border-b border-border/50 px-3 py-2 text-left hover:bg-muted/40 ${
+                      n.read ? "opacity-60" : ""
+                    }`}
+                    data-testid={`notification-item-${n.id}`}
+                  >
+                    <div className="flex w-full items-center gap-2">
+                      {!n.read && (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-sky-400" />
+                      )}
+                      <Icon
+                        className={`h-3.5 w-3.5 shrink-0 ${className}`}
+                        aria-hidden="true"
+                        data-testid={`notification-icon-${n.id}`}
+                      />
+                      <span className="truncate text-sm font-medium text-foreground">
+                        {n.title}
+                      </span>
+                      <span
+                        className="ml-auto shrink-0 text-[10px] text-muted-foreground"
+                        data-testid={`notification-time-${n.id}`}
+                      >
+                        {relativeTime(n.created_at)}
+                      </span>
+                    </div>
+                    {n.message && (
+                      <span className="line-clamp-2 text-xs text-muted-foreground">
+                        {n.message}
+                      </span>
                     )}
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {n.title}
-                    </span>
-                  </div>
-                  {n.message && (
-                    <span className="line-clamp-2 text-xs text-muted-foreground">{n.message}</span>
-                  )}
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
