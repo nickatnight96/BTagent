@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Loader2,
   ShieldAlert,
@@ -6,6 +6,9 @@ import {
   FileSearch,
   Target,
   Code2,
+  History,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
@@ -19,15 +22,55 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ds/card";
-import { generateHuntPackage, type HuntPackage } from "@/api/hunts";
+import {
+  generateHuntPackage,
+  listHuntPackages,
+  getHuntPackage,
+  type HuntPackage,
+  type HuntPackageSummary,
+} from "@/api/hunts";
 
 const SAMPLE = `CISA advisory AA26-001: threat actor infrastructure includes 10.1.42.17 and evil-c2.example, distributing payloads via hxxps://evil-c2[.]example/payload.bin. Observed SHA256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855. Exploited CVE-2026-12345.`;
+
+const HISTORY_PAGE_SIZE = 20;
+
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const diffMins = Math.floor((Date.now() - date.getTime()) / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
 
 export function HuntPackagePage() {
   const [text, setText] = useState("");
   const [pkg, setPkg] = useState<HuntPackage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Package history (#99): stored artifacts, re-openable in place.
+  const [history, setHistory] = useState<HuntPackageSummary[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const resp = await listHuntPackages({ page_size: HISTORY_PAGE_SIZE });
+      setHistory(resp.items);
+      setHistoryTotal(resp.total);
+    } catch {
+      // History is auxiliary — never block package generation on it.
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHistory();
+  }, [fetchHistory]);
 
   const handleGenerate = useCallback(async () => {
     if (!text.trim()) return;
@@ -41,12 +84,26 @@ export function HuntPackagePage() {
         backends: ["splunk", "sentinel", "sigma"],
       });
       setPkg(result);
+      void fetchHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate hunt package");
     } finally {
       setLoading(false);
     }
-  }, [text]);
+  }, [text, fetchHistory]);
+
+  const handleReopen = useCallback(async (id: string) => {
+    setReopeningId(id);
+    setError(null);
+    try {
+      const result = await getHuntPackage(id);
+      setPkg(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to re-open hunt package");
+    } finally {
+      setReopeningId(null);
+    }
+  }, []);
 
   return (
     <>
@@ -105,6 +162,76 @@ export function HuntPackagePage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Package history (#99) — collapsible, click to re-open */}
+        {history.length > 0 && (
+          <Card data-testid="package-history">
+            <CardHeader className="py-3">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 text-left"
+                onClick={() => setHistoryOpen((o) => !o)}
+                data-testid="package-history-toggle"
+                aria-expanded={historyOpen}
+              >
+                {historyOpen ? (
+                  <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                )}
+                <History className="w-4 h-4 text-primary shrink-0" />
+                <CardTitle className="text-base">
+                  Package history{" "}
+                  <span className="font-normal text-muted-foreground">
+                    ({historyTotal})
+                  </span>
+                </CardTitle>
+              </button>
+            </CardHeader>
+            {historyOpen && (
+              <CardContent className="space-y-2 pt-0">
+                {history.map((h) => (
+                  <button
+                    key={h.id}
+                    type="button"
+                    onClick={() => void handleReopen(h.id)}
+                    disabled={reopeningId !== null}
+                    className="flex w-full items-center justify-between gap-3 rounded-md border border-border p-3 text-left text-sm hover:bg-muted/50 disabled:opacity-60"
+                    data-testid={`package-history-item-${h.id}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">
+                        {h.source_label}
+                        {pkg?.id === h.id && (
+                          <span className="ml-2 text-xs text-primary">(open)</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {h.extracted_ioc_count} IOCs · {h.techniques.length}{" "}
+                        techniques · {formatRelativeTime(h.created_at)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {reopeningId === h.id && (
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                      )}
+                      {h.techniques.slice(0, 3).map((t) => (
+                        <Badge key={t} variant="secondary" className="text-xs">
+                          {t}
+                        </Badge>
+                      ))}
+                      {h.techniques.length > 3 && (
+                        <span className="text-xs text-muted-foreground">
+                          +{h.techniques.length - 3}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </CardContent>
+            )}
+          </Card>
+        )}
 
         {/* Results */}
         {pkg && (
