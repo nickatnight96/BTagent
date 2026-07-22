@@ -19,7 +19,15 @@ import { Button } from "@/components/ds/button";
 import { createSuppression, getNoiseBaseline } from "@/api/hunt";
 import type { NoiseBaseline, NoisyRule } from "@/types/hunt";
 
-export function NoisyRulesPanel({ canSuppress = false }: { canSuppress?: boolean }) {
+export function NoisyRulesPanel({
+  canSuppress = false,
+  onSuppressed,
+}: {
+  canSuppress?: boolean;
+  /** Called after a suppression lands — the parent refreshes its inbox,
+   *  since the backend suppresses existing matching findings immediately. */
+  onSuppressed?: () => void;
+}) {
   const [baseline, setBaseline] = useState<NoiseBaseline | null>(null);
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -42,29 +50,40 @@ export function NoisyRulesPanel({ canSuppress = false }: { canSuppress?: boolean
     void refresh();
   }, [refresh]);
 
-  const handleSuppress = useCallback(async (r: NoisyRule) => {
-    setSuppressingId(r.rule_id);
-    setError(null);
-    try {
-      await createSuppression({
-        name: `Mute noisy rule: ${r.rule_title}`.slice(0, 200),
-        reason:
-          `Noise baseline: hit ${Math.round(r.hit_rate * 100)}% of ` +
-          `${r.runs_observed} runs (${r.total_hits} hits total).`,
-        match: {
-          technique_ids: [],
-          entity_values: [],
-          observable_values: [],
-          rule_ids: [r.rule_id],
-        },
-      });
-      setMutedRuleIds((prev) => new Set(prev).add(r.rule_id));
-    } catch {
-      setError(`Failed to suppress '${r.rule_title}'.`);
-    } finally {
-      setSuppressingId(null);
-    }
-  }, []);
+  const handleSuppress = useCallback(
+    async (r: NoisyRule) => {
+      setSuppressingId(r.rule_id);
+      setError(null);
+      try {
+        await createSuppression({
+          name: `Mute noisy rule: ${r.rule_title}`.slice(0, 200),
+          reason:
+            `Noise baseline: hit ${Math.round(r.hit_rate * 100)}% of ` +
+            `${r.runs_observed} runs (${r.total_hits} hits total).`,
+          match: {
+            // Scoped to pack findings: identity hunts reuse detector ids in
+            // evidence.rule_id, so a bare rule_ids match could over-suppress
+            // (Codex review on #324).
+            source: "hunt_pack",
+            domain: "sigma",
+            technique_ids: [],
+            entity_values: [],
+            observable_values: [],
+            rule_ids: [r.rule_id],
+          },
+        });
+        setMutedRuleIds((prev) => new Set(prev).add(r.rule_id));
+        // The backend already suppressed matching findings — let the parent
+        // refresh its inbox so stale active rows disappear immediately.
+        onSuppressed?.();
+      } catch {
+        setError(`Failed to suppress '${r.rule_title}'.`);
+      } finally {
+        setSuppressingId(null);
+      }
+    },
+    [onSuppressed],
+  );
 
   if (!baseline || baseline.items.length === 0) return null;
 

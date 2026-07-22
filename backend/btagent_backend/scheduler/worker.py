@@ -21,6 +21,7 @@ from btagent_backend.scheduler.jobs import (
     behavioral_baseline_sweep,
     compile_proposal_plan,
     execute_hunt_plan,
+    noise_digest_sweep,
     run_hunt_pack,
     scheduled_deception_hunt_scan,
     scheduled_email_hunt_scan,
@@ -138,6 +139,7 @@ class WorkerSettings:
     # packs against the configured backends and ingests into the inbox.
     functions = [
         stale_suppression_sweep,
+        noise_digest_sweep,
         run_hunt_pack,
         scheduled_hunt_pack_run,
         scheduled_email_hunt_scan,
@@ -211,6 +213,16 @@ class WorkerSettings:
             behavioral_baseline_sweep,
             hour=_behavioral_cron_hours(),
             minute=0,
+            unique=True,
+        ),
+        # #112 newly-noisy digest: daily diff of the noise baseline against
+        # the per-org digest state; notifies hunt seniors about NEW chronic
+        # rules only. Fixed daily cadence (06:30 UTC — after the overnight
+        # pack-run crons so the diff sees fresh rule_stats).
+        cron(
+            noise_digest_sweep,
+            hour=6,
+            minute=30,
             unique=True,
         ),
     ]
