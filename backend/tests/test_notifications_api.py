@@ -83,3 +83,28 @@ async def test_mark_all_read(client, analyst_token, sample_user, db_session):
 async def test_requires_auth(client):
     resp = await client.get("/api/v1/notifications")
     assert resp.status_code in (401, 403)
+
+
+async def test_link_round_trips_through_the_api(client, analyst_token, sample_user, db_session):
+    row = NotificationRow(
+        id=generate_id("ntf"),
+        user_id=sample_user.id,
+        type="critical_finding",
+        title="Critical Hunt Findings",
+        message="deep-link roundtrip",
+        link="/hunt",
+        read=False,
+    )
+    db_session.add(row)
+    await db_session.commit()
+
+    listing = await client.get("/api/v1/notifications", headers=auth_header(analyst_token))
+    assert listing.status_code == 200, listing.text
+    items = {i["id"]: i for i in listing.json()["items"]}
+    assert items[row.id]["link"] == "/hunt"
+    # Rows without a link serialise it as null (bell falls back to the
+    # investigation deep-link).
+    others = await _seed(db_session, sample_user.id, unread=1)
+    listing = await client.get("/api/v1/notifications", headers=auth_header(analyst_token))
+    items = {i["id"]: i for i in listing.json()["items"]}
+    assert items[others[0].id]["link"] is None

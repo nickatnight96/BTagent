@@ -79,6 +79,8 @@ async def notify_critical_findings(
                     "title": "Critical Hunt Findings",
                     "message": message,
                     "investigation_id": None,
+                    # Bell click lands on the triage inbox where the rows are.
+                    "link": "/hunt",
                 },
             )
         )

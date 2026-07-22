@@ -95,6 +95,7 @@ async def test_critical_ingest_notifies_hunt_seniors(db_session, sample_user, ad
     admin_rows = await _notifications_mentioning(db_session, admin_user.id, marker)
     assert len(admin_rows) == 1
     assert admin_rows[0].title == "Critical Hunt Findings"
+    assert admin_rows[0].link == "/hunt"  # bell deep-link to the triage inbox
     # Analysts don't hold hunt:promote — no fan-out to them.
     assert await _notifications_mentioning(db_session, sample_user.id, marker) == []
 

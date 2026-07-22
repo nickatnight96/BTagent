@@ -22,6 +22,13 @@ vi.mock("@/api/ws", () => ({
   getWSClient: () => fakeWSClient,
 }));
 
+// Spy on navigation so deep-link tests can assert the target route.
+const navigateSpy = vi.fn();
+vi.mock("react-router-dom", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("react-router-dom")>();
+  return { ...mod, useNavigate: () => navigateSpy };
+});
+
 import { NotificationBell, relativeTime } from "@/components/notifications/NotificationBell";
 
 function renderBell(ui: ReactElement) {
@@ -34,6 +41,7 @@ const N1 = {
   title: "Critical finding",
   message: "A malicious IP was observed.",
   investigation_id: null,
+  link: null,
   read: false,
   created_at: "2026-07-21T12:00:00Z",
 };
@@ -92,6 +100,42 @@ describe("NotificationBell", () => {
     renderBell(<NotificationBell />);
     await waitFor(() => expect(listNotifications).toHaveBeenCalled());
     expect(screen.queryByTestId("notification-unread-badge")).toBeNull();
+  });
+
+  it("navigates to the deep link when the notification carries one", async () => {
+    markNotificationRead.mockResolvedValue(undefined);
+    listNotifications.mockResolvedValue({
+      items: [{ ...N1, link: "/hunt" }],
+      total: 1,
+      unread: 1,
+    });
+    renderBell(<NotificationBell />);
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("notification-bell-button"));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("notification-item-ntf_1"));
+    });
+    await waitFor(() => expect(navigateSpy).toHaveBeenCalledWith("/hunt"));
+  });
+
+  it("falls back to the investigation deep-link without an explicit link", async () => {
+    markNotificationRead.mockResolvedValue(undefined);
+    listNotifications.mockResolvedValue({
+      items: [{ ...N1, investigation_id: "inv_9" }],
+      total: 1,
+      unread: 1,
+    });
+    renderBell(<NotificationBell />);
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("notification-bell-button"));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("notification-item-ntf_1"));
+    });
+    await waitFor(() =>
+      expect(navigateSpy).toHaveBeenCalledWith("/investigations/inv_9"),
+    );
   });
 
   it("shows a per-type accent icon and a relative timestamp on each row", async () => {

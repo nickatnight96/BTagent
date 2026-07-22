@@ -73,6 +73,8 @@ async def notify_workflow_paused(
                 f"(run {run.id})."
             ),
             "investigation_id": run.investigation_id,
+            # Bell click lands on the workflow's detail (run history) view.
+            "link": f"/workflows/{workflow.id}",
         },
     )
 
@@ -117,6 +119,7 @@ async def notify_workflow_paused_approvers(
                         f"'{run.paused_node_id}' (run {run.id})."
                     ),
                     "investigation_id": run.investigation_id,
+                    "link": f"/workflows/{workflow.id}",
                 },
             )
         )
