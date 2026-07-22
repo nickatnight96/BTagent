@@ -25,16 +25,17 @@ from btagent_engine.reasoning.correlation_workbench import (
 from btagent_shared.types.config import TLP, AutonomyLevel
 from btagent_shared.types.correlation import CorrelationTimeline
 from btagent_shared.types.enums import InvestigationStatus, IOCType, Severity
-from btagent_shared.types.hunt import Backend
+from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan, HuntScope
 from btagent_shared.types.hunt_package import HuntPackage
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services import hunt_package_store
+from btagent_backend.services.proposal_huntplan import compile_huntinput_to_huntplan
 from btagent_backend.services.task_manager import TaskManager
 
 logger = logging.getLogger("btagent.api.hunts")
@@ -278,6 +279,76 @@ async def promote_hunt_package(
         severity=severity.value,
         status=inv.status,
     )
+
+
+class HuntPlanRequest(BaseModel):
+    """Direct hunt-plan generation (#99 Phase A) — analyst names the target."""
+
+    adversaries: list[str] = Field(
+        default_factory=list,
+        max_length=10,
+        description="Threat-actor names ('APT29', 'FIN7', ...).",
+    )
+    ttps: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description="ATT&CK technique ids ('T1059.001', ...).",
+    )
+    backends: list[Backend] = Field(
+        default_factory=list,
+        description="Backends to synthesise queries for. Empty == default fan-out.",
+    )
+
+    @model_validator(mode="after")
+    def _at_least_one_target(self) -> HuntPlanRequest:
+        if not self.adversaries and not self.ttps:
+            raise ValueError("at least one of adversaries / ttps must be non-empty")
+        return self
+
+
+@router.post("/plan", response_model=HuntPlan)
+async def generate_hunt_plan(
+    body: HuntPlanRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPlan:
+    """Generate a full hunt plan from adversaries and/or TTPs (#99 Phase A).
+
+    Runs HypothesisGen → per-TTP QuerySynth + NoiseBaseline →
+    RunbookCompiler — the same pipeline pattern-hunt proposals compile
+    through — and returns the ready-to-run runbook. The plan is not yet
+    persisted (transient artifact, mirroring how /hunts/package started);
+    the analyst re-generates cheaply in mock mode.
+    """
+    user.require_permission("hunt:run")
+
+    hunt_input = HuntInput(
+        adversaries=body.adversaries,
+        ttps=body.ttps,
+        scope=HuntScope(backends=body.backends),
+        initiated_by=user.id,
+    )
+    try:
+        plan = await compile_huntinput_to_huntplan(
+            hunt_input,
+            org_id=user.org_id,
+            log_ref=f"direct plan by {user.id}",
+        )
+    except NotImplementedError as exc:
+        raise HTTPException(
+            status_code=501,
+            detail="Live hunt-plan generation is not yet wired; "
+            "the deployment must run in mock mode.",
+        ) from exc
+
+    logger.info(
+        "hunt_plan generated",
+        extra={
+            "investigation_id": None,
+            "hypotheses": len(plan.hypotheses),
+            "ttp_entries": len(plan.ttp_entries),
+        },
+    )
+    return plan
 
 
 class CorrelateRequest(BaseModel):
