@@ -25,6 +25,10 @@ class HuntPackage(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Persisted-store id (hpkg_...). None on a package that was generated
+    # but not (yet) stored; set by the backend store on save so the caller
+    # can re-open the package from history.
+    id: str | None = None
     source_label: str = Field(
         default="advisory",
         description="Where the package came from (advisory title / filename).",
