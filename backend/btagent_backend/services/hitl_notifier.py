@@ -126,6 +126,42 @@ async def notify_workflow_paused_approvers(
     return rows
 
 
+async def notify_workflow_finished(
+    db: AsyncSession,
+    *,
+    workflow: WorkflowRow,
+    run: WorkflowRunRow,
+    redis: Any | None = None,
+    settings: Settings | None = None,
+) -> NotificationRow | None:
+    """Tell the trigger user their background run reached a terminal state.
+
+    Only fires for ``succeeded`` / ``failed`` (a paused run goes through the
+    pause notifiers instead), and only when someone triggered it. The sync
+    run path never calls this — its caller sees the outcome in the response.
+    """
+    terminal = (WorkflowRunStatus.SUCCEEDED.value, WorkflowRunStatus.FAILED.value)
+    if run.status not in terminal or not run.triggered_by:
+        return None
+
+    failed = run.status == WorkflowRunStatus.FAILED.value
+    message = f"Background run of '{workflow.name}' " + (
+        "failed" + (f": {run.error}" if run.error else ".") if failed else "succeeded."
+    )
+    service = NotificationService(settings or get_settings(), redis=redis)
+    return await service.send_inapp(
+        db,
+        user_id=run.triggered_by,
+        notification={
+            "type": "investigation_failed" if failed else "info",
+            "title": "Workflow Run Failed" if failed else "Workflow Run Finished",
+            "message": message[:2048],
+            "investigation_id": run.investigation_id,
+            "link": f"/workflows/{workflow.id}",
+        },
+    )
+
+
 async def notify_revocation_proposed(
     db: AsyncSession,
     *,

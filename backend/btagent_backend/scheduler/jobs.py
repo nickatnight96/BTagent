@@ -491,3 +491,47 @@ async def noise_digest_sweep(ctx: dict[str, Any]) -> dict[str, int]:
         totals["notified"],
     )
     return totals
+
+
+async def execute_workflow_run(ctx: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Execute a background workflow run created by the run route.
+
+    Enqueue-on-demand (no cron). Idempotent against redelivery via the
+    service's running-state check. After execution the trigger user hears
+    about the outcome: paused runs go through the standard pause notifiers
+    (trigger + approver fan-out), terminal runs get a finished/failed notice.
+    """
+    from btagent_shared.types.workflow import WorkflowRunStatus
+
+    from btagent_backend.db.models_workflow import WorkflowRow
+    from btagent_backend.services import workflow_run_service
+    from btagent_backend.services.hitl_notifier import (
+        notify_workflow_finished,
+        notify_workflow_paused,
+        notify_workflow_paused_approvers,
+    )
+
+    async with async_session_factory() as session:
+        run = await workflow_run_service.execute_pending_run(session, run_id=run_id)
+        if run is None:
+            return {"run_id": run_id, "status": "skipped"}
+
+        workflow = await session.get(WorkflowRow, run.workflow_id)
+        if workflow is not None:
+            try:
+                if run.status == WorkflowRunStatus.PAUSED.value:
+                    await notify_workflow_paused(
+                        session, workflow=workflow, run=run, redis=ctx.get("redis")
+                    )
+                    await notify_workflow_paused_approvers(
+                        session, workflow=workflow, run=run, redis=ctx.get("redis")
+                    )
+                else:
+                    await notify_workflow_finished(
+                        session, workflow=workflow, run=run, redis=ctx.get("redis")
+                    )
+            except Exception:
+                logger.exception("Background run %s: outcome notification failed", run_id)
+        await session.commit()
+    logger.info("execute_workflow_run %s: status=%s", run_id, run.status)
+    return {"run_id": run_id, "status": run.status}

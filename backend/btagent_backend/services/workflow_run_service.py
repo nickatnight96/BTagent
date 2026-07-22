@@ -347,6 +347,119 @@ async def execute_version(
     return run
 
 
+async def create_pending_run(
+    db: AsyncSession,
+    *,
+    workflow: WorkflowRow,
+    version: WorkflowVersionRow,
+    trigger_payload: dict[str, Any],
+    triggered_by: str | None,
+    active_tlp: TLP,
+    investigation_id: str | None = None,
+    agent_autonomy: AutonomyLevel = AutonomyLevel.L2_SUPERVISED,
+) -> WorkflowRunRow:
+    """Persist a ``running`` run row for background execution (no engine call).
+
+    The pre-flight :func:`_load_workflow` still runs so a non-executable
+    version 422s *before* anything is enqueued — a background job must never
+    be the first place a malformed definition surfaces. Posture (TLP +
+    autonomy) is snapshotted on the row exactly like the sync path, so the
+    worker executes under the caller's context, not its own.
+    """
+    _load_workflow(version)  # may raise WorkflowNotExecutable (pre-flight)
+
+    run_id = generate_id("wfrun")
+    run = WorkflowRunRow(
+        id=run_id,
+        workflow_id=workflow.id,
+        version_id=version.id,
+        version_number=version.version_number,
+        org_id=workflow.org_id,
+        triggered_by=triggered_by,
+        investigation_id=investigation_id,
+        status=WorkflowRunStatus.RUNNING.value,
+        active_tlp=active_tlp.value,
+        agent_autonomy=agent_autonomy.value,
+        approved_steps=[],
+        trigger_payload=dict(trigger_payload),
+        created_at=_utcnow(),
+    )
+    db.add(run)
+    await db.flush()
+    logger.info(
+        "WorkflowRun %s created for background execution (workflow=%s v%d, org=%s)",
+        run_id,
+        workflow.id,
+        version.version_number,
+        workflow.org_id,
+    )
+    return run
+
+
+async def execute_pending_run(db: AsyncSession, *, run_id: str) -> WorkflowRunRow | None:
+    """Execute a background run created by :func:`create_pending_run`.
+
+    Idempotent against arq redelivery: returns ``None`` without touching the
+    engine when the run is missing or no longer ``running`` (a prior attempt
+    already produced a terminal state). Posture is rehydrated from the row,
+    mirroring :func:`resume_run`.
+    """
+    run = await get_run(db, run_id=run_id)
+    if run is None or run.status != WorkflowRunStatus.RUNNING.value:
+        logger.warning("execute_pending_run: run %s missing or not running — skipping", run_id)
+        return None
+
+    workflow = await db.get(WorkflowRow, run.workflow_id)
+    version = await db.get(WorkflowVersionRow, run.version_id)
+    if workflow is None or version is None:
+        run.status = WorkflowRunStatus.FAILED.value
+        run.error = "Workflow or version row disappeared before execution."
+        run.completed_at = _utcnow()
+        await db.flush()
+        return run
+
+    wf = _load_workflow(version)
+    active_tlp = TLP(run.active_tlp) if run.active_tlp else TLP.RED
+    agent_autonomy = (
+        AutonomyLevel(run.agent_autonomy) if run.agent_autonomy else AutonomyLevel.L2_SUPERVISED
+    )
+    ctx = NodeContext(
+        run_id=run.id,
+        workflow_run_id=run.id,
+        investigation_id=run.investigation_id,
+        org_id=workflow.org_id,
+        user_id=run.triggered_by,
+        tlp_level=active_tlp.value,
+    )
+
+    outcome = await _run_capture(
+        workflow=wf,
+        trigger_payload=dict(run.trigger_payload or {}),
+        ctx=ctx,
+        active_tlp=active_tlp,
+        agent_autonomy=agent_autonomy,
+        integration_autonomy=IntegrationAutonomy(),
+    )
+
+    run.status = outcome.status.value
+    run.outputs = outcome.outputs
+    run.final_output = outcome.final_output
+    run.nodes_executed = outcome.nodes_executed
+    run.evidence_chain = outcome.evidence_chain
+    run.error = outcome.error
+    run.paused_node_id = outcome.paused_node_id
+    run.completed_at = _utcnow()
+    await db.flush()
+    logger.info(
+        "WorkflowRun %s (background): status=%s steps=%d evidence=%d",
+        run.id,
+        outcome.status.value,
+        len(outcome.nodes_executed),
+        len(outcome.evidence_chain),
+    )
+    return run
+
+
 class RunNotResumable(ValueError):
     """The run isn't in a state that can be resumed.
 
