@@ -14,17 +14,26 @@ import { MemoryRouter } from "react-router-dom";
 const mockGenerate = vi.fn();
 const mockList = vi.fn();
 const mockGet = vi.fn();
+const mockPromote = vi.fn();
 
 vi.mock("@/api/hunts", () => ({
   generateHuntPackage: (...a: unknown[]) => mockGenerate(...a),
   listHuntPackages: (...a: unknown[]) => mockList(...a),
   getHuntPackage: (...a: unknown[]) => mockGet(...a),
+  promoteHuntPackage: (...a: unknown[]) => mockPromote(...a),
 }));
 
 // Header pulls in auth/UI stores + the notification bell — irrelevant here.
 vi.mock("@/components/layout/Header", () => ({
   Header: ({ title }: { title: string }) => <div>{title}</div>,
 }));
+
+// Spy on navigation so promote tests can assert the target route.
+const navigateSpy = vi.fn();
+vi.mock("react-router-dom", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("react-router-dom")>();
+  return { ...mod, useNavigate: () => navigateSpy };
+});
 
 import { HuntPackagePage } from "@/components/hunts/HuntPackagePage";
 
@@ -41,6 +50,7 @@ const SUMMARY_A = {
   mock_mode: true,
   created_by: "usr_1",
   created_at: "2026-07-22T10:00:00Z",
+  investigation_id: null,
 };
 
 const SUMMARY_B = {
@@ -52,10 +62,12 @@ const SUMMARY_B = {
   mock_mode: true,
   created_by: "usr_1",
   created_at: "2026-07-21T09:00:00Z",
+  investigation_id: "inv_promoted",
 };
 
 const PACKAGE_A = {
   id: "hpkg_A",
+  investigation_id: null,
   source_label: "AA26-001",
   extracted_ioc_count: 5,
   deduped_count: 5,
@@ -95,6 +107,13 @@ beforeEach(() => {
   mockList.mockResolvedValue({ items: [SUMMARY_A, SUMMARY_B], total: 2 });
   mockGet.mockResolvedValue(PACKAGE_A);
   mockGenerate.mockResolvedValue(PACKAGE_A);
+  mockPromote.mockResolvedValue({
+    investigation_id: "inv_new",
+    package_id: "hpkg_A",
+    title: "Hunt: AA26-001",
+    severity: "medium",
+    status: "pending",
+  });
 });
 
 // --------------------------------------------------------------------------- //
@@ -152,5 +171,75 @@ describe("HuntPackagePage package history", () => {
 
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("package-history")).not.toBeInTheDocument();
+  });
+
+  it("marks already-promoted packages with a case badge in history", async () => {
+    renderPage();
+    await openHistory();
+
+    expect(screen.getByTestId("promoted-badge-hpkg_B")).toBeInTheDocument();
+    expect(screen.queryByTestId("promoted-badge-hpkg_A")).not.toBeInTheDocument();
+  });
+});
+
+describe("HuntPackagePage promote to investigation", () => {
+  it("promotes an un-promoted package and navigates to the new case", async () => {
+    renderPage();
+    await openHistory();
+    fireEvent.click(screen.getByTestId("package-history-item-hpkg_A"));
+
+    const btn = await screen.findByTestId("open-investigation");
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(mockPromote).toHaveBeenCalledWith("hpkg_A"));
+    await waitFor(() =>
+      expect(navigateSpy).toHaveBeenCalledWith("/investigations/inv_new"),
+    );
+  });
+
+  it("shows View investigation instead when the package is already a case", async () => {
+    mockGet.mockResolvedValue({
+      ...PACKAGE_A,
+      id: "hpkg_B",
+      investigation_id: "inv_promoted",
+    });
+    renderPage();
+    await openHistory();
+    fireEvent.click(screen.getByTestId("package-history-item-hpkg_B"));
+
+    const view = await screen.findByTestId("view-investigation");
+    expect(screen.queryByTestId("open-investigation")).not.toBeInTheDocument();
+    fireEvent.click(view);
+    expect(navigateSpy).toHaveBeenCalledWith("/investigations/inv_promoted");
+    expect(mockPromote).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a promote failure without navigating", async () => {
+    mockPromote.mockRejectedValue(new Error("Package already promoted"));
+    renderPage();
+    await openHistory();
+    fireEvent.click(screen.getByTestId("package-history-item-hpkg_A"));
+
+    fireEvent.click(await screen.findByTestId("open-investigation"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Package already promoted",
+    );
+    expect(navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("hides the promote button on a transient (unsaved) package", async () => {
+    mockList.mockResolvedValue({ items: [], total: 0 });
+    mockGenerate.mockResolvedValue({ ...PACKAGE_A, id: null });
+    renderPage();
+
+    fireEvent.change(screen.getByTestId("hunt-package-input"), {
+      target: { value: "some advisory" },
+    });
+    fireEvent.click(screen.getByText("Generate hunt package"));
+
+    await screen.findByTestId("hunt-package-result");
+    expect(screen.queryByTestId("open-investigation")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("view-investigation")).not.toBeInTheDocument();
   });
 });
