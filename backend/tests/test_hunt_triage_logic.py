@@ -28,6 +28,7 @@ def _finding(
     technique_ids: list[str] | None = None,
     entities: list[HuntEntity] | None = None,
     observables: list[HuntObservable] | None = None,
+    evidence: dict | None = None,
 ) -> HuntFinding:
     now = datetime.now(UTC)
     return HuntFinding(
@@ -40,6 +41,7 @@ def _finding(
         technique_ids=technique_ids or [],
         entities=entities or [],
         observables=observables or [],
+        evidence=evidence or {},
         created_at=now,
         updated_at=now,
     )
@@ -119,6 +121,31 @@ def test_suppression_matches_entity_and_observable_values():
     assert triage.suppression_matches(SuppressionMatch(entity_values=["svc_backup"]), f)
     assert triage.suppression_matches(SuppressionMatch(observable_values=["10.0.0.5"]), f)
     assert not triage.suppression_matches(SuppressionMatch(entity_values=["administrator"]), f)
+
+
+def test_suppression_matches_rule_ids_via_evidence_provenance():
+    match = SuppressionMatch(rule_ids=["rule_noisy"])
+    hit = _finding(fid="a", evidence={"rule_id": "rule_noisy", "pack_id": "p"})
+    other_rule = _finding(fid="b", evidence={"rule_id": "rule_other"})
+    no_provenance = _finding(fid="c", evidence={})
+    assert triage.suppression_matches(match, hit)
+    assert not triage.suppression_matches(match, other_rule)
+    # A finding with no rule provenance can never match a rule_ids rule.
+    assert not triage.suppression_matches(match, no_provenance)
+
+
+def test_rule_ids_and_other_criteria_are_conjunctive():
+    match = SuppressionMatch(domain=HuntDomain.SIGMA, rule_ids=["rule_noisy"])
+    wrong_domain = _finding(fid="a", domain=HuntDomain.EMAIL, evidence={"rule_id": "rule_noisy"})
+    assert not triage.suppression_matches(match, wrong_domain)
+
+
+def test_rule_ids_only_match_is_not_criterionless_overbroad():
+    match = SuppressionMatch(rule_ids=["rule_noisy"])
+    # A sample where the rule matches nothing — narrow by every measure.
+    sample = [_finding(fid=f"s{i}", evidence={"rule_id": "other"}) for i in range(4)]
+    overbroad, _reason = triage.is_overbroad(match, sample)
+    assert not overbroad
 
 
 def test_overbroad_empty_match():
