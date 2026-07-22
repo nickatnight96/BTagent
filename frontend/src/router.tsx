@@ -38,6 +38,9 @@ const HuntTriagePage = lazy(() =>
 const HuntPackagePage = lazy(() =>
   import("@/components/hunts/HuntPackagePage").then((m) => ({ default: m.HuntPackagePage })),
 );
+const HuntPlanPage = lazy(() =>
+  import("@/components/hunts/HuntPlanPage").then((m) => ({ default: m.HuntPlanPage })),
+);
 const CorrelationPage = lazy(() =>
   import("@/components/correlation/CorrelationPage").then((m) => ({
     default: m.CorrelationPage,
@@ -190,6 +193,10 @@ export const router = createBrowserRouter([
       {
         path: "hunts",
         element: lazyRoute(HuntPackagePage),
+      },
+      {
+        path: "hunt-plan",
+        element: lazyRoute(HuntPlanPage),
       },
       {
         path: "correlate",

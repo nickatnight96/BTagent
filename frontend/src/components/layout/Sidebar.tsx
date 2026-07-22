@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   FlaskConical,
   Plug,
+  Map,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -84,6 +85,12 @@ const navItems: NavItem[] = [
     path: "/hunts",
     icon: <FileSearch className="w-5 h-5" />,
     testId: "nav-hunts-link",
+  },
+  {
+    label: "Hunt Planner",
+    path: "/hunt-plan",
+    icon: <Map className="w-5 h-5" />,
+    testId: "nav-hunt-plan-link",
   },
   {
     label: "Behavioral Hunts",
