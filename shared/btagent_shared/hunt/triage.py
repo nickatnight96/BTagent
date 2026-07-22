@@ -139,6 +139,12 @@ def suppression_matches(match: SuppressionMatch, finding: HuntFinding) -> bool:
         finding_obs_vals = {o.value for o in finding.observables}
         if not (set(match.observable_values) & finding_obs_vals):
             return False
+    if match.rule_ids:
+        # Provenance-based criterion: pack-runner findings carry the
+        # detection rule that produced them in evidence["rule_id"]. A
+        # finding with no rule provenance can never match a rule_ids rule.
+        if finding.evidence.get("rule_id") not in match.rule_ids:
+            return False
     return True
 
 
@@ -191,6 +197,7 @@ def is_overbroad(
             bool(match.technique_ids),
             bool(match.entity_values),
             bool(match.observable_values),
+            bool(match.rule_ids),
         ]
     )
     if not has_any_criterion:

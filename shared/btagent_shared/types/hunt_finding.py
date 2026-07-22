@@ -71,6 +71,12 @@ class SuppressionMatch(BaseModel):
     technique_ids: list[str] = Field(default_factory=list)
     entity_values: list[str] = Field(default_factory=list)
     observable_values: list[str] = Field(default_factory=list)
+    # Detection-rule ids, matched against ``finding.evidence["rule_id"]``
+    # (the provenance every pack-runner finding carries). This is the
+    # criterion the #112 noise baseline needs: "suppress THIS chronically
+    # noisy rule" without touching sibling rules in the same pack/domain.
+    # Findings with no evidence rule_id never match a rule_ids criterion.
+    rule_ids: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
