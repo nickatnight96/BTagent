@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Loader2,
   ShieldAlert,
@@ -9,6 +10,7 @@ import {
   History,
   ChevronDown,
   ChevronRight,
+  Briefcase,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
@@ -26,6 +28,7 @@ import {
   generateHuntPackage,
   listHuntPackages,
   getHuntPackage,
+  promoteHuntPackage,
   type HuntPackage,
   type HuntPackageSummary,
 } from "@/api/hunts";
@@ -47,10 +50,12 @@ function formatRelativeTime(dateStr: string): string {
 }
 
 export function HuntPackagePage() {
+  const navigate = useNavigate();
   const [text, setText] = useState("");
   const [pkg, setPkg] = useState<HuntPackage | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promoting, setPromoting] = useState(false);
 
   // Package history (#99): stored artifacts, re-openable in place.
   const [history, setHistory] = useState<HuntPackageSummary[]>([]);
@@ -104,6 +109,20 @@ export function HuntPackagePage() {
       setReopeningId(null);
     }
   }, []);
+
+  const handlePromote = useCallback(async () => {
+    if (!pkg?.id) return;
+    setPromoting(true);
+    setError(null);
+    try {
+      const res = await promoteHuntPackage(pkg.id);
+      navigate(`/investigations/${res.investigation_id}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to open investigation");
+    } finally {
+      setPromoting(false);
+    }
+  }, [pkg, navigate]);
 
   return (
     <>
@@ -215,6 +234,16 @@ export function HuntPackagePage() {
                       {reopeningId === h.id && (
                         <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
                       )}
+                      {h.investigation_id && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs"
+                          data-testid={`promoted-badge-${h.id}`}
+                        >
+                          <Briefcase className="w-3 h-3 mr-1" />
+                          case
+                        </Badge>
+                      )}
                       {h.techniques.slice(0, 3).map((t) => (
                         <Badge key={t} variant="secondary" className="text-xs">
                           {t}
@@ -250,7 +279,7 @@ export function HuntPackagePage() {
                 ) : (
                   <ShieldCheck className="w-8 h-8 text-severity-low shrink-0" />
                 )}
-                <div>
+                <div className="min-w-0 flex-1">
                   <p className="font-semibold text-foreground">
                     {pkg.retro_report?.compromise_suspected
                       ? "Historical sightings found — possible prior compromise"
@@ -262,6 +291,37 @@ export function HuntPackagePage() {
                     {pkg.retro_report?.window_days ?? 90}-day lookback
                   </p>
                 </div>
+                {/* Promote (#99 payoff): stored + not yet a case → open one;
+                    already promoted → jump to it. */}
+                {pkg.id &&
+                  (pkg.investigation_id ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => navigate(`/investigations/${pkg.investigation_id}`)}
+                      data-testid="view-investigation"
+                    >
+                      <Briefcase className="w-4 h-4 mr-2" />
+                      View investigation
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={handlePromote}
+                      disabled={promoting}
+                      data-testid="open-investigation"
+                    >
+                      {promoting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Opening…
+                        </>
+                      ) : (
+                        <>
+                          <Briefcase className="w-4 h-4 mr-2" />
+                          Open investigation
+                        </>
+                      )}
+                    </Button>
+                  ))}
               </CardContent>
             </Card>
 

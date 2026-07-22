@@ -41,6 +41,8 @@ export interface SigmaDraft {
 export interface HuntPackage {
   /** Persisted-store id (hpkg_*); null on dumps predating persistence. */
   id?: string | null;
+  /** Investigation this package was promoted into; null until promoted. */
+  investigation_id?: string | null;
   source_label: string;
   extracted_ioc_count: number;
   deduped_count: number;
@@ -76,6 +78,8 @@ export interface HuntPackageSummary {
   mock_mode: boolean;
   created_by: string | null;
   created_at: string;
+  /** Case this package was promoted into; null until promoted. */
+  investigation_id: string | null;
 }
 
 export interface HuntPackageListResponse {
@@ -95,4 +99,17 @@ export async function listHuntPackages(
 
 export async function getHuntPackage(id: string): Promise<HuntPackage> {
   return api.get<HuntPackage>(`/v1/hunts/packages/${id}`);
+}
+
+export interface PromotePackageResponse {
+  investigation_id: string;
+  package_id: string;
+  title: string;
+  severity: string;
+  status: string;
+}
+
+/** Open an investigation from a stored package (one-shot; 409 if already promoted). */
+export async function promoteHuntPackage(id: string): Promise<PromotePackageResponse> {
+  return api.post<PromotePackageResponse>(`/v1/hunts/packages/${id}/promote`);
 }
