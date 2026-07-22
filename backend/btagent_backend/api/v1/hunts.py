@@ -22,17 +22,20 @@ from btagent_engine.reasoning.correlation_workbench import (
     CorrelationWorkbenchInput,
     CorrelationWorkbenchNode,
 )
+from btagent_shared.types.config import TLP, AutonomyLevel
 from btagent_shared.types.correlation import CorrelationTimeline
-from btagent_shared.types.enums import IOCType
+from btagent_shared.types.enums import InvestigationStatus, IOCType, Severity
 from btagent_shared.types.hunt import Backend
 from btagent_shared.types.hunt_package import HuntPackage
 from btagent_shared.utils.ids import generate_id
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services import hunt_package_store
+from btagent_backend.services.task_manager import TaskManager
 
 logger = logging.getLogger("btagent.api.hunts")
 
@@ -113,6 +116,7 @@ class HuntPackageSummary(BaseModel):
     mock_mode: bool
     created_by: str | None
     created_at: str
+    investigation_id: str | None
 
 
 class HuntPackageListResponse(BaseModel):
@@ -130,6 +134,7 @@ def _to_summary(row) -> HuntPackageSummary:
         mock_mode=row.mock_mode,
         created_by=row.created_by,
         created_at=row.created_at.isoformat(),
+        investigation_id=row.investigation_id,
     )
 
 
@@ -161,7 +166,118 @@ async def get_hunt_package(
         raise HTTPException(status_code=404, detail="Hunt package not found")
     package = HuntPackage.model_validate(row.package)
     package.id = row.id  # older dumps may predate the id field
+    package.investigation_id = row.investigation_id  # row-level lineage, never in the dump
     return package
+
+
+class PromotePackageResponse(BaseModel):
+    """Result of promoting a stored package into an investigation."""
+
+    investigation_id: str
+    package_id: str
+    title: str
+    severity: str
+    status: str
+
+
+def _get_task_manager(request: Request) -> TaskManager:
+    tm: TaskManager | None = getattr(request.app.state, "task_manager", None)
+    if tm is None:
+        raise HTTPException(
+            status_code=503,
+            detail="TaskManager not initialised -- server is starting up",
+        )
+    return tm
+
+
+@router.post(
+    "/packages/{package_id}/promote",
+    response_model=PromotePackageResponse,
+    status_code=201,
+)
+async def promote_hunt_package(
+    package_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> PromotePackageResponse:
+    """Open an investigation from a stored hunt package (#99 payoff).
+
+    Severity derives from the retro-hunt verdict: historical sightings
+    (``compromise_suspected``) open a HIGH case, a clean package a MEDIUM
+    one. The package records the case id (one promote per package — 409
+    on a second attempt) and the investigation agent starts immediately,
+    same as a manual create.
+    """
+    user.require_permission("investigation:create")
+    row = await hunt_package_store.get_package(db, org_id=user.org_id, package_id=package_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Hunt package not found")
+    if row.investigation_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Package already promoted to investigation {row.investigation_id}",
+        )
+
+    package = HuntPackage.model_validate(row.package)
+    compromise = bool(package.retro_report and package.retro_report.compromise_suspected)
+    severity = Severity.HIGH if compromise else Severity.MEDIUM
+    sightings = len(package.retro_report.sightings) if package.retro_report else 0
+
+    title = f"Hunt: {package.source_label}"
+    description = (
+        f"Promoted from hunt package {row.id} ({package.source_label}). "
+        f"{package.extracted_ioc_count} indicators extracted, "
+        f"{len(package.derived_techniques)} ATT&CK techniques derived "
+        f"({', '.join(package.derived_techniques[:5])}"
+        f"{'…' if len(package.derived_techniques) > 5 else ''}). "
+        + (
+            f"Retro-hunt found {sightings} historical sighting(s) — possible prior compromise."
+            if compromise
+            else "Retro-hunt found no historical sightings."
+        )
+    )
+
+    task_manager = _get_task_manager(request)
+    config = {
+        "severity": severity.value,
+        "tlp_level": TLP.GREEN.value,
+        "autonomy_level": AutonomyLevel.L2_SUPERVISED.value,
+        "template": None,
+        "hunt_package_id": row.id,
+    }
+    # AUTH-B1: org_id from the authenticated user, never the request.
+    inv = InvestigationRow(
+        id=generate_id("inv"),
+        title=title,
+        description=description,
+        severity=severity.value,
+        tlp_level=TLP.GREEN.value,
+        autonomy_level=AutonomyLevel.L2_SUPERVISED.value,
+        template=None,
+        assigned_to=user.id,
+        org_id=user.org_id,
+        status=InvestigationStatus.PENDING.value,
+        config=config,
+    )
+    db.add(inv)
+    await db.flush()
+    await hunt_package_store.link_investigation(db, row=row, investigation_id=inv.id)
+
+    await task_manager.start_investigation(inv.id, config)
+    logger.info(
+        "hunt package %s promoted to investigation %s by user %s",
+        row.id,
+        inv.id,
+        user.id,
+    )
+    return PromotePackageResponse(
+        investigation_id=inv.id,
+        package_id=row.id,
+        title=title,
+        severity=severity.value,
+        status=inv.status,
+    )
 
 
 class CorrelateRequest(BaseModel):

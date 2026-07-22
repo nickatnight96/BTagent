@@ -276,6 +276,13 @@ class HuntPackageRow(Base):
     mock_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # The full HuntPackage model_dump (queries, sigma drafts, retro report).
     package: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Case lineage: set when the analyst promotes the package into an
+    # investigation. SET NULL keeps the package if the case is deleted.
+    investigation_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("investigations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

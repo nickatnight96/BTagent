@@ -147,3 +147,88 @@ async def test_package_detail_404_on_unknown_id(client: AsyncClient, analyst_tok
 async def test_package_history_requires_auth(client: AsyncClient):
     assert (await client.get("/api/v1/hunts/packages")).status_code in (401, 403)
     assert (await client.get("/api/v1/hunts/packages/hpkg_x")).status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Package → investigation promote (#99 payoff)
+# --------------------------------------------------------------------------- #
+
+
+async def _generate_package(client: AsyncClient, token: str, text: str, label: str) -> dict:
+    resp = await client.post(
+        "/api/v1/hunts/package",
+        json={"text": text, "source_label": label},
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_promote_package_opens_high_severity_case_on_sightings(
+    client: AsyncClient, analyst_token: str
+):
+    """A package with historical sightings promotes to a HIGH investigation,
+    the lineage round-trips through summary + detail, and the case is real."""
+    pkg = await _generate_package(client, analyst_token, _ADVISORY, "promote-me")
+
+    resp = await client.post(
+        f"/api/v1/hunts/packages/{pkg['id']}/promote", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 201, resp.text
+    promoted = resp.json()
+    assert promoted["package_id"] == pkg["id"]
+    assert promoted["severity"] == "high"  # _ADVISORY hits the sighting fixtures
+    assert promoted["title"] == "Hunt: promote-me"
+    inv_id = promoted["investigation_id"]
+
+    # The investigation exists and carries the derived description.
+    inv = await client.get(f"/api/v1/investigations/{inv_id}", headers=auth_header(analyst_token))
+    assert inv.status_code == 200, inv.text
+    assert pkg["id"] in inv.json()["description"]
+    assert inv.json()["severity"] == "high"
+
+    # Lineage is visible in the history list and the reopened package.
+    listing = await client.get("/api/v1/hunts/packages", headers=auth_header(analyst_token))
+    summary = {i["id"]: i for i in listing.json()["items"]}[pkg["id"]]
+    assert summary["investigation_id"] == inv_id
+
+    detail = await client.get(
+        f"/api/v1/hunts/packages/{pkg['id']}", headers=auth_header(analyst_token)
+    )
+    assert detail.json()["investigation_id"] == inv_id
+
+
+async def test_promote_clean_package_opens_medium_case(client: AsyncClient, analyst_token: str):
+    pkg = await _generate_package(
+        client, analyst_token, "Only indicator: 203.0.113.255 (not in our telemetry).", "clean"
+    )
+    resp = await client.post(
+        f"/api/v1/hunts/packages/{pkg['id']}/promote", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["severity"] == "medium"
+
+
+async def test_promote_twice_conflicts(client: AsyncClient, analyst_token: str):
+    pkg = await _generate_package(client, analyst_token, _ADVISORY, "double-promote")
+    first = await client.post(
+        f"/api/v1/hunts/packages/{pkg['id']}/promote", headers=auth_header(analyst_token)
+    )
+    assert first.status_code == 201, first.text
+    second = await client.post(
+        f"/api/v1/hunts/packages/{pkg['id']}/promote", headers=auth_header(analyst_token)
+    )
+    assert second.status_code == 409
+    assert first.json()["investigation_id"] in second.json()["detail"]
+
+
+async def test_promote_unknown_package_404(client: AsyncClient, analyst_token: str):
+    resp = await client.post(
+        "/api/v1/hunts/packages/hpkg_DOESNOTEXIST/promote", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 404
+
+
+async def test_promote_requires_auth(client: AsyncClient):
+    resp = await client.post("/api/v1/hunts/packages/hpkg_x/promote")
+    assert resp.status_code in (401, 403)
