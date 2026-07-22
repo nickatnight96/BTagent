@@ -232,3 +232,55 @@ async def test_promote_unknown_package_404(client: AsyncClient, analyst_token: s
 async def test_promote_requires_auth(client: AsyncClient):
     resp = await client.post("/api/v1/hunts/packages/hpkg_x/promote")
     assert resp.status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Direct hunt planning (#99 Phase A) — POST /hunts/plan
+# --------------------------------------------------------------------------- #
+
+
+async def test_generate_hunt_plan_from_adversary(client: AsyncClient, analyst_token: str):
+    """Naming an adversary yields a full runbook: hypotheses ordered by
+    priority, per-TTP entries with per-backend queries, READY state."""
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={"adversaries": ["APT29"]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    assert plan["id"].startswith("hunt_")
+    assert plan["state"] == "ready"
+    assert plan["input"]["adversaries"] == ["APT29"]
+    assert plan["hypotheses"], "adversary input must produce hypotheses"
+    assert plan["ttp_entries"], "hypotheses must expand into runbook entries"
+    priorities = [h["priority"] for h in plan["hypotheses"]]
+    assert priorities == sorted(priorities, reverse=True)
+    # Default backend fan-out includes splunk; every entry carries queries.
+    first = plan["ttp_entries"][0]
+    assert "splunk" in first["queries"]
+    assert first["state"] == "not_started"
+
+
+async def test_generate_hunt_plan_from_ttps_pins_backends(client: AsyncClient, analyst_token: str):
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={"ttps": ["T1059.001"], "backends": ["splunk"]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    ttp_ids = {e["ttp_id"] for e in plan["ttp_entries"]}
+    assert "T1059.001" in ttp_ids
+    for entry in plan["ttp_entries"]:
+        assert set(entry["queries"].keys()) <= {"splunk"}
+
+
+async def test_hunt_plan_requires_a_target(client: AsyncClient, analyst_token: str):
+    resp = await client.post("/api/v1/hunts/plan", json={}, headers=auth_header(analyst_token))
+    assert resp.status_code == 422
+
+
+async def test_hunt_plan_requires_auth(client: AsyncClient):
+    resp = await client.post("/api/v1/hunts/plan", json={"adversaries": ["APT29"]})
+    assert resp.status_code in (401, 403)

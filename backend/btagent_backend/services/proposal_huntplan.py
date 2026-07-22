@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 
-from btagent_shared.types.hunt import Backend, HuntPlan
+from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan
 from btagent_shared.types.pattern_hunt import PatternHuntProposal
 from btagent_shared.utils.ids import generate_id
 
@@ -56,6 +56,32 @@ async def compile_proposal_to_huntplan(
 ) -> HuntPlan:
     """Compile a proposal's ``HuntInput`` into a ready-to-run ``HuntPlan``.
 
+    Thin wrapper over :func:`compile_huntinput_to_huntplan` — the proposal
+    contributes its ``hunt_input`` verbatim, its ``org_id`` as tenant scope,
+    and its id as the log reference.
+    """
+    return await compile_huntinput_to_huntplan(
+        proposal.hunt_input,
+        org_id=proposal.org_id,
+        backends=backends,
+        log_ref=f"proposal {proposal.id}",
+    )
+
+
+async def compile_huntinput_to_huntplan(
+    hunt_input: HuntInput,
+    *,
+    org_id: str,
+    backends: list[Backend] | None = None,
+    log_ref: str = "direct",
+) -> HuntPlan:
+    """Compile a raw ``HuntInput`` into a ready-to-run ``HuntPlan`` (#99 Phase A).
+
+    The same pipeline serves both entry points: pattern-hunt proposals
+    (via :func:`compile_proposal_to_huntplan`) and the direct
+    ``POST /hunts/plan`` route where the analyst names adversaries / TTPs
+    themselves.
+
     Runs the deterministic-capable engine pipeline:
 
     1. :class:`HypothesisGenNode` — resolve the HuntInput into prioritised
@@ -68,17 +94,18 @@ async def compile_proposal_to_huntplan(
     3. :class:`RunbookCompilerNode` — assemble everything into the HuntPlan.
 
     Args:
-        proposal: The accepted pattern-hunt proposal. ``proposal.hunt_input``
-            is consumed verbatim (its ``scope.backends`` win over ``backends``
-            when present); ``proposal.org_id`` becomes the plan's tenant scope.
+        hunt_input: What to hunt for. ``scope.backends`` wins over
+            ``backends`` when present.
+        org_id: Tenant scope for the resulting plan.
         backends: Override for which backends to synthesise queries for when
-            the proposal's ``scope.backends`` is empty. Defaults to
+            the input's ``scope.backends`` is empty. Defaults to
             :data:`_DEFAULT_BACKENDS`.
+        log_ref: Human-readable provenance tag for log lines.
 
     Returns:
         A :class:`HuntPlan` in ``READY`` state (id ``hunt_<ULID>``), tenant-
-        scoped to the proposal's org, carrying the proposal's ``HuntInput``
-        (and thus its ``autonomy_level``) unchanged.
+        scoped to ``org_id``, carrying the ``HuntInput`` (and thus its
+        ``autonomy_level``) unchanged.
     """
     # Lazy engine imports — keep the pysigma/LLM stack off the backend import path.
     from btagent_engine.data import (
@@ -95,7 +122,6 @@ async def compile_proposal_to_huntplan(
         QuerySynthNode,
     )
 
-    hunt_input = proposal.hunt_input
     # Scope-pinned backends win; otherwise fan out to the default set.
     target_backends: list[Backend] = list(hunt_input.scope.backends) or list(
         backends or _DEFAULT_BACKENDS
@@ -103,15 +129,15 @@ async def compile_proposal_to_huntplan(
 
     ctx = NodeContext(
         run_id=generate_id("hplan"),
-        org_id=proposal.org_id,
+        org_id=org_id,
         user_id=hunt_input.initiated_by or None,
     )
 
     # 1. Hypotheses.
     hyp_out = await HypothesisGenNode().run(HypothesisGenInput(hunt_input=hunt_input), ctx)
     logger.info(
-        "proposal %s -> %d hypotheses (mock_mode=%s)",
-        proposal.id,
+        "%s -> %d hypotheses (mock_mode=%s)",
+        log_ref,
         len(hyp_out.hypotheses),
         hyp_out.mock_mode,
     )
@@ -132,8 +158,8 @@ async def compile_proposal_to_huntplan(
             per_ttp_queries[h.ttp_id] = qs_out.queries
         except Exception:  # noqa: BLE001 - one TTP's synth failure must not sink the compile
             logger.warning(
-                "query synth failed for proposal %s ttp %s; leaving queries empty",
-                proposal.id,
+                "query synth failed for %s ttp %s; leaving queries empty",
+                log_ref,
                 h.ttp_id,
                 exc_info=True,
             )
@@ -145,8 +171,8 @@ async def compile_proposal_to_huntplan(
             per_ttp_noise[h.ttp_id] = nb_out.profile
         except Exception:  # noqa: BLE001 - noise baseline is best-effort enrichment
             logger.warning(
-                "noise baseline failed for proposal %s ttp %s; leaving profile default",
-                proposal.id,
+                "noise baseline failed for %s ttp %s; leaving profile default",
+                log_ref,
                 h.ttp_id,
                 exc_info=True,
             )
@@ -155,7 +181,7 @@ async def compile_proposal_to_huntplan(
     rb_out = await RunbookCompilerNode().run(
         RunbookCompilerInput(
             plan_id=generate_id("hunt"),
-            org_id=proposal.org_id,
+            org_id=org_id,
             hunt_input=hunt_input,
             hypotheses=hyp_out.hypotheses,
             per_ttp_queries=per_ttp_queries,  # type: ignore[arg-type]
@@ -165,8 +191,8 @@ async def compile_proposal_to_huntplan(
     )
     plan = rb_out.plan
     logger.info(
-        "compiled proposal %s -> plan %s (%d TTP entries, state=%s)",
-        proposal.id,
+        "compiled %s -> plan %s (%d TTP entries, state=%s)",
+        log_ref,
         plan.id,
         len(plan.ttp_entries),
         plan.state,
