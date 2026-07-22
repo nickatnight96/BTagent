@@ -211,3 +211,30 @@ async def test_run_route_creates_pause_notification(
     assert resp.json()["status"] == "succeeded"
     rows = await _pause_notifications(db_session, sample_user.id)
     assert len(rows) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Revocation-proposal fan-out (#116 Phase C decider notification)
+# --------------------------------------------------------------------------- #
+
+
+async def test_revocation_proposal_notifies_playbook_authors(
+    db_session, sample_user, admin_user, sample_investigation
+):
+    from btagent_backend.services.hitl_notifier import notify_revocation_proposed
+
+    rows = await notify_revocation_proposed(
+        db_session,
+        org_id=DEFAULT_ORG_ID,
+        investigation_id=sample_investigation.id,
+        investigation_title="OAuth grant abuse",
+        target_count=3,
+    )
+    targets = {r.user_id for r in rows}
+    assert admin_user.id in targets  # holds playbook:create (senior+)
+    assert sample_user.id not in targets  # analyst — cannot decide
+    assert all(r.title == "Revocation Playbook Proposed" for r in rows)
+    assert all(r.type == "hitl_checkpoint" for r in rows)
+    assert all(r.link == f"/investigations/{sample_investigation.id}" for r in rows)
+    assert all(r.investigation_id == sample_investigation.id for r in rows)
+    assert all("3 OAuth grant(s)" in r.message for r in rows)
