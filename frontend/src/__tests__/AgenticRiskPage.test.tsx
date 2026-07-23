@@ -22,6 +22,16 @@ vi.mock("@/components/layout/Header", () => ({
   Header: ({ title }: { title: string }) => <div>{title}</div>,
 }));
 
+// Live-refresh wiring (#121 Phase B): capture the registered refetch so the
+// test can simulate a WS-pushed finding event.
+const mockLiveRefresh = vi.fn();
+vi.mock("@/hooks/useLiveEventRefresh", () => ({
+  useLiveEventRefresh: (...a: unknown[]) => mockLiveRefresh(...a),
+}));
+vi.mock("@/components/hunt/HuntTriagePage", () => ({
+  HUNT_FINDING_EVENTS: ["hunt_finding_created", "hunt_finding_updated"],
+}));
+
 import { AgenticRiskPage, bucketOf } from "@/components/agentic/AgenticRiskPage";
 
 function finding(id: string, detection: string, severity = "high") {
@@ -116,6 +126,18 @@ describe("AgenticRiskPage", () => {
     fireEvent.click(screen.getByTestId("run-agentic-hunt"));
 
     await waitFor(() => expect(mockRun).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+  });
+
+  it("registers live refresh on finding events and refetches when fired", async () => {
+    renderPage();
+    await screen.findByTestId("agentic-finding-hfnd_pi");
+    expect(mockLiveRefresh).toHaveBeenCalled();
+    const [refetch, events] = mockLiveRefresh.mock.calls[0] as [() => void, string[]];
+    expect(events).toContain("hunt_finding_created");
+
+    expect(mockList).toHaveBeenCalledTimes(1);
+    refetch(); // simulate a WS-pushed finding event
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
   });
 

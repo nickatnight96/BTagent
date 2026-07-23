@@ -20,6 +20,8 @@ import {
 } from "@/components/ds/card";
 import { listAgenticFindings, type HuntFinding } from "@/api/agentic";
 import { runAgenticHunt } from "@/api/hunt";
+import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
+import { HUNT_FINDING_EVENTS } from "@/components/hunt/HuntTriagePage";
 
 /** Detection buckets emitted by the four #121 Phase A detectors
  *  (evidence.detection values). Unknown values fall into "other". */
@@ -101,6 +103,15 @@ export function AgenticRiskPage() {
   useEffect(() => {
     void fetchFindings();
   }, [fetchFindings]);
+
+  // Live refresh (#121 Phase B): WS-pushed finding events + 30 s polling
+  // safety net, shared with the other hunt surfaces.
+  useLiveEventRefresh(
+    useCallback(() => {
+      void fetchFindings();
+    }, [fetchFindings]),
+    HUNT_FINDING_EVENTS,
+  );
 
   const handleRun = useCallback(async () => {
     setRunning(true);
