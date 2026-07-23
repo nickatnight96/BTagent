@@ -12,16 +12,25 @@ import { MemoryRouter } from "react-router-dom";
 const mockGeneratePlan = vi.fn();
 const mockListPlans = vi.fn();
 const mockGetPlan = vi.fn();
+const mockExecutePlan = vi.fn();
 
 vi.mock("@/api/hunts", () => ({
   generateHuntPlan: (...a: unknown[]) => mockGeneratePlan(...a),
   listHuntPlans: (...a: unknown[]) => mockListPlans(...a),
   getHuntPlan: (...a: unknown[]) => mockGetPlan(...a),
+  executeHuntPlan: (...a: unknown[]) => mockExecutePlan(...a),
 }));
 
 vi.mock("@/components/layout/Header", () => ({
   Header: ({ title }: { title: string }) => <div>{title}</div>,
 }));
+
+// Spy on navigation so the triage-inbox link can be asserted.
+const navigateSpy = vi.fn();
+vi.mock("react-router-dom", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("react-router-dom")>();
+  return { ...mod, useNavigate: () => navigateSpy };
+});
 
 import { HuntPlanPage } from "@/components/hunts/HuntPlanPage";
 
@@ -118,7 +127,21 @@ beforeEach(() => {
     total: 2,
   });
   mockGetPlan.mockResolvedValue(PLAN);
+  mockExecutePlan.mockResolvedValue({
+    plan_id: "hunt_01TEST",
+    status: "ready",
+    queued: false,
+    findings_created: 3,
+  });
 });
+
+async function generateAPlan() {
+  fireEvent.change(screen.getByTestId("plan-adversaries-input"), {
+    target: { value: "APT29" },
+  });
+  fireEvent.click(screen.getByTestId("generate-plan"));
+  await screen.findByTestId("hunt-plan-result");
+}
 
 describe("HuntPlanPage", () => {
   it("disables Generate until a target is entered", () => {
@@ -236,5 +259,63 @@ describe("HuntPlanPage plan history", () => {
 
     await waitFor(() => expect(mockListPlans).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("plan-history")).not.toBeInTheDocument();
+  });
+});
+
+describe("HuntPlanPage runbook execution", () => {
+  it("executes the open plan and shows the findings banner with a triage link", async () => {
+    renderPage();
+    await generateAPlan();
+
+    fireEvent.click(screen.getByTestId("execute-plan"));
+
+    await waitFor(() => expect(mockExecutePlan).toHaveBeenCalledWith("hunt_01TEST"));
+    const banner = await screen.findByTestId("execute-result");
+    expect(banner).toHaveTextContent(
+      "Runbook executed — 3 finding(s) landed in the triage inbox.",
+    );
+    fireEvent.click(screen.getByTestId("open-triage-inbox"));
+    expect(navigateSpy).toHaveBeenCalledWith("/hunt");
+  });
+
+  it("shows the queued message on the live path without a triage link", async () => {
+    mockExecutePlan.mockResolvedValue({
+      plan_id: "hunt_01TEST",
+      status: "ready",
+      queued: true,
+      findings_created: null,
+    });
+    renderPage();
+    await generateAPlan();
+
+    fireEvent.click(screen.getByTestId("execute-plan"));
+
+    const banner = await screen.findByTestId("execute-result");
+    expect(banner).toHaveTextContent("Execution queued on the worker");
+    expect(screen.queryByTestId("open-triage-inbox")).not.toBeInTheDocument();
+  });
+
+  it("surfaces execution failure in the alert without a banner", async () => {
+    mockExecutePlan.mockRejectedValue(new Error("plan is not ready"));
+    renderPage();
+    await generateAPlan();
+
+    fireEvent.click(screen.getByTestId("execute-plan"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("plan is not ready");
+    expect(screen.queryByTestId("execute-result")).not.toBeInTheDocument();
+  });
+
+  it("clears a previous execution banner when another plan is opened", async () => {
+    renderPage();
+    await generateAPlan();
+    fireEvent.click(screen.getByTestId("execute-plan"));
+    await screen.findByTestId("execute-result");
+
+    await openHistory();
+    fireEvent.click(screen.getByTestId("plan-history-item-hunt_01TEST"));
+    await waitFor(() => expect(mockGetPlan).toHaveBeenCalled());
+
+    expect(screen.queryByTestId("execute-result")).not.toBeInTheDocument();
   });
 });
