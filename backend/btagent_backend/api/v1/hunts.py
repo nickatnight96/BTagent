@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models import InvestigationRow
-from btagent_backend.services import hunt_package_store
+from btagent_backend.services import hunt_package_store, hunt_plan_service
 from btagent_backend.services.proposal_huntplan import compile_huntinput_to_huntplan
 from btagent_backend.services.task_manager import TaskManager
 
@@ -309,15 +309,16 @@ class HuntPlanRequest(BaseModel):
 @router.post("/plan", response_model=HuntPlan)
 async def generate_hunt_plan(
     body: HuntPlanRequest,
+    db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> HuntPlan:
     """Generate a full hunt plan from adversaries and/or TTPs (#99 Phase A).
 
     Runs HypothesisGen → per-TTP QuerySynth + NoiseBaseline →
     RunbookCompiler — the same pipeline pattern-hunt proposals compile
-    through — and returns the ready-to-run runbook. The plan is not yet
-    persisted (transient artifact, mirroring how /hunts/package started);
-    the analyst re-generates cheaply in mock mode.
+    through — and returns the ready-to-run runbook. The plan is persisted
+    (proposal-less ``hunt_plans`` row keyed by the plan's own id) so it can
+    be re-opened from ``GET /hunts/plans`` later.
     """
     user.require_permission("hunt:run")
 
@@ -340,6 +341,8 @@ async def generate_hunt_plan(
             "the deployment must run in mock mode.",
         ) from exc
 
+    await hunt_plan_service.store_direct_plan(db, org_id=user.org_id, plan=plan)
+
     logger.info(
         "hunt_plan generated",
         extra={
@@ -349,6 +352,68 @@ async def generate_hunt_plan(
         },
     )
     return plan
+
+
+class HuntPlanSummary(BaseModel):
+    """History-list projection of a stored plan (no runbook bodies)."""
+
+    id: str
+    status: str
+    adversaries: list[str]
+    ttps: list[str]
+    hypothesis_count: int
+    entry_count: int
+    from_proposal: bool
+    created_at: str
+
+
+class HuntPlanListResponse(BaseModel):
+    items: list[HuntPlanSummary]
+    total: int
+
+
+def _plan_to_summary(row) -> HuntPlanSummary:
+    plan = row.plan or {}
+    hunt_input = plan.get("input") or {}
+    return HuntPlanSummary(
+        id=row.id,
+        status=row.status,
+        adversaries=list(hunt_input.get("adversaries") or []),
+        ttps=list(hunt_input.get("ttps") or []),
+        hypothesis_count=len(plan.get("hypotheses") or []),
+        entry_count=len(plan.get("ttp_entries") or []),
+        from_proposal=row.proposal_id is not None,
+        created_at=row.created_at.isoformat(),
+    )
+
+
+@router.get("/plans", response_model=HuntPlanListResponse)
+async def list_hunt_plans(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPlanListResponse:
+    """Org-scoped hunt-plan history (direct + proposal-compiled), newest first."""
+    user.require_permission("hunt:view")
+    rows, total = await hunt_plan_service.list_plans(
+        db, org_id=user.org_id, page=page, page_size=page_size
+    )
+    return HuntPlanListResponse(items=[_plan_to_summary(r) for r in rows], total=total)
+
+
+@router.get("/plans/{plan_id}", response_model=HuntPlan)
+async def get_hunt_plan(
+    plan_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPlan:
+    """Re-open a stored plan. 404 on miss, cross-org access, or un-compiled row."""
+    user.require_permission("hunt:view")
+    row = await hunt_plan_service.get_plan(db, org_id=user.org_id, plan_row_id=plan_id)
+    if row is None or row.plan is None:
+        raise HTTPException(status_code=404, detail="Hunt plan not found")
+    return HuntPlan.model_validate(row.plan)
 
 
 class CorrelateRequest(BaseModel):

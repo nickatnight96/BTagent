@@ -126,10 +126,13 @@ class HuntPlanRow(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
-    proposal_id: Mapped[str] = mapped_column(
+    # NULL == analyst-initiated ("direct") plan from POST /hunts/plan — no
+    # proposal behind it. The unique index still holds one-plan-per-proposal
+    # for the proposal path (Postgres unique indexes admit multiple NULLs).
+    proposal_id: Mapped[str | None] = mapped_column(
         String(64),
         ForeignKey("pattern_hunt_proposals.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     # "pending" | "ready" | "failed" — compile lifecycle, not HuntPlanState.
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")

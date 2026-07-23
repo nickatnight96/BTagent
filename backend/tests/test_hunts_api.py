@@ -284,3 +284,53 @@ async def test_hunt_plan_requires_a_target(client: AsyncClient, analyst_token: s
 async def test_hunt_plan_requires_auth(client: AsyncClient):
     resp = await client.post("/api/v1/hunts/plan", json={"adversaries": ["APT29"]})
     assert resp.status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Plan persistence + history (#99 follow-through)
+# --------------------------------------------------------------------------- #
+
+
+async def test_generated_plan_is_persisted_and_reopenable(client: AsyncClient, analyst_token: str):
+    """POST /hunts/plan stores the plan under its own id; the history list
+    summarizes it and the detail route returns the identical runbook."""
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={"adversaries": ["APT29"], "ttps": ["T1059.001"]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+
+    listing = await client.get("/api/v1/hunts/plans", headers=auth_header(analyst_token))
+    assert listing.status_code == 200, listing.text
+    items = {i["id"]: i for i in listing.json()["items"]}
+    assert plan["id"] in items
+    summary = items[plan["id"]]
+    assert summary["status"] == "ready"
+    assert summary["adversaries"] == ["APT29"]
+    assert summary["ttps"] == ["T1059.001"]
+    assert summary["hypothesis_count"] == len(plan["hypotheses"])
+    assert summary["entry_count"] == len(plan["ttp_entries"])
+    assert summary["from_proposal"] is False
+
+    detail = await client.get(
+        f"/api/v1/hunts/plans/{plan['id']}", headers=auth_header(analyst_token)
+    )
+    assert detail.status_code == 200, detail.text
+    reopened = detail.json()
+    assert reopened["id"] == plan["id"]
+    assert reopened["hypotheses"] == plan["hypotheses"]
+    assert reopened["ttp_entries"] == plan["ttp_entries"]
+
+
+async def test_plan_detail_404_on_unknown_id(client: AsyncClient, analyst_token: str):
+    resp = await client.get(
+        "/api/v1/hunts/plans/hunt_DOESNOTEXIST", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 404
+
+
+async def test_plan_history_requires_auth(client: AsyncClient):
+    assert (await client.get("/api/v1/hunts/plans")).status_code in (401, 403)
+    assert (await client.get("/api/v1/hunts/plans/hunt_x")).status_code in (401, 403)

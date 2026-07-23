@@ -29,6 +29,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from btagent_shared.types.hunt import HuntPlan
 from btagent_shared.types.pattern_hunt import PatternHuntProposal
 from btagent_shared.utils.ids import generate_id
 from sqlalchemy import func, select
@@ -150,6 +151,69 @@ async def compile_and_store(db: AsyncSession, *, plan_row_id: str) -> HuntPlanRo
         len(plan.hypotheses),
     )
     return row
+
+
+async def store_direct_plan(db: AsyncSession, *, org_id: str, plan: HuntPlan) -> HuntPlanRow:
+    """Persist an analyst-initiated plan from ``POST /hunts/plan`` (#99).
+
+    Direct plans have no proposal (``proposal_id`` NULL) and land already
+    ``ready`` — the route compiled them synchronously. The row reuses the
+    plan's own id (``hunt_...``) so the POST response, the history list,
+    and the detail route all speak one identifier.
+    """
+    now = _utcnow()
+    row = HuntPlanRow(
+        id=plan.id,
+        org_id=org_id,
+        proposal_id=None,
+        status=STATUS_READY,
+        plan=plan.model_dump(mode="json"),
+        error="",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(row)
+    await db.flush()
+    logger.info(
+        "direct hunt plan %s stored (org=%s, %d TTP entries)",
+        plan.id,
+        org_id,
+        len(plan.ttp_entries),
+    )
+    return row
+
+
+async def list_plans(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list[HuntPlanRow], int]:
+    """Org-scoped plan history (direct + proposal-compiled), newest first."""
+    count_q = select(func.count()).select_from(HuntPlanRow).where(HuntPlanRow.org_id == org_id)
+    total = (await db.execute(count_q)).scalar_one() or 0
+
+    rows_q = (
+        select(HuntPlanRow)
+        .where(HuntPlanRow.org_id == org_id)
+        .order_by(HuntPlanRow.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    rows = (await db.execute(rows_q)).scalars().all()
+    return list(rows), int(total)
+
+
+async def get_plan(db: AsyncSession, *, org_id: str, plan_row_id: str) -> HuntPlanRow | None:
+    """Org-scoped single-plan lookup; ``None`` on miss or cross-org access."""
+    result = await db.execute(
+        select(HuntPlanRow).where(
+            HuntPlanRow.id == plan_row_id,
+            HuntPlanRow.org_id == org_id,
+        )
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_plan_for_proposal(
