@@ -14,6 +14,7 @@ const mockListPlans = vi.fn();
 const mockGetPlan = vi.fn();
 const mockExecutePlan = vi.fn();
 const mockListRuns = vi.fn();
+const mockExportPlan = vi.fn();
 
 vi.mock("@/api/hunts", () => ({
   generateHuntPlan: (...a: unknown[]) => mockGeneratePlan(...a),
@@ -21,6 +22,7 @@ vi.mock("@/api/hunts", () => ({
   getHuntPlan: (...a: unknown[]) => mockGetPlan(...a),
   executeHuntPlan: (...a: unknown[]) => mockExecutePlan(...a),
   listHuntPlanRuns: (...a: unknown[]) => mockListRuns(...a),
+  exportHuntPlan: (...a: unknown[]) => mockExportPlan(...a),
 }));
 
 vi.mock("@/components/layout/Header", () => ({
@@ -156,6 +158,7 @@ beforeEach(() => {
     findings_created: 3,
   });
   mockListRuns.mockResolvedValue({ items: [], total: 0 });
+  mockExportPlan.mockResolvedValue(new Blob(["# Hunt Plan"], { type: "text/markdown" }));
 });
 
 async function generateAPlan() {
@@ -362,6 +365,43 @@ describe("HuntPlanPage runbook execution", () => {
     await screen.findByTestId("execute-result");
     await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(2));
     expect(await screen.findByTestId("run-history")).toBeInTheDocument();
+  });
+
+  it("downloads the runbook as markdown via the export endpoint", async () => {
+    const createSpy = vi.fn(() => "blob:hunt-plan");
+    const revokeSpy = vi.fn();
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: createSpy,
+      revokeObjectURL: revokeSpy,
+    });
+    try {
+      renderPage();
+      await generateAPlan();
+
+      fireEvent.click(screen.getByTestId("export-md"));
+
+      await waitFor(() =>
+        expect(mockExportPlan).toHaveBeenCalledWith("hunt_01TEST", "md"),
+      );
+      await waitFor(() => expect(createSpy).toHaveBeenCalled());
+      expect(revokeSpy).toHaveBeenCalledWith("blob:hunt-plan");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("surfaces export failure in the alert", async () => {
+    mockExportPlan.mockRejectedValue(new Error("Export failed (404)"));
+    renderPage();
+    await generateAPlan();
+
+    fireEvent.click(screen.getByTestId("export-pdf"));
+
+    await waitFor(() =>
+      expect(mockExportPlan).toHaveBeenCalledWith("hunt_01TEST", "pdf"),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Export failed (404)");
   });
 
   it("clears a previous execution banner when another plan is opened", async () => {
