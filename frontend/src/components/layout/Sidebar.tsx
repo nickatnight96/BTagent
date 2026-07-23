@@ -28,6 +28,7 @@ import {
   FlaskConical,
   Plug,
   Map,
+  Bot,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -91,6 +92,12 @@ const navItems: NavItem[] = [
     path: "/hunt-plan",
     icon: <Map className="w-5 h-5" />,
     testId: "nav-hunt-plan-link",
+  },
+  {
+    label: "Agentic Risk",
+    path: "/agentic-risk",
+    icon: <Bot className="w-5 h-5" />,
+    testId: "nav-agentic-risk-link",
   },
   {
     label: "Behavioral Hunts",
