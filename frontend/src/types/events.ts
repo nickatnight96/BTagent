@@ -37,6 +37,9 @@ export enum EventType {
   HUNT_FINDING_UPDATED = "hunt_finding_updated",
   HUNT_FINDING_SUPPRESSED = "hunt_finding_suppressed",
   HUNT_FINDING_PROMOTED = "hunt_finding_promoted",
+
+  // Governance / classification (EPIC-7 UC-7.2) — real-time egress-block alert
+  TLP_VIOLATION_ATTEMPT = "tlp.violation_attempt",
 }
 
 export interface AgentEvent {
