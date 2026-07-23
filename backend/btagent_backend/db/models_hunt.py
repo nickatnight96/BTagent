@@ -288,3 +288,46 @@ class HuntPackageRow(Base):
     )
 
     __table_args__ = (Index("idx_hunt_packages_org_created", "org_id", "created_at"),)
+
+
+class ShadowAgentRegistryRow(Base):
+    """Governance decision for a discovered shadow agent / MCP server (#121/#117).
+
+    Shadow findings (evidence ``shadow_workload=True``) route to governance,
+    not IR: an analyst either *registers* the workload (sanctioned — bring it
+    under management) or *sunsets* it (decommission). One row per
+    (org, resource); re-governing updates the decision in place so the
+    registry reflects the latest ruling, with the originating finding kept
+    for lineage.
+    """
+
+    __tablename__ = "shadow_agent_registry"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Cloud resource id / identity ref / host the shadow agent was observed at.
+    resource_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Workload kind from the finding evidence (cloud_run_mcp, bedrock_agentcore, ...).
+    kind: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    # "registered" | "sunset" — the governance ruling.
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    decided_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    rationale: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_finding_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_shadow_registry_org_resource", "org_id", "resource_key", unique=True),
+        Index("idx_shadow_registry_org_status", "org_id", "status"),
+    )

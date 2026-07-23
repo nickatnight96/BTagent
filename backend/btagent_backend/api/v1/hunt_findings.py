@@ -719,3 +719,99 @@ async def create_suppression(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return _suppression_response(rule)
+
+
+# --------------------------------------------------------------------------- #
+# Shadow-agent governance (#121/#117 Phase C)
+# --------------------------------------------------------------------------- #
+
+
+class GovernFindingRequest(BaseModel):
+    """Register/sunset ruling for a shadow-agent finding's workload."""
+
+    action: str = Field(..., pattern="^(register|sunset)$")
+    rationale: str = Field(default="", max_length=2000)
+
+
+class ShadowRegistryEntry(BaseModel):
+    id: str
+    resource_key: str
+    kind: str
+    status: str
+    decided_by: str | None
+    rationale: str
+    source_finding_id: str | None
+    updated_at: str
+
+
+class ShadowRegistryListResponse(BaseModel):
+    items: list[ShadowRegistryEntry]
+    total: int
+
+
+def _registry_response(row) -> ShadowRegistryEntry:
+    return ShadowRegistryEntry(
+        id=row.id,
+        resource_key=row.resource_key,
+        kind=row.kind,
+        status=row.status,
+        decided_by=row.decided_by,
+        rationale=row.rationale,
+        source_finding_id=row.source_finding_id,
+        updated_at=row.updated_at.isoformat(),
+    )
+
+
+@router.post("/findings/{finding_id}/govern", response_model=ShadowRegistryEntry)
+async def govern_shadow_finding(
+    finding_id: str,
+    body: GovernFindingRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Route a shadow-agent finding to governance: register or sunset.
+
+    Shadow findings (evidence ``shadow_workload=True``, emitted by both the
+    cloud and agentic detectors) are governance decisions, not incidents.
+    One registry row per (org, resource); re-governing updates the ruling.
+    Requires ``hunt:suppress`` (the senior triage-action gate).
+    """
+    user.require_permission("hunt:suppress")
+    from btagent_backend.services import shadow_governance
+
+    try:
+        row = await shadow_governance.govern_finding(
+            db,
+            org_id=user.org_id,
+            finding_id=finding_id,
+            action=body.action,
+            rationale=body.rationale,
+            decided_by=user.id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except shadow_governance.NotAShadowFindingError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return _registry_response(row)
+
+
+@router.get("/governance", response_model=ShadowRegistryListResponse)
+async def list_shadow_registry(
+    status_filter: str | None = Query(
+        None, alias="status", pattern="^(registered|sunset)$", description="Filter by ruling."
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Org-scoped shadow-agent governance registry, latest rulings first."""
+    user.require_permission("hunt:view")
+    from btagent_backend.services import shadow_governance
+
+    rows, total = await shadow_governance.list_registry(
+        db, org_id=user.org_id, status=status_filter, page=page, page_size=page_size
+    )
+    return ShadowRegistryListResponse(items=[_registry_response(r) for r in rows], total=total)
