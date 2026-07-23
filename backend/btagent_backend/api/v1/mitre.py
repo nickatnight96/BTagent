@@ -43,6 +43,22 @@ class TechniqueListResponse(BaseModel):
     page_size: int
 
 
+class TechniqueExercise(BaseModel):
+    """When this org last exercised a technique via a hunt (#99 Phase C)."""
+
+    technique_id: str
+    last_exercised_at: str
+    last_plan_id: str
+    last_run_id: str
+    last_outcome: str
+    exercise_count: int
+
+
+class TechniqueExerciseListResponse(BaseModel):
+    items: list[TechniqueExercise]
+    total: int
+
+
 class TagRequest(BaseModel):
     entity_type: str = Field(..., description="Entity kind (ioc, timeline, alert, etc.)")
     entity_id: str = Field(..., description="Entity primary key")
@@ -200,6 +216,69 @@ async def get_coverage_score(
     user.require_permission("mitre:view")
     score = await MitreService.get_coverage_score(db, investigation_id)
     return CoverageScoreResponse(score=score, investigation_id=investigation_id)
+
+
+# ---------------------------------------------------------------------------
+# Technique exercise tracking (#99 Phase C)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/exercises", response_model=TechniqueExerciseListResponse)
+async def list_technique_exercises(
+    older_than_days: int | None = Query(
+        None,
+        ge=1,
+        description="Only exercises last run more than N days ago (stale coverage).",
+    ),
+    outcome: str | None = Query(None, description="Filter by last outcome: hit/clean/errored."),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> TechniqueExerciseListResponse:
+    """Org-scoped technique exercise records, most recently exercised first.
+
+    Every hunt-plan execution stamps its TTPs here — coverage says a
+    detection exists, exercise says the hunt machinery actually looked
+    recently. ``older_than_days`` surfaces stale coverage ("untested for
+    >90 days" lists).
+    """
+    user.require_permission("mitre:view")
+
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from btagent_backend.db.models_mitre import TechniqueExerciseRow
+
+    where = [TechniqueExerciseRow.org_id == user.org_id]
+    if older_than_days is not None:
+        cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+        where.append(TechniqueExerciseRow.last_exercised_at < cutoff)
+    if outcome is not None:
+        where.append(TechniqueExerciseRow.last_outcome == outcome)
+
+    rows = (
+        (
+            await db.execute(
+                select(TechniqueExerciseRow)
+                .where(*where)
+                .order_by(TechniqueExerciseRow.last_exercised_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    items = [
+        TechniqueExercise(
+            technique_id=r.technique_id,
+            last_exercised_at=r.last_exercised_at.isoformat(),
+            last_plan_id=r.last_plan_id,
+            last_run_id=r.last_run_id,
+            last_outcome=r.last_outcome,
+            exercise_count=r.exercise_count,
+        )
+        for r in rows
+    ]
+    return TechniqueExerciseListResponse(items=items, total=len(items))
 
 
 # ---------------------------------------------------------------------------

@@ -690,6 +690,60 @@ async def test_skeleton_sigma_when_runbook_has_no_sigma_query(db_session):
     assert row.confidence == 0.3
 
 
+async def test_execution_stamps_technique_exercises(client: AsyncClient, analyst_token: str):
+    """Executing a plan upserts (org, technique) exercise rows with lineage;
+    re-executions bump the count instead of duplicating."""
+    gen = await client.post(
+        "/api/v1/hunts/plan",
+        json={"ttps": ["T1059.001"]},
+        headers=auth_header(analyst_token),
+    )
+    assert gen.status_code == 200, gen.text
+    plan = gen.json()
+    plan_id = plan["id"]
+    hunted_ttps = {e["ttp_id"] for e in plan["ttp_entries"]}
+
+    execute = await client.post(
+        f"/api/v1/hunts/plans/{plan_id}/execute", headers=auth_header(analyst_token)
+    )
+    assert execute.status_code == 200, execute.text
+
+    resp = await client.get("/api/v1/mitre/exercises", headers=auth_header(analyst_token))
+    assert resp.status_code == 200, resp.text
+    by_ttp = {i["technique_id"]: i for i in resp.json()["items"]}
+    for ttp_id in hunted_ttps:
+        assert ttp_id in by_ttp, f"{ttp_id} not stamped"
+        row = by_ttp[ttp_id]
+        assert row["last_plan_id"] == plan_id
+        assert row["last_run_id"].startswith("hrun_")
+        assert row["last_outcome"] in ("hit", "clean", "errored")
+        assert row["exercise_count"] >= 1
+    first_count = by_ttp[next(iter(hunted_ttps))]["exercise_count"]
+
+    # Re-execute: same rows, bumped count.
+    second = await client.post(
+        f"/api/v1/hunts/plans/{plan_id}/execute", headers=auth_header(analyst_token)
+    )
+    assert second.status_code == 200, second.text
+    resp = await client.get("/api/v1/mitre/exercises", headers=auth_header(analyst_token))
+    by_ttp_after = {i["technique_id"]: i for i in resp.json()["items"]}
+    sample = next(iter(hunted_ttps))
+    assert by_ttp_after[sample]["exercise_count"] == first_count + 1
+
+    # Everything just ran — the stale filter must exclude it all.
+    stale = await client.get(
+        "/api/v1/mitre/exercises?older_than_days=90", headers=auth_header(analyst_token)
+    )
+    assert stale.status_code == 200
+    stale_ttps = {i["technique_id"] for i in stale.json()["items"]}
+    assert not (hunted_ttps & stale_ttps)
+
+
+async def test_technique_exercises_require_auth(client: AsyncClient):
+    resp = await client.get("/api/v1/mitre/exercises")
+    assert resp.status_code in (401, 403)
+
+
 async def test_lesson_failure_never_sinks_execution(
     client: AsyncClient, analyst_token: str, monkeypatch
 ):
