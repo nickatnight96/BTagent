@@ -29,6 +29,7 @@ import {
   Plug,
   Map,
   Bot,
+  FileText,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -152,6 +153,12 @@ const navItems: NavItem[] = [
     path: "/response-plan",
     icon: <Siren className="w-5 h-5" />,
     testId: "nav-response-plan-link",
+  },
+  {
+    label: "Reports",
+    path: "/reports",
+    icon: <FileText className="w-5 h-5" />,
+    testId: "nav-reports-link",
   },
   {
     label: "Bulk Mitigation",
