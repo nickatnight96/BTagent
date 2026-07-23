@@ -18,10 +18,40 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ds/card";
-import { listAgenticFindings, type HuntFinding } from "@/api/agentic";
+import {
+  listAgenticFindings,
+  governFinding,
+  listGovernance,
+  type HuntFinding,
+  type ShadowRegistryEntry,
+} from "@/api/agentic";
 import { runAgenticHunt } from "@/api/hunt";
 import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
 import { HUNT_FINDING_EVENTS } from "@/components/hunt/HuntTriagePage";
+import { useAuthStore } from "@/stores/authStore";
+import { UserRole } from "@/types/config";
+
+/** Senior roles that hold hunt:suppress — the governance ruling gate. */
+function useCanGovern(): boolean {
+  const role = useAuthStore((s) => s.user?.role);
+  return (
+    role === UserRole.ADMIN ||
+    role === UserRole.SENIOR_ANALYST ||
+    role === UserRole.INCIDENT_COMMANDER
+  );
+}
+
+/** Resource key a finding governs, mirroring the backend derivation order. */
+export function resourceKeyOf(finding: HuntFinding): string {
+  const obs = (finding.observables ?? []).find(
+    (o) => (o as { type?: string }).type === "cloud_resource_id",
+  ) as { value?: string } | undefined;
+  if (obs?.value) return obs.value;
+  const ev = (finding.evidence ?? {}) as Record<string, unknown>;
+  if (ev["identity_ref"]) return String(ev["identity_ref"]);
+  const ent = (finding.entities ?? [])[0] as { value?: string } | undefined;
+  return ent?.value ?? finding.id;
+}
 
 /** Detection buckets emitted by the four #121 Phase A detectors
  *  (evidence.detection values). Unknown values fall into "other". */
@@ -160,6 +190,9 @@ export function AgenticRiskPage() {
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeBucket, setActiveBucket] = useState<string | null>(null);
+  const [registry, setRegistry] = useState<Record<string, ShadowRegistryEntry>>({});
+  const [governingId, setGoverningId] = useState<string | null>(null);
+  const canGovern = useCanGovern();
 
   const fetchFindings = useCallback(async () => {
     try {
@@ -174,9 +207,35 @@ export function AgenticRiskPage() {
     }
   }, []);
 
+  const fetchRegistry = useCallback(async () => {
+    try {
+      const resp = await listGovernance();
+      setRegistry(Object.fromEntries(resp.items.map((r) => [r.resource_key, r])));
+    } catch {
+      // Registry is auxiliary — never block the page on it.
+    }
+  }, []);
+
   useEffect(() => {
     void fetchFindings();
-  }, [fetchFindings]);
+    void fetchRegistry();
+  }, [fetchFindings, fetchRegistry]);
+
+  const handleGovern = useCallback(
+    async (finding: HuntFinding, action: "register" | "sunset") => {
+      setGoverningId(finding.id);
+      setError(null);
+      try {
+        await governFinding(finding.id, action);
+        await fetchRegistry();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : `Failed to ${action} shadow agent`);
+      } finally {
+        setGoverningId(null);
+      }
+    },
+    [fetchRegistry],
+  );
 
   // Live refresh (#121 Phase B): WS-pushed finding events + 30 s polling
   // safety net, shared with the other hunt surfaces.
@@ -406,24 +465,62 @@ export function AgenticRiskPage() {
                 scan the latest telemetry.
               </p>
             ) : (
-              visible.map((f) => (
-                <div
-                  key={f.id}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"
-                  data-testid={`agentic-finding-${f.id}`}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-foreground">{f.title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {bucketOf(f)} · {f.technique_ids.join(", ") || "—"} ·{" "}
-                      {formatRelativeTime(f.created_at)}
-                    </p>
+              visible.map((f) => {
+                const isShadow = bucketOf(f) === "shadow_agent";
+                const ruling = isShadow ? registry[resourceKeyOf(f)] : undefined;
+                return (
+                  <div
+                    key={f.id}
+                    className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"
+                    data-testid={`agentic-finding-${f.id}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">{f.title}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {bucketOf(f)} · {f.technique_ids.join(", ") || "—"} ·{" "}
+                        {formatRelativeTime(f.created_at)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {ruling && (
+                        <Badge
+                          variant={ruling.status === "registered" ? "secondary" : "outline"}
+                          data-testid={`governance-status-${f.id}`}
+                        >
+                          {ruling.status}
+                        </Badge>
+                      )}
+                      {isShadow && canGovern && (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={governingId !== null}
+                            onClick={() => void handleGovern(f, "register")}
+                            data-testid={`govern-register-${f.id}`}
+                          >
+                            Register
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={governingId !== null}
+                            onClick={() => void handleGovern(f, "sunset")}
+                            data-testid={`govern-sunset-${f.id}`}
+                          >
+                            Sunset
+                          </Button>
+                        </>
+                      )}
+                      <Badge variant={severityVariant(f.severity)} className="uppercase">
+                        {f.severity}
+                      </Badge>
+                    </div>
                   </div>
-                  <Badge variant={severityVariant(f.severity)} className="shrink-0 uppercase">
-                    {f.severity}
-                  </Badge>
-                </div>
-              ))
+                );
+              })
             )}
           </CardContent>
         </Card>

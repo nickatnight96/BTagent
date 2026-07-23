@@ -34,3 +34,37 @@ export async function listAgenticFindings(
     `${BASE}/findings?${search.toString()}`,
   );
 }
+
+// --- Shadow-agent governance (#121/#117 Phase C) --------------------------- //
+
+export interface ShadowRegistryEntry {
+  id: string;
+  resource_key: string;
+  kind: string;
+  status: string;
+  decided_by: string | null;
+  rationale: string;
+  source_finding_id: string | null;
+  updated_at: string;
+}
+
+export interface ShadowRegistryListResponse {
+  items: ShadowRegistryEntry[];
+  total: number;
+}
+
+/** Register (sanction) or sunset (decommission) a shadow-agent finding. */
+export async function governFinding(
+  findingId: string,
+  action: "register" | "sunset",
+  rationale = "",
+): Promise<ShadowRegistryEntry> {
+  return api.post<ShadowRegistryEntry>(
+    `${BASE}/findings/${findingId}/govern`,
+    { action, rationale },
+  );
+}
+
+export async function listGovernance(): Promise<ShadowRegistryListResponse> {
+  return api.get<ShadowRegistryListResponse>(`${BASE}/governance?page_size=200`);
+}

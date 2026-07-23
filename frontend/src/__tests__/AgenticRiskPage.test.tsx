@@ -12,8 +12,20 @@ import { MemoryRouter } from "react-router-dom";
 const mockList = vi.fn();
 const mockRun = vi.fn();
 
+const mockGovern = vi.fn();
+const mockListGovernance = vi.fn();
+
 vi.mock("@/api/agentic", () => ({
   listAgenticFindings: (...a: unknown[]) => mockList(...a),
+  governFinding: (...a: unknown[]) => mockGovern(...a),
+  listGovernance: (...a: unknown[]) => mockListGovernance(...a),
+}));
+
+// Auth store — default to a senior role so governance buttons render.
+let mockRole = "senior_analyst";
+vi.mock("@/stores/authStore", () => ({
+  useAuthStore: (sel: (s: { user: { role: string } | null }) => unknown) =>
+    sel({ user: { role: mockRole } }),
 }));
 vi.mock("@/api/hunt", () => ({
   runAgenticHunt: (...a: unknown[]) => mockRun(...a),
@@ -37,6 +49,7 @@ import {
   bucketOf,
   buildInjectionTimeline,
   buildDriftInventory,
+  resourceKeyOf,
 } from "@/components/agentic/AgenticRiskPage";
 
 function finding(id: string, detection: string, severity = "high") {
@@ -72,7 +85,17 @@ const FINDINGS = [
       redacted_excerpts: ["Ignore previous instructions and […]"],
     },
   },
-  finding("hfnd_shadow", "shadow_workload"),
+  {
+    ...finding("hfnd_shadow", "shadow_workload"),
+    observables: [
+      { type: "cloud_resource_id", value: "projects/demo/services/mcp-shadow" },
+    ],
+    evidence: {
+      detection: "shadow_agent_workload",
+      shadow_workload: true,
+      kind: "cloud_run_mcp",
+    },
+  },
   finding("hfnd_exfil", "llm_exfil", "critical"),
   finding("hfnd_ident", "identity_privilege_divergence"),
   {
@@ -92,6 +115,18 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockRole = "senior_analyst";
+  mockListGovernance.mockResolvedValue({ items: [], total: 0 });
+  mockGovern.mockResolvedValue({
+    id: "shreg_1",
+    resource_key: "projects/demo/services/mcp-shadow",
+    kind: "cloud_run_mcp",
+    status: "registered",
+    decided_by: "usr_1",
+    rationale: "",
+    source_finding_id: "hfnd_shadow",
+    updated_at: "2026-07-23T12:00:00Z",
+  });
   mockList.mockResolvedValue({
     clusters: [],
     findings: FINDINGS,
@@ -233,6 +268,57 @@ describe("AgenticRiskPage", () => {
     renderPage();
     await screen.findByTestId("agentic-finding-hfnd_pi_only");
     expect(screen.queryByTestId("drift-inventory")).not.toBeInTheDocument();
+  });
+
+  it("governs a shadow finding and reflects the ruling", async () => {
+    mockListGovernance
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "shreg_1",
+            resource_key: "projects/demo/services/mcp-shadow",
+            kind: "cloud_run_mcp",
+            status: "registered",
+            decided_by: "usr_1",
+            rationale: "",
+            source_finding_id: "hfnd_shadow",
+            updated_at: "2026-07-23T12:00:00Z",
+          },
+        ],
+        total: 1,
+      });
+    renderPage();
+    await screen.findByTestId("agentic-finding-hfnd_shadow");
+
+    fireEvent.click(screen.getByTestId("govern-register-hfnd_shadow"));
+
+    await waitFor(() =>
+      expect(mockGovern).toHaveBeenCalledWith("hfnd_shadow", "register"),
+    );
+    expect(await screen.findByTestId("governance-status-hfnd_shadow")).toHaveTextContent(
+      "registered",
+    );
+    // Non-shadow findings never get governance buttons.
+    expect(screen.queryByTestId("govern-register-hfnd_pi")).not.toBeInTheDocument();
+  });
+
+  it("hides governance buttons for non-senior roles", async () => {
+    mockRole = "analyst";
+    renderPage();
+    await screen.findByTestId("agentic-finding-hfnd_shadow");
+    expect(screen.queryByTestId("govern-register-hfnd_shadow")).not.toBeInTheDocument();
+  });
+
+  it("resourceKeyOf mirrors the backend derivation order", () => {
+    expect(resourceKeyOf(FINDINGS[1] as never)).toBe("projects/demo/services/mcp-shadow");
+    // Falls back to identity_ref, then entity, then id.
+    expect(
+      resourceKeyOf({
+        ...finding("x", "shadow"),
+        evidence: { identity_ref: "sa@demo" },
+      } as never),
+    ).toBe("sa@demo");
   });
 
   it("registers live refresh on finding events and refetches when fired", async () => {
