@@ -550,6 +550,146 @@ async def test_execute_indexes_hunt_lesson(client: AsyncClient, analyst_token: s
     assert lesson["title"].startswith("Hunt lesson: APT29")
 
 
+async def test_clean_ttps_file_detection_proposals(db_session):
+    """Only clean TTPs (0 hits, 0 errors) file proposals; re-runs upsert
+    instead of duplicating; analyst-decided rows are never overwritten."""
+    from datetime import UTC, datetime
+
+    from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan, Query, TTPRunbookEntry
+    from sqlalchemy import select
+
+    from btagent_backend.db.models import DEFAULT_ORG_ID
+    from btagent_backend.db.models_cti import DetectionProposalRow
+    from btagent_backend.services.hunt_plan_service import _file_clean_ttp_proposals
+
+    def entry(ttp_id: str, with_sigma: bool = False) -> TTPRunbookEntry:
+        queries = (
+            {Backend.SIGMA: Query(backend=Backend.SIGMA, query=f"title: {ttp_id} rule")}
+            if with_sigma
+            else {}
+        )
+        return TTPRunbookEntry(
+            ttp_id=ttp_id,
+            ttp_name=f"Technique {ttp_id}",
+            rationale="test rationale",
+            behavioral_description="suspicious behaviour",
+            queries=queries,
+        )
+
+    plan = HuntPlan(
+        id="hunt_TESTPROPOSE",
+        org_id=DEFAULT_ORG_ID,
+        input=HuntInput(ttps=["T1001", "T1002", "T1003"], initiated_by="usr_test"),
+        ttp_entries=[entry("T1001", with_sigma=True), entry("T1002"), entry("T1003")],
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    summary = {
+        "T1001": {"hits": 0, "errors": []},  # clean, has sigma query
+        "T1002": {"hits": 3, "errors": []},  # hit — no proposal
+        "T1003": {"hits": 0, "errors": ["boom"]},  # errored — no proposal
+    }
+
+    await _file_clean_ttp_proposals(
+        db_session, plan=plan, org_id=DEFAULT_ORG_ID, ttp_summary=summary
+    )
+    rows = (
+        (
+            await db_session.execute(
+                select(DetectionProposalRow).where(
+                    DetectionProposalRow.source_stix_id.like("hunt-plan--hunt_TESTPROPOSE--%")
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.source_stix_id == "hunt-plan--hunt_TESTPROPOSE--T1001"
+    assert row.technique_ids == ["T1001"]
+    assert row.state == "proposed"
+    assert row.sigma_yaml == "title: T1001 rule"  # runbook sigma preferred
+    assert "clean" in row.rationale
+
+    # Re-run: upsert, not duplicate.
+    await _file_clean_ttp_proposals(
+        db_session, plan=plan, org_id=DEFAULT_ORG_ID, ttp_summary=summary
+    )
+    rows = (
+        (
+            await db_session.execute(
+                select(DetectionProposalRow).where(
+                    DetectionProposalRow.source_stix_id.like("hunt-plan--hunt_TESTPROPOSE--%")
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+    # An analyst decision survives re-execution.
+    rows[0].state = "accepted"
+    await db_session.flush()
+    await _file_clean_ttp_proposals(
+        db_session, plan=plan, org_id=DEFAULT_ORG_ID, ttp_summary=summary
+    )
+    refreshed = (
+        await db_session.execute(
+            select(DetectionProposalRow).where(
+                DetectionProposalRow.source_stix_id == "hunt-plan--hunt_TESTPROPOSE--T1001"
+            )
+        )
+    ).scalar_one()
+    assert refreshed.state == "accepted"
+
+
+async def test_skeleton_sigma_when_runbook_has_no_sigma_query(db_session):
+    """Entries without a Sigma query get a reviewable skeleton draft."""
+    from datetime import UTC, datetime
+
+    from btagent_shared.types.hunt import HuntInput, HuntPlan, TTPRunbookEntry
+    from sqlalchemy import select
+
+    from btagent_backend.db.models import DEFAULT_ORG_ID
+    from btagent_backend.db.models_cti import DetectionProposalRow
+    from btagent_backend.services.hunt_plan_service import _file_clean_ttp_proposals
+
+    plan = HuntPlan(
+        id="hunt_TESTSKEL",
+        org_id=DEFAULT_ORG_ID,
+        input=HuntInput(ttps=["T1059.001"], initiated_by="usr_test"),
+        ttp_entries=[
+            TTPRunbookEntry(
+                ttp_id="T1059.001",
+                ttp_name="PowerShell",
+                rationale="r",
+                behavioral_description="encoded powershell",
+            )
+        ],
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    await _file_clean_ttp_proposals(
+        db_session,
+        plan=plan,
+        org_id=DEFAULT_ORG_ID,
+        ttp_summary={"T1059.001": {"hits": 0, "errors": []}},
+    )
+    row = (
+        await db_session.execute(
+            select(DetectionProposalRow).where(
+                DetectionProposalRow.source_stix_id == "hunt-plan--hunt_TESTSKEL--T1059.001"
+            )
+        )
+    ).scalar_one()
+    assert "status: experimental" in row.sigma_yaml
+    assert "attack.t1059_001" in row.sigma_yaml
+    assert "TODO(detection-engineering)" in row.sigma_yaml
+    assert row.confidence == 0.3
+
+
 async def test_lesson_failure_never_sinks_execution(
     client: AsyncClient, analyst_token: str, monkeypatch
 ):
