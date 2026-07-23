@@ -13,6 +13,7 @@ import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
 import { Badge } from "@/components/ds/badge";
 import { TechniqueDetail } from "./TechniqueDetail";
+import { ExercisePanel } from "./ExercisePanel";
 
 /** The 14 Enterprise ATT&CK tactic columns in kill-chain order */
 const TACTIC_ORDER = [
@@ -190,6 +191,11 @@ export function MitreMatrix() {
       <Header title="MITRE ATT&CK Matrix" />
 
       <div className="flex-1 overflow-hidden flex flex-col p-6" data-testid="mitre-matrix">
+        {/* Hunt exercise coverage (#99 Phase C) */}
+        <div className="mb-4">
+          <ExercisePanel />
+        </div>
+
         {/* Toolbar */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-4">
           <div className="flex items-center gap-3 flex-1 w-full lg:w-auto">
