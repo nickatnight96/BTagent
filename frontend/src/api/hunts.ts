@@ -113,3 +113,75 @@ export interface PromotePackageResponse {
 export async function promoteHuntPackage(id: string): Promise<PromotePackageResponse> {
   return api.post<PromotePackageResponse>(`/v1/hunts/packages/${id}/promote`);
 }
+
+// --------------------------------------------------------------------------- //
+// Direct hunt planning (#99 Phase A) — mirrors btagent_shared.types.hunt
+// --------------------------------------------------------------------------- //
+
+export interface HuntPlanQuery {
+  backend: string;
+  query: string;
+  notes: string;
+}
+
+export interface NoiseProfile {
+  expected_hits_per_day: number | null;
+  sample_window_days: number | null;
+  computed_at: string | null;
+}
+
+export interface Hypothesis {
+  id: string;
+  ttp_id: string;
+  ttp_name: string;
+  rationale: string;
+  behavioral_description: string;
+  priority: number;
+  sources: string[];
+}
+
+export interface TTPRunbookEntry {
+  ttp_id: string;
+  ttp_name: string;
+  rationale: string;
+  behavioral_description: string;
+  queries: Record<string, HuntPlanQuery>;
+  expected_noise: NoiseProfile;
+  pivot_questions: string[];
+  evidence_checklist: string[];
+  owner_id: string | null;
+  state: string;
+}
+
+export interface ExecSummary {
+  adversary_profile: string;
+  scope_description: string;
+  success_criteria: string;
+  estimated_effort_hours: number | null;
+  coverage_delta: Record<string, boolean>;
+}
+
+export interface HuntPlan {
+  id: string;
+  org_id: string;
+  state: string;
+  input: {
+    adversaries: string[];
+    ttps: string[];
+  };
+  executive_summary: ExecSummary;
+  hypotheses: Hypothesis[];
+  ttp_entries: TTPRunbookEntry[];
+  created_at: string;
+}
+
+export interface HuntPlanRequest {
+  adversaries?: string[];
+  ttps?: string[];
+  backends?: string[];
+}
+
+/** Generate a full hunt runbook from adversaries and/or ATT&CK technique ids. */
+export async function generateHuntPlan(req: HuntPlanRequest): Promise<HuntPlan> {
+  return api.post<HuntPlan>("/v1/hunts/plan", req);
+}
