@@ -98,3 +98,29 @@ export async function searchTTPs(
   const endpoint = `/v1/mitre/techniques${buildQuery({ q: query, page_size: 1000 })}`;
   return api.get<PaginatedResponse<MitreTechnique>>(endpoint);
 }
+
+// --- Technique exercise tracking (#99 Phase C, PR #347) --------------------- //
+
+export interface TechniqueExercise {
+  technique_id: string;
+  last_exercised_at: string;
+  last_plan_id: string;
+  last_run_id: string;
+  last_outcome: string;
+  exercise_count: number;
+}
+
+export interface TechniqueExerciseListResponse {
+  items: TechniqueExercise[];
+  total: number;
+}
+
+/** Org-scoped hunt exercise records; older_than_days surfaces stale coverage. */
+export async function listTechniqueExercises(params?: {
+  older_than_days?: number;
+  outcome?: string;
+}): Promise<TechniqueExerciseListResponse> {
+  return api.get<TechniqueExerciseListResponse>(
+    `/v1/mitre/exercises${buildQuery(params ?? {})}`,
+  );
+}
