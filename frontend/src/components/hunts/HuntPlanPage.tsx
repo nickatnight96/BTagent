@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Loader2,
   Map,
@@ -7,6 +7,10 @@ import {
   ListChecks,
   HelpCircle,
   Gauge,
+  History,
+  ChevronDown,
+  ChevronRight,
+  ScanSearch,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
@@ -20,7 +24,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ds/card";
-import { generateHuntPlan, type HuntPlan } from "@/api/hunts";
+import {
+  generateHuntPlan,
+  listHuntPlans,
+  getHuntPlan,
+  type HuntPlan,
+  type HuntPlanSummary,
+} from "@/api/hunts";
+
+const HISTORY_PAGE_SIZE = 20;
 
 /** Split a comma/space-separated text field into trimmed non-empty tokens. */
 function tokens(raw: string): string[] {
@@ -30,12 +42,51 @@ function tokens(raw: string): string[] {
     .filter(Boolean);
 }
 
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const diffMins = Math.floor((Date.now() - date.getTime()) / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
+/** Compact "what this plan hunts" label from a history summary. */
+function planLabel(s: HuntPlanSummary): string {
+  const parts = [...s.adversaries, ...s.ttps];
+  if (parts.length === 0) return s.id;
+  return parts.slice(0, 4).join(", ") + (parts.length > 4 ? ` +${parts.length - 4}` : "");
+}
+
 export function HuntPlanPage() {
   const [adversariesText, setAdversariesText] = useState("");
   const [ttpsText, setTtpsText] = useState("");
   const [plan, setPlan] = useState<HuntPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Plan history (#337): stored runbooks, re-openable in place.
+  const [history, setHistory] = useState<HuntPlanSummary[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const resp = await listHuntPlans({ page_size: HISTORY_PAGE_SIZE });
+      setHistory(resp.items);
+      setHistoryTotal(resp.total);
+    } catch {
+      // History is auxiliary — never block plan generation on it.
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchHistory();
+  }, [fetchHistory]);
 
   const adversaries = tokens(adversariesText);
   const ttps = tokens(ttpsText);
@@ -49,6 +100,7 @@ export function HuntPlanPage() {
     try {
       const result = await generateHuntPlan({ adversaries, ttps });
       setPlan(result);
+      void fetchHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate hunt plan");
     } finally {
@@ -56,7 +108,20 @@ export function HuntPlanPage() {
     }
     // tokens() derivations are stable for the same text inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasTarget, adversariesText, ttpsText]);
+  }, [hasTarget, adversariesText, ttpsText, fetchHistory]);
+
+  const handleReopen = useCallback(async (id: string) => {
+    setReopeningId(id);
+    setError(null);
+    try {
+      const result = await getHuntPlan(id);
+      setPlan(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to re-open hunt plan");
+    } finally {
+      setReopeningId(null);
+    }
+  }, []);
 
   return (
     <>
@@ -123,6 +188,81 @@ export function HuntPlanPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Plan history (#337) — collapsible, click to re-open */}
+        {history.length > 0 && (
+          <Card data-testid="plan-history">
+            <CardHeader className="py-3">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 text-left"
+                onClick={() => setHistoryOpen((o) => !o)}
+                data-testid="plan-history-toggle"
+                aria-expanded={historyOpen}
+              >
+                {historyOpen ? (
+                  <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                )}
+                <History className="w-4 h-4 text-primary shrink-0" />
+                <CardTitle className="text-base">
+                  Plan history{" "}
+                  <span className="font-normal text-muted-foreground">
+                    ({historyTotal})
+                  </span>
+                </CardTitle>
+              </button>
+            </CardHeader>
+            {historyOpen && (
+              <CardContent className="space-y-2 pt-0">
+                {history.map((h) => (
+                  <button
+                    key={h.id}
+                    type="button"
+                    onClick={() => void handleReopen(h.id)}
+                    disabled={reopeningId !== null || h.status !== "ready"}
+                    className="flex w-full items-center justify-between gap-3 rounded-md border border-border p-3 text-left text-sm hover:bg-muted/50 disabled:opacity-60"
+                    data-testid={`plan-history-item-${h.id}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-foreground">
+                        {planLabel(h)}
+                        {plan?.id === h.id && (
+                          <span className="ml-2 text-xs text-primary">(open)</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {h.hypothesis_count} hypotheses · {h.entry_count} entries ·{" "}
+                        {formatRelativeTime(h.created_at)}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {reopeningId === h.id && (
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+                      )}
+                      {h.from_proposal && (
+                        <Badge
+                          variant="outline"
+                          className="text-xs"
+                          data-testid={`proposal-badge-${h.id}`}
+                        >
+                          <ScanSearch className="w-3 h-3 mr-1" />
+                          proposal
+                        </Badge>
+                      )}
+                      {h.status !== "ready" && (
+                        <Badge variant="secondary" className="text-xs">
+                          {h.status}
+                        </Badge>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </CardContent>
+            )}
+          </Card>
+        )}
 
         {/* Plan */}
         {plan && (

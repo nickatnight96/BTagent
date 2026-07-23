@@ -185,3 +185,36 @@ export interface HuntPlanRequest {
 export async function generateHuntPlan(req: HuntPlanRequest): Promise<HuntPlan> {
   return api.post<HuntPlan>("/v1/hunts/plan", req);
 }
+
+// --- Plan history (#337) — mirrors HuntPlanSummary in api/v1/hunts.py ------ //
+
+export interface HuntPlanSummary {
+  id: string;
+  status: string;
+  adversaries: string[];
+  ttps: string[];
+  hypothesis_count: number;
+  entry_count: number;
+  /** True when the plan was compiled from a pattern-hunt proposal. */
+  from_proposal: boolean;
+  created_at: string;
+}
+
+export interface HuntPlanListResponse {
+  items: HuntPlanSummary[];
+  total: number;
+}
+
+export async function listHuntPlans(
+  params: { page?: number; page_size?: number } = {}
+): Promise<HuntPlanListResponse> {
+  const sp = new URLSearchParams();
+  if (params.page) sp.set("page", String(params.page));
+  if (params.page_size) sp.set("page_size", String(params.page_size));
+  const q = sp.toString();
+  return api.get<HuntPlanListResponse>(`/v1/hunts/plans${q ? `?${q}` : ""}`);
+}
+
+export async function getHuntPlan(id: string): Promise<HuntPlan> {
+  return api.get<HuntPlan>(`/v1/hunts/plans/${id}`);
+}
