@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
+from typing import Literal
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import HuntPackageInput, HuntPackageNode
@@ -30,7 +31,7 @@ from btagent_shared.types.enums import InvestigationStatus, IOCType, Severity
 from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan, HuntScope
 from btagent_shared.types.hunt_package import HuntPackage
 from btagent_shared.utils.ids import generate_id
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -478,6 +479,54 @@ async def list_hunt_plan_runs(
     )
     return HuntPlanRunListResponse(
         items=[HuntPlanRunResponse.model_validate(r) for r in rows], total=total
+    )
+
+
+@router.get("/plans/{plan_id}/export", response_model=None)
+async def export_hunt_plan(
+    plan_id: str,
+    format: Literal["md", "pdf"] = Query("md"),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    """Export a stored plan's runbook as Markdown or PDF (#99 Phase B).
+
+    The runbook is a team-coordination artifact — this is how it leaves
+    the app for tickets, wikis, and IR reports. 404 on miss/cross-org or
+    an un-compiled row. Requires ``hunt:view``.
+    """
+    user.require_permission("hunt:view")
+    row = await hunt_plan_service.get_plan(db, org_id=user.org_id, plan_row_id=plan_id)
+    if row is None or row.plan is None:
+        raise HTTPException(status_code=404, detail="Hunt plan not found")
+    plan_data = dict(row.plan)
+    plan_data.pop("last_run", None)  # rides alongside the extra=forbid model
+    plan = HuntPlan.model_validate(plan_data)
+
+    from btagent_backend.services import hunt_plan_export
+
+    if format == "md":
+        markdown = hunt_plan_export.plan_to_markdown(plan)
+        return Response(
+            content=markdown,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="hunt_plan_{plan.id}.md"'},
+        )
+
+    # PDF path reuses the report renderer (TLP stamping + egress gate).
+    # Plans carry no TLP column; they are internal runbooks, stamped GREEN.
+    from btagent_backend.services.report_pdf import render_report_pdf
+
+    pdf_bytes = render_report_pdf(
+        hunt_plan_export.plan_to_report_sections(plan),
+        tlp_level="green",
+        severity="medium",
+        org_id=row.org_id,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="hunt_plan_{plan.id}.pdf"'},
     )
 
 
