@@ -452,3 +452,62 @@ async def test_plan_runs_404_on_unknown_plan(client: AsyncClient, analyst_token:
 async def test_plan_runs_require_auth(client: AsyncClient):
     resp = await client.get("/api/v1/hunts/plans/hunt_x/runs")
     assert resp.status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Plan export (#99 Phase B)
+# --------------------------------------------------------------------------- #
+
+
+async def test_export_plan_markdown(client: AsyncClient, analyst_token: str):
+    """Markdown export carries the runbook content and a download filename."""
+    gen = await client.post(
+        "/api/v1/hunts/plan",
+        json={"adversaries": ["APT29"], "ttps": ["T1059.001"]},
+        headers=auth_header(analyst_token),
+    )
+    assert gen.status_code == 200, gen.text
+    plan = gen.json()
+
+    resp = await client.get(
+        f"/api/v1/hunts/plans/{plan['id']}/export?format=md",
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("text/markdown")
+    assert f'filename="hunt_plan_{plan["id"]}.md"' in resp.headers["content-disposition"]
+    md = resp.text
+    assert "# Hunt Plan: APT29, T1059.001" in md
+    assert "## Executive summary" in md
+    assert "## Hypotheses (priority order)" in md
+    # Every runbook entry appears with its queries fenced.
+    for entry in plan["ttp_entries"]:
+        assert f"## {entry['ttp_id']}" in md
+    assert "```" in md
+    assert "- [ ]" in md  # evidence checklist renders as task boxes
+
+
+async def test_export_plan_pdf(client: AsyncClient, analyst_token: str):
+    gen = await client.post(
+        "/api/v1/hunts/plan",
+        json={"adversaries": ["APT29"]},
+        headers=auth_header(analyst_token),
+    )
+    assert gen.status_code == 200, gen.text
+    plan_id = gen.json()["id"]
+
+    resp = await client.get(
+        f"/api/v1/hunts/plans/{plan_id}/export?format=pdf",
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.content[:5] == b"%PDF-"
+
+
+async def test_export_plan_404_and_auth(client: AsyncClient, analyst_token: str):
+    resp = await client.get(
+        "/api/v1/hunts/plans/hunt_DOESNOTEXIST/export", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 404
+    assert (await client.get("/api/v1/hunts/plans/hunt_x/export")).status_code in (401, 403)
