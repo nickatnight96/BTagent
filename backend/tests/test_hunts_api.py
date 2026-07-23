@@ -744,6 +744,64 @@ async def test_technique_exercises_require_auth(client: AsyncClient):
     assert resp.status_code in (401, 403)
 
 
+async def test_exercise_gaps_list_never_exercised(
+    client: AsyncClient, analyst_token: str, db_session
+):
+    """Gaps = corpus minus exercised set, org-scoped, with tactic filter."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import delete
+
+    from btagent_backend.db.models import DEFAULT_ORG_ID
+    from btagent_backend.db.models_mitre import MitreTechniqueRow, TechniqueExerciseRow
+
+    # Test-only corpus rows (T99xx ids never collide with real ATT&CK data).
+    db_session.add(MitreTechniqueRow(id="T9901", name="Exercised Tech", tactic="execution"))
+    db_session.add(MitreTechniqueRow(id="T9902", name="Unexercised Tech", tactic="execution"))
+    db_session.add(MitreTechniqueRow(id="T9903", name="Other Tactic Tech", tactic="persistence"))
+    db_session.add(
+        TechniqueExerciseRow(
+            org_id=DEFAULT_ORG_ID,
+            technique_id="T9901",
+            last_exercised_at=datetime.now(UTC),
+            last_plan_id="hunt_gapstest",
+            last_run_id="hrun_gapstest",
+            last_outcome="clean",
+            exercise_count=1,
+        )
+    )
+    await db_session.commit()
+    try:
+        resp = await client.get(
+            "/api/v1/mitre/exercises/gaps?page_size=1000", headers=auth_header(analyst_token)
+        )
+        assert resp.status_code == 200, resp.text
+        ids = {i["technique_id"] for i in resp.json()["items"]}
+        assert "T9902" in ids
+        assert "T9903" in ids
+        assert "T9901" not in ids  # exercised → not a gap
+
+        filtered = await client.get(
+            "/api/v1/mitre/exercises/gaps?tactic=persistence&page_size=1000",
+            headers=auth_header(analyst_token),
+        )
+        f_ids = {i["technique_id"] for i in filtered.json()["items"]}
+        assert "T9903" in f_ids
+        assert "T9902" not in f_ids
+
+        assert (await client.get("/api/v1/mitre/exercises/gaps")).status_code in (401, 403)
+    finally:
+        await db_session.execute(
+            delete(TechniqueExerciseRow).where(
+                TechniqueExerciseRow.technique_id.in_(["T9901", "T9902", "T9903"])
+            )
+        )
+        await db_session.execute(
+            delete(MitreTechniqueRow).where(MitreTechniqueRow.id.in_(["T9901", "T9902", "T9903"]))
+        )
+        await db_session.commit()
+
+
 async def test_lesson_failure_never_sinks_execution(
     client: AsyncClient, analyst_token: str, monkeypatch
 ):
