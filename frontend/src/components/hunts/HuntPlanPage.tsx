@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import {
+  Play,
   Loader2,
   Map,
   Target,
@@ -28,8 +30,10 @@ import {
   generateHuntPlan,
   listHuntPlans,
   getHuntPlan,
+  executeHuntPlan,
   type HuntPlan,
   type HuntPlanSummary,
+  type ExecuteHuntPlanResponse,
 } from "@/api/hunts";
 
 const HISTORY_PAGE_SIZE = 20;
@@ -62,6 +66,7 @@ function planLabel(s: HuntPlanSummary): string {
 }
 
 export function HuntPlanPage() {
+  const navigate = useNavigate();
   const [adversariesText, setAdversariesText] = useState("");
   const [ttpsText, setTtpsText] = useState("");
   const [plan, setPlan] = useState<HuntPlan | null>(null);
@@ -73,6 +78,10 @@ export function HuntPlanPage() {
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reopeningId, setReopeningId] = useState<string | null>(null);
+
+  // Runbook execution (#339): run the open plan, hits land in triage.
+  const [executing, setExecuting] = useState(false);
+  const [execResult, setExecResult] = useState<ExecuteHuntPlanResponse | null>(null);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -100,6 +109,7 @@ export function HuntPlanPage() {
     try {
       const result = await generateHuntPlan({ adversaries, ttps });
       setPlan(result);
+      setExecResult(null);
       void fetchHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate hunt plan");
@@ -116,12 +126,28 @@ export function HuntPlanPage() {
     try {
       const result = await getHuntPlan(id);
       setPlan(result);
+      setExecResult(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to re-open hunt plan");
     } finally {
       setReopeningId(null);
     }
   }, []);
+
+  const handleExecute = useCallback(async () => {
+    if (!plan?.id) return;
+    setExecuting(true);
+    setError(null);
+    setExecResult(null);
+    try {
+      const result = await executeHuntPlan(plan.id);
+      setExecResult(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to execute hunt plan");
+    } finally {
+      setExecuting(false);
+    }
+  }, [plan]);
 
   return (
     <>
@@ -270,13 +296,34 @@ export function HuntPlanPage() {
             {/* Executive summary */}
             <Card>
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Gauge className="w-4 h-4 text-primary" />
-                  Executive summary
-                  <Badge variant="secondary" className="ml-2 uppercase">
-                    {plan.state}
-                  </Badge>
-                </CardTitle>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Gauge className="w-4 h-4 text-primary" />
+                    Executive summary
+                    <Badge variant="secondary" className="ml-2 uppercase">
+                      {plan.state}
+                    </Badge>
+                  </CardTitle>
+                  {plan.id && (
+                    <Button
+                      onClick={handleExecute}
+                      disabled={executing}
+                      data-testid="execute-plan"
+                    >
+                      {executing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Executing…
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 mr-2" />
+                          Execute runbook
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 {plan.executive_summary.adversary_profile && (
@@ -298,6 +345,31 @@ export function HuntPlanPage() {
                 </p>
               </CardContent>
             </Card>
+
+            {/* Execution outcome (#339) */}
+            {execResult && (
+              <Card
+                className="border-severity-low/40"
+                data-testid="execute-result"
+              >
+                <CardContent className="flex items-center justify-between gap-3 py-4 text-sm">
+                  <p className="text-foreground">
+                    {execResult.queued
+                      ? "Execution queued on the worker — re-open the plan shortly for the run summary."
+                      : `Runbook executed — ${execResult.findings_created} finding(s) landed in the triage inbox.`}
+                  </p>
+                  {!execResult.queued && (
+                    <Button
+                      variant="outline"
+                      onClick={() => navigate("/hunt")}
+                      data-testid="open-triage-inbox"
+                    >
+                      Open triage inbox
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Hypotheses */}
             <Card>

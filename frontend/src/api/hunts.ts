@@ -218,3 +218,17 @@ export async function listHuntPlans(
 export async function getHuntPlan(id: string): Promise<HuntPlan> {
   return api.get<HuntPlan>(`/v1/hunts/plans/${id}`);
 }
+
+export interface ExecuteHuntPlanResponse {
+  plan_id: string;
+  status: string;
+  /** True on the live-connector path — the run happens on the worker. */
+  queued: boolean;
+  /** Findings landed in the triage inbox; null when queued. */
+  findings_created: number | null;
+}
+
+/** Run a stored plan's runbook; hits land in the hunt triage inbox. */
+export async function executeHuntPlan(id: string): Promise<ExecuteHuntPlanResponse> {
+  return api.post<ExecuteHuntPlanResponse>(`/v1/hunts/plans/${id}/execute`);
+}
