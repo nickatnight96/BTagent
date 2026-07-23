@@ -13,12 +13,14 @@ const mockGeneratePlan = vi.fn();
 const mockListPlans = vi.fn();
 const mockGetPlan = vi.fn();
 const mockExecutePlan = vi.fn();
+const mockListRuns = vi.fn();
 
 vi.mock("@/api/hunts", () => ({
   generateHuntPlan: (...a: unknown[]) => mockGeneratePlan(...a),
   listHuntPlans: (...a: unknown[]) => mockListPlans(...a),
   getHuntPlan: (...a: unknown[]) => mockGetPlan(...a),
   executeHuntPlan: (...a: unknown[]) => mockExecutePlan(...a),
+  listHuntPlanRuns: (...a: unknown[]) => mockListRuns(...a),
 }));
 
 vi.mock("@/components/layout/Header", () => ({
@@ -93,6 +95,8 @@ const SUMMARY_DIRECT = {
   entry_count: 1,
   from_proposal: false,
   created_at: "2026-07-22T21:00:00Z",
+  last_run_findings: 3,
+  last_run_at: "2026-07-22T22:00:00Z",
 };
 
 const SUMMARY_PROPOSAL = {
@@ -104,6 +108,24 @@ const SUMMARY_PROPOSAL = {
   entry_count: 5,
   from_proposal: true,
   created_at: "2026-07-21T10:00:00Z",
+  last_run_findings: null,
+  last_run_at: null,
+};
+
+const RUN_ROW = {
+  id: "plrun_01",
+  plan_row_id: "hunt_01TEST",
+  proposal_id: null,
+  plan_id: "hunt_01TEST",
+  run_id: "hrun_01",
+  ttp_stats: { "T1059.001": { hits: 2, errors: [] } },
+  hit_count: 2,
+  error_count: 0,
+  findings_created: 3,
+  status: "completed",
+  error: null,
+  started_at: "2026-07-22T22:00:00Z",
+  completed_at: "2026-07-22T22:00:05Z",
 };
 
 function renderPage() {
@@ -133,6 +155,7 @@ beforeEach(() => {
     queued: false,
     findings_created: 3,
   });
+  mockListRuns.mockResolvedValue({ items: [], total: 0 });
 });
 
 async function generateAPlan() {
@@ -304,6 +327,41 @@ describe("HuntPlanPage runbook execution", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("plan is not ready");
     expect(screen.queryByTestId("execute-result")).not.toBeInTheDocument();
+  });
+
+  it("shows last-run outcome on history rows that have one", async () => {
+    renderPage();
+    await openHistory();
+
+    const withRun = screen.getByTestId("last-run-hunt_01TEST");
+    expect(withRun).toHaveTextContent("last run: 3 finding(s)");
+    expect(screen.queryByTestId("last-run-hplan_02PROP")).not.toBeInTheDocument();
+  });
+
+  it("renders the run-history card when the opened plan has runs", async () => {
+    mockListRuns.mockResolvedValue({ items: [RUN_ROW], total: 1 });
+    renderPage();
+    await openHistory();
+    fireEvent.click(screen.getByTestId("plan-history-item-hunt_01TEST"));
+
+    const card = await screen.findByTestId("run-history");
+    expect(mockListRuns).toHaveBeenCalledWith("hunt_01TEST", { page_size: 10 });
+    expect(card).toHaveTextContent("3 finding(s)");
+    expect(card).toHaveTextContent("2 hits · 0 errors");
+    expect(card).toHaveTextContent("completed");
+  });
+
+  it("refreshes the run list after executing", async () => {
+    renderPage();
+    await generateAPlan();
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(1));
+
+    mockListRuns.mockResolvedValue({ items: [RUN_ROW], total: 1 });
+    fireEvent.click(screen.getByTestId("execute-plan"));
+
+    await screen.findByTestId("execute-result");
+    await waitFor(() => expect(mockListRuns).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("run-history")).toBeInTheDocument();
   });
 
   it("clears a previous execution banner when another plan is opened", async () => {

@@ -198,6 +198,10 @@ export interface HuntPlanSummary {
   /** True when the plan was compiled from a pattern-hunt proposal. */
   from_proposal: boolean;
   created_at: string;
+  /** Findings from the most recent execution; null until first run. */
+  last_run_findings: number | null;
+  /** Timestamp of the most recent execution; null until first run. */
+  last_run_at: string | null;
 }
 
 export interface HuntPlanListResponse {
@@ -231,4 +235,40 @@ export interface ExecuteHuntPlanResponse {
 /** Run a stored plan's runbook; hits land in the hunt triage inbox. */
 export async function executeHuntPlan(id: string): Promise<ExecuteHuntPlanResponse> {
   return api.post<ExecuteHuntPlanResponse>(`/v1/hunts/plans/${id}/execute`);
+}
+
+// --- Per-run execution history (#341) -------------------------------------- //
+
+export interface HuntPlanRun {
+  id: string;
+  plan_row_id: string;
+  proposal_id: string | null;
+  plan_id: string;
+  run_id: string;
+  ttp_stats: Record<string, { hits: number; errors: string[] }>;
+  hit_count: number;
+  error_count: number;
+  findings_created: number;
+  status: string;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface HuntPlanRunListResponse {
+  items: HuntPlanRun[];
+  total: number;
+}
+
+export async function listHuntPlanRuns(
+  id: string,
+  params: { page?: number; page_size?: number } = {}
+): Promise<HuntPlanRunListResponse> {
+  const sp = new URLSearchParams();
+  if (params.page) sp.set("page", String(params.page));
+  if (params.page_size) sp.set("page_size", String(params.page_size));
+  const q = sp.toString();
+  return api.get<HuntPlanRunListResponse>(
+    `/v1/hunts/plans/${id}/runs${q ? `?${q}` : ""}`
+  );
 }
