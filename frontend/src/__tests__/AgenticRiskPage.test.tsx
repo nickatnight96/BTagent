@@ -32,7 +32,11 @@ vi.mock("@/components/hunt/HuntTriagePage", () => ({
   HUNT_FINDING_EVENTS: ["hunt_finding_created", "hunt_finding_updated"],
 }));
 
-import { AgenticRiskPage, bucketOf } from "@/components/agentic/AgenticRiskPage";
+import {
+  AgenticRiskPage,
+  bucketOf,
+  buildInjectionTimeline,
+} from "@/components/agentic/AgenticRiskPage";
 
 function finding(id: string, detection: string, severity = "high") {
   return {
@@ -58,10 +62,23 @@ function finding(id: string, detection: string, severity = "high") {
 }
 
 const FINDINGS = [
-  finding("hfnd_pi", "prompt_injection", "critical"),
+  {
+    ...finding("hfnd_pi", "prompt_injection", "critical"),
+    created_at: "2026-07-23T06:00:00Z",
+    evidence: {
+      detection: "prompt_injection",
+      matched_patterns: ["instruction_override.ignore_previous", "jailbreak.dan_phrase"],
+      redacted_excerpts: ["Ignore previous instructions and […]"],
+    },
+  },
   finding("hfnd_shadow", "shadow_workload"),
   finding("hfnd_exfil", "llm_exfil", "critical"),
   finding("hfnd_ident", "identity_privilege_divergence"),
+  {
+    ...finding("hfnd_pi2", "prompt_injection", "high"),
+    created_at: "2026-07-23T07:00:00Z",
+    evidence: { detection: "prompt_injection", matched_patterns: ["role_hijack.act_as"] },
+  },
 ];
 
 function renderPage() {
@@ -78,7 +95,7 @@ beforeEach(() => {
     clusters: [],
     findings: FINDINGS,
     total_clusters: 0,
-    total_findings: 4,
+    total_findings: 5,
   });
   mockRun.mockResolvedValue({ findings_created: 4 });
 });
@@ -99,7 +116,7 @@ describe("AgenticRiskPage", () => {
 
     expect(await screen.findByTestId("agentic-finding-hfnd_pi")).toBeInTheDocument();
     expect(mockList).toHaveBeenCalledWith({ state: "active", page_size: 200 });
-    expect(screen.getByTestId("bucket-prompt_injection")).toHaveTextContent("1");
+    expect(screen.getByTestId("bucket-prompt_injection")).toHaveTextContent("2");
     expect(screen.getByTestId("bucket-shadow_agent")).toHaveTextContent("1");
     expect(screen.getByTestId("bucket-identity_abuse")).toHaveTextContent("1");
     expect(screen.getByTestId("bucket-llm_exfil")).toHaveTextContent("1");
@@ -127,6 +144,36 @@ describe("AgenticRiskPage", () => {
 
     await waitFor(() => expect(mockRun).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+  });
+
+  it("renders the injection timeline newest-first with pattern chips + excerpt", async () => {
+    renderPage();
+    const timeline = await screen.findByTestId("injection-timeline");
+
+    const entries = buildInjectionTimeline(FINDINGS as never);
+    expect(entries.map((e) => e.finding_id)).toEqual(["hfnd_pi2", "hfnd_pi"]);
+
+    const first = screen.getByTestId("injection-entry-hfnd_pi");
+    expect(first).toHaveTextContent("instruction_override.ignore_previous");
+    expect(first).toHaveTextContent("jailbreak.dan_phrase");
+    expect(first).toHaveTextContent("Ignore previous instructions and […]");
+    expect(timeline).toHaveTextContent("Prompt-injection timeline");
+    // Entry without excerpts renders chips but no excerpt block.
+    expect(screen.getByTestId("injection-entry-hfnd_pi2")).toHaveTextContent(
+      "role_hijack.act_as",
+    );
+  });
+
+  it("hides the timeline when there are no injection findings", async () => {
+    mockList.mockResolvedValue({
+      clusters: [],
+      findings: [finding("hfnd_only_exfil", "llm_exfil")],
+      total_clusters: 0,
+      total_findings: 1,
+    });
+    renderPage();
+    await screen.findByTestId("agentic-finding-hfnd_only_exfil");
+    expect(screen.queryByTestId("injection-timeline")).not.toBeInTheDocument();
   });
 
   it("registers live refresh on finding events and refetches when fired", async () => {

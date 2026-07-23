@@ -62,6 +62,40 @@ export function bucketOf(finding: HuntFinding): string {
   return "other";
 }
 
+export interface InjectionTimelineEntry {
+  finding_id: string;
+  created_at: string;
+  title: string;
+  severity: string;
+  matched_patterns: string[];
+  excerpt: string | null;
+}
+
+/** Chronological (newest-first) timeline of prompt-injection findings,
+ *  built from the detector's evidence payload. Exported for unit tests. */
+export function buildInjectionTimeline(findings: HuntFinding[]): InjectionTimelineEntry[] {
+  return findings
+    .filter((f) => bucketOf(f) === "prompt_injection")
+    .map((f) => {
+      const ev = (f.evidence ?? {}) as Record<string, unknown>;
+      const patterns = Array.isArray(ev["matched_patterns"])
+        ? (ev["matched_patterns"] as string[])
+        : [];
+      const excerpts = Array.isArray(ev["redacted_excerpts"])
+        ? (ev["redacted_excerpts"] as string[])
+        : [];
+      return {
+        finding_id: f.id,
+        created_at: f.created_at,
+        title: f.title,
+        severity: f.severity,
+        matched_patterns: patterns,
+        excerpt: excerpts[0] ?? null,
+      } satisfies InjectionTimelineEntry;
+    })
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+}
+
 function severityVariant(sev: string): "destructive" | "secondary" | "outline" {
   if (sev === "critical" || sev === "high") return "destructive";
   if (sev === "medium") return "secondary";
@@ -204,6 +238,60 @@ export function AgenticRiskPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Prompt-injection hit timeline (#121 Phase B) */}
+        {buildInjectionTimeline(findings).length > 0 && (
+          <Card data-testid="injection-timeline">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-primary" />
+                Prompt-injection timeline
+              </CardTitle>
+              <CardDescription>
+                Newest first. Excerpts are redacted by the detector; raw inputs
+                stay in the upstream telemetry store.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {buildInjectionTimeline(findings).map((e) => (
+                <div
+                  key={e.finding_id}
+                  className="rounded-md border border-border p-3 text-sm"
+                  data-testid={`injection-entry-${e.finding_id}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="min-w-0 truncate font-medium text-foreground">{e.title}</p>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {formatRelativeTime(e.created_at)}
+                      </span>
+                      <Badge variant={severityVariant(e.severity)}>{e.severity}</Badge>
+                    </div>
+                  </div>
+                  {e.matched_patterns.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {e.matched_patterns.slice(0, 4).map((p) => (
+                        <Badge key={p} variant="outline" className="font-mono text-xs">
+                          {p}
+                        </Badge>
+                      ))}
+                      {e.matched_patterns.length > 4 && (
+                        <span className="text-xs text-muted-foreground">
+                          +{e.matched_patterns.length - 4}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {e.excerpt && (
+                    <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs text-muted-foreground">
+                      {e.excerpt}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>
