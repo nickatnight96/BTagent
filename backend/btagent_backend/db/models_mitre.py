@@ -88,3 +88,35 @@ class MitreTechniqueTagRow(Base):
         Index("idx_mitre_tags_entity", "entity_type", "entity_id"),
         Index("idx_mitre_tags_tagged_by", "tagged_by"),
     )
+
+
+class TechniqueExerciseRow(Base):
+    """When an org last *exercised* an ATT&CK technique via a hunt (#99 Phase C).
+
+    One row per (org, technique), upserted by every plan execution. Powers
+    the coverage-map question "which techniques haven't been tested in
+    >N days?" — coverage says a detection exists; exercise says the hunt
+    machinery actually looked recently. No FK to ``mitre_techniques``:
+    hypotheses may cite techniques newer than the seeded corpus, and the
+    record of having hunted them must not be droppable by a corpus refresh.
+    """
+
+    __tablename__ = "technique_exercises"
+
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    technique_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    last_exercised_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    # Lineage of the most recent exercise.
+    last_plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_run_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # "hit" | "clean" | "errored" — outcome of the most recent exercise.
+    last_outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    exercise_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (Index("idx_technique_exercises_org_at", "org_id", "last_exercised_at"),)

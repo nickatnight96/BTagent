@@ -462,7 +462,63 @@ async def execute_plan_and_ingest(
     except Exception:  # noqa: BLE001 — proposal filing is auxiliary
         logger.warning("clean-TTP proposal filing failed for plan %s", plan.id, exc_info=True)
 
+    # #99 Phase C closed loop, part 3: stamp every hunted technique as
+    # exercised so the coverage map can surface "untested for >N days".
+    try:
+        await _record_technique_exercises(
+            db,
+            org_id=row.org_id,
+            plan_id=plan.id,
+            run_id=result.run_id,
+            ttp_summary=ttp_summary,
+        )
+    except Exception:  # noqa: BLE001 — exercise stamping is auxiliary
+        logger.warning("technique-exercise stamping failed for plan %s", plan.id, exc_info=True)
+
     return row, findings_created
+
+
+async def _record_technique_exercises(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    plan_id: str,
+    run_id: str,
+    ttp_summary: dict,
+) -> None:
+    """Upsert (org, technique) exercise rows for every hunted TTP (#99 Phase C)."""
+    from btagent_backend.db.models_mitre import TechniqueExerciseRow
+
+    now = _utcnow()
+    for ttp_id, stats in ttp_summary.items():
+        if stats.get("hits", 0):
+            outcome = "hit"
+        elif stats.get("errors"):
+            outcome = "errored"
+        else:
+            outcome = "clean"
+
+        existing = await db.get(TechniqueExerciseRow, (org_id, ttp_id))
+        if existing is None:
+            db.add(
+                TechniqueExerciseRow(
+                    org_id=org_id,
+                    technique_id=ttp_id,
+                    last_exercised_at=now,
+                    last_plan_id=plan_id,
+                    last_run_id=run_id,
+                    last_outcome=outcome,
+                    exercise_count=1,
+                )
+            )
+        else:
+            existing.last_exercised_at = now
+            existing.last_plan_id = plan_id
+            existing.last_run_id = run_id
+            existing.last_outcome = outcome
+            existing.exercise_count += 1
+    await db.flush()
+    logger.info("stamped %d technique exercises for plan %s", len(ttp_summary), plan_id)
 
 
 async def _file_clean_ttp_proposals(
