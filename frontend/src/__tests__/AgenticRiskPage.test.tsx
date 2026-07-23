@@ -36,6 +36,7 @@ import {
   AgenticRiskPage,
   bucketOf,
   buildInjectionTimeline,
+  buildDriftInventory,
 } from "@/components/agentic/AgenticRiskPage";
 
 function finding(id: string, detection: string, severity = "high") {
@@ -105,6 +106,11 @@ describe("bucketOf", () => {
     expect(bucketOf(finding("a", "prompt_injection") as never)).toBe("prompt_injection");
     expect(bucketOf(finding("b", "shadow_agent_registration") as never)).toBe("shadow_agent");
     expect(bucketOf(finding("c", "identity_tool_misuse") as never)).toBe("identity_abuse");
+    // Regression: the A3 detector's real evidence values must bucket correctly.
+    expect(bucketOf(finding("c2", "agent_identity_abuse") as never)).toBe("identity_abuse");
+    expect(bucketOf(finding("c3", "agent_identity_abuse.unregistered") as never)).toBe(
+      "identity_abuse",
+    );
     expect(bucketOf(finding("d", "llm_exfil") as never)).toBe("llm_exfil");
     expect(bucketOf(finding("e", "mystery") as never)).toBe("other");
   });
@@ -174,6 +180,59 @@ describe("AgenticRiskPage", () => {
     renderPage();
     await screen.findByTestId("agentic-finding-hfnd_only_exfil");
     expect(screen.queryByTestId("injection-timeline")).not.toBeInTheDocument();
+  });
+
+  it("renders the identity-drift inventory from A3 evidence", async () => {
+    const drift = {
+      ...finding("hfnd_drift", "agent_identity_abuse", "high"),
+      created_at: "2026-07-23T08:00:00Z",
+      evidence: {
+        detection: "agent_identity_abuse",
+        agent_identity_ref: "arn:aws:iam::1:role/TriageAgent",
+        declared_role: "arn:aws:iam::1:role/TriageAgent",
+        observed_role: "arn:aws:iam::1:role/AdminRole",
+        invoked_tool: "kb_search",
+        out_of_toolset: false,
+        role_mismatch: true,
+        privileged_escalation: true,
+        reasons: ["role_mismatch", "privileged_escalation"],
+      },
+    };
+    mockList.mockResolvedValue({
+      clusters: [],
+      findings: [drift],
+      total_clusters: 0,
+      total_findings: 1,
+    });
+    renderPage();
+
+    const entry = await screen.findByTestId("drift-entry-hfnd_drift");
+    expect(entry).toHaveTextContent("arn:aws:iam::1:role/TriageAgent");
+    expect(entry).toHaveTextContent("arn:aws:iam::1:role/AdminRole");
+    expect(entry).toHaveTextContent("role_mismatch");
+    expect(entry).toHaveTextContent("privileged_escalation");
+    expect(entry).toHaveTextContent("kb_search");
+
+    // Helper falls back to boolean flags when reasons[] is absent.
+    const noReasons = buildDriftInventory([
+      {
+        ...drift,
+        evidence: { ...drift.evidence, reasons: undefined },
+      },
+    ] as never);
+    expect(noReasons[0]?.reasons).toEqual(["role_mismatch", "privileged_escalation"]);
+  });
+
+  it("hides the drift inventory when there are no identity findings", async () => {
+    mockList.mockResolvedValue({
+      clusters: [],
+      findings: [finding("hfnd_pi_only", "prompt_injection")],
+      total_clusters: 0,
+      total_findings: 1,
+    });
+    renderPage();
+    await screen.findByTestId("agentic-finding-hfnd_pi_only");
+    expect(screen.queryByTestId("drift-inventory")).not.toBeInTheDocument();
   });
 
   it("registers live refresh on finding events and refetches when fired", async () => {
