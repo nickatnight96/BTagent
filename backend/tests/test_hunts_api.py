@@ -334,3 +334,56 @@ async def test_plan_detail_404_on_unknown_id(client: AsyncClient, analyst_token:
 async def test_plan_history_requires_auth(client: AsyncClient):
     assert (await client.get("/api/v1/hunts/plans")).status_code in (401, 403)
     assert (await client.get("/api/v1/hunts/plans/hunt_x")).status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Direct-plan execution (#99 Phase B)
+# --------------------------------------------------------------------------- #
+
+
+async def test_execute_direct_plan_runs_inline_and_reopens(client: AsyncClient, analyst_token: str):
+    """Mock-connector execution runs inline, records NULL-proposal history,
+    and the executed plan still re-opens (last_run popped before validate)."""
+    gen = await client.post(
+        "/api/v1/hunts/plan",
+        json={"adversaries": ["APT29"]},
+        headers=auth_header(analyst_token),
+    )
+    assert gen.status_code == 200, gen.text
+    plan_id = gen.json()["id"]
+
+    resp = await client.post(
+        f"/api/v1/hunts/plans/{plan_id}/execute", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 200, resp.text
+    executed = resp.json()
+    assert executed["plan_id"] == plan_id
+    assert executed["queued"] is False
+    assert isinstance(executed["findings_created"], int)
+
+    # The executed plan re-opens despite the stored last_run summary.
+    detail = await client.get(f"/api/v1/hunts/plans/{plan_id}", headers=auth_header(analyst_token))
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["state"] == "completed"
+
+    # Still listed, still ready for a re-execute.
+    listing = await client.get("/api/v1/hunts/plans", headers=auth_header(analyst_token))
+    summary = {i["id"]: i for i in listing.json()["items"]}[plan_id]
+    assert summary["status"] == "ready"
+
+    second = await client.post(
+        f"/api/v1/hunts/plans/{plan_id}/execute", headers=auth_header(analyst_token)
+    )
+    assert second.status_code == 200, second.text
+
+
+async def test_execute_plan_404_on_unknown_id(client: AsyncClient, analyst_token: str):
+    resp = await client.post(
+        "/api/v1/hunts/plans/hunt_DOESNOTEXIST/execute", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 404
+
+
+async def test_execute_plan_requires_auth(client: AsyncClient):
+    resp = await client.post("/api/v1/hunts/plans/hunt_x/execute")
+    assert resp.status_code in (401, 403)
