@@ -237,6 +237,25 @@ export async function executeHuntPlan(id: string): Promise<ExecuteHuntPlanRespon
   return api.post<ExecuteHuntPlanResponse>(`/v1/hunts/plans/${id}/execute`);
 }
 
+/** Download a stored plan's runbook as a Markdown or PDF blob (#343). */
+export async function exportHuntPlan(
+  id: string,
+  format: "md" | "pdf"
+): Promise<Blob> {
+  const response = await fetch(
+    `${import.meta.env.VITE_API_BASE_URL ?? "/api"}/v1/hunts/plans/${id}/export?format=${format}`,
+    {
+      method: "GET",
+      // httpOnly-cookie auth, same as the main api client.
+      credentials: "include",
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Export failed (${response.status})`);
+  }
+  return response.blob();
+}
+
 // --- Per-run execution history (#341) -------------------------------------- //
 
 export interface HuntPlanRun {

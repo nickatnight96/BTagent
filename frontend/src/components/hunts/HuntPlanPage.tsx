@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Play,
+  Download,
   Loader2,
   Map,
   Target,
@@ -32,6 +33,7 @@ import {
   getHuntPlan,
   executeHuntPlan,
   listHuntPlanRuns,
+  exportHuntPlan,
   type HuntPlan,
   type HuntPlanSummary,
   type ExecuteHuntPlanResponse,
@@ -87,6 +89,33 @@ export function HuntPlanPage() {
 
   // Per-run history (#341) of the open stored plan.
   const [runs, setRuns] = useState<HuntPlanRun[]>([]);
+
+  // Runbook export (#343).
+  const [exporting, setExporting] = useState<"md" | "pdf" | null>(null);
+
+  const handleExport = useCallback(
+    async (format: "md" | "pdf") => {
+      if (!plan?.id) return;
+      setExporting(format);
+      setError(null);
+      try {
+        const blob = await exportHuntPlan(plan.id, format);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `hunt_plan_${plan.id}.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to export hunt plan");
+      } finally {
+        setExporting(null);
+      }
+    },
+    [plan],
+  );
 
   const fetchRuns = useCallback(async (planId: string) => {
     try {
@@ -333,23 +362,53 @@ export function HuntPlanPage() {
                     </Badge>
                   </CardTitle>
                   {plan.id && (
-                    <Button
-                      onClick={handleExecute}
-                      disabled={executing}
-                      data-testid="execute-plan"
-                    >
-                      {executing ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Executing…
-                        </>
-                      ) : (
-                        <>
-                          <Play className="w-4 h-4 mr-2" />
-                          Execute runbook
-                        </>
-                      )}
-                    </Button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleExport("md")}
+                        disabled={exporting !== null}
+                        data-testid="export-md"
+                      >
+                        {exporting === "md" ? (
+                          <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4 mr-1.5" />
+                        )}
+                        .md
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleExport("pdf")}
+                        disabled={exporting !== null}
+                        data-testid="export-pdf"
+                      >
+                        {exporting === "pdf" ? (
+                          <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4 mr-1.5" />
+                        )}
+                        .pdf
+                      </Button>
+                      <Button
+                        onClick={handleExecute}
+                        disabled={executing}
+                        data-testid="execute-plan"
+                      >
+                        {executing ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Executing…
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4 mr-2" />
+                            Execute runbook
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   )}
                 </div>
               </CardHeader>
