@@ -453,7 +453,99 @@ async def execute_plan_and_ingest(
     except Exception:  # noqa: BLE001 — lesson indexing is auxiliary
         logger.warning("hunt-lesson indexing failed for plan %s", plan.id, exc_info=True)
 
+    # #99 Phase C closed loop, part 2: clean TTPs (hunted, zero hits, no
+    # query errors) become draft detection proposals in the #113 review
+    # queue — an unsuccessful hunt is a detection-engineering signal.
+    # Best-effort for the same reason as the lesson indexer.
+    try:
+        await _file_clean_ttp_proposals(db, plan=plan, org_id=row.org_id, ttp_summary=ttp_summary)
+    except Exception:  # noqa: BLE001 — proposal filing is auxiliary
+        logger.warning("clean-TTP proposal filing failed for plan %s", plan.id, exc_info=True)
+
     return row, findings_created
+
+
+async def _file_clean_ttp_proposals(
+    db: AsyncSession,
+    *,
+    plan: HuntPlan,
+    org_id: str,
+    ttp_summary: dict,
+) -> None:
+    """File draft detection proposals for cleanly-hunted TTPs (#99 Phase C).
+
+    A TTP that was hunted with zero hits and zero query errors is verified
+    coverage territory — the natural next step is a detection rule so the
+    technique alerts *without* a hunt next time. Proposals land in the #113
+    review queue (state ``proposed``) via :func:`persist_proposals`, keyed
+    on a deterministic ``hunt-plan--{plan_id}--{ttp_id}`` source id so
+    re-executions upsert instead of duplicating and analyst-decided rows
+    are never overwritten.
+    """
+    from btagent_shared.types.detection_proposal import DetectionProposal
+
+    from btagent_backend.services.cti_detection_service import persist_proposals
+
+    entries_by_ttp = {e.ttp_id: e for e in plan.ttp_entries}
+    proposals: list[DetectionProposal] = []
+    now = _utcnow()
+    for ttp_id, stats in ttp_summary.items():
+        if stats.get("hits", 0) or stats.get("errors"):
+            continue
+        entry = entries_by_ttp.get(ttp_id)
+        if entry is None:
+            continue
+
+        # Prefer the runbook's own Sigma query; fall back to a reviewable
+        # skeleton — proposals are drafts for the #113 human review flow.
+        sigma_query = entry.queries.get("sigma")
+        if sigma_query is not None:
+            sigma_yaml = sigma_query.query
+        else:
+            tag = ttp_id.lower().replace(".", "_")
+            sigma_yaml = (
+                f"title: {entry.ttp_name} ({ttp_id}) — draft from clean hunt\n"
+                "status: experimental\n"
+                f"description: >-\n"
+                f"  {entry.behavioral_description or entry.rationale or ttp_id}\n"
+                f"tags:\n  - attack.{tag}\n"
+                "logsource:\n  category: process_creation\n"
+                "detection:\n"
+                "  selection:\n"
+                "    # TODO(detection-engineering): translate the runbook\n"
+                "    # queries into Sigma selections before accepting.\n"
+                "    CommandLine|contains: PLACEHOLDER\n"
+                "  condition: selection\n"
+                "level: medium\n"
+            )
+
+        proposals.append(
+            DetectionProposal(
+                id=f"dprop-hunt-{plan.id}-{ttp_id}",
+                source_stix_id=f"hunt-plan--{plan.id}--{ttp_id}",
+                title=f"Detection gap: {ttp_id} — {entry.ttp_name} (clean hunt)",
+                sigma_yaml=sigma_yaml,
+                technique_ids=[ttp_id],
+                confidence=0.3,
+                rationale=(
+                    f"Hunt plan {plan.id} exercised {ttp_id} and found no telemetry "
+                    "(clean, no query errors). Filing a draft rule so the technique "
+                    "alerts without requiring a hunt."
+                ),
+                generated_at=now,
+            )
+        )
+
+    if not proposals:
+        return
+    created, updated, unchanged = await persist_proposals(db, org_id=org_id, proposals=proposals)
+    logger.info(
+        "clean-TTP proposals for plan %s: created=%d updated=%d unchanged=%d",
+        plan.id,
+        created,
+        updated,
+        unchanged,
+    )
 
 
 async def _index_hunt_lesson(
