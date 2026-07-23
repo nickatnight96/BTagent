@@ -18,6 +18,8 @@ Detections implemented (connector-independent, fixture-based):
   A3  Agent-identity abuse — observed tool / API call outside the declared
       catalogue, or executed under a higher-privilege role than the registered
       identity.
+  A4  LLM exfil — secret material (cloud keys, tokens, private keys) present
+      in either direction of an agent call, plus oversized outbound prompts.
 
 Deferred (blocked on live LLM-call telemetry + agent-platform MCP connectors):
   - Real-time LLM-call telemetry ingest (Bedrock invocation logs, Vertex
@@ -25,7 +27,6 @@ Deferred (blocked on live LLM-call telemetry + agent-platform MCP connectors):
   - Live agent-registration inventory from Bedrock AgentCore / Vertex Agent
     Engine / Cloud Run MCP.
   - Cross-call session reconstruction (multi-turn jailbreak escalation).
-  - Output-side scanning (data-exfil leak detection on agent responses).
 
 DEFENSIVE-FACING design note
 ----------------------------
@@ -774,6 +775,140 @@ def detect_agent_identity_abuse(
 
 
 # ---------------------------------------------------------------------------
+# A4 — LLM exfil: leaked secrets + oversized outbound prompts (#121 Phase A)
+# ---------------------------------------------------------------------------
+
+_T_EXFIL_WEB = "T1567"  # Exfiltration Over Web Service — secrets leaving via inference calls
+
+# Secret-material signatures scanned over both directions of an agent call.
+# Pattern names are stable evidence keys; matches are ALWAYS masked before
+# they land in finding evidence.
+_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "aws_access_key_id"),
+    (
+        re.compile(r"(?i)aws_secret_access_key\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}"),
+        "aws_secret_access_key",
+    ),
+    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"), "github_token"),
+    (re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----"), "private_key_block"),
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+        "jwt",
+    ),
+    (
+        re.compile(r"(?i)\b(?:api[_-]?key|client[_-]?secret|password)\s*[=:]\s*['\"]?\S{16,}"),
+        "generic_credential_assignment",
+    ),
+]
+
+# Outbound prompts beyond this size are anomalous for interactive agent use
+# and a classic bulk-exfil channel (issue #121: "large outbound prompt").
+_EXFIL_OVERSIZE_CHARS = 8000
+
+
+def _mask_secret(match_text: str) -> str:
+    """Keep just enough of a matched secret to identify it, never to reuse it."""
+    head = match_text[:6]
+    return f"{head}…[masked {len(match_text)} chars]"
+
+
+def detect_llm_exfil(events: Iterable[AgentCallEvent]) -> list[RecordFindingRequest]:
+    """Flag secret material and oversized payloads in agent-call bodies.
+
+    Complements the prompt-injection scan (which flags exfil *requests* in
+    inputs): this detector flags exfil *material* — actual key/token/secret
+    patterns present in either direction, plus abnormally large outbound
+    prompts. One finding per event with at least one signal. Matched secrets
+    are masked before entering evidence; the raw text stays in the upstream
+    telemetry store.
+    """
+    findings: list[RecordFindingRequest] = []
+    for event in events:
+        signals: list[dict[str, str]] = []
+        for direction, text in (("input", event.input_text), ("output", event.output_text)):
+            if not text:
+                continue
+            for pattern, name in _SECRET_PATTERNS:
+                for match in pattern.finditer(text):
+                    signals.append(
+                        {
+                            "pattern": name,
+                            "direction": direction,
+                            "masked": _mask_secret(match.group(0)),
+                        }
+                    )
+        oversized = len(event.input_text) >= _EXFIL_OVERSIZE_CHARS
+        if oversized:
+            signals.append(
+                {
+                    "pattern": "oversized_outbound_prompt",
+                    "direction": "input",
+                    "masked": f"{len(event.input_text)} chars",
+                }
+            )
+        if not signals:
+            continue
+
+        secret_signals = [s for s in signals if s["pattern"] != "oversized_outbound_prompt"]
+        if secret_signals:
+            # Any real secret is at least HIGH; multiple secrets, a private
+            # key, or a secret flowing *outward* in the response escalates.
+            critical = (
+                len(secret_signals) > 1
+                or any(s["pattern"] == "private_key_block" for s in secret_signals)
+                or any(s["direction"] == "output" for s in secret_signals)
+            )
+            severity = Severity.CRITICAL if critical else Severity.HIGH
+            confidence = min(1.0, 0.7 + 0.1 * len(secret_signals))
+        else:
+            severity = Severity.MEDIUM
+            confidence = 0.5
+
+        patterns_hit = sorted({s["pattern"] for s in signals})
+        entities = [HuntEntity(kind="agent_call_event", value=event.event_id)]
+        if event.agent_identity_ref:
+            entities.append(HuntEntity(kind="agent_identity", value=event.agent_identity_ref))
+        observables: list[HuntObservable] = []
+        if event.invoked_tool:
+            observables.append(HuntObservable(type="agent_tool", value=event.invoked_tool))
+
+        title = f"LLM exfil signal on agent call {event.event_id}: {patterns_hit[0]}" + (
+            f" (+{len(patterns_hit) - 1} more)" if len(patterns_hit) > 1 else ""
+        )
+        findings.append(
+            RecordFindingRequest(
+                source=HuntSource.AGENTIC,
+                domain=HuntDomain.AGENTIC,
+                title=title[:300],
+                description=(
+                    f"Agent call event {event.event_id!r} "
+                    f"(agent={event.agent_identity_ref or 'unknown'}) carried "
+                    f"{len(secret_signals)} secret-material signal(s)"
+                    + (" and an oversized outbound prompt" if oversized else "")
+                    + f". Patterns: {', '.join(patterns_hit)}. Matches are masked in "
+                    "evidence; the raw bodies remain only in the upstream telemetry store."
+                ),
+                severity=severity,
+                confidence=confidence,
+                technique_ids=[_T_UNSECURED_CREDS, _T_EXFIL_WEB],
+                entities=entities,
+                observables=observables,
+                evidence={
+                    "detection": "llm_exfil",
+                    "event_id": event.event_id,
+                    "agent_identity_ref": event.agent_identity_ref,
+                    "patterns": patterns_hit,
+                    "signals": signals[:12],
+                    "oversized_outbound_prompt": oversized,
+                    "input_chars": len(event.input_text),
+                    "output_chars": len(event.output_text),
+                },
+            )
+        )
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Convenience: run all detectors over a combined fixture bundle
 # ---------------------------------------------------------------------------
 
@@ -804,6 +939,7 @@ def run_all_detectors(
 
     if _events:
         findings.extend(detect_prompt_injection(_events))
+        findings.extend(detect_llm_exfil(_events))
 
     if _workloads or _identities:
         findings.extend(detect_shadow_agents(_workloads, identities=_identities))
