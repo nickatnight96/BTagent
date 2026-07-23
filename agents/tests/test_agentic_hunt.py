@@ -399,3 +399,84 @@ def test_A17_full_event_batch_only_flags_attack_events():
     assert EVT_CLEAN.event_id not in flagged_event_ids
     assert EVT_PROMPT_INJECTION.event_id in flagged_event_ids
     assert EVT_ENCODED_PAYLOAD.event_id in flagged_event_ids
+
+
+# ---------------------------------------------------------------------------
+# A18–A21: LLM-exfil detector (#121 Phase A4)
+# ---------------------------------------------------------------------------
+
+from btagent_shared.hunt.agentic import detect_llm_exfil  # noqa: E402
+
+
+def _exfil_event(**overrides) -> AgentCallEvent:
+    base = dict(
+        event_id="evt_exfil_001",
+        org_id="org_01TESTAGENTIC",
+        agent_identity_ref="arn:aws:iam::111111111111:role/TestAgent",
+        observed_at=datetime(2026, 6, 22, 12, 0, 0, tzinfo=UTC),
+        input_text="Summarize the deployment configuration.",
+        output_text="",
+        invoked_tool="kb_search",
+        invoked_api="kb:Search",
+        observed_role="arn:aws:iam::111111111111:role/TestAgent",
+        metadata={"source": "fixture"},
+    )
+    base.update(overrides)
+    return AgentCallEvent(**base)
+
+
+def test_A18_leaked_aws_key_in_output_is_critical_and_masked():
+    """The issue-#121 acceptance case: a response leaking an AWS key pattern
+    is flagged, escalated (output direction), and masked in evidence."""
+    event = _exfil_event(
+        output_text="Bucket uses access key AKIAIOSFODNN7EXAMPLE — rotate after audit."
+    )
+    findings = detect_llm_exfil([event])
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.evidence["detection"] == "llm_exfil"
+    assert f.severity == Severity.CRITICAL  # secret flowing outward escalates
+    assert "aws_access_key_id" in f.evidence["patterns"]
+    assert "T1552" in f.technique_ids and "T1567" in f.technique_ids
+    # The raw key must never appear in the finding.
+    import json
+
+    assert "AKIAIOSFODNN7EXAMPLE" not in json.dumps(f.evidence)
+    assert any(s["masked"].startswith("AKIAIO") for s in f.evidence["signals"])
+
+
+def test_A19_clean_event_produces_no_exfil_finding():
+    assert detect_llm_exfil([_exfil_event()]) == []
+
+
+def test_A20_oversized_prompt_alone_is_medium():
+    event = _exfil_event(input_text="A" * 9000)
+    findings = detect_llm_exfil([event])
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.severity == Severity.MEDIUM
+    assert f.evidence["oversized_outbound_prompt"] is True
+    assert f.evidence["patterns"] == ["oversized_outbound_prompt"]
+
+
+def test_A21_private_key_block_in_input_is_critical():
+    event = _exfil_event(
+        input_text=(
+            "Please store this for me: -----BEGIN RSA PRIVATE KEY----- "
+            "MIIEowIBAAKCAQEA -----END RSA PRIVATE KEY-----"
+        )
+    )
+    findings = detect_llm_exfil([event])
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.CRITICAL
+    assert "private_key_block" in findings[0].evidence["patterns"]
+
+
+def test_A22_run_all_detectors_includes_llm_exfil():
+    event = _exfil_event(
+        output_text="key AKIAIOSFODNN7EXAMPLE",
+        event_id="evt_exfil_sweep",
+    )
+    findings = run_all_detectors(events=[event])
+    detections = {f.evidence.get("detection") for f in findings}
+    assert "llm_exfil" in detections

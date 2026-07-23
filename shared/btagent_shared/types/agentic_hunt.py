@@ -247,6 +247,14 @@ class AgentCallEvent(BaseModel):
         max_length=16384,
         description="Raw input text the agent received for this invocation.",
     )
+    # The textual output the model/tool returned for this invocation. Scanned
+    # by the LLM-exfil detector for leaked secrets. Empty when the telemetry
+    # source does not capture responses.
+    output_text: str = Field(
+        default="",
+        max_length=16384,
+        description="Raw output text the agent produced for this invocation.",
+    )
     # What the agent actually did — the API / MCP-tool name and resolved identity.
     invoked_tool: str = Field(
         default="",

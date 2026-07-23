@@ -193,6 +193,23 @@ _DEMO_EVENTS: list[AgentCallEvent] = [
         observed_role=_ADMIN_ROLE,
         metadata={"source": "demo"},
     ),
+    # A4 — LLM exfil: the model response leaks an AWS access key (AWS's
+    # documented example key — non-functional, safe for fixtures).
+    AgentCallEvent(
+        event_id="evt_demo_exfil",
+        org_id=_DEMO_ORG,
+        agent_identity_ref=_GOVERNED_ROLE,
+        observed_at=_DEMO_TS,
+        input_text="Summarize the deployment configuration for the audit.",
+        output_text=(
+            "The deployment uses access key AKIAIOSFODNN7EXAMPLE for the "
+            "artifact bucket; rotate it after the audit."
+        ),
+        invoked_tool="kb_search",
+        invoked_api="kb:Search",
+        observed_role=_GOVERNED_ROLE,
+        metadata={"source": "demo"},
+    ),
 ]
 
 
