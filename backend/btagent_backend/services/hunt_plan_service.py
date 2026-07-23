@@ -437,4 +437,80 @@ async def execute_plan_and_ingest(
         findings_created,
         result.error_count,
     )
+
+    # #99 Phase C closed loop: every completed hunt becomes a case lesson in
+    # the RAG knowledge base. Best-effort — a lesson-indexing failure must
+    # never sink the execution that already landed findings.
+    try:
+        await _index_hunt_lesson(
+            db,
+            plan=plan,
+            run_id=result.run_id,
+            findings_created=findings_created,
+            error_count=result.error_count,
+            ttp_summary=ttp_summary,
+        )
+    except Exception:  # noqa: BLE001 — lesson indexing is auxiliary
+        logger.warning("hunt-lesson indexing failed for plan %s", plan.id, exc_info=True)
+
     return row, findings_created
+
+
+async def _index_hunt_lesson(
+    db: AsyncSession,
+    *,
+    plan: HuntPlan,
+    run_id: str,
+    findings_created: int,
+    error_count: int,
+    ttp_summary: dict,
+) -> None:
+    """Index a compact hunt-outcome lesson into the knowledge base.
+
+    Uses the mock embedding service (same as the task manager's background
+    auto-indexing) so no external API key is required. ``source_type``
+    "runbook" keeps lessons retrievable alongside other procedural docs.
+    """
+    from btagent_backend.services.embedding_service import MockEmbeddingService
+    from btagent_backend.services.knowledge_service import KnowledgeService
+
+    outcome = "hit" if findings_created else "clean"
+    target = ", ".join(plan.input.adversaries + plan.input.ttps) or plan.id
+
+    lines = [
+        f"Hunt outcome: {outcome.upper()} — {findings_created} finding(s), "
+        f"{error_count} query error(s).",
+        f"Target: {target}.",
+        f"Hypotheses tested: {len(plan.hypotheses)}; runbook entries: {len(plan.ttp_entries)}.",
+        "",
+        "Per-technique results:",
+    ]
+    for ttp_id, stats in ttp_summary.items():
+        hits = stats.get("hits", 0)
+        errors = stats.get("errors") or []
+        lines.append(
+            f"- {ttp_id}: {hits} hit(s)" + (f", {len(errors)} error(s)" if errors else " (clean)")
+        )
+    if outcome == "clean":
+        lines += [
+            "",
+            "No historical activity matched the hunted techniques over the "
+            "lookback window. Clean coverage for the tested hypotheses; "
+            "consider proposing detections for any uncovered techniques.",
+        ]
+
+    svc = KnowledgeService(embedding_service=MockEmbeddingService())
+    doc = await svc.ingest_document(
+        db,
+        title=f"Hunt lesson: {target} ({outcome})",
+        content="\n".join(lines),
+        source_type="runbook",
+        metadata={
+            "kind": "hunt_lesson",
+            "plan_id": plan.id,
+            "run_id": run_id,
+            "outcome": outcome,
+            "findings_created": findings_created,
+        },
+    )
+    logger.info("hunt lesson indexed for plan %s as knowledge doc %s", plan.id, doc.id)

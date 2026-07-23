@@ -511,3 +511,66 @@ async def test_export_plan_404_and_auth(client: AsyncClient, analyst_token: str)
     )
     assert resp.status_code == 404
     assert (await client.get("/api/v1/hunts/plans/hunt_x/export")).status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Hunt lesson → RAG on execution (#99 Phase C)
+# --------------------------------------------------------------------------- #
+
+
+async def test_execute_indexes_hunt_lesson(client: AsyncClient, analyst_token: str):
+    """A completed execution lands a 'runbook' knowledge doc carrying the
+    plan/run lineage and outcome."""
+    gen = await client.post(
+        "/api/v1/hunts/plan",
+        json={"adversaries": ["APT29"]},
+        headers=auth_header(analyst_token),
+    )
+    assert gen.status_code == 200, gen.text
+    plan_id = gen.json()["id"]
+
+    execute = await client.post(
+        f"/api/v1/hunts/plans/{plan_id}/execute", headers=auth_header(analyst_token)
+    )
+    assert execute.status_code == 200, execute.text
+    findings_created = execute.json()["findings_created"]
+
+    docs = await client.get("/api/v1/knowledge/documents", headers=auth_header(analyst_token))
+    assert docs.status_code == 200, docs.text
+    lessons = [
+        d for d in docs.json()["items"] if (d.get("metadata") or {}).get("plan_id") == plan_id
+    ]
+    assert len(lessons) == 1, "exactly one lesson per execution"
+    lesson = lessons[0]
+    assert lesson["source_type"] == "runbook"
+    assert lesson["metadata"]["kind"] == "hunt_lesson"
+    assert lesson["metadata"]["run_id"].startswith("hrun_")
+    expected_outcome = "hit" if findings_created else "clean"
+    assert lesson["metadata"]["outcome"] == expected_outcome
+    assert lesson["title"].startswith("Hunt lesson: APT29")
+
+
+async def test_lesson_failure_never_sinks_execution(
+    client: AsyncClient, analyst_token: str, monkeypatch
+):
+    """If knowledge indexing blows up, the execution still succeeds."""
+    from btagent_backend.services.knowledge_service import KnowledgeService
+
+    async def _boom(self, db, **kwargs):  # noqa: ANN001, ANN003
+        raise RuntimeError("embedding backend down")
+
+    monkeypatch.setattr(KnowledgeService, "ingest_document", _boom)
+
+    gen = await client.post(
+        "/api/v1/hunts/plan",
+        json={"ttps": ["T1059.001"]},
+        headers=auth_header(analyst_token),
+    )
+    assert gen.status_code == 200, gen.text
+    plan_id = gen.json()["id"]
+
+    execute = await client.post(
+        f"/api/v1/hunts/plans/{plan_id}/execute", headers=auth_header(analyst_token)
+    )
+    assert execute.status_code == 200, execute.text
+    assert isinstance(execute.json()["findings_created"], int)
