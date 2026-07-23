@@ -5,10 +5,12 @@ import type { ReactElement } from "react";
 
 const listReportTemplates = vi.fn();
 const generateReport = vi.fn();
+const exportReportPdf = vi.fn();
 
 vi.mock("@/api/reports", () => ({
   listReportTemplates: (...a: unknown[]) => listReportTemplates(...a),
   generateReport: (...a: unknown[]) => generateReport(...a),
+  exportReportPdf: (...a: unknown[]) => exportReportPdf(...a),
 }));
 
 import { ReportsPage } from "@/components/reports/ReportsPage";
@@ -104,6 +106,59 @@ describe("ReportsPage", () => {
     const btn = screen.getByTestId("reports-generate") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(generateReport).not.toHaveBeenCalled();
+  });
+
+  it("exports the generated report as a PDF", async () => {
+    exportReportPdf.mockResolvedValue(new Blob(["%PDF"], { type: "application/pdf" }));
+    const createSpy = vi.fn(() => "blob:report");
+    const revokeSpy = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL: createSpy, revokeObjectURL: revokeSpy });
+    try {
+      renderPage(<ReportsPage />);
+      await waitFor(() => expect(listReportTemplates).toHaveBeenCalled());
+      // No export button before a report exists.
+      expect(screen.queryByTestId("reports-export-pdf")).toBeNull();
+
+      fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+        target: { value: "inv_mock_001" },
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("reports-generate"));
+      });
+
+      await act(async () => {
+        fireEvent.click(await screen.findByTestId("reports-export-pdf"));
+      });
+
+      await waitFor(() =>
+        expect(exportReportPdf).toHaveBeenCalledWith("inv_mock_001", "cisa_incident"),
+      );
+      await waitFor(() => expect(createSpy).toHaveBeenCalled());
+      expect(revokeSpy).toHaveBeenCalledWith("blob:report");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("surfaces a TLP block on export as a distinct error", async () => {
+    exportReportPdf.mockRejectedValue(
+      new Error("Export blocked by TLP policy (classified investigation)"),
+    );
+    renderPage(<ReportsPage />);
+    await waitFor(() => expect(listReportTemplates).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+      target: { value: "inv_mock_001" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reports-generate"));
+    });
+    await act(async () => {
+      fireEvent.click(await screen.findByTestId("reports-export-pdf"));
+    });
+
+    const err = await screen.findByTestId("reports-error");
+    expect(err.textContent).toContain("TLP policy");
   });
 
   it("surfaces an error when generation fails", async () => {

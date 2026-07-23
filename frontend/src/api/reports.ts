@@ -35,3 +35,31 @@ export async function generateReport(
     template,
   });
 }
+
+/**
+ * Download an investigation's report as a PDF blob.
+ *
+ * Mirrors `exportHuntPlan`: a raw fetch (the JSON api client can't carry
+ * blobs) with httpOnly-cookie auth. The backend TLP egress gate refuses
+ * TLP:RED investigations with a 403 — surfaced as a distinct error so the
+ * page can tell a policy block from a plain failure.
+ */
+export async function exportReportPdf(
+  investigationId: string,
+  template: ReportTemplateName,
+): Promise<Blob> {
+  const response = await fetch(
+    `${import.meta.env.VITE_API_BASE_URL ?? "/api"}${BASE}/${investigationId}/export?format=pdf&template=${template}`,
+    {
+      method: "GET",
+      credentials: "include",
+    },
+  );
+  if (response.status === 403) {
+    throw new Error("Export blocked by TLP policy (classified investigation)");
+  }
+  if (!response.ok) {
+    throw new Error(`Export failed (${response.status})`);
+  }
+  return response.blob();
+}
