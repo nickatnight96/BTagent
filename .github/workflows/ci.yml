@@ -33,7 +33,13 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install ruff
-        run: pip install ruff
+        # Pin ruff: an unpinned install silently adopts each new release, and
+        # ruff's formatter is versioned — 0.16.0 reformats docstring-embedded
+        # code examples that 0.15.x leaves alone, which would fail this job on
+        # every PR without any source change. Pin to the last-known-green line
+        # (matches the dev baseline in the package pyproject files); bump
+        # deliberately alongside a repo-wide `ruff format`.
+        run: pip install ruff==0.15.22
 
       - name: Ruff check
         # Engine/ is included so the workspace package gets the same
