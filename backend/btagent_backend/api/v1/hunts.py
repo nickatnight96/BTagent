@@ -15,6 +15,7 @@ a 501.
 from __future__ import annotations
 
 import logging
+import os
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import HuntPackageInput, HuntPackageNode
@@ -413,7 +414,87 @@ async def get_hunt_plan(
     row = await hunt_plan_service.get_plan(db, org_id=user.org_id, plan_row_id=plan_id)
     if row is None or row.plan is None:
         raise HTTPException(status_code=404, detail="Hunt plan not found")
-    return HuntPlan.model_validate(row.plan)
+    # ``last_run`` rides alongside the plan fields in the stored JSON
+    # (HuntPlan is extra=forbid) — pop it so an executed plan re-opens.
+    plan_data = dict(row.plan)
+    plan_data.pop("last_run", None)
+    return HuntPlan.model_validate(plan_data)
+
+
+def _mock_connectors_mode() -> bool:
+    """Same flag the engine integration nodes read (default: mock on)."""
+    return os.getenv("BTAGENT_MOCK_CONNECTORS", "true").strip().lower() == "true"
+
+
+class ExecuteHuntPlanResponse(BaseModel):
+    """Outcome of kicking a direct-plan execution (#99 Phase B).
+
+    ``queued`` is True on the live-connector path — the run happens on the
+    arq worker and ``findings_created`` is None; re-open the plan for the
+    ``last_run`` summary. Mock mode executes inline and reports counts.
+    """
+
+    plan_id: str
+    status: str
+    queued: bool
+    findings_created: int | None
+
+
+@router.post("/plans/{plan_id}/execute", response_model=ExecuteHuntPlanResponse)
+async def execute_hunt_plan(
+    plan_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> ExecuteHuntPlanResponse:
+    """Execute a stored plan's runbook (#99 Phase B).
+
+    Runs the per-TTP queries through the engine integration nodes and lands
+    every hit in the triage inbox (clustering + suppressions apply), exactly
+    like proposal-compiled plans. Inline under mock connectors; enqueued to
+    the arq worker on the live path. 404 on miss/cross-org; 409 when the
+    plan row is not ``ready``.
+    """
+    user.require_permission("hunt:run")
+    row = await hunt_plan_service.get_plan(db, org_id=user.org_id, plan_row_id=plan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Hunt plan not found")
+    if row.status != hunt_plan_service.STATUS_READY:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Hunt plan is not ready to execute (status={row.status})",
+        )
+
+    if _mock_connectors_mode():
+        row, findings_created = await hunt_plan_service.execute_plan_and_ingest(
+            db, plan_row_id=row.id
+        )
+        await db.commit()
+        return ExecuteHuntPlanResponse(
+            plan_id=row.id,
+            status=row.status,
+            queued=False,
+            findings_created=findings_created,
+        )
+
+    try:
+        from arq import create_pool
+
+        from btagent_backend.scheduler.worker import redis_settings
+
+        pool = await create_pool(redis_settings())
+        try:
+            await pool.enqueue_job("execute_hunt_plan", row.id)
+        finally:
+            await pool.aclose()
+    except Exception as exc:  # noqa: BLE001 — infra failure surfaces as 503
+        logger.exception("Failed to enqueue HuntPlan execution for %s", row.id)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not queue plan execution: {type(exc).__name__}",
+        ) from exc
+    return ExecuteHuntPlanResponse(
+        plan_id=row.id, status=row.status, queued=True, findings_created=None
+    )
 
 
 class CorrelateRequest(BaseModel):

@@ -180,8 +180,9 @@ class PlanRunRow(Base):
     )
     # Denormalised pivots: the proposal the plan compiled from and the
     # compiled HuntPlan's own id (both already inside the plan JSON, kept as
-    # columns so history queries never parse JSONB).
-    proposal_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # columns so history queries never parse JSONB). NULL proposal_id ==
+    # run of a direct (analyst-initiated) plan.
+    proposal_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
     # The engine runner's transient ``hrun_`` id (PlanRunResult.run_id) —
     # findings created by this run carry it in ``evidence.plan_run_id``.
