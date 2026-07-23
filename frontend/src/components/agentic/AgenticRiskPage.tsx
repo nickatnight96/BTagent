@@ -42,7 +42,8 @@ const BUCKETS = [
     key: "identity_abuse",
     label: "Identity abuse",
     icon: KeyRound,
-    match: (d: string) => d.startsWith("identity") || d.includes("role"),
+    // The A3 detector emits "agent_identity_abuse" / ".unregistered".
+    match: (d: string) => d.includes("identity") || d.includes("role"),
   },
   {
     key: "llm_exfil",
@@ -92,6 +93,45 @@ export function buildInjectionTimeline(findings: HuntFinding[]): InjectionTimeli
         matched_patterns: patterns,
         excerpt: excerpts[0] ?? null,
       } satisfies InjectionTimelineEntry;
+    })
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+}
+
+export interface DriftInventoryEntry {
+  finding_id: string;
+  created_at: string;
+  agent: string;
+  declared_role: string | null;
+  observed_role: string | null;
+  invoked_tool: string | null;
+  reasons: string[];
+  severity: string;
+}
+
+/** Declared-vs-observed drift rows from identity-abuse findings (#121
+ *  Phase B). Newest first. Exported for unit tests. */
+export function buildDriftInventory(findings: HuntFinding[]): DriftInventoryEntry[] {
+  return findings
+    .filter((f) => bucketOf(f) === "identity_abuse")
+    .map((f) => {
+      const ev = (f.evidence ?? {}) as Record<string, unknown>;
+      const reasons = Array.isArray(ev["reasons"]) ? (ev["reasons"] as string[]) : [];
+      const flagged = [
+        ev["out_of_toolset"] ? "out_of_toolset" : null,
+        ev["role_mismatch"] ? "role_mismatch" : null,
+        ev["privileged_escalation"] ? "privileged_escalation" : null,
+        String(ev["detection"] ?? "").endsWith("unregistered") ? "unregistered_identity" : null,
+      ].filter((x): x is string => x !== null);
+      return {
+        finding_id: f.id,
+        created_at: f.created_at,
+        agent: String(ev["agent_identity_ref"] ?? "unknown"),
+        declared_role: (ev["declared_role"] as string | null) ?? null,
+        observed_role: (ev["observed_role"] as string | null) ?? null,
+        invoked_tool: (ev["invoked_tool"] as string | null) ?? null,
+        reasons: reasons.length > 0 ? reasons : flagged,
+        severity: f.severity,
+      } satisfies DriftInventoryEntry;
     })
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
@@ -286,6 +326,61 @@ export function AgenticRiskPage() {
                     <pre className="mt-1.5 overflow-x-auto whitespace-pre-wrap rounded bg-muted p-2 font-mono text-xs text-muted-foreground">
                       {e.excerpt}
                     </pre>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Identity-drift inventory (#121 Phase B) */}
+        {buildDriftInventory(findings).length > 0 && (
+          <Card data-testid="drift-inventory">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-primary" />
+                Agent identity drift
+              </CardTitle>
+              <CardDescription>
+                Declared vs observed — calls that ran outside the registered
+                identity&apos;s role or tool catalogue.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {buildDriftInventory(findings).map((e) => (
+                <div
+                  key={e.finding_id}
+                  className="rounded-md border border-border p-3 text-sm"
+                  data-testid={`drift-entry-${e.finding_id}`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="min-w-0 truncate font-mono text-foreground">{e.agent}</p>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        {formatRelativeTime(e.created_at)}
+                      </span>
+                      <Badge variant={severityVariant(e.severity)}>{e.severity}</Badge>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    declared:{" "}
+                    <span className="font-mono">{e.declared_role ?? "—"}</span> → observed:{" "}
+                    <span className="font-mono">{e.observed_role ?? "—"}</span>
+                    {e.invoked_tool && (
+                      <>
+                        {" "}
+                        · tool: <span className="font-mono">{e.invoked_tool}</span>
+                      </>
+                    )}
+                  </p>
+                  {e.reasons.length > 0 && (
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {e.reasons.slice(0, 4).map((r) => (
+                        <Badge key={r} variant="outline" className="text-xs">
+                          {r}
+                        </Badge>
+                      ))}
+                    </div>
                   )}
                 </div>
               ))}
