@@ -62,6 +62,7 @@ class GenerateReportRequest(BaseModel):
         "executive_briefing",
         "regulatory_notification",
         "cisa_incident",
+        "external_advisory",
     ] = "incident_report"
 
 
@@ -128,6 +129,7 @@ async def export_report(
         "executive_briefing",
         "regulatory_notification",
         "cisa_incident",
+        "external_advisory",
     ] = Query("incident_report"),
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

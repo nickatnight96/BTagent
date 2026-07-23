@@ -96,6 +96,44 @@ def test_full_incident_report_is_complete() -> None:
     assert completeness["required_total"] < len(result["sections"])
 
 
+def test_external_advisory_is_listed_and_complete() -> None:
+    """The partner-facing advisory template exists and fully populates."""
+    listed = list_templates.invoke({})
+    by_name = {t["name"]: t for t in listed["templates"]}
+    assert "external_advisory" in by_name
+    advisory = by_name["external_advisory"]
+    for section in ("threat_overview", "defensive_actions", "sharing_guidance"):
+        assert section in advisory["sections"]
+
+    result = generate_report.invoke({"investigation_id": _INV, "template": "external_advisory"})
+    assert result["status"] == "success"
+    # Every required section has a generator → 100% complete, no gaps.
+    assert result["completeness"]["gaps"] == []
+    assert result["completeness"]["completeness_pct"] == 100
+    # Shareable indicators are present.
+    assert "malicious-domain.com" in result["sections"]["iocs"]
+
+
+def test_external_advisory_is_tlp_sanitized() -> None:
+    """The advisory must not leak internal accounts / containment targets.
+
+    ``jdoe@corp.com`` is an internal disabled-account containment target from
+    the mock case; it belongs in the internal incident report and CISA
+    notification, never in an externally shared advisory.
+    """
+    advisory = generate_report.invoke({"investigation_id": _INV, "template": "external_advisory"})
+    internal = generate_report.invoke({"investigation_id": _INV, "template": "incident_report"})
+
+    advisory_blob = "\n".join(advisory["sections"].values())
+    internal_blob = "\n".join(internal["sections"].values())
+
+    # Sanity: the internal report does surface the internal account...
+    assert "jdoe@corp.com" in internal_blob
+    # ...but the external advisory does not, and carries no containment section.
+    assert "jdoe@corp.com" not in advisory_blob
+    assert "containment" not in advisory["sections"]
+
+
 def test_unknown_template_and_investigation_fail_cleanly() -> None:
     bad_tmpl = generate_report.invoke({"investigation_id": _INV, "template": "does_not_exist"})
     assert bad_tmpl["status"] == "failed"

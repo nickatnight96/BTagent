@@ -323,6 +323,48 @@ def _gen_points_of_contact(inv: dict[str, Any]) -> str:
     )
 
 
+def _gen_threat_overview(inv: dict[str, Any]) -> str:
+    """Generate a partner-facing threat overview (external advisory).
+
+    TLP-sanitized: describes the adversary activity and its significance for
+    peers without disclosing the reporting org's internal asset names,
+    accounts, or containment targets — those live only in internal templates.
+    """
+    techniques = inv.get("mitre_techniques", [])
+    iocs = inv.get("iocs", [])
+    severity = inv.get("severity", "medium")
+    return (
+        "## Threat Overview\n\n"
+        f"A {severity}-severity campaign involving "
+        f"{inv.get('title', 'malicious activity')} has been observed. "
+        f"The activity leveraged {len(techniques)} distinct MITRE ATT&CK "
+        f"technique(s) and produced {len(iocs)} shareable indicator(s). "
+        "This advisory is intended to help partner organizations detect and "
+        "defend against the same activity. Handle per the sharing guidance "
+        "below."
+    )
+
+
+def _gen_defensive_actions(inv: dict[str, Any]) -> str:
+    """Generate peer-facing defensive recommendations (external advisory).
+
+    Distinct from the internal ``recommendations`` section: frames actions a
+    *recipient* organization should take to protect itself, not the reporting
+    org's internal remediation plan.
+    """
+    techniques = inv.get("mitre_techniques", [])
+    actions = [
+        "## Defensive Actions for Recipients\n",
+        "1. Block and alert on the indicators listed in this advisory.",
+        "2. Hunt retrospectively for the listed indicators across your logs.",
+        "3. Verify multi-factor authentication is enforced for remote access.",
+    ]
+    if any(t.startswith("T1566") for t in techniques):
+        actions.append("4. Reinforce email filtering and user phishing awareness.")
+    actions.append(f"{len(actions)}. Report related sightings to your ISAC / national CERT.")
+    return "\n".join(actions)
+
+
 # Map section names to generators
 _SECTION_GENERATORS: dict[str, Any] = {
     "executive_summary": _gen_executive_summary,
@@ -346,6 +388,8 @@ _SECTION_GENERATORS: dict[str, Any] = {
     "incident_description": _gen_incident_description,
     "impact_assessment": _gen_impact_assessment,
     "points_of_contact": _gen_points_of_contact,
+    "threat_overview": _gen_threat_overview,
+    "defensive_actions": _gen_defensive_actions,
 }
 
 # Sentinel prefix emitted for a template section that has no registered
@@ -419,7 +463,8 @@ def generate_report(investigation_id: str, template: str) -> dict[str, Any]:
     Args:
         investigation_id: The investigation ID to generate a report for.
         template: Template name (incident_report, ioc_report,
-            executive_briefing, regulatory_notification, cisa_incident).
+            executive_briefing, regulatory_notification, cisa_incident,
+            external_advisory).
     """
     inv = _get_investigation(investigation_id)
     if inv is None:

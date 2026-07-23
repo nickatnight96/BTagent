@@ -1,0 +1,29 @@
+title: External Threat Advisory
+description: >
+  Partner- and ISAC-facing threat advisory for external sharing. TLP-sanitized:
+  it conveys the adversary activity, shareable indicators, observed techniques,
+  defensive actions for recipients, and TLP sharing guidance — without the
+  reporting organization's internal asset names, accounts, or containment
+  targets (those stay in the internal incident report and CISA notification).
+version: "1.0"
+sections:
+  - name: threat_overview
+    title: Threat Overview
+    required: true
+    description: Partner-facing summary of the adversary activity and its significance
+  - name: findings
+    title: Observed Techniques
+    required: true
+    description: Observed attacker techniques mapped to MITRE ATT&CK
+  - name: iocs
+    title: Indicators of Compromise
+    required: true
+    description: Shareable indicators categorized by type
+  - name: defensive_actions
+    title: Defensive Actions for Recipients
+    required: true
+    description: Recommended defensive measures for recipient organizations
+  - name: sharing_guidance
+    title: Sharing Guidance
+    required: true
+    description: TLP markings and sharing recommendations for ISACs and partners
