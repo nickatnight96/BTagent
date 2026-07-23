@@ -31,9 +31,11 @@ import {
   listHuntPlans,
   getHuntPlan,
   executeHuntPlan,
+  listHuntPlanRuns,
   type HuntPlan,
   type HuntPlanSummary,
   type ExecuteHuntPlanResponse,
+  type HuntPlanRun,
 } from "@/api/hunts";
 
 const HISTORY_PAGE_SIZE = 20;
@@ -82,6 +84,23 @@ export function HuntPlanPage() {
   // Runbook execution (#339): run the open plan, hits land in triage.
   const [executing, setExecuting] = useState(false);
   const [execResult, setExecResult] = useState<ExecuteHuntPlanResponse | null>(null);
+
+  // Per-run history (#341) of the open stored plan.
+  const [runs, setRuns] = useState<HuntPlanRun[]>([]);
+
+  const fetchRuns = useCallback(async (planId: string) => {
+    try {
+      const resp = await listHuntPlanRuns(planId, { page_size: 10 });
+      setRuns(resp.items);
+    } catch {
+      // Run history is auxiliary — never block the runbook view on it.
+    }
+  }, []);
+
+  useEffect(() => {
+    setRuns([]);
+    if (plan?.id) void fetchRuns(plan.id);
+  }, [plan, fetchRuns]);
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -142,12 +161,14 @@ export function HuntPlanPage() {
     try {
       const result = await executeHuntPlan(plan.id);
       setExecResult(result);
+      void fetchRuns(plan.id);
+      void fetchHistory();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to execute hunt plan");
     } finally {
       setExecuting(false);
     }
-  }, [plan]);
+  }, [plan, fetchRuns, fetchHistory]);
 
   return (
     <>
@@ -261,6 +282,13 @@ export function HuntPlanPage() {
                       <p className="text-xs text-muted-foreground">
                         {h.hypothesis_count} hypotheses · {h.entry_count} entries ·{" "}
                         {formatRelativeTime(h.created_at)}
+                        {h.last_run_findings != null && h.last_run_at && (
+                          <span data-testid={`last-run-${h.id}`}>
+                            {" "}
+                            · last run: {h.last_run_findings} finding(s){" "}
+                            {formatRelativeTime(h.last_run_at)}
+                          </span>
+                        )}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
@@ -367,6 +395,41 @@ export function HuntPlanPage() {
                       Open triage inbox
                     </Button>
                   )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Per-run execution history (#341) */}
+            {runs.length > 0 && (
+              <Card data-testid="run-history">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <History className="w-4 h-4 text-primary" />
+                    Run history
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {runs.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border p-3 text-sm"
+                      data-testid={`run-row-${r.id}`}
+                    >
+                      <p className="text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {r.findings_created} finding(s)
+                        </span>{" "}
+                        · {r.hit_count} hits · {r.error_count} errors ·{" "}
+                        {formatRelativeTime(r.started_at)}
+                      </p>
+                      <Badge
+                        variant={r.status === "completed" ? "secondary" : "outline"}
+                        className="shrink-0"
+                      >
+                        {r.status}
+                      </Badge>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
             )}
