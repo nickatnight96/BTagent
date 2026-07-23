@@ -57,7 +57,11 @@ _report_service = ReportService()
 class GenerateReportRequest(BaseModel):
     investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
     template: Literal[
-        "incident_report", "ioc_report", "executive_briefing", "regulatory_notification"
+        "incident_report",
+        "ioc_report",
+        "executive_briefing",
+        "regulatory_notification",
+        "cisa_incident",
     ] = "incident_report"
 
 
@@ -119,7 +123,11 @@ async def export_report(
     investigation_id: str,
     format: Literal["pdf"] = Query("pdf"),
     template: Literal[
-        "incident_report", "ioc_report", "executive_briefing", "regulatory_notification"
+        "incident_report",
+        "ioc_report",
+        "executive_briefing",
+        "regulatory_notification",
+        "cisa_incident",
     ] = Query("incident_report"),
     user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

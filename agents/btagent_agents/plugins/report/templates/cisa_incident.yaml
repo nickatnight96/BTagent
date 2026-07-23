@@ -1,0 +1,43 @@
+title: CISA US-CERT Incident Notification
+description: >
+  Federal incident-notification form aligned to the CISA US-CERT reportable-incident
+  report (https://us-cert.cisa.gov/forms/report). Mirrors the required fields so the
+  generated draft is paste-ready: reporting and impacted organization details, an
+  incident description, impact assessment, observed activity (MITRE ATT&CK), indicators
+  of compromise, an event timeline, response actions taken, and agency points of
+  contact. Points-of-contact fields are analyst-supplied and flagged as gaps until
+  completed.
+version: "1.0"
+sections:
+  - name: reporting_details
+    title: Reporting and Impacted Organization
+    required: true
+    description: Reporting entity, impacted organization, and how the incident was discovered
+  - name: incident_description
+    title: Incident Description
+    required: true
+    description: Nature of the incident, what occurred, and current status
+  - name: impact_assessment
+    title: Impact Assessment
+    required: true
+    description: Functional and information impact, affected systems, and recoverability
+  - name: findings
+    title: Observed Activity
+    required: true
+    description: Observed attacker techniques mapped to MITRE ATT&CK
+  - name: iocs
+    title: Indicators of Compromise
+    required: true
+    description: Structured IOC list with type, value, and enrichment context
+  - name: timeline
+    title: Event Timeline
+    required: true
+    description: Chronological event timeline with evidence references
+  - name: containment
+    title: Response Actions
+    required: true
+    description: Containment, eradication, and mitigation actions taken
+  - name: points_of_contact
+    title: Points of Contact
+    required: true
+    description: Reporting-organization points of contact (analyst-supplied)

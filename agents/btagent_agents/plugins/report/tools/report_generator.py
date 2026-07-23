@@ -253,6 +253,76 @@ def _gen_sharing_guidance(inv: dict[str, Any]) -> str:
     )
 
 
+# Sentinel embedded by a generator when a required field must be supplied by
+# the analyst before submission (data not present in the investigation record,
+# e.g. federal-form points of contact). The completeness gate treats any
+# section carrying this marker as an unfilled gap.
+_ANALYST_INPUT_MARKER = "[ANALYST INPUT REQUIRED]"
+
+
+def _gen_reporting_details(inv: dict[str, Any]) -> str:
+    """Generate CISA reporting/impacted-organization section."""
+    timeline = inv.get("timeline", [])
+    discovered = timeline[0]["timestamp"] if timeline else "Unknown"
+    return (
+        "## Reporting and Impacted Organization\n\n"
+        "### Reporting Organization\n"
+        f"{_ANALYST_INPUT_MARKER} — reporting entity name, sector, and CISA "
+        "reporting-entity category.\n\n"
+        "### Impacted Organization\n"
+        "As reported in the case record. Confirm legal entity name and sector "
+        "before submission.\n\n"
+        "### Discovery\n"
+        f"Incident first observed on {discovered}; identified through SOC alert "
+        "triage and subsequent investigation."
+    )
+
+
+def _gen_incident_description(inv: dict[str, Any]) -> str:
+    """Generate CISA incident-description section."""
+    iocs = inv.get("iocs", [])
+    severity = inv.get("severity", "medium")
+    return (
+        "## Incident Description\n\n"
+        f"A {severity}-severity security incident involving "
+        f"{inv.get('title', 'unknown activity')} was identified and investigated. "
+        f"Analysis surfaced {len(iocs)} indicators of compromise and "
+        f"{len(inv.get('mitre_techniques', []))} distinct attacker techniques. "
+        f"Current status: {inv.get('status', 'unknown')}."
+    )
+
+
+def _gen_impact_assessment(inv: dict[str, Any]) -> str:
+    """Generate CISA impact-assessment section (functional + information impact)."""
+    actions = inv.get("containment_actions", [])
+    targets = sorted({a.get("target", "") for a in actions if a.get("target")})
+    return (
+        "## Impact Assessment\n\n"
+        "### Functional Impact\n"
+        f"{len(actions)} containment action(s) executed across "
+        f"{len(targets)} affected asset(s). Business-function degradation "
+        "assessment pending analyst confirmation.\n\n"
+        "### Information Impact\n"
+        "Potential exposure of credentials and internal data; scope assessment "
+        "in progress.\n\n"
+        "### Affected Systems\n"
+        + ("\n".join(f"- {t}" for t in targets) if targets else "- None recorded")
+        + "\n\n### Recoverability\n"
+        "Regular recovery — remediation achievable with existing resources."
+    )
+
+
+def _gen_points_of_contact(inv: dict[str, Any]) -> str:
+    """Generate CISA points-of-contact section (analyst-supplied)."""
+    return (
+        "## Points of Contact\n\n"
+        f"### Primary Technical POC\n{_ANALYST_INPUT_MARKER} — name, role, "
+        "email, and phone.\n\n"
+        f"### Organizational POC\n{_ANALYST_INPUT_MARKER} — name, role, and "
+        "24x7 contact number.\n"
+    )
+
+
 # Map section names to generators
 _SECTION_GENERATORS: dict[str, Any] = {
     "executive_summary": _gen_executive_summary,
@@ -272,7 +342,66 @@ _SECTION_GENERATORS: dict[str, Any] = {
     ),
     "data_affected": _gen_data_affected,
     "sharing_guidance": _gen_sharing_guidance,
+    "reporting_details": _gen_reporting_details,
+    "incident_description": _gen_incident_description,
+    "impact_assessment": _gen_impact_assessment,
+    "points_of_contact": _gen_points_of_contact,
 }
+
+# Sentinel prefix emitted for a template section that has no registered
+# generator yet. The completeness gate counts these as gaps too.
+_PENDING_PREFIX = "[Section"
+
+
+def _section_is_gap(content: str) -> bool:
+    """Return True when a generated section is unpopulated or needs analyst input.
+
+    A section counts as a gap when it is empty/whitespace, is a
+    ``[Section '…' — content pending]`` placeholder (no generator registered),
+    or carries the ``[ANALYST INPUT REQUIRED]`` marker (data the analyst must
+    supply before submission).
+    """
+    if not content or not content.strip():
+        return True
+    stripped = content.lstrip()
+    return stripped.startswith(_PENDING_PREFIX) or _ANALYST_INPUT_MARKER in content
+
+
+def _compute_completeness(
+    template_sections: list[dict[str, Any]], sections: dict[str, str]
+) -> dict[str, Any]:
+    """Score required-field completeness and list gaps for the analyst.
+
+    Only ``required: true`` sections gate completeness — optional sections
+    (e.g. appendices) never count against the percentage. Returns the totals
+    plus a per-section ``gaps`` list so the UI/analyst can see exactly which
+    required fields still need attention before sign-off.
+    """
+    required = [s for s in template_sections if s.get("required", False)]
+    gaps: list[dict[str, str]] = []
+    for section_def in required:
+        name = section_def.get("name", "")
+        if _section_is_gap(sections.get(name, "")):
+            gaps.append(
+                {
+                    "section": name,
+                    "title": section_def.get("title", name),
+                    "reason": (
+                        "analyst input required"
+                        if _ANALYST_INPUT_MARKER in sections.get(name, "")
+                        else "not populated from case data"
+                    ),
+                }
+            )
+    total = len(required)
+    populated = total - len(gaps)
+    pct = round(100 * populated / total) if total else 100
+    return {
+        "required_total": total,
+        "required_populated": populated,
+        "completeness_pct": pct,
+        "gaps": gaps,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -290,7 +419,7 @@ def generate_report(investigation_id: str, template: str) -> dict[str, Any]:
     Args:
         investigation_id: The investigation ID to generate a report for.
         template: Template name (incident_report, ioc_report,
-            executive_briefing, regulatory_notification).
+            executive_briefing, regulatory_notification, cisa_incident).
     """
     inv = _get_investigation(investigation_id)
     if inv is None:
@@ -318,6 +447,8 @@ def generate_report(investigation_id: str, template: str) -> dict[str, Any]:
         else:
             sections[section_name] = f"[Section '{section_name}' — content pending]"
 
+    completeness = _compute_completeness(template_sections, sections)
+
     return {
         "investigation_id": investigation_id,
         "template": template,
@@ -325,6 +456,7 @@ def generate_report(investigation_id: str, template: str) -> dict[str, Any]:
         "generated_at": now_iso,
         "sections": sections,
         "section_count": len(sections),
+        "completeness": completeness,
         "status": "success",
     }
 

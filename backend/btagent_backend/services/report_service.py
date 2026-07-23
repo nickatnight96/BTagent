@@ -33,7 +33,7 @@ class ReportService:
             The investigation to generate a report for.
         template : str
             Template name (incident_report, ioc_report, executive_briefing,
-            regulatory_notification).
+            regulatory_notification, cisa_incident).
 
         Returns
         -------
