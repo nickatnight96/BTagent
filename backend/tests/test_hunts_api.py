@@ -387,3 +387,68 @@ async def test_execute_plan_404_on_unknown_id(client: AsyncClient, analyst_token
 async def test_execute_plan_requires_auth(client: AsyncClient):
     resp = await client.post("/api/v1/hunts/plans/hunt_x/execute")
     assert resp.status_code in (401, 403)
+
+
+# --------------------------------------------------------------------------- #
+# Plan run history surfacing (#99 follow-through)
+# --------------------------------------------------------------------------- #
+
+
+async def test_plan_run_history_and_last_run_summary(client: AsyncClient, analyst_token: str):
+    """Executing a plan lands a run row in GET /hunts/plans/{id}/runs (with
+    NULL proposal_id) and the history summary gains last_run_* fields."""
+    gen = await client.post(
+        "/api/v1/hunts/plan",
+        json={"adversaries": ["APT29"]},
+        headers=auth_header(analyst_token),
+    )
+    assert gen.status_code == 200, gen.text
+    plan_id = gen.json()["id"]
+
+    # Before execution: empty run history, no last_run summary.
+    runs = await client.get(
+        f"/api/v1/hunts/plans/{plan_id}/runs", headers=auth_header(analyst_token)
+    )
+    assert runs.status_code == 200, runs.text
+    assert runs.json() == {"items": [], "total": 0}
+
+    listing = await client.get("/api/v1/hunts/plans", headers=auth_header(analyst_token))
+    summary = {i["id"]: i for i in listing.json()["items"]}[plan_id]
+    assert summary["last_run_findings"] is None
+    assert summary["last_run_at"] is None
+
+    execute = await client.post(
+        f"/api/v1/hunts/plans/{plan_id}/execute", headers=auth_header(analyst_token)
+    )
+    assert execute.status_code == 200, execute.text
+    findings_created = execute.json()["findings_created"]
+
+    # After execution: one run row, NULL proposal_id, matching counts.
+    runs = await client.get(
+        f"/api/v1/hunts/plans/{plan_id}/runs", headers=auth_header(analyst_token)
+    )
+    body = runs.json()
+    assert body["total"] == 1
+    run = body["items"][0]
+    assert run["plan_row_id"] == plan_id
+    assert run["proposal_id"] is None
+    assert run["findings_created"] == findings_created
+    assert run["status"] in ("completed", "completed_with_errors")
+    assert run["started_at"]
+
+    listing = await client.get("/api/v1/hunts/plans", headers=auth_header(analyst_token))
+    summary = {i["id"]: i for i in listing.json()["items"]}[plan_id]
+    assert summary["last_run_findings"] == findings_created
+    assert summary["last_run_at"] is not None
+
+
+async def test_plan_runs_404_on_unknown_plan(client: AsyncClient, analyst_token: str):
+    resp = await client.get(
+        "/api/v1/hunts/plans/hunt_DOESNOTEXIST/runs", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 404
+
+
+async def test_plan_runs_require_auth(client: AsyncClient):
+    resp = await client.get("/api/v1/hunts/plans/hunt_x/runs")
+    assert resp.status_code in (401, 403)

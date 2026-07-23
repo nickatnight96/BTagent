@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 
 from btagent_engine import NodeContext
 from btagent_engine.reasoning import HuntPackageInput, HuntPackageNode
@@ -30,7 +31,7 @@ from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan, HuntScope
 from btagent_shared.types.hunt_package import HuntPackage
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -366,6 +367,10 @@ class HuntPlanSummary(BaseModel):
     entry_count: int
     from_proposal: bool
     created_at: str
+    # Quick-glance outcome of the most recent execution (from the stored
+    # last_run blob); None until the plan has been executed.
+    last_run_findings: int | None
+    last_run_at: str | None
 
 
 class HuntPlanListResponse(BaseModel):
@@ -376,6 +381,7 @@ class HuntPlanListResponse(BaseModel):
 def _plan_to_summary(row) -> HuntPlanSummary:
     plan = row.plan or {}
     hunt_input = plan.get("input") or {}
+    last_run = plan.get("last_run") or {}
     return HuntPlanSummary(
         id=row.id,
         status=row.status,
@@ -385,6 +391,8 @@ def _plan_to_summary(row) -> HuntPlanSummary:
         entry_count=len(plan.get("ttp_entries") or []),
         from_proposal=row.proposal_id is not None,
         created_at=row.created_at.isoformat(),
+        last_run_findings=last_run.get("findings_created"),
+        last_run_at=last_run.get("completed_at") or last_run.get("started_at"),
     )
 
 
@@ -419,6 +427,58 @@ async def get_hunt_plan(
     plan_data = dict(row.plan)
     plan_data.pop("last_run", None)
     return HuntPlan.model_validate(plan_data)
+
+
+class HuntPlanRunResponse(BaseModel):
+    """One plan-execution history row (mirrors pattern_hunt's PlanRunResponse,
+    with ``proposal_id`` optional — NULL on direct-plan runs)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    plan_row_id: str
+    proposal_id: str | None
+    plan_id: str
+    run_id: str
+    ttp_stats: dict
+    hit_count: int
+    error_count: int
+    findings_created: int
+    status: str
+    error: str | None
+    started_at: datetime
+    completed_at: datetime | None
+
+
+class HuntPlanRunListResponse(BaseModel):
+    items: list[HuntPlanRunResponse]
+    total: int
+
+
+@router.get("/plans/{plan_id}/runs", response_model=HuntPlanRunListResponse)
+async def list_hunt_plan_runs(
+    plan_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPlanRunListResponse:
+    """Per-run execution history for a stored plan (#99 Phase B).
+
+    Newest-first, paginated. 404 on miss/cross-org; a stored-but-never-
+    executed plan returns an empty list. The summary's ``last_run_*``
+    fields are the quick glance; this is the full history behind them.
+    """
+    user.require_permission("hunt:view")
+    row = await hunt_plan_service.get_plan(db, org_id=user.org_id, plan_row_id=plan_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Hunt plan not found")
+    rows, total = await hunt_plan_service.list_plan_runs(
+        db, org_id=user.org_id, plan_row_id=row.id, page=page, page_size=page_size
+    )
+    return HuntPlanRunListResponse(
+        items=[HuntPlanRunResponse.model_validate(r) for r in rows], total=total
+    )
 
 
 def _mock_connectors_mode() -> bool:
