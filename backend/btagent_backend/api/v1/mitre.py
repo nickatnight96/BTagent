@@ -281,6 +281,70 @@ async def list_technique_exercises(
     return TechniqueExerciseListResponse(items=items, total=len(items))
 
 
+class ExerciseGap(BaseModel):
+    """A technique the org has never exercised via a hunt (#99 Phase C)."""
+
+    technique_id: str
+    name: str
+    tactic: str
+
+
+class ExerciseGapListResponse(BaseModel):
+    items: list[ExerciseGap]
+    total: int
+
+
+@router.get("/exercises/gaps", response_model=ExerciseGapListResponse)
+async def list_exercise_gaps(
+    tactic: str | None = Query(None, description="Filter by tactic shortname."),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> ExerciseGapListResponse:
+    """Techniques in the seeded corpus this org has *never* exercised.
+
+    Complements ``GET /mitre/exercises``: that route lists what the hunt
+    machinery has looked at (with ``older_than_days`` for staleness); this
+    one lists what it has never looked at. Alphabetical by technique id
+    for stable pagination.
+    """
+    user.require_permission("mitre:view")
+
+    from sqlalchemy import exists, func, select
+
+    from btagent_backend.db.models_mitre import MitreTechniqueRow, TechniqueExerciseRow
+
+    exercised = exists().where(
+        TechniqueExerciseRow.org_id == user.org_id,
+        TechniqueExerciseRow.technique_id == MitreTechniqueRow.id,
+    )
+    where = [~exercised]
+    if tactic:
+        where.append(MitreTechniqueRow.tactic == tactic)
+
+    total = (
+        await db.execute(select(func.count()).select_from(MitreTechniqueRow).where(*where))
+    ).scalar_one() or 0
+    rows = (
+        (
+            await db.execute(
+                select(MitreTechniqueRow)
+                .where(*where)
+                .order_by(MitreTechniqueRow.id)
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return ExerciseGapListResponse(
+        items=[ExerciseGap(technique_id=r.id, name=r.name, tactic=r.tactic) for r in rows],
+        total=int(total),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Detection gaps
 # ---------------------------------------------------------------------------
