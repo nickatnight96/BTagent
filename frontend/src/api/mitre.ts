@@ -124,3 +124,25 @@ export async function listTechniqueExercises(params?: {
     `/v1/mitre/exercises${buildQuery(params ?? {})}`,
   );
 }
+
+export interface ExerciseGap {
+  technique_id: string;
+  name: string;
+  tactic: string;
+}
+
+export interface ExerciseGapListResponse {
+  items: ExerciseGap[];
+  total: number;
+}
+
+/** Techniques in the seeded corpus this org has never exercised (#349). */
+export async function listExerciseGaps(params?: {
+  tactic?: string;
+  page?: number;
+  page_size?: number;
+}): Promise<ExerciseGapListResponse> {
+  return api.get<ExerciseGapListResponse>(
+    `/v1/mitre/exercises/gaps${buildQuery(params ?? {})}`,
+  );
+}
