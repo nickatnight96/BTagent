@@ -10,9 +10,13 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 const mockGeneratePlan = vi.fn();
+const mockListPlans = vi.fn();
+const mockGetPlan = vi.fn();
 
 vi.mock("@/api/hunts", () => ({
   generateHuntPlan: (...a: unknown[]) => mockGeneratePlan(...a),
+  listHuntPlans: (...a: unknown[]) => mockListPlans(...a),
+  getHuntPlan: (...a: unknown[]) => mockGetPlan(...a),
 }));
 
 vi.mock("@/components/layout/Header", () => ({
@@ -71,6 +75,28 @@ const PLAN = {
   created_at: "2026-07-22T21:00:00Z",
 };
 
+const SUMMARY_DIRECT = {
+  id: "hunt_01TEST",
+  status: "ready",
+  adversaries: ["APT29"],
+  ttps: [],
+  hypothesis_count: 1,
+  entry_count: 1,
+  from_proposal: false,
+  created_at: "2026-07-22T21:00:00Z",
+};
+
+const SUMMARY_PROPOSAL = {
+  id: "hplan_02PROP",
+  status: "ready",
+  adversaries: [],
+  ttps: ["T1078.004", "T1110", "T1556", "T1621", "T1098"],
+  hypothesis_count: 5,
+  entry_count: 5,
+  from_proposal: true,
+  created_at: "2026-07-21T10:00:00Z",
+};
+
 function renderPage() {
   return render(
     <MemoryRouter>
@@ -79,9 +105,19 @@ function renderPage() {
   );
 }
 
+async function openHistory() {
+  const toggle = await screen.findByTestId("plan-history-toggle");
+  fireEvent.click(toggle);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockGeneratePlan.mockResolvedValue(PLAN);
+  mockListPlans.mockResolvedValue({
+    items: [SUMMARY_DIRECT, SUMMARY_PROPOSAL],
+    total: 2,
+  });
+  mockGetPlan.mockResolvedValue(PLAN);
 });
 
 describe("HuntPlanPage", () => {
@@ -147,5 +183,58 @@ describe("HuntPlanPage", () => {
       "planning backend down",
     );
     expect(screen.queryByTestId("hunt-plan-result")).not.toBeInTheDocument();
+  });
+});
+
+describe("HuntPlanPage plan history", () => {
+  it("renders stored summaries with labels, counts, and proposal badge", async () => {
+    renderPage();
+    await openHistory();
+
+    expect(screen.getByText("APT29")).toBeInTheDocument();
+    // 5 ttps → first 4 + overflow marker
+    expect(
+      screen.getByText("T1078.004, T1110, T1556, T1621 +1"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/1 hypotheses · 1 entries/)).toBeInTheDocument();
+    expect(screen.getByTestId("proposal-badge-hplan_02PROP")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("proposal-badge-hunt_01TEST"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("(2)")).toBeInTheDocument();
+    expect(mockListPlans).toHaveBeenCalledWith({ page_size: 20 });
+  });
+
+  it("re-opens a stored plan on click via the detail endpoint", async () => {
+    renderPage();
+    await openHistory();
+
+    fireEvent.click(screen.getByTestId("plan-history-item-hunt_01TEST"));
+
+    await waitFor(() => expect(mockGetPlan).toHaveBeenCalledWith("hunt_01TEST"));
+    expect(await screen.findByTestId("hunt-plan-result")).toBeInTheDocument();
+    expect(screen.getByTestId("runbook-T1059.001")).toBeInTheDocument();
+    expect(screen.getByText("(open)")).toBeInTheDocument();
+  });
+
+  it("refreshes history after generating a new plan", async () => {
+    renderPage();
+    await waitFor(() => expect(mockListPlans).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(screen.getByTestId("plan-adversaries-input"), {
+      target: { value: "APT29" },
+    });
+    fireEvent.click(screen.getByTestId("generate-plan"));
+
+    await waitFor(() => expect(mockGeneratePlan).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockListPlans).toHaveBeenCalledTimes(2));
+  });
+
+  it("renders no history panel when the store is empty", async () => {
+    mockListPlans.mockResolvedValue({ items: [], total: 0 });
+    renderPage();
+
+    await waitFor(() => expect(mockListPlans).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("plan-history")).not.toBeInTheDocument();
   });
 });
