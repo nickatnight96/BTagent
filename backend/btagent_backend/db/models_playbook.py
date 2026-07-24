@@ -13,7 +13,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from btagent_backend.db.models import Base, utcnow
+from btagent_backend.db.models import DEFAULT_ORG_ID, Base, utcnow
 
 
 class PlaybookRow(Base):
@@ -50,6 +50,17 @@ class PlaybookExecutionRow(Base):
     __tablename__ = "playbook_executions"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # #394: executions are tenant-scoped. The org is stamped from the
+    # authenticated caller when the run is created (the playbook definition
+    # is not itself org-scoped), so list/get reads can filter by tenant and
+    # never leak trigger_data / step_results / investigation_id across orgs.
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
     playbook_id: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("playbooks.id", ondelete="CASCADE"),
@@ -72,4 +83,5 @@ class PlaybookExecutionRow(Base):
         Index("idx_pbe_investigation_id", "investigation_id"),
         Index("idx_pbe_status", "status"),
         Index("idx_pbe_started_at", "started_at"),
+        Index("idx_playbook_executions_org_id", "org_id", "id"),
     )
