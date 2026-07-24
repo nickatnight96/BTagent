@@ -133,6 +133,7 @@ async def ingest_document(
             source_type=body.source_type,
             metadata=body.metadata,
             classification=body.classification,
+            org_id=user.org_id,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -182,6 +183,7 @@ async def query_knowledge_base(
         query=body.query,
         top_k=body.top_k,
         source_type_filter=body.source_type_filter,
+        org_id=user.org_id,
     )
 
     return QueryResponse(
@@ -225,6 +227,7 @@ async def keyword_search(
         query=q,
         top_k=top_k,
         source_type_filter=source_type,
+        org_id=user.org_id,
     )
 
     return QueryResponse(
@@ -262,6 +265,7 @@ async def list_documents(
         source_type_filter=source_type,
         page=page,
         page_size=page_size,
+        org_id=user.org_id,
     )
 
     return DocumentListResponse(
@@ -282,14 +286,14 @@ async def get_document(
     user.require_permission("knowledge:query")
 
     svc = _get_knowledge_service()
-    doc = await svc.get_document(db, document_id)
+    doc = await svc.get_document(db, document_id, org_id=user.org_id)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
         )
 
-    chunk_count = await svc.get_document_chunk_count(db, document_id)
+    chunk_count = await svc.get_document_chunk_count(db, document_id, org_id=user.org_id)
 
     return DocumentDetailResponse(
         id=doc.id,
@@ -317,7 +321,7 @@ async def delete_document(
     user.require_permission("knowledge:delete")
 
     svc = _get_knowledge_service()
-    deleted = await svc.delete_document(db, document_id)
+    deleted = await svc.delete_document(db, document_id, org_id=user.org_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

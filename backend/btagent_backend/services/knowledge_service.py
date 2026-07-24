@@ -18,7 +18,7 @@ from btagent_shared.utils.ids import generate_id
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.db.models import InvestigationRow, IOCRow
+from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, IOCRow
 from btagent_backend.db.models_knowledge import (
     KNOWLEDGE_SOURCE_TYPES,
     KnowledgeChunkRow,
@@ -81,6 +81,7 @@ class KnowledgeService:
         source_type: str,
         metadata: dict[str, Any] | None = None,
         classification: str | None = None,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> KnowledgeDocumentRow:
         """Chunk text, generate embeddings, and store document + chunks.
 
@@ -96,6 +97,10 @@ class KnowledgeService:
             One of KNOWLEDGE_SOURCE_TYPES.
         metadata : dict | None
             Additional metadata.
+        org_id : str
+            Owning organization (GH #386). The API route passes the
+            authenticated caller's ``org_id``; internal callers that predate
+            tenant scoping default to the seeded ``org_default``.
         classification : str | None
             TLP level of the source (``"red"``, ``"amber_strict"``,
             ``"amber"``, ``"green"``, ``"white"``). Defaults to green when
@@ -137,6 +142,7 @@ class KnowledgeService:
         # Create document row
         doc = KnowledgeDocumentRow(
             id=doc_id,
+            org_id=org_id,
             title=title,
             source_type=source_type,
             content=content,
@@ -158,6 +164,7 @@ class KnowledgeService:
                 chunk_row = KnowledgeChunkRow(
                     id=generate_id("kc"),
                     document_id=doc_id,
+                    org_id=org_id,
                     chunk_index=chunk.index,
                     content=chunk.content,
                     embedding=embedding,
@@ -192,6 +199,7 @@ class KnowledgeService:
         query: str,
         top_k: int = 5,
         source_type_filter: str | None = None,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> list[SearchResult]:
         """Hybrid search combining vector similarity and keyword matching.
 
@@ -209,6 +217,10 @@ class KnowledgeService:
             Number of results to return.
         source_type_filter : str | None
             Optional filter by source_type.
+        org_id : str
+            Restrict the search to a single organization's documents
+            (GH #386). Applied as a parameterized ``WHERE`` bind on both the
+            vector and keyword SQL so org B can never see org A's chunks.
 
         Returns
         -------
@@ -238,6 +250,7 @@ class KnowledgeService:
                 FROM knowledge_chunks kc
                 JOIN knowledge_documents kd ON kd.id = kc.document_id
                 WHERE kc.embedding IS NOT NULL
+                AND kc.org_id = :org_id
                 {source_filter}
                 ORDER BY kc.embedding <=> CAST(:embedding AS vector)
                 LIMIT :limit
@@ -250,6 +263,7 @@ class KnowledgeService:
 
             params: dict[str, Any] = {
                 "embedding": str(query_embedding),
+                "org_id": org_id,
                 "limit": top_k * 3,
             }
             if source_type_filter:
@@ -265,6 +279,7 @@ class KnowledgeService:
             FROM knowledge_chunks kc
             JOIN knowledge_documents kd ON kd.id = kc.document_id
             WHERE kc.content ILIKE :pattern
+            AND kc.org_id = :org_id
             {source_filter}
             LIMIT :limit
         """.format(
@@ -274,6 +289,7 @@ class KnowledgeService:
 
         kw_params: dict[str, Any] = {
             "pattern": f"%{query}%",
+            "org_id": org_id,
             "limit": top_k * 3,
         }
         if source_type_filter:
@@ -310,7 +326,12 @@ class KnowledgeService:
                 KnowledgeDocumentRow,
                 KnowledgeChunkRow.document_id == KnowledgeDocumentRow.id,
             )
-            .where(KnowledgeChunkRow.id.in_(chunk_id_list))
+            .where(
+                KnowledgeChunkRow.id.in_(chunk_id_list),
+                # GH #386 defense-in-depth: even though the ranked ids come
+                # from org-scoped SQL above, re-assert the tenant filter here.
+                KnowledgeChunkRow.org_id == org_id,
+            )
         )
         rows = await db.execute(stmt)
         chunk_doc_map: dict[str, tuple[KnowledgeChunkRow, KnowledgeDocumentRow]] = {}
@@ -419,6 +440,9 @@ class KnowledgeService:
                 "auto_indexed": True,
             },
             classification=investigation.tlp_level,
+            # GH #386: keep the auto-indexed report inside the investigation's
+            # own tenant so it never lands in the shared default org.
+            org_id=investigation.org_id,
         )
 
         logger.info(
@@ -456,6 +480,8 @@ class KnowledgeService:
         )
         investigation = inv_result.scalar_one_or_none()
         investigation_tlp = investigation.tlp_level if investigation is not None else None
+        # GH #386: scope the enrichment doc to the investigation's tenant.
+        investigation_org_id = investigation.org_id if investigation is not None else DEFAULT_ORG_ID
 
         result = await db.execute(
             select(IOCRow).where(
@@ -497,6 +523,7 @@ class KnowledgeService:
                 "auto_indexed": True,
             },
             classification=investigation_tlp,
+            org_id=investigation_org_id,
         )
 
         logger.info(
@@ -514,6 +541,8 @@ class KnowledgeService:
         self,
         db: AsyncSession,
         document_id: str,
+        *,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> bool:
         """Delete a document and cascade-delete its chunks.
 
@@ -523,6 +552,10 @@ class KnowledgeService:
             Database session.
         document_id : str
             ID of the document to delete.
+        org_id : str
+            Owning organization (GH #386). A document belonging to another
+            org is treated as not found (the route returns 404), so delete
+            can never touch another tenant's data or leak its existence.
 
         Returns
         -------
@@ -530,17 +563,30 @@ class KnowledgeService:
             True if document was found and deleted, False otherwise.
         """
         result = await db.execute(
-            select(KnowledgeDocumentRow).where(KnowledgeDocumentRow.id == document_id)
+            select(KnowledgeDocumentRow).where(
+                KnowledgeDocumentRow.id == document_id,
+                KnowledgeDocumentRow.org_id == org_id,
+            )
         )
         doc = result.scalar_one_or_none()
         if doc is None:
             return False
 
-        # Chunks are cascade-deleted via FK, but explicit delete for clarity
+        # Chunks are cascade-deleted via FK, but explicit delete for clarity.
+        # Scope both deletes by org_id so a stray same-id row from another
+        # tenant can never be affected.
         await db.execute(
-            delete(KnowledgeChunkRow).where(KnowledgeChunkRow.document_id == document_id)
+            delete(KnowledgeChunkRow).where(
+                KnowledgeChunkRow.document_id == document_id,
+                KnowledgeChunkRow.org_id == org_id,
+            )
         )
-        await db.execute(delete(KnowledgeDocumentRow).where(KnowledgeDocumentRow.id == document_id))
+        await db.execute(
+            delete(KnowledgeDocumentRow).where(
+                KnowledgeDocumentRow.id == document_id,
+                KnowledgeDocumentRow.org_id == org_id,
+            )
+        )
         await db.flush()
 
         logger.info("Deleted document %s and its chunks", document_id)
@@ -553,6 +599,7 @@ class KnowledgeService:
         source_type_filter: str | None = None,
         page: int = 1,
         page_size: int = 20,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> tuple[list[KnowledgeDocumentRow], int]:
         """List documents with optional source_type filter and pagination.
 
@@ -566,14 +613,23 @@ class KnowledgeService:
             Page number (1-based).
         page_size : int
             Items per page.
+        org_id : str
+            Owning organization (GH #386). The listing (and its total) is
+            scoped to a single tenant.
 
         Returns
         -------
         tuple[list[KnowledgeDocumentRow], int]
             (rows, total_count)
         """
-        query = select(KnowledgeDocumentRow).order_by(KnowledgeDocumentRow.created_at.desc())
-        count_query = select(func.count(KnowledgeDocumentRow.id))
+        query = (
+            select(KnowledgeDocumentRow)
+            .where(KnowledgeDocumentRow.org_id == org_id)
+            .order_by(KnowledgeDocumentRow.created_at.desc())
+        )
+        count_query = select(func.count(KnowledgeDocumentRow.id)).where(
+            KnowledgeDocumentRow.org_id == org_id
+        )
 
         if source_type_filter:
             query = query.where(KnowledgeDocumentRow.source_type == source_type_filter)
@@ -592,10 +648,20 @@ class KnowledgeService:
         self,
         db: AsyncSession,
         document_id: str,
+        *,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> KnowledgeDocumentRow | None:
-        """Fetch a single document by ID."""
+        """Fetch a single document by ID, scoped to ``org_id`` (GH #386).
+
+        Returns ``None`` for a document owned by another org so the route
+        surfaces a 404 (existence-oracle policy: never reveal that a
+        cross-tenant document exists).
+        """
         result = await db.execute(
-            select(KnowledgeDocumentRow).where(KnowledgeDocumentRow.id == document_id)
+            select(KnowledgeDocumentRow).where(
+                KnowledgeDocumentRow.id == document_id,
+                KnowledgeDocumentRow.org_id == org_id,
+            )
         )
         return result.scalar_one_or_none()
 
@@ -603,11 +669,14 @@ class KnowledgeService:
         self,
         db: AsyncSession,
         document_id: str,
+        *,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> int:
-        """Get the number of chunks for a document."""
+        """Get the number of chunks for a document, scoped to ``org_id``."""
         result = await db.execute(
             select(func.count(KnowledgeChunkRow.id)).where(
-                KnowledgeChunkRow.document_id == document_id
+                KnowledgeChunkRow.document_id == document_id,
+                KnowledgeChunkRow.org_id == org_id,
             )
         )
         return result.scalar() or 0
