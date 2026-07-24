@@ -439,23 +439,57 @@ class WebSocketHub:
     async def _enqueue(self, client: ConnectedClient, payload: str, *, critical: bool) -> None:
         if client.queue.full():
             if critical:
-                # Drop the oldest non-critical item to make room
+                # Drain everything so we can decide what to keep. The queue is
+                # bounded at BACKPRESSURE_QUEUE_LIMIT.
                 drained: list[str] = []
                 while not client.queue.empty():
                     try:
                         drained.append(client.queue.get_nowait())
                     except asyncio.QueueEmpty:
                         break
-                # Re-add critical items, drop non-critical
+
+                # Keep critical items (and protocol ack messages, which don't
+                # parse as an EventEnvelope) in FIFO order, then the new
+                # critical payload.
+                keep: list[str] = []
                 for item in drained:
                     try:
-                        env = EventEnvelope.model_validate_json(item)
-                        if is_critical(env):
-                            client.queue.put_nowait(item)
+                        if is_critical(EventEnvelope.model_validate_json(item)):
+                            keep.append(item)
                     except Exception:
                         # Protocol ack messages — keep them
+                        keep.append(item)
+                keep.append(payload)
+
+                # GH #395 FIX: if the queue is *entirely* critical/ack items,
+                # re-adding them all plus the new payload would exceed the
+                # bound and make the final put_nowait raise asyncio.QueueFull.
+                # That exception is unhandled in the drain-refill path and,
+                # because _enqueue runs inside the shared pub/sub listener,
+                # would kill event fan-out for ALL connected clients. Trim to
+                # the bound (drop-oldest — newest critical events win) and
+                # guard every put so QueueFull can never escape this method.
+                if len(keep) > BACKPRESSURE_QUEUE_LIMIT:
+                    dropped = len(keep) - BACKPRESSURE_QUEUE_LIMIT
+                    logger.warning(
+                        "Backpressure queue saturated with critical events for "
+                        "user=%s; dropping %d oldest to keep the shared listener alive",
+                        client.user.id,
+                        dropped,
+                    )
+                    keep = keep[dropped:]
+
+                for item in keep:
+                    try:
                         client.queue.put_nowait(item)
-                client.queue.put_nowait(payload)
+                    except asyncio.QueueFull:
+                        # Defensive: never let QueueFull propagate out of the
+                        # listener loop, whatever the cause.
+                        logger.warning(
+                            "Dropping event for saturated client user=%s (queue full)",
+                            client.user.id,
+                        )
+                        break
             else:
                 # Non-critical event and queue full — drop silently
                 logger.debug(
