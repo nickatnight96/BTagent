@@ -287,6 +287,18 @@ class AuditLogRow(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # GH #385: the audit ledger is tenant-scoped. Follows the same convention as
+    # UserRow/InvestigationRow — required, indexed, defaulted to the seeded
+    # ``org_default`` row so pre-existing writers keep functioning. The API read
+    # surfaces (/audit/entries, /audit/lineage, /audit/export) filter on this so
+    # one tenant can never see another tenant's actor/action/resource.
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
     seq: Mapped[int] = mapped_column(Integer, autoincrement=True, unique=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     actor: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -302,6 +314,8 @@ class AuditLogRow(Base):
         Index("idx_audit_seq", "seq"),
         Index("idx_audit_timestamp", "timestamp"),
         Index("idx_audit_actor", "actor"),
+        # Covers the org-scoped read path (WHERE org_id = ... ORDER BY seq).
+        Index("idx_audit_logs_org_id", "org_id", "seq"),
     )
 
 

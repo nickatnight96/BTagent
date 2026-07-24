@@ -13,7 +13,7 @@ from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.db.models import AuditLogRow
+from btagent_backend.db.models import DEFAULT_ORG_ID, AuditLogRow
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +64,18 @@ class AuditTrail:
         resource: str = "",
         outcome: AuditOutcome = AuditOutcome.SUCCESS,
         details: dict[str, Any] | None = None,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> AuditLogRow:
         """Append a new entry to the audit chain.
 
         The entry's SHA-256 hash is computed over all fields plus the previous
         entry's hash, forming a tamper-evident chain similar to a blockchain.
+
+        GH #385: ``org_id`` stamps the writing tenant so the read surfaces can
+        scope by org. It is *not* part of the hash — the chain stays a single
+        global, tamper-evident sequence; org_id only governs read visibility.
+        Defaults to ``DEFAULT_ORG_ID`` so existing internal callers that do not
+        yet thread a tenant keep working; API-driven writers pass ``user.org_id``.
         """
         details = details or {}
         entry_id = generate_id("aud")
@@ -105,6 +112,7 @@ class AuditTrail:
 
         row = AuditLogRow(
             id=entry_id,
+            org_id=org_id,
             seq=seq,
             timestamp=now,
             actor=actor,
@@ -129,11 +137,18 @@ class AuditTrail:
         )
         return row
 
-    async def verify_chain(self) -> tuple[bool, list[str]]:
-        """Validate the full audit chain integrity.
+    async def verify_chain(self, org_id: str = DEFAULT_ORG_ID) -> tuple[bool, list[str]]:
+        """Validate the audit chain integrity, scoped to one tenant.
 
         Returns a ``(valid, errors)`` tuple. ``errors`` contains human-readable
         descriptions of any integrity violations found.
+
+        GH #385: the hash chain is a single *global* sequence — each entry's
+        ``prev_hash`` links to whichever entry immediately precedes it, whatever
+        its org. So linkage is verified over the full global chain (a per-org
+        slice is not a valid chain on its own), but reported ``errors`` are
+        scoped to the caller's ``org_id`` so one tenant can neither read nor
+        infer another tenant's ledger contents.
         """
         errors: list[str] = []
 
@@ -143,9 +158,10 @@ class AuditTrail:
         if not rows:
             return True, []
 
-        # Verify the first entry links to the genesis sentinel
+        # Verify the first entry links to the genesis sentinel — reported only
+        # when that entry belongs to the caller's org.
         first = rows[0]
-        if first.prev_hash != _GENESIS_HASH:
+        if first.org_id == org_id and first.prev_hash != _GENESIS_HASH:
             errors.append(
                 f"seq={first.seq}: genesis entry prev_hash is "
                 f"'{first.prev_hash}', expected '{_GENESIS_HASH}'"
@@ -153,8 +169,11 @@ class AuditTrail:
 
         prev_hash = _GENESIS_HASH
         for row in rows:
-            # Verify chain linkage
-            if row.prev_hash != prev_hash:
+            in_org = row.org_id == org_id
+
+            # Verify chain linkage over the GLOBAL chain (prev_hash always
+            # tracks the previous global row); surface it only for the caller.
+            if in_org and row.prev_hash != prev_hash:
                 errors.append(
                     f"seq={row.seq}: prev_hash mismatch "
                     f"(stored='{row.prev_hash}', expected='{prev_hash}')"
@@ -184,7 +203,7 @@ class AuditTrail:
                 prev_hash=row.prev_hash,
             )
 
-            if row.hash != expected_hash:
+            if in_org and row.hash != expected_hash:
                 errors.append(
                     f"seq={row.seq}: hash mismatch "
                     f"(stored='{row.hash}', computed='{expected_hash}')"
@@ -196,20 +215,28 @@ class AuditTrail:
         if not valid:
             logger.warning("Audit chain verification failed with %d error(s)", len(errors))
         else:
-            logger.info("Audit chain verified: %d entries, all OK", len(rows))
+            logger.info("Audit chain verified (org=%s): all OK", org_id)
 
         return valid, errors
 
     async def get_entries(
         self,
         *,
+        org_id: str = DEFAULT_ORG_ID,
         actor: str | None = None,
         category: AuditCategory | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AuditLogRow]:
-        """Query audit log entries with optional filters."""
-        query = select(AuditLogRow).order_by(AuditLogRow.seq.desc())
+        """Query audit log entries with optional filters.
+
+        GH #385: always tenant-scoped — only entries for ``org_id`` are
+        returned, so the /audit/entries and /audit/export surfaces never leak
+        another org's ledger.
+        """
+        query = (
+            select(AuditLogRow).where(AuditLogRow.org_id == org_id).order_by(AuditLogRow.seq.desc())
+        )
 
         if actor is not None:
             query = query.where(AuditLogRow.actor == actor)
