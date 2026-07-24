@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from btagent_shared.types.enums import IOCType
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -91,6 +91,11 @@ class IOCResponse(BaseModel):
     context: str
     source: str
     enrichment: dict[str, Any]
+    # UC-5.2 notebook annotations (#108).
+    pinned: bool
+    tags: list[str]
+    analyst_note: str
+    disposition: str
 
 
 class IOCListResponse(BaseModel):
@@ -98,6 +103,22 @@ class IOCListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class AnnotateIOCRequest(BaseModel):
+    """Partial update of the UC-5.2 notebook annotations.
+
+    Only the supplied fields change (``exclude_unset`` semantics), so a pin
+    toggle doesn't clobber tags or the note. Empty string / empty list are
+    valid values — they clear the field.
+    """
+
+    pinned: bool | None = None
+    tags: list[str] | None = Field(default=None, max_length=20)
+    analyst_note: str | None = Field(default=None, max_length=8192)
+    disposition: (
+        Literal["", "under_review", "confirmed_malicious", "benign", "false_positive"] | None
+    ) = None
 
 
 class EnrichRequest(BaseModel):
@@ -146,6 +167,10 @@ def _to_response(row: IOCRow) -> IOCResponse:
         context=row.context,
         source=row.source,
         enrichment=row.enrichment or {},
+        pinned=bool(row.pinned),
+        tags=list(row.tags or []),
+        analyst_note=row.analyst_note or "",
+        disposition=row.disposition or "",
     )
 
 
@@ -397,6 +422,40 @@ async def update_ioc(
             status_code=400,
             detail="No fields to update",
         )
+
+    row = await ioc_service.update_ioc(db, ioc_id, **update_fields)
+    if not row:
+        raise HTTPException(status_code=404, detail="IOC not found")
+
+    return _to_response(row)
+
+
+@router.patch("/{ioc_id}/annotate", response_model=IOCResponse)
+async def annotate_ioc(
+    ioc_id: str,
+    body: AnnotateIOCRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Update the IOC's notebook annotations (pin / tags / note / disposition).
+
+    UC-5.2 (#108): analyst-owned metadata layered on the evidence record.
+    Partial semantics — only fields present in the body change, and empty
+    values clear a field. Requires ``ioc:edit``.
+    """
+    user.require_permission("ioc:edit")
+
+    existing = await ioc_service.get_ioc(db, ioc_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="IOC not found")
+    inv = await _load_investigation_or_404(db, existing.investigation_id)
+    assert_can_access_ioc(user, existing, investigation=inv, write=True)
+
+    # None means "not provided" (all fields default to None); explicit empty
+    # values ("", []) are the way to clear a field.
+    update_fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not update_fields:
+        raise HTTPException(status_code=400, detail="No annotation fields supplied")
 
     row = await ioc_service.update_ioc(db, ioc_id, **update_fields)
     if not row:

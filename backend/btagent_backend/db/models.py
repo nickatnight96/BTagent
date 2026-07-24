@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -175,6 +176,14 @@ class IOCRow(Base):
     context: Mapped[str] = mapped_column(Text, default="")
     source: Mapped[str] = mapped_column(String(200), default="")
     enrichment: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    # UC-5.2 notebook annotations (#108): analyst-owned metadata layered on
+    # the evidence record — pin for the case notebook, free-form tags, a
+    # working note, and the analyst's disposition call.
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tags: Mapped[list] = mapped_column(JSONB, default=list)
+    analyst_note: Mapped[str] = mapped_column(Text, default="")
+    disposition: Mapped[str] = mapped_column(String(30), default="")
 
     investigation: Mapped["InvestigationRow"] = relationship(back_populates="iocs")
 
