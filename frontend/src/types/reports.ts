@@ -71,6 +71,23 @@ export interface RemediationAction {
   [key: string]: unknown;
 }
 
+/** One platform-specific SIEM rule (UC-6.2, `POST /reports/detection-content`). */
+export interface DetectionRule {
+  name: string;
+  description: string;
+  language: string;
+  rule: string;
+}
+
+export interface DetectionContentResponse {
+  investigation_id: string;
+  platform: string;
+  rules: DetectionRule[];
+  rule_count: number;
+  generated_at: string;
+  status: string;
+}
+
 export interface RemediationGuidance {
   audience: string;
   title: string;
