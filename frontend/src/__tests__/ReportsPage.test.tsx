@@ -6,11 +6,16 @@ import type { ReactElement } from "react";
 const listReportTemplates = vi.fn();
 const generateReport = vi.fn();
 const exportReportPdf = vi.fn();
+const listInvestigations = vi.fn();
 
 vi.mock("@/api/reports", () => ({
   listReportTemplates: (...a: unknown[]) => listReportTemplates(...a),
   generateReport: (...a: unknown[]) => generateReport(...a),
   exportReportPdf: (...a: unknown[]) => exportReportPdf(...a),
+}));
+
+vi.mock("@/api/investigations", () => ({
+  listInvestigations: (...a: unknown[]) => listInvestigations(...a),
 }));
 
 import { ReportsPage } from "@/components/reports/ReportsPage";
@@ -60,11 +65,38 @@ const REPORT = {
   status: "success",
 };
 
+const INVESTIGATIONS = {
+  items: [
+    {
+      id: "inv_mock_001",
+      title: "Phishing Campaign Targeting Finance Department",
+      severity: "high",
+      status: "contained",
+      description: "",
+      created_at: "2026-07-01T00:00:00Z",
+      updated_at: "2026-07-01T00:00:00Z",
+    },
+    {
+      id: "inv_mock_002",
+      title: "Suspicious OAuth Grant",
+      severity: "medium",
+      status: "active",
+      description: "",
+      created_at: "2026-07-02T00:00:00Z",
+      updated_at: "2026-07-02T00:00:00Z",
+    },
+  ],
+  total: 2,
+  page: 1,
+  page_size: 50,
+};
+
 describe("ReportsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listReportTemplates.mockResolvedValue(TEMPLATES);
     generateReport.mockResolvedValue(REPORT);
+    listInvestigations.mockResolvedValue(INVESTIGATIONS);
   });
 
   it("loads templates into the picker and shows the empty state", async () => {
@@ -106,6 +138,43 @@ describe("ReportsPage", () => {
     const btn = screen.getByTestId("reports-generate") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(generateReport).not.toHaveBeenCalled();
+  });
+
+  it("suggests real investigations and shows a hint on match", async () => {
+    renderPage(<ReportsPage />);
+    await waitFor(() => expect(listInvestigations).toHaveBeenCalledWith({ page_size: 50 }));
+
+    // Datalist carries one option per fetched investigation.
+    const datalist = await screen.findByTestId("reports-investigation-options");
+    expect(datalist.querySelectorAll("option")).toHaveLength(2);
+
+    // No hint until the typed ID matches a real case.
+    expect(screen.queryByTestId("reports-investigation-hint")).toBeNull();
+    fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+      target: { value: "inv_mock_002" },
+    });
+    const hint = await screen.findByTestId("reports-investigation-hint");
+    expect(hint.textContent).toContain("Suspicious OAuth Grant");
+    expect(hint.textContent).toContain("medium");
+  });
+
+  it("keeps free-text generation working when the case list fails to load", async () => {
+    listInvestigations.mockRejectedValue(new Error("boom"));
+    renderPage(<ReportsPage />);
+    await waitFor(() => expect(listReportTemplates).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+      target: { value: "inv_mock_001" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reports-generate"));
+    });
+
+    await waitFor(() =>
+      expect(generateReport).toHaveBeenCalledWith("inv_mock_001", "cisa_incident"),
+    );
+    // The picker failure never surfaces as a page error.
+    expect(screen.queryByTestId("reports-error")).toBeNull();
   });
 
   it("exports the generated report as a PDF", async () => {
