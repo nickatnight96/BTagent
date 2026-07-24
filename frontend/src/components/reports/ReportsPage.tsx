@@ -20,6 +20,8 @@ import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { exportReportPdf, generateReport, listReportTemplates } from "@/api/reports";
 import type { ReportTemplateName } from "@/api/reports";
+import { listInvestigations } from "@/api/investigations";
+import type { Investigation } from "@/types/investigation";
 import type { GeneratedReport, ReportTemplate } from "@/types/reports";
 
 function completenessColor(pct: number): string {
@@ -31,6 +33,7 @@ function completenessColor(pct: number): string {
 export function ReportsPage() {
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [template, setTemplate] = useState<ReportTemplateName | "">("");
+  const [investigations, setInvestigations] = useState<Investigation[]>([]);
   const [investigationId, setInvestigationId] = useState("");
   const [report, setReport] = useState<GeneratedReport | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -52,10 +55,26 @@ export function ReportsPage() {
         if (!cancelled) setError("Failed to load report templates.");
       }
     })();
+    // Best-effort: real cases feed the picker's suggestions, but the field
+    // stays free-text (mock IDs remain typable), so a failure here must
+    // never block report generation.
+    void (async () => {
+      try {
+        const resp = await listInvestigations({ page_size: 50 });
+        if (!cancelled) setInvestigations(resp.items);
+      } catch {
+        // Suggestions are an enhancement only — swallow and keep free text.
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const matchedInvestigation = useMemo(
+    () => investigations.find((inv) => inv.id === investigationId.trim()) ?? null,
+    [investigations, investigationId],
+  );
 
   const canGenerate = template !== "" && investigationId.trim() !== "" && !isGenerating;
 
@@ -123,15 +142,25 @@ export function ReportsPage() {
         {/* Controls */}
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-sm">
-            <span className="text-muted-foreground">Investigation ID</span>
+            <span className="text-muted-foreground">Investigation</span>
             <input
               type="text"
               value={investigationId}
               onChange={(e) => setInvestigationId(e.target.value)}
               placeholder="inv_…"
+              list="reports-investigation-options"
               data-testid="reports-investigation-input"
               className="w-64 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-sky-500"
             />
+            {/* Native combobox: suggests real cases while keeping free text
+                (mock IDs stay typable). */}
+            <datalist id="reports-investigation-options" data-testid="reports-investigation-options">
+              {investigations.map((inv) => (
+                <option key={inv.id} value={inv.id}>
+                  {`${inv.title} (${inv.severity})`}
+                </option>
+              ))}
+            </datalist>
           </label>
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-muted-foreground">Template</span>
@@ -164,6 +193,16 @@ export function ReportsPage() {
             <span className="ml-2">Generate</span>
           </Button>
         </div>
+
+        {matchedInvestigation && (
+          <div
+            className="-mt-4 text-xs text-muted-foreground"
+            data-testid="reports-investigation-hint"
+          >
+            {matchedInvestigation.title} — {matchedInvestigation.severity} ·{" "}
+            {matchedInvestigation.status}
+          </div>
+        )}
 
         {error && (
           <div
