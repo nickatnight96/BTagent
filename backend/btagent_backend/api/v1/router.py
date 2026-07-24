@@ -9,6 +9,7 @@ from btagent_backend.api.v1.config import router as config_router
 from btagent_backend.api.v1.connectors import router as connectors_router
 from btagent_backend.api.v1.credentials import router as credentials_router
 from btagent_backend.api.v1.cti_detection import router as cti_detection_router
+from btagent_backend.api.v1.handover import router as handover_router
 from btagent_backend.api.v1.health import router as health_router
 from btagent_backend.api.v1.hunt_findings import router as hunt_router
 from btagent_backend.api.v1.hunts import router as hunts_router
@@ -61,6 +62,7 @@ api_v1_router.include_router(identity_router)
 api_v1_router.include_router(pattern_hunt_router)
 api_v1_router.include_router(validation_router)
 api_v1_router.include_router(notifications_router)
+api_v1_router.include_router(handover_router)
 
 # Health at root level (no /api/v1 prefix)
 health_router_root = health_router
