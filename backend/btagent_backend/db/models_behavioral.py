@@ -22,7 +22,7 @@ from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from btagent_backend.db.models import Base, utcnow
+from btagent_backend.db.models import DEFAULT_ORG_ID, Base, utcnow
 
 
 class BehavioralEntityRow(Base):
@@ -145,4 +145,44 @@ class BehavioralOutlierRow(Base):
         Index("idx_behavioral_outliers_entity_id", "entity_id"),
         Index("idx_behavioral_outliers_created_at", "created_at"),
         Index("idx_behavioral_outliers_intent_label", "intent_label"),
+    )
+
+
+class OrgProfileRow(Base):
+    """Per-org organisation profile injected into agent prompts (GH #393).
+
+    The org profile contextualises agent system prompts to a tenant's industry,
+    compliance posture, tech stack, and IR team. It was previously stored as a
+    *single global row* in ``org_config`` (``key='org_profile'``): any analyst
+    read another org's profile, and an admin's update overwrote the one global
+    row — poisoning every other org's agent prompts (cross-tenant read +
+    destructive cross-tenant write).
+
+    This model makes the profile **per-org**: one row per ``org_id`` (enforced
+    by a unique index), following the ``UserRow`` org-scoping convention
+    (``String(64)`` FK ``organizations.id``, ``nullable=False``, defaulting to
+    ``DEFAULT_ORG_ID``). Reads and writes in ``api/v1/config.py`` are scoped to
+    the authenticated user's ``org_id``, so cross-tenant access is structurally
+    impossible.
+    """
+
+    __tablename__ = "org_profiles"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        default=DEFAULT_ORG_ID,
+    )
+    # The serialised ``OrgProfile`` (see ``services.org_profile.OrgProfile``).
+    profile: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        # One profile row per org — the tenant-isolation invariant.
+        Index("idx_org_profiles_org_id", "org_id", unique=True),
     )
