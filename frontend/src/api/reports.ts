@@ -8,9 +8,15 @@
  */
 
 import api from "./client";
-import type { GeneratedReport, ReportTemplateListResponse } from "@/types/reports";
+import type {
+  GeneratedReport,
+  ReportTemplateListResponse,
+  SummarizeResponse,
+} from "@/types/reports";
 
 const BASE = "/v1/reports";
+
+export type AgencyFormat = "cisa" | "fbi_ic3" | "isac" | "generic";
 
 export type ReportTemplateName =
   | "incident_report"
@@ -33,6 +39,22 @@ export async function generateReport(
   return api.post<GeneratedReport>(`${BASE}/generate`, {
     investigation_id: investigationId,
     template,
+  });
+}
+
+/**
+ * Summarize investigation(s) into an agency-submission draft (UC-6.2).
+ *
+ * RBAC server-side (`report:summarize`); every requested investigation must
+ * be in the caller's scope or the backend 404s.
+ */
+export async function summarizeInvestigations(
+  investigationIds: string[],
+  format: AgencyFormat,
+): Promise<SummarizeResponse> {
+  return api.post<SummarizeResponse>(`${BASE}/summarize`, {
+    investigation_ids: investigationIds,
+    format,
   });
 }
 

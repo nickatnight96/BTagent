@@ -15,20 +15,36 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, FileText, Loader2, Play } from "lucide-react";
+import { Download, FileText, Landmark, Loader2, Play } from "lucide-react";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
-import { exportReportPdf, generateReport, listReportTemplates } from "@/api/reports";
-import type { ReportTemplateName } from "@/api/reports";
+import {
+  exportReportPdf,
+  generateReport,
+  listReportTemplates,
+  summarizeInvestigations,
+} from "@/api/reports";
+import type { AgencyFormat, ReportTemplateName } from "@/api/reports";
 import { listInvestigations } from "@/api/investigations";
 import type { Investigation } from "@/types/investigation";
-import type { GeneratedReport, ReportTemplate } from "@/types/reports";
+import type {
+  AgencyFormattedReport,
+  GeneratedReport,
+  ReportTemplate,
+} from "@/types/reports";
 
 function completenessColor(pct: number): string {
   if (pct >= 90) return "text-emerald-400";
   if (pct >= 60) return "text-amber-400";
   return "text-rose-400";
 }
+
+const AGENCY_FORMATS: Array<{ value: AgencyFormat; label: string }> = [
+  { value: "cisa", label: "CISA" },
+  { value: "fbi_ic3", label: "FBI IC3" },
+  { value: "isac", label: "ISAC" },
+  { value: "generic", label: "Generic" },
+];
 
 export function ReportsPage() {
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
@@ -38,6 +54,9 @@ export function ReportsPage() {
   const [report, setReport] = useState<GeneratedReport | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [agencyFormat, setAgencyFormat] = useState<AgencyFormat>("cisa");
+  const [agencySummary, setAgencySummary] = useState<AgencyFormattedReport | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -116,6 +135,22 @@ export function ReportsPage() {
       setIsExporting(false);
     }
   }, [report]);
+
+  const handleSummarize = useCallback(async () => {
+    const id = investigationId.trim();
+    if (!id) return;
+    setIsSummarizing(true);
+    setError(null);
+    try {
+      const resp = await summarizeInvestigations([id], agencyFormat);
+      setAgencySummary(resp.formatted_report);
+    } catch {
+      setError("Agency summarization failed. Check the investigation ID and try again.");
+      setAgencySummary(null);
+    } finally {
+      setIsSummarizing(false);
+    }
+  }, [investigationId, agencyFormat]);
 
   const orderedSections = useMemo(() => {
     if (!report) return [];
@@ -306,6 +341,69 @@ export function ReportsPage() {
             </div>
           </>
         )}
+
+        {/* ---- Agency submission draft (UC-6.2) ---- */}
+        <Card data-testid="reports-agency-panel">
+          <CardContent className="py-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <Landmark className="w-4 h-4 text-sky-400" aria-hidden="true" />
+              <span className="text-sm font-semibold text-foreground">
+                Agency submission draft
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Format the case for CISA / FBI IC3 / ISAC hand-off
+              </span>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground">Agency format</span>
+                <select
+                  value={agencyFormat}
+                  onChange={(e) => setAgencyFormat(e.target.value as AgencyFormat)}
+                  data-testid="reports-agency-format"
+                  className="w-48 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-sky-500"
+                >
+                  {AGENCY_FORMATS.map((f) => (
+                    <option key={f.value} value={f.value}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleSummarize()}
+                disabled={investigationId.trim() === "" || isSummarizing}
+                data-testid="reports-summarize"
+                title="Summarize the selected investigation into an agency-submission draft"
+              >
+                {isSummarizing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4" />
+                )}
+                <span className="ml-2">Summarize</span>
+              </Button>
+            </div>
+
+            {agencySummary && (
+              <div className="space-y-3" data-testid="reports-agency-sections">
+                <div className="text-xs text-muted-foreground">
+                  {agencySummary.format.toUpperCase()} draft · generated{" "}
+                  {agencySummary.generated_at}
+                </div>
+                {Object.entries(agencySummary.sections).map(([name, content]) => (
+                  <div key={name} data-testid={`reports-agency-section-${name}`}>
+                    <pre className="whitespace-pre-wrap rounded-md border border-border/50 bg-background/50 p-3 font-mono text-xs text-foreground">
+                      {content}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </div>
   );
