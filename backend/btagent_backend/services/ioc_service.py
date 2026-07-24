@@ -331,6 +331,11 @@ async def update_ioc(
         "enrichment",
         "first_seen",
         "last_seen",
+        # UC-5.2 notebook annotations (#108).
+        "pinned",
+        "tags",
+        "analyst_note",
+        "disposition",
     }
     update_values = {k: v for k, v in fields.items() if k in allowed_fields}
 
