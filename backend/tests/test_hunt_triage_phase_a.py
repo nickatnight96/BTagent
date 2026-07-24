@@ -528,6 +528,86 @@ async def _seed_cluster_in_state(
     return cluster.id
 
 
+async def _seed_domain_cluster(
+    db_session: AsyncSession, *, org_id: str, domain: str, state: str, idx: int
+) -> str:
+    """Single-finding cluster with an explicit domain + aggregate state."""
+    from btagent_backend.db.models_hunt import HuntFindingClusterRow, HuntFindingRow
+
+    now = datetime.now(UTC)
+    cluster = HuntFindingClusterRow(
+        id=generate_id("hclu"),
+        org_id=org_id,
+        signature=f"sig-{domain}-{state}-{idx}-{generate_id('s')}",
+        title=f"{domain} {state} {idx}",
+        domain=domain,
+        severity="medium",
+        technique_ids=[],
+        finding_count=1,
+        state=state,
+        representative_finding_id="x",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(cluster)
+    await db_session.flush()
+    finding = HuntFindingRow(
+        id=generate_id("hfnd"),
+        org_id=org_id,
+        source="hunt_pack",
+        domain=domain,
+        title=f"{domain} {state} {idx}",
+        description="",
+        severity="medium",
+        confidence=0.5,
+        state=state,
+        technique_ids=[],
+        entities=[],
+        observables=[],
+        evidence={},
+        cluster_id=cluster.id,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add(finding)
+    await db_session.flush()
+    return cluster.id
+
+
+async def test_total_findings_respects_domain_and_state_filters(db_session: AsyncSession):
+    """Codex #401: ``list_clusters`` total_findings must honour the domain +
+    cluster-state filters, not count every finding in the org."""
+    org_id = await _isolated_org(db_session)
+    # 2 sigma/clustered, 1 identity/clustered, 1 sigma/promoted.
+    await _seed_domain_cluster(db_session, org_id=org_id, domain="sigma", state="clustered", idx=1)
+    await _seed_domain_cluster(db_session, org_id=org_id, domain="sigma", state="clustered", idx=2)
+    await _seed_domain_cluster(
+        db_session, org_id=org_id, domain="identity", state="clustered", idx=3
+    )
+    await _seed_domain_cluster(db_session, org_id=org_id, domain="sigma", state="promoted", idx=4)
+    await db_session.commit()
+
+    # Domain filter: only the 3 sigma findings, not the identity one.
+    _c, _f, _tc, total_sigma = await svc.list_clusters(db_session, org_id=org_id, domain="sigma")
+    assert total_sigma == 3
+
+    # Cluster-state filter: only the 1 promoted finding.
+    _c2, _f2, _tc2, total_promoted = await svc.list_clusters(
+        db_session, org_id=org_id, state="promoted"
+    )
+    assert total_promoted == 1
+
+    # Combined domain + state: the 2 sigma clustered (active) findings.
+    _c3, _f3, _tc3, total_combo = await svc.list_clusters(
+        db_session, org_id=org_id, domain="sigma", state="active"
+    )
+    assert total_combo == 2
+
+    # No filters: whole-org count unchanged (all 4 findings) — back-compat.
+    _c4, _f4, _tc4, total_all = await svc.list_clusters(db_session, org_id=org_id)
+    assert total_all == 4
+
+
 async def test_state_filter_applied_before_pagination(db_session: AsyncSession):
     """Seed >page_size clusters across states; page-1 of the suppressed tab
     shows suppressed clusters only and the total counts only suppressed."""
