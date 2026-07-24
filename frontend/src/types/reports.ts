@@ -43,3 +43,17 @@ export interface GeneratedReport {
   completeness: ReportCompleteness;
   status: string;
 }
+
+/** Agency-formatted submission draft (UC-6.2, `POST /reports/summarize`). */
+export interface AgencyFormattedReport {
+  format: string;
+  sections: Record<string, string>;
+  generated_at: string;
+  status: string;
+}
+
+export interface SummarizeResponse {
+  summary: Record<string, unknown>;
+  formatted_report: AgencyFormattedReport;
+  status: string;
+}

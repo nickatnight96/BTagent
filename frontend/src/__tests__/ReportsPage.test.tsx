@@ -8,10 +8,13 @@ const generateReport = vi.fn();
 const exportReportPdf = vi.fn();
 const listInvestigations = vi.fn();
 
+const summarizeInvestigations = vi.fn();
+
 vi.mock("@/api/reports", () => ({
   listReportTemplates: (...a: unknown[]) => listReportTemplates(...a),
   generateReport: (...a: unknown[]) => generateReport(...a),
   exportReportPdf: (...a: unknown[]) => exportReportPdf(...a),
+  summarizeInvestigations: (...a: unknown[]) => summarizeInvestigations(...a),
 }));
 
 vi.mock("@/api/investigations", () => ({
@@ -138,6 +141,61 @@ describe("ReportsPage", () => {
     const btn = screen.getByTestId("reports-generate") as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(generateReport).not.toHaveBeenCalled();
+  });
+
+  it("summarizes an investigation into an agency draft", async () => {
+    summarizeInvestigations.mockResolvedValue({
+      summary: {},
+      formatted_report: {
+        format: "fbi_ic3",
+        sections: {
+          header: "FBI IC3 COMPLAINT DRAFT",
+          incident_details: "INCIDENT DETAILS\n\nPhishing campaign …",
+        },
+        generated_at: "2026-07-24 00:00 UTC",
+        status: "success",
+      },
+      status: "success",
+    });
+    renderPage(<ReportsPage />);
+    await waitFor(() => expect(listReportTemplates).toHaveBeenCalled());
+
+    // Disabled until an investigation ID is present.
+    const btn = screen.getByTestId("reports-summarize") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+
+    fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+      target: { value: "inv_mock_001" },
+    });
+    fireEvent.change(screen.getByTestId("reports-agency-format"), {
+      target: { value: "fbi_ic3" },
+    });
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    await waitFor(() =>
+      expect(summarizeInvestigations).toHaveBeenCalledWith(["inv_mock_001"], "fbi_ic3"),
+    );
+    const sections = await screen.findByTestId("reports-agency-sections");
+    expect(sections.textContent).toContain("FBI IC3 COMPLAINT DRAFT");
+    expect(screen.getByTestId("reports-agency-section-incident_details")).toBeTruthy();
+  });
+
+  it("surfaces a summarization failure in the error banner", async () => {
+    summarizeInvestigations.mockRejectedValue(new Error("boom"));
+    renderPage(<ReportsPage />);
+    await waitFor(() => expect(listReportTemplates).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+      target: { value: "inv_nope" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reports-summarize"));
+    });
+
+    const err = await screen.findByTestId("reports-error");
+    expect(err.textContent).toContain("summarization failed");
   });
 
   it("suggests real investigations and shows a hint on match", async () => {
