@@ -95,6 +95,38 @@ async def test_annotate_validates_disposition_and_body(client, analyst_token):
     assert empty.status_code == 400
 
 
+async def test_pinned_filter_on_list(client, analyst_token):
+    """`GET /iocs?pinned=true` returns only the pinned working set (UC-5.2)."""
+    pinned_id = await _seed_ioc(client, analyst_token)
+    other_id = await _seed_ioc(client, analyst_token)
+
+    pin = await client.patch(
+        f"/api/v1/iocs/{pinned_id}/annotate",
+        headers=auth_header(analyst_token),
+        json={"pinned": True},
+    )
+    assert pin.status_code == 200, pin.text
+
+    pinned_list = await client.get("/api/v1/iocs?pinned=true", headers=auth_header(analyst_token))
+    assert pinned_list.status_code == 200, pinned_list.text
+    pinned_ids = {i["id"] for i in pinned_list.json()["items"]}
+    assert pinned_id in pinned_ids
+    assert other_id not in pinned_ids
+
+    unpinned_list = await client.get(
+        "/api/v1/iocs?pinned=false", headers=auth_header(analyst_token)
+    )
+    assert unpinned_list.status_code == 200
+    unpinned_ids = {i["id"] for i in unpinned_list.json()["items"]}
+    assert other_id in unpinned_ids
+    assert pinned_id not in unpinned_ids
+
+    # No param → both.
+    all_list = await client.get("/api/v1/iocs", headers=auth_header(analyst_token))
+    all_ids = {i["id"] for i in all_list.json()["items"]}
+    assert {pinned_id, other_id} <= all_ids
+
+
 async def test_annotate_requires_auth_and_existing_ioc(client, analyst_token):
     unauth = await client.patch("/api/v1/iocs/ioc_nope/annotate", json={"pinned": True})
     assert unauth.status_code in (401, 403)
