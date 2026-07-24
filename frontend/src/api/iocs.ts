@@ -1,10 +1,19 @@
 import api from "./client";
 import type {
   IOC,
+  IOCDisposition,
   IOCFilter,
   ImportResult,
   ExportOptions,
 } from "@/types/ioc";
+
+/** Partial notebook-annotation update (UC-5.2). Omitted fields are untouched. */
+export interface AnnotateIOCPatch {
+  pinned?: boolean;
+  tags?: string[];
+  analyst_note?: string;
+  disposition?: IOCDisposition;
+}
 
 interface PaginatedResponse<T> {
   items: T[];
@@ -53,6 +62,11 @@ export async function updateIOC(
   data: Partial<IOC>,
 ): Promise<IOC> {
   return api.patch<IOC>(`/v1/iocs/${id}`, data);
+}
+
+/** Update the IOC's notebook annotations (pin / tags / note / disposition). */
+export async function annotateIOC(id: string, patch: AnnotateIOCPatch): Promise<IOC> {
+  return api.patch<IOC>(`/v1/iocs/${id}/annotate`, patch);
 }
 
 export async function deleteIOC(id: string): Promise<void> {

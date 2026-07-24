@@ -17,6 +17,7 @@ import {
 import { useIOCStore } from "@/stores/iocStore";
 import { Button } from "@/components/ds/button";
 import { Badge } from "@/components/ds/badge";
+import { AnnotationSection } from "./AnnotationSection";
 import type { EnrichmentStatus, MitreTag } from "@/types/ioc";
 
 interface IOCDetailPanelProps {
@@ -190,6 +191,21 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
         </div>
 
         <div className="p-4 space-y-6">
+          {/* Notebook annotations (UC-5.2) */}
+          <div>
+            <SectionHeader>Notebook</SectionHeader>
+            <AnnotationSection
+              ioc={selectedIOC}
+              onAnnotated={(updated) =>
+                useIOCStore.setState((state) => ({
+                  selectedIOC: state.selectedIOC
+                    ? { ...state.selectedIOC, ...updated }
+                    : state.selectedIOC,
+                }))
+              }
+            />
+          </div>
+
           {/* Summary */}
           <div>
             <SectionHeader>Summary</SectionHeader>
