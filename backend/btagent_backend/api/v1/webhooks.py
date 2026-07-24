@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import get_db
 from btagent_backend.config import Settings, get_settings
-from btagent_backend.db.models import InvestigationRow
+from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,40 @@ def _verify_secret(
     settings: Settings,
     source: str,
 ) -> None:
-    expected = getattr(settings, "webhook_secret", None) or settings.jwt_secret
+    """Authenticate an inbound webhook against the dedicated webhook secret.
+
+    SEC #372: the webhook secret is a DISTINCT credential from ``jwt_secret``
+    and must never be compared against the JWT signing key in a real
+    deployment — a webhook client presenting the JWT key would otherwise be
+    able to forge admin JWTs. Effective-secret resolution:
+
+      * ``settings.webhook_secret`` when configured (the only accepted path in
+        staging/prod);
+      * in dev/test ONLY, if ``webhook_secret`` is unset, fall back to
+        ``jwt_secret`` (with a warning) so local/CI webhook tests keep working
+        without extra config;
+      * otherwise (unset outside dev/test) deny — a misconfiguration must fail
+        closed, never authenticate against the JWT key.
+    """
+    expected = settings.webhook_secret
+    if expected is None:
+        if settings.env in ("dev", "test"):
+            logger.warning(
+                "webhook_secret unset; falling back to jwt_secret for source=%s "
+                "(dev/test convenience only — set BTAGENT_WEBHOOK_SECRET for "
+                "staging/prod).",
+                source,
+            )
+            expected = settings.jwt_secret
+        else:
+            logger.error(
+                "Webhook rejected: BTAGENT_WEBHOOK_SECRET is not configured (source=%s)",
+                source,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or missing webhook secret",
+            )
     if not provided or not hmac.compare_digest(provided, expected):
         logger.warning("Webhook secret mismatch from source=%s", source)
         raise HTTPException(
@@ -136,10 +169,19 @@ async def _create_investigation(
 ) -> InvestigationRow:
     inv = InvestigationRow(
         id=generate_id("inv"),
+        # SEC #372: set org_id explicitly rather than relying on the column
+        # default. There is no per-source org mapping yet, so webhook-ingested
+        # cases are scoped to the default org (matching how other creators,
+        # e.g. ioc_service, fall back to DEFAULT_ORG_ID).
+        org_id=DEFAULT_ORG_ID,
         title=title,
         description=description,
         severity=severity,
         status=InvestigationStatus.PENDING.value,
+        # Unassigned until an analyst triages the alert — made explicit so the
+        # webhook path is self-documenting rather than leaning on the model
+        # default.
+        assigned_to=None,
         config={"webhook_source": source, "raw_alert": raw_payload},
     )
     db.add(inv)
