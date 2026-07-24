@@ -10,6 +10,7 @@
 import api from "./client";
 import type {
   GeneratedReport,
+  RemediationGuidance,
   ReportTemplateListResponse,
   SummarizeResponse,
 } from "@/types/reports";
@@ -17,6 +18,8 @@ import type {
 const BASE = "/v1/reports";
 
 export type AgencyFormat = "cisa" | "fbi_ic3" | "isac" | "generic";
+
+export type RemediationAudience = "executive" | "technical" | "compliance";
 
 export type ReportTemplateName =
   | "incident_report"
@@ -55,6 +58,22 @@ export async function summarizeInvestigations(
   return api.post<SummarizeResponse>(`${BASE}/summarize`, {
     investigation_ids: investigationIds,
     format,
+  });
+}
+
+/**
+ * Generate audience-tuned remediation guidance for an investigation (UC-6.2).
+ *
+ * RBAC server-side (`remediation:generate`); the investigation must be in the
+ * caller's scope.
+ */
+export async function generateRemediation(
+  investigationId: string,
+  audience: RemediationAudience,
+): Promise<RemediationGuidance> {
+  return api.post<RemediationGuidance>(`${BASE}/remediation`, {
+    investigation_id: investigationId,
+    audience,
   });
 }
 

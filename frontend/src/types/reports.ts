@@ -57,3 +57,27 @@ export interface SummarizeResponse {
   formatted_report: AgencyFormattedReport;
   status: string;
 }
+
+/**
+ * One remediation checklist item (UC-6.2, `POST /reports/remediation`).
+ *
+ * `priority` + `action` are common to every audience; the remaining fields
+ * are audience-specific (executive: effort/owner, technical: commands/
+ * verification, compliance: deadline/framework), so they stay open-typed.
+ */
+export interface RemediationAction {
+  priority: string;
+  action: string;
+  [key: string]: unknown;
+}
+
+export interface RemediationGuidance {
+  audience: string;
+  title: string;
+  severity?: string;
+  business_impact?: string;
+  actions: RemediationAction[];
+  investigation_id: string;
+  generated_at: string;
+  status: string;
+}

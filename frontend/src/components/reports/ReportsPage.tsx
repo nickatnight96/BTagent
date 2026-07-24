@@ -15,21 +15,27 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, FileText, Landmark, Loader2, Play } from "lucide-react";
+import { Download, FileText, Landmark, Loader2, Play, Wrench } from "lucide-react";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import {
   exportReportPdf,
+  generateRemediation,
   generateReport,
   listReportTemplates,
   summarizeInvestigations,
 } from "@/api/reports";
-import type { AgencyFormat, ReportTemplateName } from "@/api/reports";
+import type {
+  AgencyFormat,
+  RemediationAudience,
+  ReportTemplateName,
+} from "@/api/reports";
 import { listInvestigations } from "@/api/investigations";
 import type { Investigation } from "@/types/investigation";
 import type {
   AgencyFormattedReport,
   GeneratedReport,
+  RemediationGuidance,
   ReportTemplate,
 } from "@/types/reports";
 
@@ -46,6 +52,28 @@ const AGENCY_FORMATS: Array<{ value: AgencyFormat; label: string }> = [
   { value: "generic", label: "Generic" },
 ];
 
+const REMEDIATION_AUDIENCES: Array<{ value: RemediationAudience; label: string }> = [
+  { value: "executive", label: "Executive" },
+  { value: "technical", label: "Technical" },
+  { value: "compliance", label: "Compliance" },
+];
+
+function priorityColor(priority: string): string {
+  if (priority === "immediate") return "text-rose-300 border-rose-500/40";
+  if (priority === "short_term" || priority === "high") return "text-amber-300 border-amber-500/40";
+  return "text-sky-300 border-sky-500/40";
+}
+
+/** Audience-specific string extras worth surfacing on a checklist row. */
+const ACTION_DETAIL_KEYS = [
+  "estimated_effort",
+  "business_owner",
+  "deadline",
+  "timeline",
+  "verification",
+  "framework",
+] as const;
+
 export function ReportsPage() {
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [template, setTemplate] = useState<ReportTemplateName | "">("");
@@ -57,6 +85,9 @@ export function ReportsPage() {
   const [agencyFormat, setAgencyFormat] = useState<AgencyFormat>("cisa");
   const [agencySummary, setAgencySummary] = useState<AgencyFormattedReport | null>(null);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [audience, setAudience] = useState<RemediationAudience>("technical");
+  const [remediation, setRemediation] = useState<RemediationGuidance | null>(null);
+  const [isRemediating, setIsRemediating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -151,6 +182,22 @@ export function ReportsPage() {
       setIsSummarizing(false);
     }
   }, [investigationId, agencyFormat]);
+
+  const handleRemediate = useCallback(async () => {
+    const id = investigationId.trim();
+    if (!id) return;
+    setIsRemediating(true);
+    setError(null);
+    try {
+      const resp = await generateRemediation(id, audience);
+      setRemediation(resp);
+    } catch {
+      setError("Remediation generation failed. Check the investigation ID and try again.");
+      setRemediation(null);
+    } finally {
+      setIsRemediating(false);
+    }
+  }, [investigationId, audience]);
 
   const orderedSections = useMemo(() => {
     if (!report) return [];
@@ -400,6 +447,98 @@ export function ReportsPage() {
                     </pre>
                   </div>
                 ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ---- Remediation guidance (UC-6.2) ---- */}
+        <Card data-testid="reports-remediation-panel">
+          <CardContent className="py-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <Wrench className="w-4 h-4 text-sky-400" aria-hidden="true" />
+              <span className="text-sm font-semibold text-foreground">
+                Remediation guidance
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Audience-tuned checklist for the selected case
+              </span>
+            </div>
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground">Audience</span>
+                <select
+                  value={audience}
+                  onChange={(e) => setAudience(e.target.value as RemediationAudience)}
+                  data-testid="reports-remediation-audience"
+                  className="w-48 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-sky-500"
+                >
+                  {REMEDIATION_AUDIENCES.map((a) => (
+                    <option key={a.value} value={a.value}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleRemediate()}
+                disabled={investigationId.trim() === "" || isRemediating}
+                data-testid="reports-remediate"
+                title="Generate an audience-tuned remediation checklist for the selected case"
+              >
+                {isRemediating ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Play className="w-4 h-4" />
+                )}
+                <span className="ml-2">Generate guidance</span>
+              </Button>
+            </div>
+
+            {remediation && (
+              <div className="space-y-3" data-testid="reports-remediation-result">
+                <div>
+                  <div className="text-sm font-medium text-foreground">
+                    {remediation.title}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {remediation.audience} · generated {remediation.generated_at}
+                  </div>
+                </div>
+                {remediation.business_impact && (
+                  <p className="text-sm text-muted-foreground">
+                    {remediation.business_impact}
+                  </p>
+                )}
+                <ul className="space-y-2">
+                  {remediation.actions.map((a, idx) => (
+                    <li
+                      key={`${a.priority}-${idx}`}
+                      className="flex items-start gap-3 rounded-md border border-border/50 bg-background/50 p-3"
+                      data-testid={`reports-remediation-action-${idx}`}
+                    >
+                      <span
+                        className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${priorityColor(
+                          a.priority,
+                        )}`}
+                      >
+                        {a.priority.replace("_", " ")}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-sm text-foreground">{a.action}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {ACTION_DETAIL_KEYS.filter(
+                            (k) => typeof a[k] === "string" && a[k],
+                          )
+                            .map((k) => `${k.replace("_", " ")}: ${String(a[k])}`)
+                            .join(" · ")}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </CardContent>

@@ -9,12 +9,14 @@ const exportReportPdf = vi.fn();
 const listInvestigations = vi.fn();
 
 const summarizeInvestigations = vi.fn();
+const generateRemediation = vi.fn();
 
 vi.mock("@/api/reports", () => ({
   listReportTemplates: (...a: unknown[]) => listReportTemplates(...a),
   generateReport: (...a: unknown[]) => generateReport(...a),
   exportReportPdf: (...a: unknown[]) => exportReportPdf(...a),
   summarizeInvestigations: (...a: unknown[]) => summarizeInvestigations(...a),
+  generateRemediation: (...a: unknown[]) => generateRemediation(...a),
 }));
 
 vi.mock("@/api/investigations", () => ({
@@ -196,6 +198,76 @@ describe("ReportsPage", () => {
 
     const err = await screen.findByTestId("reports-error");
     expect(err.textContent).toContain("summarization failed");
+  });
+
+  it("generates an audience-tuned remediation checklist", async () => {
+    generateRemediation.mockResolvedValue({
+      audience: "executive",
+      title: "Executive Remediation Summary — Phishing Campaign",
+      severity: "high",
+      business_impact: "A high-severity incident was identified affecting 3 accounts.",
+      actions: [
+        {
+          priority: "immediate",
+          action: "Approve credential reset for all affected accounts",
+          estimated_effort: "1-2 hours",
+          business_owner: "IT Security",
+        },
+        {
+          priority: "short_term",
+          action: "Schedule phishing-awareness refresher",
+        },
+      ],
+      investigation_id: "inv_mock_001",
+      generated_at: "2026-07-24T02:00:00Z",
+      status: "success",
+    });
+    renderPage(<ReportsPage />);
+    await waitFor(() => expect(listReportTemplates).toHaveBeenCalled());
+
+    // Disabled until an investigation ID is present.
+    const btn = screen.getByTestId("reports-remediate") as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+
+    fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+      target: { value: "inv_mock_001" },
+    });
+    fireEvent.change(screen.getByTestId("reports-remediation-audience"), {
+      target: { value: "executive" },
+    });
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+
+    await waitFor(() =>
+      expect(generateRemediation).toHaveBeenCalledWith("inv_mock_001", "executive"),
+    );
+    const result = await screen.findByTestId("reports-remediation-result");
+    expect(result.textContent).toContain("Executive Remediation Summary");
+    expect(result.textContent).toContain("business owner: IT Security");
+    // Both checklist rows render with their priorities.
+    expect(screen.getByTestId("reports-remediation-action-0").textContent).toContain(
+      "immediate",
+    );
+    expect(screen.getByTestId("reports-remediation-action-1").textContent).toContain(
+      "short term",
+    );
+  });
+
+  it("surfaces a remediation failure in the error banner", async () => {
+    generateRemediation.mockRejectedValue(new Error("boom"));
+    renderPage(<ReportsPage />);
+    await waitFor(() => expect(listReportTemplates).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByTestId("reports-investigation-input"), {
+      target: { value: "inv_nope" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("reports-remediate"));
+    });
+
+    const err = await screen.findByTestId("reports-error");
+    expect(err.textContent).toContain("Remediation generation failed");
   });
 
   it("suggests real investigations and shows a hint on match", async () => {
