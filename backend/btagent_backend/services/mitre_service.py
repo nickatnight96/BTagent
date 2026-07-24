@@ -395,6 +395,8 @@ class MitreService:
     async def get_coverage(
         db: AsyncSession,
         investigation_id: str | None = None,
+        *,
+        org_id: str | None = None,
     ) -> CoverageMap:
         """Return a CoverageMap grouped by tactic.
 
@@ -407,7 +409,12 @@ class MitreService:
             Request-scoped async DB session.
         investigation_id : str | None
             If provided, only count tags for entities belonging to this
-            investigation.
+            investigation. (Callers must have already authorized access to it.)
+        org_id : str | None
+            When ``investigation_id`` is NOT provided, scope the otherwise-global
+            aggregation to this org so one tenant never sees another tenant's
+            coverage counts (GH #375). Ignored when ``investigation_id`` is set
+            (that path is already single-investigation scoped).
 
         Returns
         -------
@@ -428,6 +435,32 @@ class MitreService:
             ioc_ids = select(IOCRow.id).where(IOCRow.investigation_id == investigation_id)
             timeline_ids = select(TimelineEntryRow.id).where(
                 TimelineEntryRow.investigation_id == investigation_id
+            )
+            tag_query = tag_query.where(
+                or_(
+                    MitreTechniqueTagRow.entity_id.in_(ioc_ids),
+                    MitreTechniqueTagRow.entity_id.in_(timeline_ids),
+                )
+            )
+        elif org_id is not None:
+            # Global (no investigation) view scoped to the caller's org. The
+            # mitre_technique_tags table has no org_id column, so we scope
+            # through the two entity kinds that carry a clean org linkage:
+            # IOCs (own org_id) and timeline entries (via their investigation).
+            # LIMITATION (GH #375): tags on other entity kinds have no org
+            # linkage in the current schema and are therefore excluded from the
+            # org-scoped global view — accepted until those entities gain an
+            # org column (no migration in this change set).
+            from btagent_backend.db.models import InvestigationRow, IOCRow, TimelineEntryRow
+
+            ioc_ids = select(IOCRow.id).where(IOCRow.org_id == org_id)
+            timeline_ids = (
+                select(TimelineEntryRow.id)
+                .join(
+                    InvestigationRow,
+                    TimelineEntryRow.investigation_id == InvestigationRow.id,
+                )
+                .where(InvestigationRow.org_id == org_id)
             )
             tag_query = tag_query.where(
                 or_(
@@ -474,6 +507,8 @@ class MitreService:
     async def get_coverage_score(
         db: AsyncSession,
         investigation_id: str | None = None,
+        *,
+        org_id: str | None = None,
     ) -> float:
         """Return the percentage of techniques with at least one detection/tag.
 
@@ -483,13 +518,16 @@ class MitreService:
             Request-scoped async DB session.
         investigation_id : str | None
             Optional investigation scope filter.
+        org_id : str | None
+            Org scope for the global (no-investigation) view — see
+            :meth:`get_coverage`.
 
         Returns
         -------
         float
             Percentage (0.0-100.0) of techniques covered.
         """
-        coverage = await MitreService.get_coverage(db, investigation_id)
+        coverage = await MitreService.get_coverage(db, investigation_id, org_id=org_id)
         if coverage.total_techniques == 0:
             return 0.0
         return round((coverage.covered_techniques / coverage.total_techniques) * 100, 2)
@@ -498,6 +536,8 @@ class MitreService:
     async def get_detection_gaps(
         db: AsyncSession,
         investigation_id: str | None = None,
+        *,
+        org_id: str | None = None,
     ) -> list[DetectionGap]:
         """Identify techniques without detection data per tactic.
 
@@ -507,12 +547,15 @@ class MitreService:
             Request-scoped async DB session.
         investigation_id : str | None
             Optional investigation scope filter.
+        org_id : str | None
+            Org scope for the global (no-investigation) view — see
+            :meth:`get_coverage`.
 
         Returns
         -------
         list[DetectionGap]
         """
-        coverage = await MitreService.get_coverage(db, investigation_id)
+        coverage = await MitreService.get_coverage(db, investigation_id, org_id=org_id)
         gaps: list[DetectionGap] = []
 
         for tactic, techniques in coverage.tactics.items():
@@ -747,6 +790,8 @@ class MitreService:
     async def export_navigator_layer(
         db: AsyncSession,
         investigation_id: str | None = None,
+        *,
+        org_id: str | None = None,
     ) -> NavigatorLayer:
         """Export an ATT&CK Navigator compatible JSON layer.
 
@@ -756,12 +801,15 @@ class MitreService:
             Request-scoped async DB session.
         investigation_id : str | None
             If provided, layer reflects coverage for this investigation only.
+        org_id : str | None
+            Org scope for the global (no-investigation) view — see
+            :meth:`get_coverage`.
 
         Returns
         -------
         NavigatorLayer
         """
-        coverage = await MitreService.get_coverage(db, investigation_id)
+        coverage = await MitreService.get_coverage(db, investigation_id, org_id=org_id)
 
         nav_techniques: list[NavigatorTechnique] = []
         for tactic, techniques in coverage.tactics.items():

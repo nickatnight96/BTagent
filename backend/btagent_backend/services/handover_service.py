@@ -14,14 +14,31 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from btagent_shared.types.enums import InvestigationStatus
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_hunt import HuntFindingRow
 
-# Statuses that count as "still needs attention" for the open-case rollup.
-_OPEN_STATUSES = ("pending", "running", "paused", "awaiting_approval")
+# Terminal statuses — the case is resolved and off the incoming shift's plate.
+# (Mirrors the "closed" set used by data_retention / pattern_hunt, plus the
+# ``failed`` end-state.) Everything else in ``InvestigationStatus`` is an
+# open/active case that "still needs attention" for the handover rollup.
+#
+# Previously this rolled up on literal strings ("running", "awaiting_approval")
+# that DON'T EXIST in ``InvestigationStatus``, so genuinely active incidents
+# (``investigating``, ``triaging`` …) were silently omitted from the shift
+# handover (GH #387). Deriving from the enum keeps it correct and future-proof.
+_TERMINAL_STATUSES = frozenset(
+    {
+        InvestigationStatus.CLOSED.value,
+        InvestigationStatus.REMEDIATED.value,
+        InvestigationStatus.CANCELLED.value,
+        InvestigationStatus.FAILED.value,
+    }
+)
+_OPEN_STATUSES = tuple(s.value for s in InvestigationStatus if s.value not in _TERMINAL_STATUSES)
 
 _MAX_ITEMS = 20
 

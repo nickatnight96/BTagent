@@ -16,11 +16,12 @@ give an operator the explicit, audited override. Coverage here:
 from __future__ import annotations
 
 import pytest_asyncio
+from btagent_shared.utils.ids import generate_id
 from httpx import AsyncClient
 from sqlalchemy import delete, select
 
 from btagent_backend.config import OIDCProviderConfig, get_settings
-from btagent_backend.db.models import AuditLogRow, SSOIdentityRow
+from btagent_backend.db.models import AuditLogRow, OrganizationRow, SSOIdentityRow, UserRow
 from tests.helpers import auth_header
 
 _PROVIDER_KEY = "testidp"
@@ -240,6 +241,103 @@ async def test_link_and_unlink_are_audited(
         assert r.outcome == "success"
         assert r.resource == f"user:{sample_user.id}"
         assert r.details["identity_id"] == identity_id
+
+
+# --- Cross-org scoping (GH #376) ------------------------------------------- #
+
+_FOREIGN_ORG = "org_sso_foreign_tenant"
+
+
+async def _make_foreign_user(db_session) -> UserRow:
+    """Create a user in a DIFFERENT org than the admin token's (default) org."""
+    if await db_session.get(OrganizationRow, _FOREIGN_ORG) is None:
+        db_session.add(OrganizationRow(id=_FOREIGN_ORG, name="Foreign Tenant"))
+        await db_session.commit()
+    uid = generate_id("usr")
+    user = UserRow(
+        id=uid,
+        org_id=_FOREIGN_ORG,
+        username=f"foreign-{uid}",
+        email=f"{uid}@foreign.test",
+        password_hash=None,
+        role="analyst",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    return user
+
+
+async def test_link_cross_org_user_is_404(
+    client: AsyncClient, admin_token: str, provider, db_session
+):
+    """An admin cannot link an SSO identity onto a user in another tenant."""
+    foreign = await _make_foreign_user(db_session)
+    resp = await client.post(
+        "/api/v1/auth/sso/identities",
+        json=_link_body(foreign.id),
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 404, resp.text
+
+    # Nothing was linked (the autouse fixture cleared identities beforehand).
+    rows = (await db_session.execute(select(SSOIdentityRow))).scalars().all()
+    assert rows == []
+
+
+async def test_list_scoped_to_caller_org(
+    client: AsyncClient, admin_token: str, sample_user, provider, db_session
+):
+    """List returns only identities whose owning user is in the caller's org."""
+    created = await client.post(
+        "/api/v1/auth/sso/identities",
+        json=_link_body(sample_user.id),
+        headers=auth_header(admin_token),
+    )
+    same_org_id = created.json()["id"]
+
+    # Cross-org identity inserted directly (bypassing the org-guarded route).
+    foreign = await _make_foreign_user(db_session)
+    foreign_identity = SSOIdentityRow(
+        id=generate_id("sso"),
+        user_id=foreign.id,
+        provider=_PROVIDER_KEY,
+        subject="foreign-subject-list",
+        email="foreign@idp.test",
+    )
+    db_session.add(foreign_identity)
+    await db_session.commit()
+
+    listed = await client.get("/api/v1/auth/sso/identities", headers=auth_header(admin_token))
+    assert listed.status_code == 200
+    ids = [i["id"] for i in listed.json()]
+    assert same_org_id in ids
+    assert foreign_identity.id not in ids
+
+
+async def test_unlink_cross_org_identity_is_404(
+    client: AsyncClient, admin_token: str, provider, db_session
+):
+    """An admin cannot unlink an identity owned by a user in another tenant."""
+    foreign = await _make_foreign_user(db_session)
+    foreign_identity = SSOIdentityRow(
+        id=generate_id("sso"),
+        user_id=foreign.id,
+        provider=_PROVIDER_KEY,
+        subject="foreign-subject-unlink",
+        email="foreign2@idp.test",
+    )
+    db_session.add(foreign_identity)
+    await db_session.commit()
+
+    resp = await client.delete(
+        f"/api/v1/auth/sso/identities/{foreign_identity.id}",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 404, resp.text
+
+    # Still present — the cross-org delete was refused.
+    still = await db_session.get(SSOIdentityRow, foreign_identity.id)
+    assert still is not None
 
 
 # --- Behavior: linking unblocks the JIT 409 -------------------------------- #
