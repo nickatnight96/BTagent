@@ -15,10 +15,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, Play } from "lucide-react";
+import { Download, FileText, Loader2, Play } from "lucide-react";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
-import { generateReport, listReportTemplates } from "@/api/reports";
+import { exportReportPdf, generateReport, listReportTemplates } from "@/api/reports";
 import type { ReportTemplateName } from "@/api/reports";
 import type { GeneratedReport, ReportTemplate } from "@/types/reports";
 
@@ -34,6 +34,7 @@ export function ReportsPage() {
   const [investigationId, setInvestigationId] = useState("");
   const [report, setReport] = useState<GeneratedReport | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -72,6 +73,30 @@ export function ReportsPage() {
       setIsGenerating(false);
     }
   }, [template, investigationId]);
+
+  const handleExport = useCallback(async () => {
+    if (!report) return;
+    setIsExporting(true);
+    setError(null);
+    try {
+      const blob = await exportReportPdf(
+        report.investigation_id,
+        report.template as ReportTemplateName,
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `report_${report.investigation_id}_${report.template}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to export report PDF");
+    } finally {
+      setIsExporting(false);
+    }
+  }, [report]);
 
   const orderedSections = useMemo(() => {
     if (!report) return [];
@@ -169,18 +194,35 @@ export function ReportsPage() {
                       {report.section_count} sections · generated {report.generated_at}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div
-                      className={`text-2xl font-semibold ${completenessColor(
-                        report.completeness.completeness_pct,
-                      )}`}
-                      data-testid="reports-completeness-pct"
+                  <div className="flex items-center gap-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleExport()}
+                      disabled={isExporting}
+                      data-testid="reports-export-pdf"
+                      title="Download this report as a PDF (TLP:RED investigations are refused)"
                     >
-                      {report.completeness.completeness_pct}%
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {report.completeness.required_populated}/
-                      {report.completeness.required_total} required fields
+                      {isExporting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4" />
+                      )}
+                      <span className="ml-2 hidden sm:inline">Export PDF</span>
+                    </Button>
+                    <div className="text-right">
+                      <div
+                        className={`text-2xl font-semibold ${completenessColor(
+                          report.completeness.completeness_pct,
+                        )}`}
+                        data-testid="reports-completeness-pct"
+                      >
+                        {report.completeness.completeness_pct}%
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {report.completeness.required_populated}/
+                        {report.completeness.required_total} required fields
+                      </div>
                     </div>
                   </div>
                 </div>
