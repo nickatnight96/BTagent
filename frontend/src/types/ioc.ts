@@ -114,7 +114,19 @@ export interface IOC {
   tlp?: TLP;
   tlp_level?: string;
   related_ioc_ids?: string[];
+  // UC-5.2 notebook annotations (#108) — analyst-owned metadata.
+  pinned?: boolean;
+  analyst_note?: string;
+  disposition?: string;
 }
+
+/** Valid analyst dispositions for the annotate endpoint. */
+export type IOCDisposition =
+  | ""
+  | "under_review"
+  | "confirmed_malicious"
+  | "benign"
+  | "false_positive";
 
 /** IOC filter parameters */
 export interface IOCFilter {
