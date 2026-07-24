@@ -32,6 +32,7 @@ import {
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
+import { IocRulesPanel } from "@/components/detection/IocRulesPanel";
 import {
   listProposals,
   acceptProposal,
@@ -432,6 +433,12 @@ export function DetectionProposalsPage() {
             })}
           </div>
         )}
+
+        {/* Quick-deploy SIEM rules from a case's IOCs (UC-6.2) — complements
+            the formal CTI→Sigma review queue above. */}
+        <div className="mt-6">
+          <IocRulesPanel />
+        </div>
       </div>
     </div>
   );

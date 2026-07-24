@@ -9,6 +9,7 @@
 
 import api from "./client";
 import type {
+  DetectionContentResponse,
   GeneratedReport,
   RemediationGuidance,
   ReportTemplateListResponse,
@@ -20,6 +21,8 @@ const BASE = "/v1/reports";
 export type AgencyFormat = "cisa" | "fbi_ic3" | "isac" | "generic";
 
 export type RemediationAudience = "executive" | "technical" | "compliance";
+
+export type SiemPlatform = "splunk" | "elastic" | "sentinel";
 
 export type ReportTemplateName =
   | "incident_report"
@@ -74,6 +77,22 @@ export async function generateRemediation(
   return api.post<RemediationGuidance>(`${BASE}/remediation`, {
     investigation_id: investigationId,
     audience,
+  });
+}
+
+/**
+ * Generate platform-specific SIEM rules from an investigation's IOCs (UC-6.2).
+ *
+ * RBAC server-side (`remediation:generate`); the investigation must be in the
+ * caller's scope.
+ */
+export async function generateDetectionContent(
+  investigationId: string,
+  platform: SiemPlatform,
+): Promise<DetectionContentResponse> {
+  return api.post<DetectionContentResponse>(`${BASE}/detection-content`, {
+    investigation_id: investigationId,
+    platform,
   });
 }
 
