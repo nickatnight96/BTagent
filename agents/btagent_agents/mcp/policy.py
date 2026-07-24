@@ -7,10 +7,13 @@ agents-side MCP registry. :func:`evaluate_tool_call` is consulted by
 
 * **HITL gate** — a capability declared ``hitl_required=True`` (the
   containment actions, the detection-PR composer) is refused with a
-  ``hitl_required`` verdict unless the call carries ``hitl_approved=True``.
-  The flag is set by the HITL resume path after an analyst approves — the
-  router envelope is what forces that round-trip; the audit trail of the
-  approval lives with the HITL hook, not here.
+  ``hitl_required`` verdict unless a server-set approval is present. The
+  approval is NEVER an LLM-supplied tool argument (that would let a
+  prompt-injected/misaligned agent self-approve containment, #374): it lives
+  in the request/run-scoped :data:`_hitl_approved` contextvar, flipped only by
+  the HITL resume path via :func:`set_hitl_approved` / :func:`hitl_approval`
+  after an analyst approves. The router envelope is what forces that
+  round-trip; the audit trail of the approval lives with the HITL hook.
 * **TLP-egress gate** — mirrors the engine semantics: a capability's
   ``tlp_egress`` is the *highest* context classification it may run at.
   With an active classification set (see :func:`set_active_tlp`), any
@@ -22,13 +25,19 @@ agents-side MCP registry. :func:`evaluate_tool_call` is consulted by
   registered tool has a manifest capability, so an undeclared tool name at
   runtime means a policy hole; it is refused rather than waved through.
 
-The active classification is process-global (set per investigation by the
-orchestrator's classification hook); :func:`reset_active_tlp` restores the
-unrestricted default for tests.
+The active classification is request/run-scoped, held in a
+:class:`contextvars.ContextVar` and set per investigation by the classification
+hook (:mod:`btagent_agents.hooks.classification_hook`). A contextvar — rather
+than a process-global — is what keeps two concurrent investigations from
+clobbering each other's classification (#397). :func:`reset_active_tlp`
+restores the unrestricted default for tests.
 """
 
 from __future__ import annotations
 
+import contextvars
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -46,23 +55,85 @@ TLP_RANK: dict[TLP, int] = {
     TLP.RED: 4,
 }
 
-_active_tlp: TLP | None = None
+# Request/run-scoped active classification. Backed by a ContextVar so
+# concurrent investigations never clobber one another — a single process-global
+# would leak a TLP:RED context into an unrelated run (#397).
+_active_tlp: contextvars.ContextVar[TLP | None] = contextvars.ContextVar(
+    "btagent_mcp_active_tlp", default=None
+)
+
+# Request/run-scoped HITL approval. The model MUST NOT be able to set this:
+# ``mcp_router_tool`` no longer exposes an ``hitl_approved`` argument (#374).
+# Only the server-controlled HITL resume path flips it (via
+# :func:`set_hitl_approved` / :func:`hitl_approval`) after an analyst approves a
+# gated action. Defaults to False (fail-closed).
+_hitl_approved: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "btagent_mcp_hitl_approved", default=False
+)
 
 
-def set_active_tlp(tlp: TLP | None) -> None:
-    """Set the active context classification (None = unrestricted)."""
-    global _active_tlp
-    _active_tlp = tlp
+def set_active_tlp(tlp: TLP | None) -> contextvars.Token[TLP | None]:
+    """Set the active context classification (None = unrestricted).
+
+    Returns the contextvar token so callers may restore the prior value; most
+    callers ignore it and use :func:`reset_active_tlp`.
+    """
+    return _active_tlp.set(tlp)
 
 
 def get_active_tlp() -> TLP | None:
     """The active context classification, or None when unrestricted."""
-    return _active_tlp
+    return _active_tlp.get()
 
 
 def reset_active_tlp() -> None:
     """Restore the unrestricted default (test hook)."""
-    set_active_tlp(None)
+    _active_tlp.set(None)
+
+
+@contextmanager
+def active_tlp_scope(tlp: TLP | None) -> Iterator[None]:
+    """Scope the active classification to a block, restoring the prior value."""
+    token = _active_tlp.set(tlp)
+    try:
+        yield
+    finally:
+        _active_tlp.reset(token)
+
+
+def set_hitl_approved(approved: bool) -> contextvars.Token[bool]:
+    """Server-only: mark the current run/request context as HITL-approved.
+
+    Called EXCLUSIVELY by the HITL resume path after an analyst approves a
+    gated action — never from an LLM-supplied tool argument (#374). Returns the
+    contextvar token so callers may restore the prior value.
+    """
+    return _hitl_approved.set(approved)
+
+
+def is_hitl_approved() -> bool:
+    """Whether the current context carries a server-set HITL approval."""
+    return _hitl_approved.get()
+
+
+def reset_hitl_approved() -> None:
+    """Clear any server-set HITL approval (fail-closed default)."""
+    _hitl_approved.set(False)
+
+
+@contextmanager
+def hitl_approval(approved: bool = True) -> Iterator[None]:
+    """Scope a server-set HITL approval to the approved re-invocation block.
+
+    The HITL resume path wraps its re-dispatch of an analyst-approved action in
+    this context manager so the router's HITL gate sees the approval without
+    ever exposing it to the model.
+    """
+    token = _hitl_approved.set(approved)
+    try:
+        yield
+    finally:
+        _hitl_approved.reset(token)
 
 
 def is_tlp_allowed(capability_tlp: TLP, active_tlp: TLP | None) -> bool:
@@ -109,15 +180,22 @@ def evaluate_tool_call(
     tool_name: str,
     *,
     active_tlp: TLP | None = None,
-    hitl_approved: bool = False,
+    hitl_approved: bool | None = None,
 ) -> PolicyVerdict:
     """Policy check for one MCP tool call (see module docstring).
 
-    ``active_tlp`` defaults to the process-global classification set via
+    ``active_tlp`` defaults to the run-scoped classification set via
     :func:`set_active_tlp`; pass it explicitly to override.
+
+    ``hitl_approved`` defaults to the run-scoped, server-only approval set via
+    :func:`set_hitl_approved` — it is deliberately NOT sourced from any
+    LLM-supplied argument (#374). Pass it explicitly only from server-side
+    callers/tests that model the resume path.
     """
     if active_tlp is None:
-        active_tlp = _active_tlp
+        active_tlp = _active_tlp.get()
+    if hitl_approved is None:
+        hitl_approved = _hitl_approved.get()
 
     server_id, cap = _find_capability(tool_name)
     if cap is None:
