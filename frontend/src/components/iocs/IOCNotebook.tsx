@@ -14,6 +14,7 @@ import {
   Zap,
   Database,
   XCircle,
+  Pin,
 } from "lucide-react";
 import { useIOCStore } from "@/stores/iocStore";
 import { useInvestigationStore } from "@/stores/investigationStore";
@@ -23,7 +24,69 @@ import { Badge } from "@/components/ds/badge";
 import { IOCDetailPanel } from "./IOCDetailPanel";
 import { IOCImportModal } from "./IOCImportModal";
 import { IOCExportDialog } from "./IOCExportDialog";
-import type { IOCType, IOCSortField, EnrichmentStatus } from "@/types/ioc";
+import type { IOC, IOCType, IOCSortField, EnrichmentStatus } from "@/types/ioc";
+
+/**
+ * Pinned-first stable reorder (UC-5.2): pinned IOCs surface at the top of
+ * whatever server-side sort the analyst picked; relative order within the
+ * pinned/unpinned groups is preserved.
+ */
+export function pinnedFirst<T extends { pinned?: boolean }>(items: T[]): T[] {
+  return [...items].sort(
+    (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)),
+  );
+}
+
+const DISPOSITION_BADGE: Record<string, { label: string; className: string }> = {
+  under_review: { label: "review", className: "border-sky-500/40 text-sky-300" },
+  confirmed_malicious: { label: "malicious", className: "border-rose-500/40 text-rose-300" },
+  benign: { label: "benign", className: "border-emerald-500/40 text-emerald-300" },
+  false_positive: { label: "false +", className: "border-border text-muted-foreground" },
+};
+
+const MAX_TAG_BADGES = 3;
+
+/** Pin marker + disposition/tag badges rendered under the IOC value (UC-5.2). */
+export function AnnotationBadges({ ioc }: { ioc: IOC }) {
+  const disposition = ioc.disposition ? DISPOSITION_BADGE[ioc.disposition] : undefined;
+  const tags = ioc.tags ?? [];
+  if (!ioc.pinned && !disposition && tags.length === 0) return null;
+  return (
+    <span
+      className="mt-0.5 flex flex-wrap items-center gap-1"
+      data-testid={`ioc-annotation-badges-${ioc.id}`}
+    >
+      {ioc.pinned && (
+        <Pin
+          className="w-3 h-3 text-amber-400"
+          aria-label="Pinned"
+          data-testid={`ioc-pin-${ioc.id}`}
+        />
+      )}
+      {disposition && (
+        <span
+          className={`rounded border px-1 py-px text-[9px] font-medium uppercase tracking-wide ${disposition.className}`}
+          data-testid={`ioc-disposition-${ioc.id}`}
+        >
+          {disposition.label}
+        </span>
+      )}
+      {tags.slice(0, MAX_TAG_BADGES).map((tag) => (
+        <span
+          key={tag}
+          className="rounded border border-border px-1 py-px text-[9px] text-muted-foreground"
+        >
+          {tag}
+        </span>
+      ))}
+      {tags.length > MAX_TAG_BADGES && (
+        <span className="text-[9px] text-muted-foreground">
+          +{tags.length - MAX_TAG_BADGES}
+        </span>
+      )}
+    </span>
+  );
+}
 
 const IOC_TYPE_OPTIONS: { label: string; value: IOCType | "" }[] = [
   { label: "All Types", value: "" },
@@ -180,6 +243,10 @@ export function IOCNotebook() {
     () => iocs.length > 0 && iocs.every((ioc) => selectedIds.has(ioc.id)),
     [iocs, selectedIds],
   );
+
+  // UC-5.2: pinned IOCs always surface at the top of the current page,
+  // whatever the server-side sort.
+  const displayIOCs = useMemo(() => pinnedFirst(iocs), [iocs]);
 
   function SortHeader({
     field,
@@ -570,7 +637,7 @@ export function IOCNotebook() {
                 </tr>
               </thead>
               <tbody>
-                {iocs.map((ioc, index) => (
+                {displayIOCs.map((ioc, index) => (
                   <tr
                     key={ioc.id}
                     onClick={() => selectIOC(ioc.id)}
@@ -605,6 +672,7 @@ export function IOCNotebook() {
                       <span className="font-mono text-xs text-foreground truncate max-w-[240px] inline-block">
                         {ioc.value}
                       </span>
+                      <AnnotationBadges ioc={ioc} />
                     </td>
                     <td className="px-3 py-2.5">
                       <ConfidenceBar confidence={ioc.confidence} />
