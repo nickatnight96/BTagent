@@ -7,7 +7,10 @@ from btagent_shared.types.config import AutonomyLevel, IntegrationAutonomy
 from pydantic import BaseModel
 
 from btagent_engine import Node, NodeCategory, NodeContext, NodeMeta, Runner
+from btagent_engine.compiler.steps import HITLGateNode
 from btagent_engine.middleware.hitl import (
+    HITLGateMiddleware,
+    HITLGatePause,
     HITLMiddleware,
     HITLPause,
     requires_approval,
@@ -110,3 +113,58 @@ def test_requires_approval_l4_only_blocks_l0_actions():
     assert requires_approval("integration.disable_account", AutonomyLevel.L4_FULL_AUTO, ia)
     # virustotal lookup is L3 by default -> not blocked at L4
     assert not requires_approval("integration.virustotal.lookup", AutonomyLevel.L4_FULL_AUTO, ia)
+
+
+# --------------------------------------------------------------------------- #
+# HITLGateMiddleware -- explicit hitl_gate step gating (GH #389)
+# --------------------------------------------------------------------------- #
+
+
+async def test_gate_middleware_ignores_non_gate_nodes():
+    """A gate middleware must be a no-op for anything that isn't the gate.
+
+    Even an INTEGRATION node at L0 (which the *autonomy* HITL would pause)
+    passes straight through the gate middleware -- gating that node is the
+    other middleware's job, not this one's.
+    """
+    mw = HITLGateMiddleware()
+    runner = Runner([mw])
+    node = _make_node("integration.disable_account.run", NodeCategory.INTEGRATION)()
+    out = await runner.execute(node, _In(q=""), _ctx())
+    assert out.ok is True
+
+
+async def test_gate_middleware_pauses_the_hitl_gate_node():
+    """Reaching the ``decision.hitl_gate`` node raises HITLGatePause and the
+    node's ``run`` (which would return approved=True) never executes."""
+    mw = HITLGateMiddleware()
+    runner = Runner([mw])
+    node = HITLGateNode()
+    with pytest.raises(HITLGatePause) as ei:
+        await runner.execute(
+            node,
+            {"required_role": "incident_commander", "prompt": "Approve containment?"},
+            _ctx(),
+        )
+    # required_role / prompt are propagated onto the pause for the approval card.
+    assert ei.value.node_id == HITLGateNode.meta.id
+    assert ei.value.required_role == "incident_commander"
+    assert ei.value.prompt == "Approve containment?"
+    # HITLGatePause is a HITLPause subclass so the executor's existing catch
+    # translates it to WorkflowPaused with no executor change.
+    assert isinstance(ei.value, HITLPause)
+
+
+async def test_gate_middleware_bypasses_when_step_is_approved():
+    """A resume that approved this step skips the pause -- the gate's
+    pass-through ``run`` proceeds and returns approved=True."""
+    mw = HITLGateMiddleware()
+    runner = Runner([mw])
+    node = HITLGateNode()
+    ctx = NodeContext(
+        run_id="r1",
+        org_id="org_test",
+        metadata={"current_step_id": "gate", "approved_steps": {"gate"}},
+    )
+    out = await runner.execute(node, {"required_role": "incident_commander"}, ctx)
+    assert out.approved is True

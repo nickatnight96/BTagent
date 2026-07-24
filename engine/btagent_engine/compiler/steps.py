@@ -16,11 +16,14 @@ Three Nodes live here:
   in for the merge.
 
 * :class:`HITLGateNode` (id ``decision.hitl_gate``) -- a *pass-through*
-  with category ``DECISION``. The HITL middleware (Sprint 2B) inspects
-  the node's category and gates execution; the Node itself does
-  nothing functional. This keeps the gating policy in middleware and
-  out of the Node, so the same gate can be opted-out of in unit tests
-  by simply running without the middleware.
+  with category ``DECISION``. ``HITLGateMiddleware``
+  (``btagent_engine.middleware.hitl``) keys off this node id and PAUSES
+  execution (raising ``HITLGatePause``) until a human approves; the Node
+  itself does nothing functional and its ``run`` is only reached *after*
+  approval. Keeping the gating policy in middleware (rather than the
+  Node) means the same gate can be opted out of in unit tests by simply
+  running without the middleware, and the Node keeps its DECISION
+  category so it doesn't need bespoke routing.
 
 The ``action`` step type is *not* a class here: an action step is just
 the wrapping of an already-registered Node by id. The compiler emits a
@@ -169,13 +172,16 @@ class HITLGateNodeOutput(BaseModel):
 
 
 class HITLGateNode(Node[HITLGateNodeInput, HITLGateNodeOutput]):
-    """Pass-through Node whose category triggers the HITL middleware.
+    """Pass-through Node whose id triggers ``HITLGateMiddleware``.
 
-    ``approved`` is True at the Node level by default; the gating
-    middleware overlays the actual approval state via context metadata
-    (the contract's exact shape is owned by the HITL middleware in
-    Sprint 2B). Without that middleware the Node is a no-op, which is
-    exactly what we want for unit tests.
+    ``approved`` is True at the Node level by default: the middleware
+    pauses the run in ``before_run`` *before* ``run`` is ever called, so
+    ``run`` executes only once the step has been approved on resume --
+    at which point returning ``approved=True`` is correct. Without the
+    middleware (e.g. in a Node unit test) the gate is a no-op, which is
+    exactly what we want for isolated tests. ``required_role`` / ``prompt``
+    on the input are propagated by the middleware into the pause payload
+    so the analyst approval card can show who must approve and why.
     """
 
     meta: ClassVar[NodeMeta] = NodeMeta(
