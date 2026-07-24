@@ -232,6 +232,48 @@ def impossible_travel_events() -> list[IdentityEvent]:
     ]
 
 
+def simultaneous_login_events() -> list[IdentityEvent]:
+    """Two logins for one principal at the EXACT same instant, London and NY.
+
+    Zero elapsed time, ~5570 km apart => infinite implied velocity. The strongest
+    impossible-travel signal; the old detector silently dropped it because
+    ``_speed_kmh`` returns None on a zero Δt (#407).
+    """
+    ts = _dt("2026-06-18T09:00:00")
+    return [
+        IdentityEvent(
+            id="evt_simul_001",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.LOGIN_SUCCESS,
+            principal_id="frank@corp.example.com",
+            ip_address="5.148.0.9",
+            geo=GeoLocation(
+                country="GB",
+                city="London",
+                latitude=51.5074,
+                longitude=-0.1278,
+            ),
+            timestamp=ts,
+        ),
+        IdentityEvent(
+            id="evt_simul_002",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.LOGIN_SUCCESS,
+            principal_id="frank@corp.example.com",
+            ip_address="23.100.0.9",
+            geo=GeoLocation(
+                country="US",
+                city="New York",
+                latitude=40.7128,
+                longitude=-74.0060,
+            ),
+            timestamp=ts,  # same instant as the London login
+        ),
+    ]
+
+
 def possible_travel_events() -> list[IdentityEvent]:
     """London then NY 8 hours apart — ~700 km/h, below the threshold."""
     return [

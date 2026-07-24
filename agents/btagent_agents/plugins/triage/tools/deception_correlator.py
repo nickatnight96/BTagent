@@ -75,7 +75,11 @@ def correlate_deception_events(incidents: list[dict[str, Any]]) -> dict[str, Any
     Pure: no I/O. Accepts the ``incidents`` list of a ``canary_list_incidents``
     envelope. See the module docstring for the priority model.
     """
-    incidents = incidents or []
+    # The list may contain non-dict junk (a bare string, number, or null) from a
+    # malformed envelope. Every downstream access is ``inc.get(...)``, which
+    # raises ``AttributeError`` on a non-dict -- so drop non-dict items up front
+    # and correlate the well-formed rows instead of crashing.
+    incidents = [inc for inc in (incidents or []) if isinstance(inc, dict)]
 
     # First pass: how many distinct decoys did each attacker IP trip, counting
     # only unacknowledged trips (acknowledged ones are already handled and must

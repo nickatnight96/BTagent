@@ -11,6 +11,7 @@ Coverage:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -192,3 +193,62 @@ async def test_tool_end_passthrough_for_clean_output() -> None:
 
     _evt_type, payload = emitter.events[1]
     assert payload["output"] == output
+
+
+# ── #405: tool-call INPUTS must be redacted before broadcast ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_event_emitter_redacts_secret_tool_input() -> None:
+    """Secret-valued tool-call args (JSON) must be redacted in the TOOL_START event."""
+    emitter = _CapturingEmitter()
+    cb = EventEmitterCallback(emitter, investigation_id="inv_test")  # type: ignore[arg-type]
+
+    input_str = json.dumps(
+        {
+            "host": "10.0.0.1",
+            "password": "hunter2",
+            "api_key": "sk-live-abcdef1234567890",
+            "authorization": "Basic dGVzdDp0ZXN0",
+        }
+    )
+    await cb.on_tool_start({"name": "login_tool"}, input_str, run_id=uuid4())
+
+    _evt_type, payload = emitter.events[0]
+    emitted = payload["input"]
+    assert "hunter2" not in emitted
+    assert "sk-live-abcdef1234567890" not in emitted
+    assert "dGVzdDp0ZXN0" not in emitted
+    assert "[REDACTED]" in emitted
+    # Non-secret fields are preserved.
+    assert "10.0.0.1" in emitted
+
+
+@pytest.mark.asyncio
+async def test_event_emitter_redacts_secret_ref_in_tool_input() -> None:
+    """``${secret:...}`` / ``${env:...}`` refs must be redacted even in non-JSON input."""
+    emitter = _CapturingEmitter()
+    cb = EventEmitterCallback(emitter, investigation_id="inv_test")  # type: ignore[arg-type]
+
+    input_str = "connect --dsn postgres://db --token ${secret:vault:db/token}"
+    await cb.on_tool_start({"name": "db_tool"}, input_str, run_id=uuid4())
+
+    _evt_type, payload = emitter.events[0]
+    emitted = payload["input"]
+    assert "${secret:vault:db/token}" not in emitted
+    assert "[REDACTED:secret_ref]" in emitted
+
+
+@pytest.mark.asyncio
+async def test_event_emitter_passes_clean_tool_input() -> None:
+    """Inputs with no secrets are emitted intact (values preserved)."""
+    emitter = _CapturingEmitter()
+    cb = EventEmitterCallback(emitter, investigation_id="inv_test")  # type: ignore[arg-type]
+
+    input_str = json.dumps({"host": "10.0.0.1", "limit": 50})
+    await cb.on_tool_start({"name": "search_tool"}, input_str, run_id=uuid4())
+
+    _evt_type, payload = emitter.events[0]
+    emitted = payload["input"]
+    assert "10.0.0.1" in emitted
+    assert "[REDACTED" not in emitted

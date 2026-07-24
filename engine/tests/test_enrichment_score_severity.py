@@ -107,3 +107,48 @@ async def test_score_unknown_technique_does_not_force_critical() -> None:
 
 def test_score_severity_node_is_registered() -> None:
     assert NodeRegistry.get("enrichment.score_severity") is ScoreSeverityNode
+
+
+# ---------------------------------------------------------------------------
+# #398 -- word-boundary keyword matching (no substring false positives)
+# ---------------------------------------------------------------------------
+
+
+async def test_apt_does_not_match_inside_adaptive_or_chapter() -> None:
+    """'apt' must NOT fire inside 'adaptive' / 'chapter' (was a substring match)."""
+    out = await Runner().execute(
+        ScoreSeverityNode(),
+        ScoreSeverityInput(text="Adaptive MFA rollout, see chapter 3 of the runbook"),
+        _ctx(),
+    )
+    # The critical 'apt' keyword (+0.40) must not have contributed.
+    assert not any("apt" in r for r in out.rationale)
+    assert out.severity == "low"
+    assert out.score == 0.0
+
+
+async def test_greatest_does_not_match_test_keyword() -> None:
+    """'test' must NOT fire inside 'greatest'.
+
+    Substring matching used to subtract the low 'test' keyword (-0.10) from a
+    genuine 'lateral movement' (+0.25) hit, dropping medium -> low. With
+    word-boundary matching only 'lateral movement' scores.
+    """
+    out = await Runner().execute(
+        ScoreSeverityNode(),
+        ScoreSeverityInput(text="Our greatest lateral movement playbook update"),
+        _ctx(),
+    )
+    assert not any("'test'" in r for r in out.rationale)
+    assert out.severity == "medium"
+
+
+async def test_apt_matches_as_standalone_word() -> None:
+    """Positive control: 'apt' as a standalone word still scores."""
+    out = await Runner().execute(
+        ScoreSeverityNode(),
+        ScoreSeverityInput(text="Confirmed apt activity observed on host"),
+        _ctx(),
+    )
+    assert any("'apt'" in r for r in out.rationale)
+    assert out.score >= 0.40

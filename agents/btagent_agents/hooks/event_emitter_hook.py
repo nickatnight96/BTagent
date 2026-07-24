@@ -11,7 +11,9 @@ Translates LangChain callback events into BTagent EventEnvelope messages:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import time
 from typing import Any
 from uuid import UUID
@@ -27,6 +29,71 @@ from btagent_agents.hooks._redaction import redact_secrets
 from btagent_agents.hooks.base import HookProvider
 
 logger = logging.getLogger("btagent.hooks.event_emitter")
+
+# Keys whose *values* are credentials and must never reach the broadcast
+# channel, regardless of value length or format.
+_SECRET_KEY_RE = re.compile(
+    r"(?i)(password|passwd|pwd|secret|token|api[_-]?key|apikey|authorization|credential)"
+)
+
+# ``${secret:...}`` / ``${env:...}`` credential references (BTagent secret
+# resolver syntax) — redact the whole ref so the path/name isn't broadcast.
+_SECRET_REF_RE = re.compile(r"\$\{(?:secret|env):[^}]*\}")
+
+# Env-/query-style ``key=value`` (or ``key: value``) secret pairs for inputs
+# that are not JSON. Value stops at the next delimiter; short values are caught
+# too (unlike the length-gated generic redactor in ``_redaction``).
+_SECRET_KV_RE = re.compile(
+    r"(?i)(?P<k>password|passwd|pwd|secret|token|api[_-]?key|apikey|authorization|credential)"
+    r"(?P<sep>\s*[:=]\s*)"
+    r"(?P<q>['\"]?)"
+    r"(?P<v>[^'\"\s,}&]+)"
+    r"(?P=q)"
+)
+
+
+def _redact_secret_string(value: str) -> str:
+    """Redact secret refs and well-known token formats inside a free string."""
+    value = _SECRET_REF_RE.sub("[REDACTED:secret_ref]", value)
+    return redact_secrets(value)
+
+
+def _redact_secret_obj(obj: Any) -> Any:
+    """Recursively redact a parsed-JSON structure by secret-looking key name."""
+    if isinstance(obj, dict):
+        return {
+            k: ("[REDACTED]" if _SECRET_KEY_RE.search(str(k)) else _redact_secret_obj(v))
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_secret_obj(v) for v in obj]
+    if isinstance(obj, str):
+        return _redact_secret_string(obj)
+    return obj
+
+
+def _redact_tool_input(input_str: str) -> str:
+    """Redact credentials from a tool-call argument string before broadcast.
+
+    Tool inputs frequently carry secrets (``password``/``token``/``api_key``/
+    ``authorization``/``credential`` fields and ``${secret:...}``/``${env:...}``
+    refs). They were emitted verbatim to the shared WebSocket channel. Structured
+    (JSON) inputs are redacted by key name; anything else falls back to
+    string-level redaction of secret refs, known token formats, and ``key=value``
+    pairs.
+    """
+    if not input_str:
+        return input_str
+    try:
+        parsed = json.loads(input_str)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, (dict, list)):
+        return json.dumps(_redact_secret_obj(parsed))
+    return _SECRET_KV_RE.sub(
+        lambda m: f"{m.group('k')}{m.group('sep')}{m.group('q')}[REDACTED]{m.group('q')}",
+        _redact_secret_string(input_str),
+    )
 
 
 def _fire_and_forget(coro: Any) -> None:
@@ -208,15 +275,21 @@ class EventEmitterCallback(AsyncCallbackHandler):
         run_key = str(run_id)
         self._tool_start_times[run_key] = time.monotonic()
 
+        # Tool arguments can carry credentials (passwords, tokens, api keys,
+        # ${secret:...}/${env:...} refs). Redact BEFORE the payload reaches the
+        # shared broadcast channel, and TLP-gate on the redacted form so nothing
+        # unredacted is logged even on a drop (mirrors on_tool_end).
+        redacted_input = _redact_tool_input(input_str)
+
         if not self._tlp_check_or_drop(
-            {"tool_name": tool_name, "input": input_str, "run_id": run_key},
+            {"tool_name": tool_name, "input": redacted_input, "run_id": run_key},
             source="on_tool_start",
         ):
             return
         await self._emitter.emit(
             EventType.TOOL_START,
             tool_name=tool_name,
-            input=input_str,
+            input=redacted_input,
             run_id=run_key,
         )
 

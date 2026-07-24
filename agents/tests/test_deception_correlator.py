@@ -162,6 +162,49 @@ class TestToolWrapper:
 
 
 # ---------------------------------------------------------------------------
+# #404 -- non-dict list items must be skipped, not crash on ``inc.get``
+# ---------------------------------------------------------------------------
+
+
+class TestNonDictItems:
+    def test_correlator_skips_non_dict_items(self) -> None:
+        """A list mixing valid incidents with junk (str/int/None) must not crash."""
+        out = correlate_deception_events(
+            [
+                _inc("1.1.1.1", "port scan", "decoy-a", inc_id="a"),
+                "not-a-dict",
+                42,
+                None,
+                ["nested", "list"],
+            ]
+        )
+        assert out["total_incidents"] == 1
+        assert out["incidents"][0]["id"] == "a"
+
+    def test_tool_wrapper_skips_non_dict_items(self) -> None:
+        """The JSON tool wrapper must also survive a list with non-object items."""
+        payload = [
+            {
+                "id": "a",
+                "src_host": "1.1.1.1",
+                "incident_type": "port scan",
+                "target": "decoy-a",
+                "acknowledged": False,
+            },
+            "bad",
+            5,
+        ]
+        out = deception_triage.invoke({"incidents_json": json.dumps(payload)})
+        assert out["total_incidents"] == 1
+        assert out["incidents"][0]["id"] == "a"
+
+    def test_all_non_dict_items_yield_empty_result(self) -> None:
+        out = correlate_deception_events(["x", 1, None])
+        assert out["total_incidents"] == 0
+        assert out["incidents"] == []
+
+
+# ---------------------------------------------------------------------------
 # End-to-end from the real connector envelope
 # ---------------------------------------------------------------------------
 
