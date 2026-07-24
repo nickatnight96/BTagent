@@ -289,8 +289,9 @@ async def test_hitl_callback_raises_hitlinterrupt_for_high_risk_tool() -> None:
     assert err.tool_name == "isolate_host"
     assert err.checkpoint_id.startswith("cp_")
     # ``required_level`` is the tool's resolved autonomy level (host_isolation
-    # defaults to L1_ASSISTED in IntegrationAutonomy), NOT the agent's level.
-    assert err.required_level == AutonomyLevel.L1_ASSISTED
+    # defaults to L0_MANUAL in IntegrationAutonomy since #377), NOT the agent's
+    # level.
+    assert err.required_level == AutonomyLevel.L0_MANUAL
     # Event must have been emitted before the raise.
     assert len(emitter.events) == 1
     _event_type, payload = emitter.events[0]
@@ -315,6 +316,125 @@ async def test_hitl_callback_passes_through_low_risk_tool() -> None:
     result = await callback.on_tool_start(
         serialized={"name": "echo_tool"},
         input_str="hello",
+        run_id=uuid4(),
+    )
+    assert result is None
+    assert emitter.events == []
+
+
+# ---------------------------------------------------------------------------
+# Regression — router-dispatched containment + always-gated containment (#377)
+# ---------------------------------------------------------------------------
+
+
+def test_requires_approval_router_dispatched_containment_is_gated() -> None:
+    """A containment tool dispatched through the MCP router wrapper must be
+    gated by its REAL target, not the benign wrapper name (#377).
+
+    The wrapper ``mcp_router_tool`` alone resolves to the L2_SUPERVISED default
+    and would slip through at L3/L4 — the router's ``tool_name`` argument names
+    the real ``cs_isolate_host`` target that must be gated.
+    """
+    integ = IntegrationAutonomy()
+    router_args = '{"tool_name": "cs_isolate_host", "arguments": "{\\"hostname\\": \\"WS-1\\"}"}'
+
+    for level in (
+        AutonomyLevel.L2_SUPERVISED,
+        AutonomyLevel.L3_AUTONOMOUS,
+        AutonomyLevel.L4_FULL_AUTO,
+    ):
+        assert requires_approval("mcp_router_tool", level, integ, router_args) is True, (
+            f"router-dispatched cs_isolate_host must be gated at {level}"
+        )
+
+    # The target is resolved from a structured dict input just as well.
+    dict_args = {"tool_name": "mde_isolate_machine", "arguments": "{}"}
+    assert (
+        requires_approval("mcp_router_tool", AutonomyLevel.L4_FULL_AUTO, integ, dict_args) is True
+    )
+
+
+def test_requires_approval_containment_always_gated_at_high_autonomy() -> None:
+    """host_isolation / firewall_rule are destructive containment: gated even
+    at L3_AUTONOMOUS and L4_FULL_AUTO (#377)."""
+    integ = IntegrationAutonomy()
+    for level in (AutonomyLevel.L3_AUTONOMOUS, AutonomyLevel.L4_FULL_AUTO):
+        assert requires_approval("cs_isolate_host", level, integ) is True
+        assert requires_approval("quarantine_device", level, integ) is True
+        assert requires_approval("firewall_block_ip", level, integ) is True
+        assert requires_approval("block_domain", level, integ) is True
+
+    # Even a deployment that loosens the per-integration level to fully
+    # autonomous cannot auto-approve containment — the code gates it, not the
+    # default.
+    loosened = IntegrationAutonomy(
+        host_isolation=AutonomyLevel.L4_FULL_AUTO,
+        firewall_rule=AutonomyLevel.L4_FULL_AUTO,
+    )
+    assert requires_approval("cs_isolate_host", AutonomyLevel.L4_FULL_AUTO, loosened) is True
+    assert requires_approval("firewall_block_ip", AutonomyLevel.L4_FULL_AUTO, loosened) is True
+
+
+def test_requires_approval_benign_tool_not_gated_at_high_autonomy() -> None:
+    """A benign query tool (direct or router-dispatched) stays ungated at L3/L4."""
+    integ = IntegrationAutonomy()
+    # siem_query defaults to L3 -> not gated at L3/L4.
+    assert requires_approval("splunk_search", AutonomyLevel.L3_AUTONOMOUS, integ) is False
+    assert requires_approval("splunk_search", AutonomyLevel.L4_FULL_AUTO, integ) is False
+    # The same benign tool dispatched via the router is still not gated.
+    router_args = '{"tool_name": "splunk_search", "arguments": "{}"}'
+    assert requires_approval("mcp_router_tool", AutonomyLevel.L4_FULL_AUTO, integ, router_args) is (
+        False
+    )
+
+
+async def test_hitl_callback_gates_router_dispatched_containment_at_l3() -> None:
+    """A containment action dispatched through ``mcp_router_tool`` must raise
+    HITLInterrupt even at L3_AUTONOMOUS, and the checkpoint must name the real
+    target rather than the wrapper (#377)."""
+    from uuid import uuid4
+
+    emitter = _RecordingEmitter()
+    callback = HITLCallback(
+        emitter=emitter,  # type: ignore[arg-type]
+        agent_autonomy=AutonomyLevel.L3_AUTONOMOUS,
+        integration_autonomy=IntegrationAutonomy(),
+        investigation_id="inv_test",
+    )
+
+    router_input = '{"tool_name": "cs_isolate_host", "arguments": "{\\"hostname\\": \\"WS-1\\"}"}'
+    with pytest.raises(HITLInterrupt) as exc_info:
+        await callback.on_tool_start(
+            serialized={"name": "mcp_router_tool"},
+            input_str=router_input,
+            run_id=uuid4(),
+        )
+
+    err = exc_info.value
+    # The interrupt names the REAL containment target, not the wrapper.
+    assert err.tool_name == "cs_isolate_host"
+    # Event emitted before the raise, also naming the real target.
+    assert len(emitter.events) == 1
+    _event_type, payload = emitter.events[0]
+    assert payload["tool_name"] == "cs_isolate_host"
+
+
+async def test_hitl_callback_router_benign_passes_through_at_l4() -> None:
+    """A benign router-dispatched query is not gated at L4 — no event, no raise."""
+    from uuid import uuid4
+
+    emitter = _RecordingEmitter()
+    callback = HITLCallback(
+        emitter=emitter,  # type: ignore[arg-type]
+        agent_autonomy=AutonomyLevel.L4_FULL_AUTO,
+        integration_autonomy=IntegrationAutonomy(),
+        investigation_id="inv_test",
+    )
+
+    router_input = '{"tool_name": "splunk_search", "arguments": "{}"}'
+    result = await callback.on_tool_start(
+        serialized={"name": "mcp_router_tool"},
+        input_str=router_input,
         run_id=uuid4(),
     )
     assert result is None

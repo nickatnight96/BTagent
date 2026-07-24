@@ -78,6 +78,38 @@ _NODE_AUTONOMY_MAP: dict[str, str] = {
     "soar": "playbook_execution",
 }
 
+# IntegrationAutonomy fields for destructive containment. Every connector
+# manifest marks the matching actions ``hitl_required=True``, so the autonomy
+# layer treats that intent as the source of truth and NEVER auto-approves them
+# -- regardless of the agent's autonomy level or a per-integration override
+# (#377). The engine has zero deps on ``btagent_agents``, so this list is kept
+# in lockstep with the agents-side hook by hand + the manifest coverage tests.
+_ALWAYS_GATE_CATEGORIES: frozenset[str] = frozenset(
+    {"host_isolation", "firewall_rule", "account_disable"}
+)
+
+# Substring tokens that mark a node as destructive containment, derived from
+# ``_NODE_AUTONOMY_MAP`` so the two never drift. Checked independently of that
+# map's iteration order: a node id like ``integration.crowdstrike.isolate_host``
+# matches ``crowdstrike``->edr_query *first* in the map, which would
+# misclassify containment as a benign EDR query -- the token scan below is
+# immune to that ordering.
+_CONTAINMENT_TOKENS: tuple[str, ...] = tuple(
+    token
+    for token, field_name in _NODE_AUTONOMY_MAP.items()
+    if field_name in _ALWAYS_GATE_CATEGORIES
+)
+
+
+def _is_containment_node(node_id: str) -> bool:
+    """True when *node_id* is a destructive containment action.
+
+    Containment is HITL-gated in every connector manifest, so it is always
+    gated by the autonomy layer too -- independent of the configured level.
+    """
+    lower = node_id.lower()
+    return any(token in lower for token in _CONTAINMENT_TOKENS)
+
 
 class HITLPause(Exception):
     """Raised when a node requires human approval before execution.
@@ -158,7 +190,17 @@ def requires_approval(
 
     L0 -> always pause. L1 -> pause unless the integration is L3+. L2 ->
     pause when the integration is L1 or L0. L3/L4 -> pause only on L0.
+
+    Destructive containment is the exception to the table above: it is
+    ``hitl_required=True`` in every connector manifest, so it always pauses --
+    even at L3/L4 and even if a config sets a higher per-integration level
+    (#377).
     """
+    # Containment is never auto-approved -- the manifest intent overrides the
+    # autonomy table (#377).
+    if _is_containment_node(node_id):
+        return True
+
     node_level = _resolve_node_autonomy(node_id, integration_autonomy)
 
     if agent_autonomy == AutonomyLevel.L0_MANUAL:

@@ -7,7 +7,10 @@ overrides), this hook emits an HITL_CHECKPOINT event and signals the interrupt.
 
 from __future__ import annotations
 
+import ast
+import json
 import logging
+from collections.abc import Mapping
 from typing import Any
 from uuid import UUID
 
@@ -47,6 +50,89 @@ _TOOL_AUTONOMY_MAP: dict[str, str] = {
     "playbook": "playbook_execution",
     "soar": "playbook_execution",
 }
+
+# The single LangChain tool every MCP dispatch flows through. Its own name says
+# nothing about the destructiveness of the call — the real target
+# (``cs_isolate_host`` etc.) rides inside the router's ``tool_name`` argument
+# (#377), so autonomy must be resolved from that, not the wrapper name.
+_MCP_ROUTER_TOOL_NAME = "mcp_router_tool"
+
+# IntegrationAutonomy fields for destructive containment. Every connector
+# manifest marks the matching actions ``hitl_required=True`` (see
+# ``btagent_agents.mcp.manifests``), so the autonomy layer treats that intent
+# as the source of truth and NEVER auto-approves them — regardless of the
+# agent's autonomy level or a per-integration override (#377).
+_ALWAYS_GATE_CATEGORIES: frozenset[str] = frozenset(
+    {"host_isolation", "firewall_rule", "account_disable"}
+)
+
+# Substring tokens that mark a call as destructive containment, derived from
+# the autonomy map so the two never drift. Membership is checked independently
+# of ``_TOOL_AUTONOMY_MAP`` iteration order: a name like
+# ``cs_isolate_host`` matches ``crowdstrike``->edr_query *first* in that map,
+# which would misclassify containment as a benign EDR query — the token scan
+# below is immune to that ordering.
+_CONTAINMENT_TOKENS: tuple[str, ...] = tuple(
+    token
+    for token, field_name in _TOOL_AUTONOMY_MAP.items()
+    if field_name in _ALWAYS_GATE_CATEGORIES
+)
+
+
+def _coerce_mapping(raw: Any) -> dict[str, Any] | None:
+    """Best-effort decode of a tool input into a mapping.
+
+    LangChain may hand us the router input as an already-structured dict
+    (``inputs`` kwarg) or as a string — JSON for a real dispatch, or a Python
+    ``repr`` in some runtimes. Handle all three; return ``None`` when the input
+    is not a mapping (e.g. a plain ``"host=host-42"`` string).
+    """
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    if isinstance(raw, (bytes, bytearray)):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(raw)
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(parsed, Mapping):
+            return dict(parsed)
+    return None
+
+
+def _resolve_effective_tool_name(tool_name: str, tool_input: Any = None) -> str:
+    """Resolve the tool whose autonomy actually governs this call.
+
+    For an MCP router dispatch the LangChain-visible tool is the wrapper
+    ``mcp_router_tool``; the destructive target (``cs_isolate_host`` …) is
+    named by the router's ``tool_name`` argument. Reach through the wrapper so
+    containment is classified by its real target, not the benign wrapper name
+    (#377). Non-router tools are returned unchanged.
+    """
+    if tool_name != _MCP_ROUTER_TOOL_NAME:
+        return tool_name
+    args = _coerce_mapping(tool_input)
+    if args:
+        target = args.get("tool_name")
+        if isinstance(target, str) and target:
+            return target
+    return tool_name
+
+
+def _is_containment_tool(tool_name: str) -> bool:
+    """True when *tool_name* is a destructive containment action.
+
+    Containment is HITL-gated in every connector manifest, so it is always
+    gated by the autonomy layer too — independent of the configured level.
+    """
+    lower = tool_name.lower()
+    return any(token in lower for token in _CONTAINMENT_TOKENS)
 
 
 class HITLInterrupt(Exception):
@@ -97,6 +183,7 @@ def requires_approval(
     tool_name: str,
     agent_autonomy: AutonomyLevel,
     integration_autonomy: IntegrationAutonomy,
+    tool_input: Any = None,
 ) -> bool:
     """Check if a tool call requires human approval.
 
@@ -104,10 +191,25 @@ def requires_approval(
     stricter (lower number) than the agent's overall autonomy level, or when
     the agent's autonomy level is L0 (manual) or L1 (assisted).
 
+    ``tool_input`` (the tool call's arguments) is used to reach through the
+    ``mcp_router_tool`` wrapper to its real target so router-dispatched
+    containment is classified correctly (#377); pass it for router calls.
+
     Returns:
         True if the tool call should be paused for human review.
     """
-    tool_level = _resolve_tool_autonomy(tool_name, integration_autonomy)
+    # Reach through the MCP router wrapper to the real target so a
+    # router-dispatched containment tool is classified as containment (#377).
+    effective_name = _resolve_effective_tool_name(tool_name, tool_input)
+
+    # Destructive containment is HITL-gated in every connector manifest
+    # (hitl_required=True). Treat that intent as the source of truth: never
+    # auto-approve it — not at L3/L4, and not even if a config sets a higher
+    # per-integration level (#377).
+    if _is_containment_tool(effective_name):
+        return True
+
+    tool_level = _resolve_tool_autonomy(effective_name, integration_autonomy)
 
     # L0: everything requires approval
     if agent_autonomy == AutonomyLevel.L0_MANUAL:
@@ -152,37 +254,54 @@ class HITLCallback(AsyncCallbackHandler):
     ) -> None:
         tool_name = serialized.get("name", "unknown_tool")
 
-        if not requires_approval(tool_name, self._agent_autonomy, self._integration_autonomy):
+        # LangChain hands structured tool inputs via the ``inputs`` kwarg; fall
+        # back to ``input_str`` for runtimes that only pass the string form.
+        raw_input = kwargs.get("inputs")
+        if raw_input is None:
+            raw_input = input_str
+
+        # Resolve the real target so a router-dispatched containment action
+        # (mcp_router_tool -> cs_isolate_host) is gated and reported as
+        # containment, not as the benign wrapper (#377).
+        effective_name = _resolve_effective_tool_name(tool_name, raw_input)
+
+        if not requires_approval(
+            tool_name,
+            self._agent_autonomy,
+            self._integration_autonomy,
+            raw_input,
+        ):
             return
 
         # Emit HITL_CHECKPOINT event for the frontend
         from btagent_shared.utils.ids import generate_id
 
         checkpoint_id = generate_id("cp")
+        required_level = _resolve_tool_autonomy(effective_name, self._integration_autonomy)
 
         await self._emitter.emit(
             EventType.HITL_CHECKPOINT,
             checkpoint_id=checkpoint_id,
-            tool_name=tool_name,
+            tool_name=effective_name,
             tool_input=input_str[:5000],  # Truncate large inputs
-            required_autonomy=_resolve_tool_autonomy(tool_name, self._integration_autonomy).value,
+            required_autonomy=required_level.value,
             agent_autonomy=self._agent_autonomy.value,
-            message=f"Tool '{tool_name}' requires human approval before execution.",
+            message=f"Tool '{effective_name}' requires human approval before execution.",
         )
 
         logger.info(
             "HITL checkpoint %s: tool=%s requires approval (agent=%s, tool_level=%s)",
             checkpoint_id,
-            tool_name,
+            effective_name,
             self._agent_autonomy.value,
-            _resolve_tool_autonomy(tool_name, self._integration_autonomy).value,
+            required_level.value,
         )
 
         # Raise interrupt for LangGraph to catch
         raise HITLInterrupt(
-            tool_name=tool_name,
+            tool_name=effective_name,
             tool_input=input_str,
-            required_level=_resolve_tool_autonomy(tool_name, self._integration_autonomy),
+            required_level=required_level,
             checkpoint_id=checkpoint_id,
         )
 

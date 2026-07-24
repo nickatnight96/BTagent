@@ -116,6 +116,56 @@ def test_requires_approval_l4_only_blocks_l0_actions():
 
 
 # --------------------------------------------------------------------------- #
+# Regression: destructive containment is always gated, even at L3/L4 (#377)
+# --------------------------------------------------------------------------- #
+
+
+def test_requires_approval_containment_gated_at_high_autonomy():
+    """host_isolation / firewall_rule nodes are destructive containment and
+    must be gated even at L3_AUTONOMOUS / L4_FULL_AUTO — the manifest marks them
+    hitl_required=True, so the autonomy table never auto-approves them (#377).
+
+    ``integration.crowdstrike.isolate_host`` also proves the token scan is
+    immune to autonomy-map ordering: ``crowdstrike`` would otherwise resolve it
+    to a benign L3 edr_query before the ``isolate`` token is ever considered.
+    """
+    ia = IntegrationAutonomy()
+    for level in (AutonomyLevel.L3_AUTONOMOUS, AutonomyLevel.L4_FULL_AUTO):
+        assert requires_approval("integration.crowdstrike.isolate_host", level, ia)
+        assert requires_approval("integration.defender.quarantine", level, ia)
+        assert requires_approval("integration.paloalto.firewall_block", level, ia)
+        assert requires_approval("integration.edge.block_domain", level, ia)
+
+
+def test_requires_approval_containment_gated_even_with_loosened_config():
+    """Even a config that sets host_isolation/firewall_rule to L4 cannot
+    auto-approve containment -- the code gates it, not the default (#377)."""
+    ia = IntegrationAutonomy(
+        host_isolation=AutonomyLevel.L4_FULL_AUTO,
+        firewall_rule=AutonomyLevel.L4_FULL_AUTO,
+    )
+    assert requires_approval("integration.crowdstrike.isolate_host", AutonomyLevel.L4_FULL_AUTO, ia)
+    assert requires_approval("integration.paloalto.firewall_block", AutonomyLevel.L4_FULL_AUTO, ia)
+
+
+def test_requires_approval_benign_query_not_gated_at_high_autonomy():
+    """A benign SIEM query stays ungated at L3/L4 (non-containment unchanged)."""
+    ia = IntegrationAutonomy()
+    assert not requires_approval("integration.splunk.search", AutonomyLevel.L3_AUTONOMOUS, ia)
+    assert not requires_approval("integration.splunk.search", AutonomyLevel.L4_FULL_AUTO, ia)
+
+
+async def test_hitl_pauses_isolation_at_l4_autonomy():
+    """End-to-end: an isolate node paused via the middleware even at L4 (#377)."""
+    mw = HITLMiddleware(agent_autonomy=AutonomyLevel.L4_FULL_AUTO)
+    runner = Runner([mw])
+    node = _make_node("integration.crowdstrike.isolate_host", NodeCategory.INTEGRATION)()
+    with pytest.raises(HITLPause) as exc:
+        await runner.execute(node, _In(q=""), _ctx())
+    assert exc.value.node_id == "integration.crowdstrike.isolate_host"
+
+
+# --------------------------------------------------------------------------- #
 # HITLGateMiddleware -- explicit hitl_gate step gating (GH #389)
 # --------------------------------------------------------------------------- #
 
