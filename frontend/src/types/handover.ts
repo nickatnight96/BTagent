@@ -14,6 +14,8 @@ export interface HandoverSummary {
   window_start: string;
   generated_at: string;
   headline: string;
+  /** Multi-line shift brief (deterministic composer, #108). */
+  narrative?: string;
   investigations: HandoverInvestigationItem[];
   open_by_severity: Record<string, number>;
   findings_by_severity: Record<string, number>;

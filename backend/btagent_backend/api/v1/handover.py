@@ -42,6 +42,8 @@ class HandoverSummary(BaseModel):
     window_start: datetime
     generated_at: datetime
     headline: str
+    # Multi-line shift brief (deterministic composer; see handover_narrative).
+    narrative: str
     investigations: list[HandoverInvestigationItem]
     open_by_severity: dict[str, int]
     findings_by_severity: dict[str, int]

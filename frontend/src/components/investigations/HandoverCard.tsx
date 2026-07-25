@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from "react";
-import { ArrowRightLeft } from "lucide-react";
+import { ArrowRightLeft, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ds/card";
 import { getHandoverSummary } from "@/api/handover";
 import type { HandoverSummary } from "@/types/handover";
@@ -29,6 +29,7 @@ function orderedEntries(counts: Record<string, number>): Array<[string, number]>
 
 export function HandoverCard() {
   const [summary, setSummary] = useState<HandoverSummary | null>(null);
+  const [briefOpen, setBriefOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +65,34 @@ export function HandoverCard() {
         <p className="text-sm text-muted-foreground" data-testid="handover-headline">
           {summary.headline}
         </p>
+
+        {/* Expandable multi-line shift brief (#108) — only when the backend
+         * sent one (older payloads omit it). */}
+        {summary.narrative && (
+          <div>
+            <button
+              onClick={() => setBriefOpen((v) => !v)}
+              aria-expanded={briefOpen}
+              className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+              data-testid="handover-brief-toggle"
+            >
+              {briefOpen ? (
+                <ChevronUp className="w-3.5 h-3.5" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
+              )}
+              Full brief
+            </button>
+            {briefOpen && (
+              <pre
+                className="mt-2 whitespace-pre-wrap rounded-md border border-border bg-accent/30 p-3 font-sans text-xs text-muted-foreground"
+                data-testid="handover-brief"
+              >
+                {summary.narrative}
+              </pre>
+            )}
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-4 text-xs">
           {findings.length > 0 && (
