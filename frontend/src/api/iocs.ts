@@ -90,6 +90,25 @@ export async function searchIOCs(
   return api.get<PaginatedResponse<IOC>>(endpoint);
 }
 
+/**
+ * Cross-case notebook search (#108 UC-5.2): only annotated IOCs, with the
+ * query matching the analyst note and tags as well as the value.
+ */
+export async function searchNotebook(
+  q: string,
+  disposition?: Exclude<IOCDisposition, "">,
+  page = 1,
+  pageSize = 25,
+): Promise<PaginatedResponse<IOC>> {
+  const endpoint = `/v1/iocs/notebook/search${buildQuery({
+    q,
+    disposition,
+    page,
+    page_size: pageSize,
+  })}`;
+  return api.get<PaginatedResponse<IOC>>(endpoint);
+}
+
 export async function importSTIX(
   data: string,
   investigationId?: string,
