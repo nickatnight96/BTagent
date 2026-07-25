@@ -390,6 +390,27 @@ class NotificationPrefRow(Base):
     )
 
 
+class DashboardPrefRow(Base):
+    """Per-user PunchList layout preference (EPIC-5 role-tuned views, #108).
+
+    ``layout`` stores the saved :class:`~btagent_backend.services.
+    dashboard_layout.DashboardLayout` payload verbatim. Absence of a row means
+    "use the role default" — resolved at read time by the config API, never
+    materialized here, so a role change immediately re-tunes users who never
+    customized.
+    """
+
+    __tablename__ = "dashboard_prefs"
+
+    user_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    layout: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
 class OrgConfigRow(Base):
     __tablename__ = "org_config"
 
