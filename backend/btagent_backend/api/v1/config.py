@@ -15,6 +15,7 @@ from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import DashboardPrefRow
 from btagent_backend.db.models_behavioral import OrgProfileRow
+from btagent_backend.services.config_catalog import build_config_catalog
 from btagent_backend.services.dashboard_layout import DashboardLayout, role_default_layout
 from btagent_backend.services.data_retention import DataRetentionService
 from btagent_backend.services.org_profile import OrgProfile
@@ -33,6 +34,13 @@ class OrgProfileResponse(BaseModel):
     profile: dict[str, Any]
 
 
+class ConfigSchemaResponse(BaseModel):
+    """The #418 configuration inventory — safe metadata only, never secrets."""
+
+    runtime: list[dict[str, Any]]
+    deploy_time: list[dict[str, Any]]
+
+
 class RetentionStatsResponse(BaseModel):
     events: dict[str, Any]
     audit_logs: dict[str, Any]
@@ -43,6 +51,26 @@ class RetentionRunResponse(BaseModel):
     events: dict[str, Any]
     investigations: dict[str, Any]
     audit_verification: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Configuration inventory (#418 — Settings / Configuration Center)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/schema", response_model=ConfigSchemaResponse)
+async def get_config_schema(
+    user: CurrentUser = Depends(get_current_user),
+) -> ConfigSchemaResponse:
+    """The consolidated configuration inventory (#418 slice 1).
+
+    Read-only: runtime-changeable surfaces (with their scope, write
+    permission, and API/UI location) plus every deploy-time ``BTAGENT_*``
+    knob with secret-bearing values redacted. Answers "what can I change,
+    and where?" without exposing credential material.
+    """
+    user.require_permission("config:view")
+    return ConfigSchemaResponse(**build_config_catalog(get_settings()))
 
 
 # ---------------------------------------------------------------------------
