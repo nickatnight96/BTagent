@@ -86,6 +86,29 @@ async def get_current_user(
             detail="Expected access token, got refresh token",
         )
 
+    await _assert_token_not_revoked(payload)
+
+    return CurrentUser(payload)
+
+
+async def _assert_token_not_revoked(payload: TokenPayload) -> None:
+    """Enforce the shared token-revocation policy for an ``access`` token.
+
+    Factored out of :func:`get_current_user` so the HTTP dependency and the
+    WebSocket dependency (:func:`get_ws_user`) run the *exact same* checks and
+    cannot drift (GH #384). Raises :class:`HTTPException` (401) on any failure;
+    the HTTP path propagates it directly, the WS path catches it and converts
+    it into a policy close.
+
+    Checks, in order:
+
+    * AUTH-A2 legacy no-jti handling — reject in prod, warn-and-accept in
+      dev/test (a legacy token can't be revoked individually).
+    * AUTH-A2 per-jti deny-list (logout / refresh rotation / MFA single-use).
+    * P142 per-user revocation epoch (admin / self-service "log out
+      everywhere") — any token issued before the epoch is rejected even if its
+      individual jti was never added to the deny-list.
+    """
     # AUTH-A2: enforce the Redis-backed revocation list.
     if payload.jti is None:
         # Legacy access tokens issued before AUTH-A2 have no jti and therefore
@@ -129,8 +152,6 @@ async def get_current_user(
             headers=_INVALID_TOKEN_HEADERS,
         )
 
-    return CurrentUser(payload)
-
 
 async def get_ws_user(websocket: WebSocket) -> CurrentUser:
     """Extract user from WebSocket cookie or ``?token=`` query param.
@@ -157,6 +178,18 @@ async def get_ws_user(websocket: WebSocket) -> CurrentUser:
     if payload.type != "access":
         await websocket.close(code=4001, reason="Expected access token")
         raise HTTPException(status_code=401, detail="Expected access token")
+
+    # GH #384 FIX: the WS auth path must run the SAME revocation checks as
+    # ``get_current_user`` (per-jti deny-list, per-user epoch, prod legacy
+    # no-jti rejection). Without this a revoked / force-logged-out token still
+    # granted full access to the live investigation event stream. Reuse the
+    # shared helper so the two paths can't drift; on failure signal the WS
+    # client the same way this path already does for other auth failures.
+    try:
+        await _assert_token_not_revoked(payload)
+    except HTTPException:
+        await websocket.close(code=4001, reason="Token revoked")
+        raise HTTPException(status_code=401, detail="Token has been revoked")
 
     return CurrentUser(payload)
 

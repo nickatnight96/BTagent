@@ -485,6 +485,19 @@ async def list_clusters(
         total_findings_q = total_findings_q.where(
             HuntFindingRow.state != HuntFindingState.SUPPRESSED.value
         )
+    # Codex #401: the ``domain`` + cluster-``state`` filters that scope the
+    # cluster list (and its total) must also scope the finding total, else the
+    # count reflects the whole org regardless of the active tab / domain view.
+    # Restrict to findings whose parent cluster matches the same filters.
+    if state_filter is not None or domain is not None:
+        cluster_scope = select(HuntFindingClusterRow.id).where(
+            HuntFindingClusterRow.org_id == org_id
+        )
+        if state_filter is not None:
+            cluster_scope = cluster_scope.where(HuntFindingClusterRow.state.in_(state_filter))
+        if domain is not None:
+            cluster_scope = cluster_scope.where(HuntFindingClusterRow.domain == domain)
+        total_findings_q = total_findings_q.where(HuntFindingRow.cluster_id.in_(cluster_scope))
     total_findings = (await db.execute(total_findings_q)).scalar_one() or 0
 
     return list(cluster_rows), findings, int(total_clusters), int(total_findings)

@@ -88,8 +88,10 @@ async def list_audit_entries(
 ) -> AuditEntryListResponse:
     """List audit-ledger entries (newest first), filterable by actor/category."""
     user.require_permission("audit:view")
+    # GH #385: scope to the caller's tenant so the ledger never leaks another
+    # org's actor/action/resource.
     rows = await AuditTrail(db).get_entries(
-        actor=actor, category=category, limit=limit, offset=offset
+        org_id=user.org_id, actor=actor, category=category, limit=limit, offset=offset
     )
     return AuditEntryListResponse(items=[_to_response(r) for r in rows], limit=limit, offset=offset)
 
@@ -101,7 +103,9 @@ async def verify_audit_chain(
 ) -> ChainVerifyResponse:
     """Verify the SHA-256 hash chain — tamper evidence for the whole ledger."""
     user.require_permission("audit:view")
-    valid, errors = await AuditTrail(db).verify_chain()
+    # GH #385: chain integrity is verified over the full global chain, but the
+    # reported result is scoped to the caller's org.
+    valid, errors = await AuditTrail(db).verify_chain(org_id=user.org_id)
     return ChainVerifyResponse(valid=valid, errors=errors)
 
 
@@ -120,7 +124,8 @@ async def get_audit_lineage(
     """Project the audit hash chain into a node/edge lineage graph (UC-7.1)."""
     user.require_permission("audit:view")
     try:
-        return await build_audit_lineage(db, up_to_hash=up_to_hash)
+        # GH #385: project only the caller's tenant rows into the lineage graph.
+        return await build_audit_lineage(db, org_id=user.org_id, up_to_hash=up_to_hash)
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -135,7 +140,10 @@ async def export_audit_csv(
 ) -> StreamingResponse:
     """Export audit entries as CSV for external auditors (admin only)."""
     user.require_permission("audit:export")
-    rows = await AuditTrail(db).get_entries(actor=actor, category=category, limit=limit, offset=0)
+    # GH #385: export only the caller's tenant ledger.
+    rows = await AuditTrail(db).get_entries(
+        org_id=user.org_id, actor=actor, category=category, limit=limit, offset=0
+    )
 
     buf = io.StringIO()
     writer = csv.writer(buf)

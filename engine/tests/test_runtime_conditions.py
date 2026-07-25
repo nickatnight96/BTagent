@@ -153,6 +153,38 @@ def test_power_operator_is_rejected_with_specific_message():
     assert "Power" in str(ei.value) or "power" in str(ei.value)
 
 
+def test_string_repetition_is_rejected():
+    """``'x' * 10**8`` is a memory-DoS via sequence repetition -- must be blocked (#406)."""
+    with pytest.raises(ConditionEvaluationError) as ei:
+        evaluate_condition("'x' * 100000000", {})
+    msg = str(ei.value).lower()
+    assert "repetition" in msg or "sequence" in msg
+
+
+def test_list_repetition_is_rejected():
+    """``[0] * 10**8`` exhausts memory just like the string form -- block it (#406)."""
+    with pytest.raises(ConditionEvaluationError):
+        evaluate_condition("[0] * 100000000", {})
+
+
+def test_tuple_repetition_is_rejected():
+    """Tuple repetition is the same DoS family -- block it (#406)."""
+    with pytest.raises(ConditionEvaluationError):
+        evaluate_condition("(0,) * 100000000", {})
+
+
+def test_repetition_rejected_with_int_on_left():
+    """Operand order must not matter: ``int * seq`` is caught too (#406)."""
+    with pytest.raises(ConditionEvaluationError):
+        evaluate_condition("100000000 * 'x'", {})
+
+
+def test_numeric_multiplication_still_allowed():
+    """Ordinary numeric ``*`` must keep working -- only sequence repetition is blocked."""
+    assert evaluate_condition("3 * 4", {}) == 12
+    assert evaluate_condition("2.5 * 2", {}) == 5.0
+
+
 def test_arbitrary_function_call_is_rejected():
     """Only the explicit allowlist (len/min/max) may be called."""
     with pytest.raises(ConditionEvaluationError) as ei:

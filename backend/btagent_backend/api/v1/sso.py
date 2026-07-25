@@ -456,7 +456,11 @@ async def link_sso_identity(
     _get_provider(body.provider)
 
     target = await db.get(UserRow, body.user_id)
-    if target is None:
+    # AUTH: the target must belong to the caller's org — an admin cannot link
+    # an SSO identity onto a user in another tenant. Same 404 for "not found"
+    # and "other org" so we don't leak existence of users in other tenants
+    # (mirrors ``auth.revoke_user_sessions``).
+    if target is None or target.org_id != user.org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     existing = await db.execute(
@@ -516,7 +520,15 @@ async def list_sso_identities(
     Backs the admin UI that shows which IdP identities are bound to an account.
     """
     user.require_permission("sso:link")
-    query = select(SSOIdentityRow).order_by(SSOIdentityRow.created_at.desc())
+    # AUTH: scope to the caller's org. ``sso_identity`` has no org_id column,
+    # so we join through the owning user and filter on ``UserRow.org_id`` —
+    # an admin only ever sees identities bound to users in their own tenant.
+    query = (
+        select(SSOIdentityRow)
+        .join(UserRow, SSOIdentityRow.user_id == UserRow.id)
+        .where(UserRow.org_id == user.org_id)
+        .order_by(SSOIdentityRow.created_at.desc())
+    )
     if user_id is not None:
         query = query.where(SSOIdentityRow.user_id == user_id)
     rows = (await db.execute(query)).scalars().all()
@@ -538,6 +550,13 @@ async def unlink_sso_identity(
 
     identity = await db.get(SSOIdentityRow, identity_id)
     if identity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO identity not found")
+
+    # AUTH: the identity's owning user must belong to the caller's org — an
+    # admin cannot unlink an identity for a user in another tenant. Same 404
+    # for "not found" and "other org" so cross-tenant existence never leaks.
+    owner = await db.get(UserRow, identity.user_id)
+    if owner is None or owner.org_id != user.org_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO identity not found")
 
     await AuditTrail(db).record(

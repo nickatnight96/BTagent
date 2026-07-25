@@ -114,6 +114,7 @@ def test_chain_includes_all_layers_when_fully_configured():
         "ScopeEnforcementMiddleware",
         "ClassificationMiddleware",
         "HITLMiddleware",
+        "HITLGateMiddleware",
         "LLMRouterMiddleware",
         "PromptBudgetMiddleware",
         "EvidenceChainMiddleware",
@@ -134,10 +135,11 @@ def test_chain_omits_optional_layers_when_unset():
     )
     types = [type(m).__name__ for m in chain]
     # Scope, PromptBudget, EventEmitter all dropped; classification + HITL +
-    # LLMRouter + EvidenceChain remain.
+    # HITL-gate + LLMRouter + EvidenceChain remain.
     assert types == [
         "ClassificationMiddleware",
         "HITLMiddleware",
+        "HITLGateMiddleware",
         "LLMRouterMiddleware",
         "EvidenceChainMiddleware",
     ]

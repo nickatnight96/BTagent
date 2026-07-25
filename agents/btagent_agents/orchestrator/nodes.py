@@ -113,6 +113,11 @@ _SEVERITY_ORDER: list[str] = [
 # Pre-compiled pattern to strip XML-like tags when extracting plain text.
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 
+# Matches an opening or closing ``<external-data>`` fence tag (case-insensitive,
+# tolerating stray inner whitespace) *inside* an untrusted payload so it can be
+# neutralised before the payload is fenced (see ``_wrap_external_data``).
+_EXTERNAL_DATA_SENTINEL_RE = re.compile(r"<\s*/?\s*external-data\s*>", re.IGNORECASE)
+
 # Simple IOC extraction patterns (phase-1 heuristics; enrichment agent expands).
 _IOC_PATTERNS: dict[str, re.Pattern[str]] = {
     "ip": re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|1?\d\d?)\b"),
@@ -232,8 +237,18 @@ def _highest_severity(current: str, candidate: str) -> str:
 
 
 def _wrap_external_data(text: str) -> str:
-    """Wrap untrusted external data in XML tags as a prompt injection defense."""
-    return f"<external-data>\n{text}\n</external-data>"
+    """Wrap untrusted external data in XML tags as a prompt injection defense.
+
+    The payload is *untrusted*: a literal ``</external-data>`` embedded in it
+    would otherwise close the fence early and let the trailing text be read as
+    trusted instructions (GH #373, prompt-injection breakout). Any embedded
+    opening/closing sentinel is HTML-escaped before interpolation so the only
+    real fence tags in the output are this wrapper's own.
+    """
+    safe = _EXTERNAL_DATA_SENTINEL_RE.sub(
+        lambda m: m.group(0).replace("<", "&lt;").replace(">", "&gt;"), text
+    )
+    return f"<external-data>\n{safe}\n</external-data>"
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +272,38 @@ def route_task(state: InvestigationState) -> dict[str, Any]:
         return {
             "task_type": "general",
             "current_agent": "general",
+            "status": InvestigationStatus.INVESTIGATING,
+        }
+
+    # Map task type to agent node name.
+    agent_map: dict[str, str] = {
+        "triage": "triage",
+        "query": "query",
+        "enrich": "enrich",
+        "contain": "contain",
+        "report": "report",
+        "coordination": "coordination",
+        "mitigation": "mitigation",
+        "general": "synthesize",
+    }
+
+    # Internal hand-off (GH #388): when the graph loops back into ``route_task``
+    # from ``synthesize`` the newest message is an AIMessage, not a fresh human
+    # turn. Re-classifying the *unchanged* human message would re-pick the same
+    # worker (e.g. "triage") on every iteration and spin until the recursion
+    # limit. Instead, honor the ``task_type`` the previous stage advanced to and
+    # route straight there without re-classifying.
+    if not isinstance(messages[-1], HumanMessage):
+        handoff_task = state.get("task_type", "general")
+        handoff_agent = agent_map.get(handoff_task, "synthesize")
+        _emit_event(
+            "agent_status",
+            state.get("investigation_id", ""),
+            {"task_type": handoff_task, "routed_to": handoff_agent, "handoff": True},
+        )
+        return {
+            "task_type": handoff_task,
+            "current_agent": handoff_agent,
             "status": InvestigationStatus.INVESTIGATING,
         }
 
@@ -286,17 +333,6 @@ def route_task(state: InvestigationState) -> dict[str, Any]:
     if classified == "general" and current_agent and current_agent != "general":
         classified = state.get("task_type", "general")
 
-    # Map task type to agent node name.
-    agent_map: dict[str, str] = {
-        "triage": "triage",
-        "query": "query",
-        "enrich": "enrich",
-        "contain": "contain",
-        "report": "report",
-        "coordination": "coordination",
-        "mitigation": "mitigation",
-        "general": "synthesize",
-    }
     target_agent = agent_map.get(classified, "synthesize")
 
     _emit_event(
@@ -762,10 +798,18 @@ def synthesize_node(state: InvestigationState) -> dict[str, Any]:
     needs_hitl = len(pending_containment) > 0
     needs_more_work = False
 
-    # After triage, if severity is high/critical and we have IOCs, auto-route
-    # to enrichment.  The should_continue edge reads task_type="triage" to
-    # decide whether to loop back through route_task targeting enrich.
-    if task_type == "triage" and severity in (Severity.HIGH, Severity.CRITICAL) and iocs:
+    # After triage, if severity is high/critical and we have IOCs, advance to
+    # enrichment.  We only do this once per triage step: the enrichment stage
+    # merges an ``enrichment`` key onto each IOC, so if that key is already
+    # present the enrichment has already run and we must NOT advance again
+    # (guards against re-processing an unchanged message — GH #388).
+    already_enriched = any("enrichment" in ioc for ioc in iocs)
+    if (
+        task_type == "triage"
+        and severity in (Severity.HIGH, Severity.CRITICAL)
+        and iocs
+        and not already_enriched
+    ):
         needs_more_work = True
 
     # Build synthesis summary.
@@ -774,14 +818,28 @@ def synthesize_node(state: InvestigationState) -> dict[str, Any]:
     summary_parts.append(f"- IOCs: {len(iocs)}")
     summary_parts.append(f"- Containment actions: {len(containment_actions)}")
 
+    # ``next_task`` / ``next_agent`` are the target the graph advances to next.
+    # For the triage->enrichment hand-off we explicitly emit ``enrich`` so that
+    # ``route_task`` routes straight to enrichment instead of re-classifying the
+    # (unchanged) human message back to triage and spinning (GH #388).
+    next_task = task_type
+    next_agent = "synthesize"
+
     if needs_hitl:
         summary_parts.append(
             f"\n{len(pending_containment)} containment action(s) pending human approval."
         )
         new_status = InvestigationStatus.PAUSED_HITL
     elif needs_more_work:
-        summary_parts.append("\nHigh/critical severity with IOCs — enrichment recommended.")
+        summary_parts.append("\nHigh/critical severity with IOCs — advancing to enrichment.")
         new_status = InvestigationStatus.INVESTIGATING
+        next_task = "enrich"
+        # ``current_agent == "enrich"`` is the *pending target* marker that
+        # ``should_continue`` reads to route once to enrichment. After the
+        # enrich node runs and re-enters synthesize, this branch is not taken
+        # (task_type is no longer "triage"), so current_agent falls back to
+        # "synthesize" and the graph terminates — no infinite loop.
+        next_agent = "enrich"
     else:
         summary_parts.append("\nInvestigation step complete.")
         new_status = status
@@ -800,7 +858,8 @@ def synthesize_node(state: InvestigationState) -> dict[str, Any]:
     return {
         "messages": [AIMessage(content="\n".join(summary_parts))],
         "status": new_status,
-        "current_agent": "synthesize",
+        "task_type": next_task,
+        "current_agent": next_agent,
     }
 
 

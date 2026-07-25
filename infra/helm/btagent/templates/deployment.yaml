@@ -94,8 +94,30 @@ spec:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
         - name: frontend
+          # Hardened nginx on Kubernetes (#399). The shared .Values.securityContext
+          # drops ALL capabilities and runs readOnlyRootFilesystem, which makes the
+          # nginx frontend CrashLoopBackOff two ways:
+          #   1. nginx binds :80 (a privileged port the image's config listens on),
+          #      but with NET_BIND_SERVICE dropped a non-root process cannot bind it.
+          #   2. nginx must write its pid + cache/temp files, but the root fs is
+          #      read-only with no writable mount for those paths.
+          # Fix, keeping the hardened posture intact (non-root, readOnlyRootFilesystem,
+          # no privilege escalation, every other capability dropped): add back ONLY
+          # NET_BIND_SERVICE so the non-root process can bind :80, and mount emptyDir
+          # volumes over the dirs nginx writes to. This does NOT reference
+          # .Values.securityContext because that block cannot express a per-container
+          # capability add without a merge; the values below mirror it exactly plus
+          # the single added capability.
           securityContext:
-            {{- toYaml .Values.securityContext | nindent 12 }}
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
           image: "{{ .Values.frontendImage.repository }}:{{ .Values.frontendImage.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.frontendImage.pullPolicy }}
           ports:
@@ -116,6 +138,23 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.frontendResources | nindent 12 }}
+          # Writable scratch mounts required under readOnlyRootFilesystem: nginx
+          # writes its pid to /var/run, proxy/fastcgi/etc. temp files under
+          # /var/cache/nginx, and may use /tmp.
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: nginx-tmp
+              mountPath: /tmp
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: nginx-tmp
+          emptyDir: {}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

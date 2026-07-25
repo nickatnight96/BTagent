@@ -23,7 +23,7 @@ from datetime import datetime
 from btagent_shared.types.pattern_hunt import ProposalOutcome, ProposalState
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -206,23 +206,29 @@ async def list_proposals(
     """Org-scoped, paginated proposal list ordered by score desc."""
     user.require_permission("hunt:view")
 
-    stmt = select(PatternHuntProposalRow).where(PatternHuntProposalRow.org_id == user.org_id)
-    if state:
-        stmt = stmt.where(PatternHuntProposalRow.state == state)
+    org_filter = PatternHuntProposalRow.org_id == user.org_id
+    state_filter = PatternHuntProposalRow.state == state if state else None
+
+    # Total count is computed in SQL over the same filters — never materialise
+    # the whole org proposal set just to length it (that scaled with the org,
+    # not the page).
+    count_q = select(func.count()).select_from(PatternHuntProposalRow).where(org_filter)
+    if state_filter is not None:
+        count_q = count_q.where(state_filter)
+    total = (await db.execute(count_q)).scalar_one() or 0
+
+    # Page query pushes limit/offset into SQL so only the page is fetched.
     # Order by score descending so the highest-ranking proposals surface first.
-    stmt = stmt.order_by(PatternHuntProposalRow.score.desc())
-
-    # Total count (re-uses the same filtered query).
-    count_result = await db.execute(stmt)
-    all_rows = list(count_result.scalars().all())
-    total = len(all_rows)
-
+    page_q = select(PatternHuntProposalRow).where(org_filter)
+    if state_filter is not None:
+        page_q = page_q.where(state_filter)
+    page_q = page_q.order_by(PatternHuntProposalRow.score.desc())
     offset = (page - 1) * page_size
-    page_rows = all_rows[offset : offset + page_size]
+    page_rows = (await db.execute(page_q.offset(offset).limit(page_size))).scalars().all()
 
     return PatternHuntProposalListResponse(
         items=[_proposal_response(r) for r in page_rows],
-        total=total,
+        total=int(total),
     )
 
 

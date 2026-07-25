@@ -320,6 +320,40 @@ async def test_grants_require_auth(client):
     assert resp.status_code == 401
 
 
+async def test_over_long_derived_id_does_not_500(client, analyst_token, db_session):
+    """#392: a principal_id/app_id long enough to push the natural derived id
+    (``oag_{provider}_{principal}_{app}``) past the 200-char ``OAuthGrant.id``
+    bound must yield a valid response, not a 500 on model construction."""
+    long_principal = "svc-" + ("p" * 300) + "@example.com"  # ~316 chars
+    long_app = "app-" + ("a" * 300)  # ~304 chars
+    db_session.add(
+        _finding(
+            principal_id=long_principal,
+            app_id=long_app,
+            provider="okta",
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.get(
+        "/api/v1/identity/grants?page_size=200", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    match = next(
+        (
+            g
+            for g in body["items"]
+            if g["principal_id"] == long_principal and g["app_id"] == long_app
+        ),
+        None,
+    )
+    assert match is not None
+    # The derived id was safely bounded (hashed) rather than overflowing.
+    assert len(match["id"]) <= 200
+    assert match["id"].startswith("oag_")
+
+
 async def test_non_identity_domain_findings_excluded(client, analyst_token, db_session):
     """A sigma-domain finding that happens to carry app_id/principal_id in its
     evidence must not bleed into the grant inventory."""

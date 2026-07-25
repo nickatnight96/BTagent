@@ -86,12 +86,20 @@ class AgentConfig(BaseModel):
 
 
 class IntegrationAutonomy(BaseModel):
-    """Per-integration autonomy level overrides."""
+    """Per-integration autonomy level overrides.
+
+    Read-only telemetry (SIEM / EDR / CTI) defaults to autonomous. Destructive
+    containment (``host_isolation``, ``firewall_rule``, ``account_disable``)
+    defaults to ``L0_MANUAL`` to match the connector manifests, every one of
+    which marks the corresponding action ``hitl_required=True`` (#377). The HITL
+    gate does not rely on these defaults, though: containment is always gated in
+    code even if a deployment loosens one of these levels.
+    """
 
     siem_query: AutonomyLevel = AutonomyLevel.L3_AUTONOMOUS
     edr_query: AutonomyLevel = AutonomyLevel.L3_AUTONOMOUS
     cti_lookup: AutonomyLevel = AutonomyLevel.L3_AUTONOMOUS
-    host_isolation: AutonomyLevel = AutonomyLevel.L1_ASSISTED
-    firewall_rule: AutonomyLevel = AutonomyLevel.L1_ASSISTED
+    host_isolation: AutonomyLevel = AutonomyLevel.L0_MANUAL
+    firewall_rule: AutonomyLevel = AutonomyLevel.L0_MANUAL
     account_disable: AutonomyLevel = AutonomyLevel.L0_MANUAL
     playbook_execution: AutonomyLevel = AutonomyLevel.L2_SUPERVISED

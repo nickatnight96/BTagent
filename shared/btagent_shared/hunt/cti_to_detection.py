@@ -192,11 +192,26 @@ def extract_detectable_indicators(
         pattern: str = obj.get("pattern", "")
         name: str = obj.get("name", "")
         description: str = obj.get("description", "")
-        kill_chain_phases: list[dict[str, str]] = obj.get("kill_chain_phases", [])
+        kill_chain_phases_raw = obj.get("kill_chain_phases", [])
+        # A malformed bundle may carry ``kill_chain_phases`` as something other
+        # than a list of objects (a bare string, a dict, …). Normalise to a list
+        # here so the technique resolver never does ``phase.get`` on a non-dict
+        # (which raised AttributeError → HTTP 500). Non-dict items are dropped
+        # downstream in ``_technique_ids_from_kill_chain``.
+        kill_chain_phases: list[dict[str, str]] = (
+            kill_chain_phases_raw if isinstance(kill_chain_phases_raw, list) else []
+        )
 
-        # STIX confidence 0-100 → BTagent 0.0-1.0
+        # STIX confidence 0-100 → BTagent 0.0-1.0. A malformed ``confidence``
+        # (non-numeric string, null, list, …) must not raise TypeError/ValueError
+        # → HTTP 500; coerce defensively and fall back to the neutral 50 default.
         stix_conf = obj.get("confidence", 50)
-        confidence = round(min(100, max(0, int(stix_conf))) / 100.0, 2)
+        try:
+            conf_int = int(stix_conf)
+        except (TypeError, ValueError):
+            logger.debug("Malformed STIX confidence %r; defaulting to 50", stix_conf)
+            conf_int = 50
+        confidence = round(min(100, max(0, conf_int)) / 100.0, 2)
 
         parsed = _parse_stix_pattern(pattern)
         if parsed is None:
@@ -243,7 +258,7 @@ def extract_detectable_indicators(
 # ---------------------------------------------------------------------------
 
 
-def _technique_ids_from_kill_chain(kill_chain_phases: list[dict[str, str]]) -> list[str]:
+def _technique_ids_from_kill_chain(kill_chain_phases: Any) -> list[str]:
     """Extract ATT&CK technique IDs from STIX kill_chain_phases.
 
     STIX bundles from ATT&CK-aware CTI feeds often carry entries like::
@@ -252,12 +267,23 @@ def _technique_ids_from_kill_chain(kill_chain_phases: list[dict[str, str]]) -> l
 
     We surface those directly.  ATT&CK Navigator exports may also embed the
     technique id in ``phase_name`` in the form ``t<nnnn>`` or ``t<nnnn>.<nnn>``.
+
+    Defensive: ``kill_chain_phases`` from a malformed indicator may not be a list
+    of dicts (a bare string, a list of strings, …). Non-list input yields no IDs
+    and non-dict / non-string-``phase_name`` items are skipped rather than raising
+    AttributeError (which previously surfaced as an HTTP 500).
     """
     ids: list[str] = []
+    if not isinstance(kill_chain_phases, list):
+        return ids
     for phase in kill_chain_phases:
+        if not isinstance(phase, dict):
+            continue
         if phase.get("kill_chain_name") != "mitre-attack":
             continue
-        phase_name: str = phase.get("phase_name", "")
+        phase_name = phase.get("phase_name", "")
+        if not isinstance(phase_name, str):
+            continue
         # phase_name may already be a technique-id (t1059.001) or a tactic
         # name (execution).  Technique IDs start with 't' followed by digits.
         if phase_name and phase_name[0].lower() == "t" and any(c.isdigit() for c in phase_name):

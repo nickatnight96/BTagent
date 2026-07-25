@@ -146,6 +146,45 @@ async def test_list_proposals_pagination(client, analyst_token, db_session):
     assert data["total"] >= 2
 
 
+async def test_list_proposals_pagination_returns_correct_slices(client, analyst_token, db_session):
+    """#400: SQL limit/offset must return the same slices the (now-removed)
+    in-Python slice did — page N is exactly the score-desc window, not a
+    re-materialisation of the whole org set."""
+    # Seed a handful with distinct scores so ordering is deterministic.
+    for score in (0.11, 0.22, 0.33, 0.44):
+        db_session.add(_make_proposal(score=score))
+    await db_session.commit()
+
+    # The score-desc ordering the endpoint promises, taken 4 at a time.
+    first4 = await client.get(
+        "/api/v1/pattern/proposals?page=1&page_size=4",
+        headers=auth_header(analyst_token),
+    )
+    assert first4.status_code == 200, first4.text
+    ordered_ids = [p["id"] for p in first4.json()["items"]]
+    assert len(ordered_ids) == 4
+
+    page1 = (
+        await client.get(
+            "/api/v1/pattern/proposals?page=1&page_size=2",
+            headers=auth_header(analyst_token),
+        )
+    ).json()
+    page2 = (
+        await client.get(
+            "/api/v1/pattern/proposals?page=2&page_size=2",
+            headers=auth_header(analyst_token),
+        )
+    ).json()
+
+    # Each page is the exact window into the shared ordering.
+    assert [p["id"] for p in page1["items"]] == ordered_ids[0:2]
+    assert [p["id"] for p in page2["items"]] == ordered_ids[2:4]
+    # Consistent total across pages, and no row served on two pages.
+    assert page1["total"] == page2["total"]
+    assert {p["id"] for p in page1["items"]}.isdisjoint({p["id"] for p in page2["items"]})
+
+
 # --------------------------------------------------------------------------- #
 # Lifecycle mutations
 # --------------------------------------------------------------------------- #

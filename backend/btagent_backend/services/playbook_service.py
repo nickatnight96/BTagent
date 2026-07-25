@@ -34,6 +34,7 @@ from btagent_shared.utils.ids import generate_id
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from btagent_backend.db.models import DEFAULT_ORG_ID
 from btagent_backend.db.models_playbook import PlaybookExecutionRow, PlaybookRow
 
 logger = logging.getLogger("btagent.services.playbook")
@@ -473,6 +474,7 @@ class PlaybookService:
         playbook_id: str,
         trigger_data: dict[str, Any] | None = None,
         investigation_id: str | None = None,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> PlaybookExecutionRow:
         """Create an execution record and dispatch to TaskManager.
 
@@ -486,6 +488,9 @@ class PlaybookService:
             Runtime trigger data (alert payload, etc.).
         investigation_id : str | None
             Optional investigation to associate with.
+        org_id : str
+            Tenant the execution belongs to (#394). Stamped from the
+            authenticated caller so later reads can be org-scoped.
 
         Returns
         -------
@@ -510,6 +515,7 @@ class PlaybookService:
         now = datetime.now(UTC)
         execution = PlaybookExecutionRow(
             id=generate_id("pbe"),
+            org_id=org_id,
             playbook_id=playbook_id,
             investigation_id=investigation_id,
             status=PlaybookStatus.RUNNING.value,
@@ -683,17 +689,26 @@ class PlaybookService:
         db: AsyncSession,
         playbook_id: str,
         *,
+        org_id: str = DEFAULT_ORG_ID,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[PlaybookExecutionRow], int]:
-        """Get paginated execution history for a playbook."""
+        """Get paginated execution history for a playbook, scoped to ``org_id``.
+
+        #394: only executions belonging to the caller's tenant are returned so
+        a shared playbook's runs never leak across orgs.
+        """
         query = (
             select(PlaybookExecutionRow)
-            .where(PlaybookExecutionRow.playbook_id == playbook_id)
+            .where(
+                PlaybookExecutionRow.playbook_id == playbook_id,
+                PlaybookExecutionRow.org_id == org_id,
+            )
             .order_by(PlaybookExecutionRow.started_at.desc())
         )
         count_query = select(func.count(PlaybookExecutionRow.id)).where(
-            PlaybookExecutionRow.playbook_id == playbook_id
+            PlaybookExecutionRow.playbook_id == playbook_id,
+            PlaybookExecutionRow.org_id == org_id,
         )
 
         total_result = await db.execute(count_query)
@@ -709,9 +724,18 @@ class PlaybookService:
         self,
         db: AsyncSession,
         execution_id: str,
+        *,
+        org_id: str = DEFAULT_ORG_ID,
     ) -> PlaybookExecutionRow | None:
-        """Fetch a single execution by ID."""
+        """Fetch a single execution by ID, scoped to ``org_id`` (#394).
+
+        Returns ``None`` when the execution belongs to a different tenant so
+        the route surfaces a 404 (not a 403) on cross-org access.
+        """
         result = await db.execute(
-            select(PlaybookExecutionRow).where(PlaybookExecutionRow.id == execution_id)
+            select(PlaybookExecutionRow).where(
+                PlaybookExecutionRow.id == execution_id,
+                PlaybookExecutionRow.org_id == org_id,
+            )
         )
         return result.scalar_one_or_none()

@@ -154,6 +154,28 @@ class TextImportRequest(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
+def _reject_if_over_bulk_cap(count: int) -> None:
+    """Enforce the documented bulk-size cap on an import batch.
+
+    The STIX / CSV import endpoints build their IOC list from a free-form
+    payload (a STIX bundle or CSV blob) and then funnel it into
+    ``create_iocs_bulk`` — the same insert path the ``POST /iocs`` bulk route
+    uses. That route caps its list via ``BulkCreateIOCRequest``'s Pydantic
+    ``max_length=_MAX_BULK_IOCS``; the import paths had no equivalent guard, so
+    a single oversized bundle could bypass the cap and DoS the enrichment
+    scheduler. Re-use the same ``_MAX_BULK_IOCS`` constant here and reject an
+    oversized import with 413 (Request Entity Too Large).
+    """
+    if count > _MAX_BULK_IOCS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Import exceeds the maximum bulk size of {_MAX_BULK_IOCS} IOCs "
+                f"(got {count}). Split the import into smaller batches."
+            ),
+        )
+
+
 def _to_response(row: IOCRow) -> IOCResponse:
     return IOCResponse(
         id=row.id,
@@ -585,6 +607,8 @@ async def import_stix(
     if not ioc_dicts:
         return {"imported": 0, "message": "No valid indicators found in STIX bundle"}
 
+    _reject_if_over_bulk_cap(len(ioc_dicts))
+
     rows = await ioc_service.create_iocs_bulk(
         db,
         investigation_id=body.investigation_id,
@@ -688,6 +712,8 @@ async def import_csv(
             "message": "No valid rows in CSV",
         }
 
+    _reject_if_over_bulk_cap(len(parsed))
+
     rows = await ioc_service.create_iocs_bulk(
         db,
         investigation_id=body.investigation_id,
@@ -733,6 +759,8 @@ async def import_stix_text(
     )
     if not ioc_dicts:
         return {"imported": 0, "message": "No valid indicators found in STIX bundle"}
+
+    _reject_if_over_bulk_cap(len(ioc_dicts))
 
     rows = await ioc_service.create_iocs_bulk(
         db,

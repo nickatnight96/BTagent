@@ -90,17 +90,29 @@ def should_continue(state: InvestigationState) -> str:
     if status in terminal_statuses:
         return END
 
-    # If the investigation needs more work (synthesize set the status to
-    # INVESTIGATING and there are IOCs that need enrichment), continue.
-    severity = state.get("severity", "")
+    # Enrichment hand-off (GH #388): a high/critical triage with IOCs advances
+    # to enrichment. ``synthesize_node`` signals this by setting
+    # ``task_type="enrich"`` AND marking ``current_agent="enrich"`` as the
+    # *pending* target (before the enrich node has actually run). We route once
+    # back through ``route_task``, which honors the advanced task_type and goes
+    # straight to enrichment.
+    #
+    # This cannot loop: after the enrich node runs and re-enters synthesize,
+    # ``current_agent`` becomes "synthesize" again and the IOCs carry an
+    # ``enrichment`` key, so neither guard below holds and we fall through to
+    # END. The ``not already_enriched`` guard additionally prevents re-issuing
+    # "continue" for a message whose IOCs were already enriched.
     iocs: list[dict] = state.get("iocs", [])
     task_type = state.get("task_type", "")
+    current_agent = state.get("current_agent", "")
+    already_enriched = any("enrichment" in ioc for ioc in iocs)
 
     if (
         status == InvestigationStatus.INVESTIGATING
-        and task_type == "triage"
-        and severity in ("high", "critical")
+        and task_type == "enrich"
+        and current_agent == "enrich"
         and iocs
+        and not already_enriched
     ):
         return "continue"
 

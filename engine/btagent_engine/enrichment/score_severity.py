@@ -31,6 +31,7 @@ Sprint 4B; bumps a TODO from Sprint 3D's enrichment workflow template.
 
 from __future__ import annotations
 
+import re
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field
@@ -113,6 +114,20 @@ _FORCE_CRITICAL_TECHNIQUES: frozenset[str] = frozenset(
 # dominating the score on their own.
 _PER_IOC_WEIGHT: float = 0.04
 _MAX_IOC_CONTRIBUTION: float = 0.20
+
+
+def _keyword_matches(keyword: str, text: str) -> bool:
+    """Whole-word/phrase match for a keyword against (already-lowered) *text*.
+
+    Substring matching (the old ``keyword in text``) misfired: ``"apt"`` matched
+    inside ``"adaptive"`` / ``"chapter"`` and ``"test"`` matched inside
+    ``"greatest"``, inflating (or deflating) severity on unrelated prose. Anchor
+    both ends of the keyword on word boundaries so only standalone occurrences
+    score. Multi-word phrases (``"lateral movement"``) and hyphen/digit keywords
+    (``"0-day"``) all begin and end with an alphanumeric, so ``\\b`` is
+    well-defined at each edge.
+    """
+    return re.search(rf"\b{re.escape(keyword)}\b", text) is not None
 
 
 def _bucket(score: float) -> str:
@@ -213,7 +228,7 @@ class ScoreSeverityNode(Node[ScoreSeverityInput, ScoreSeverityOutput]):
             ("low", _LOW_KEYWORDS),
         ):
             for keyword, weight in table:
-                if keyword in lower:
+                if _keyword_matches(keyword, lower):
                     score += weight
                     sign = "+" if weight >= 0 else ""
                     rationale.append(

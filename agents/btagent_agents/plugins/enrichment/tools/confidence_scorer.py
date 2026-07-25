@@ -142,6 +142,20 @@ def score_confidence(enrichment_json: str) -> dict[str, Any]:
             "error": str(exc),
         }
 
+    # ``json.loads`` happily returns non-object roots (a list, string, number,
+    # bool, or null). Those have no ``.get`` -- the old code crashed on the very
+    # next line. Validate the shape first and fail gracefully with an error
+    # result instead.
+    if not isinstance(enrichment, dict):
+        return {
+            "confidence": 0.0,
+            "justification": [
+                "Expected a JSON object with a 'source_results' list, got "
+                f"{type(enrichment).__name__}."
+            ],
+            "error": f"Input JSON must be an object, got {type(enrichment).__name__}",
+        }
+
     source_results = enrichment.get("source_results", [])
     ioc_type = enrichment.get("ioc_type", "unknown")
     ioc_value = enrichment.get("ioc_value", "unknown")
