@@ -24,6 +24,7 @@ import { Badge } from "@/components/ds/badge";
 import { IOCDetailPanel } from "./IOCDetailPanel";
 import { IOCImportModal } from "./IOCImportModal";
 import { IOCExportDialog } from "./IOCExportDialog";
+import { NotebookSearchPanel } from "./NotebookSearchPanel";
 import type { IOC, IOCType, IOCSortField, EnrichmentStatus } from "@/types/ioc";
 
 /**
@@ -452,6 +453,10 @@ export function IOCNotebook() {
             Pinned only
           </label>
         </div>
+
+        {/* Cross-case notebook search (UC-5.2) — annotated IOCs across all
+            accessible cases, independent of the per-case filters above. */}
+        <NotebookSearchPanel />
 
         {/* Bulk actions bar */}
         {selectedIds.size > 0 && (
