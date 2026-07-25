@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_hunt import HuntFindingRow
+from btagent_backend.services.handover_narrative import compose_handover_narrative
 
 # Terminal statuses — the case is resolved and off the incoming shift's plate.
 # (Mirrors the "closed" set used by data_retention / pattern_hunt, plus the
@@ -125,7 +126,7 @@ async def build_handover_summary(
         f"landed ({findings_untriaged} untriaged); {open_total} case(s) still open."
     )
 
-    return {
+    summary = {
         "window_hours": window_hours,
         "window_start": cutoff,
         "generated_at": datetime.now(UTC),
@@ -135,3 +136,7 @@ async def build_handover_summary(
         "findings_by_severity": findings_by_severity,
         "findings_untriaged": findings_untriaged,
     }
+    # Multi-line brief derived from the same aggregates (pure, cheap). The
+    # LLM-polished prose variant is the documented follow-up on #108.
+    summary["narrative"] = compose_handover_narrative(summary)
+    return summary
