@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Plus,
   Search as SearchIcon,
@@ -6,8 +6,10 @@ import {
   Loader2,
   AlertTriangle,
 } from "lucide-react";
+import { getDashboardLayout } from "@/api/dashboard";
 import { useInvestigationStore } from "@/stores/investigationStore";
 import { InvestigationStatus } from "@/types/config";
+import type { DashboardLayout } from "@/types/dashboard";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
 import { Input } from "@/components/ds/input";
@@ -33,6 +35,38 @@ export function InvestigationList() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  // Role-tuned view (#108): the saved/role-default layout preselects a status
+  // pill and decides section visibility. Null until loaded; a fetch failure
+  // leaves the stock layout (everything visible, All preselected).
+  const [layout, setLayout] = useState<DashboardLayout | null>(null);
+  // Once the user clicks a pill themselves, the preference must not clobber
+  // their choice — even if the (async) layout fetch resolves afterwards.
+  const filterTouched = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDashboardLayout()
+      .then((resp) => {
+        if (cancelled) return;
+        setLayout(resp.layout);
+        const pref = resp.layout.default_status_filter;
+        if (
+          pref &&
+          !filterTouched.current &&
+          statusFilters.some((f) => f.value === pref)
+        ) {
+          setStatusFilter(pref);
+        }
+      })
+      .catch(() => {
+        // Preference is a nicety — the PunchList must render without it.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const showHandover = layout ? layout.sections.includes("handover") : true;
 
   useEffect(() => {
     void fetchInvestigations({
@@ -69,8 +103,9 @@ export function InvestigationList() {
         className="flex-1 overflow-y-auto p-6"
         data-testid="investigation-list"
       >
-        {/* Shift-handover rollup (UC-5.1) — renders nothing on fetch failure */}
-        <HandoverCard />
+        {/* Shift-handover rollup (UC-5.1) — renders nothing on fetch failure;
+         * hidden entirely when the user's layout omits the section (#108). */}
+        {showHandover && <HandoverCard />}
 
         {/* Toolbar */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
@@ -124,7 +159,10 @@ export function InvestigationList() {
             return (
               <button
                 key={filter.value}
-                onClick={() => setStatusFilter(filter.value)}
+                onClick={() => {
+                  filterTouched.current = true;
+                  setStatusFilter(filter.value);
+                }}
                 role="tab"
                 aria-selected={active}
                 data-testid={`investigation-list-filter-${
