@@ -493,6 +493,33 @@ async def noise_digest_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     return totals
 
 
+async def shift_handover_digest(ctx: dict[str, Any]) -> dict[str, int]:
+    """Shift-boundary handover digest (#108 UC-5.1).
+
+    For every organization, builds the 8h handover rollup and pushes the
+    headline to each analyst's bell (quiet windows stay silent — see
+    :mod:`services.handover_notifier`). Fires at the three shift boundaries;
+    the arq redis rides along for the real-time WS push.
+    """
+    from sqlalchemy import select as _select
+
+    from btagent_backend.db.models import OrganizationRow
+    from btagent_backend.services.handover_notifier import notify_shift_handover
+
+    totals = {"orgs": 0, "notified": 0}
+    async with async_session_factory() as session:
+        org_ids = [
+            org_id for (org_id,) in (await session.execute(_select(OrganizationRow.id))).all()
+        ]
+        for org_id in org_ids:
+            created = await notify_shift_handover(session, org_id=org_id, redis=ctx.get("redis"))
+            totals["orgs"] += 1
+            totals["notified"] += len(created)
+        await session.commit()
+    logger.info("shift_handover_digest: orgs=%d notified=%d", totals["orgs"], totals["notified"])
+    return totals
+
+
 async def execute_workflow_run(ctx: dict[str, Any], run_id: str) -> dict[str, Any]:
     """Execute a background workflow run created by the run route.
 
