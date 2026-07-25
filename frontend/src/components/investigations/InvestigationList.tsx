@@ -9,13 +9,14 @@ import {
 import { getDashboardLayout } from "@/api/dashboard";
 import { useInvestigationStore } from "@/stores/investigationStore";
 import { InvestigationStatus } from "@/types/config";
-import type { DashboardLayout } from "@/types/dashboard";
+import type { DashboardLayout, DashboardLayoutResponse } from "@/types/dashboard";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
 import { Input } from "@/components/ds/input";
 import { cn } from "@/lib/utils";
 import { InvestigationCard } from "./InvestigationCard";
 import { HandoverCard } from "./HandoverCard";
+import { LayoutSettings } from "./LayoutSettings";
 import { NewInvestigationModal } from "./NewInvestigationModal";
 
 const statusFilters: { label: string; value: string }[] = [
@@ -39,6 +40,7 @@ export function InvestigationList() {
   // pill and decides section visibility. Null until loaded; a fetch failure
   // leaves the stock layout (everything visible, All preselected).
   const [layout, setLayout] = useState<DashboardLayout | null>(null);
+  const [layoutSource, setLayoutSource] = useState("role_default");
   // Once the user clicks a pill themselves, the preference must not clobber
   // their choice — even if the (async) layout fetch resolves afterwards.
   const filterTouched = useRef(false);
@@ -49,6 +51,7 @@ export function InvestigationList() {
       .then((resp) => {
         if (cancelled) return;
         setLayout(resp.layout);
+        setLayoutSource(resp.source);
         const pref = resp.layout.default_status_filter;
         if (
           pref &&
@@ -64,6 +67,14 @@ export function InvestigationList() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Save/reset from the view-settings dropdown: section visibility applies
+  // immediately; the default filter only takes effect on the next visit
+  // (changing it mid-session would yank the board out from under the user).
+  const handleLayoutApplied = useCallback((resp: DashboardLayoutResponse) => {
+    setLayout(resp.layout);
+    setLayoutSource(resp.source);
   }, []);
 
   const showHandover = layout ? layout.sections.includes("handover") : true;
@@ -135,6 +146,17 @@ export function InvestigationList() {
             >
               <Filter className="w-4 h-4" aria-hidden="true" />
             </Button>
+
+            {/* View settings appear once the preference has loaded — saving
+             * before then could clobber a customization with the stock view. */}
+            {layout && (
+              <LayoutSettings
+                layout={layout}
+                source={layoutSource}
+                statusOptions={statusFilters}
+                onApplied={handleLayoutApplied}
+              />
+            )}
           </div>
 
           <Button
