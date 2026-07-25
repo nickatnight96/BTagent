@@ -30,6 +30,7 @@ import {
   Map,
   Bot,
   FileText,
+  SlidersHorizontal,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -195,6 +196,12 @@ const navItems: NavItem[] = [
     path: "/integrations",
     icon: <Plug className="w-5 h-5" />,
     testId: "nav-integrations-link",
+  },
+  {
+    label: "Configuration",
+    path: "/config",
+    icon: <SlidersHorizontal className="w-5 h-5" />,
+    testId: "nav-config-link",
   },
   {
     label: "SSO Linking",

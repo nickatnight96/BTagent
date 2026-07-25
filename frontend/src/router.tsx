@@ -104,6 +104,11 @@ const IntegrationsPage = lazy(() =>
 const SSOIdentitiesPage = lazy(() =>
   import("@/components/auth/SSOIdentitiesPage").then((m) => ({ default: m.SSOIdentitiesPage })),
 );
+const ConfigCenterPage = lazy(() =>
+  import("@/components/settings/ConfigCenterPage").then((m) => ({
+    default: m.ConfigCenterPage,
+  })),
+);
 const BehavioralHuntsPage = lazy(() =>
   import("@/components/behavioral/BehavioralHuntsPage").then((m) => ({
     default: m.BehavioralHuntsPage,
@@ -271,6 +276,10 @@ export const router = createBrowserRouter([
       {
         path: "integrations",
         element: lazyRoute(IntegrationsPage),
+      },
+      {
+        path: "config",
+        element: lazyRoute(ConfigCenterPage),
       },
       {
         path: "sso-identities",
