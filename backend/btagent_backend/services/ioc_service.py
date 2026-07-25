@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from btagent_shared.utils.ids import generate_id
-from sqlalchemy import func, select, update
+from sqlalchemy import Text, cast, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import IOCRow
@@ -291,6 +291,82 @@ async def search_cross_investigation(
     if confidence_min is not None:
         query = query.where(IOCRow.confidence >= confidence_min)
         count_query = count_query.where(IOCRow.confidence >= confidence_min)
+
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+
+    query = query.offset((page - 1) * page_size).limit(page_size)
+    result = await db.execute(query)
+    rows = list(result.scalars().all())
+
+    return rows, total
+
+
+async def search_notebook(
+    db: AsyncSession,
+    *,
+    q: str | None = None,
+    disposition: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+    investigation_id_in: list[str] | None = None,
+) -> tuple[list[IOCRow], int]:
+    """Search analyst-annotated IOCs across investigations (#108 UC-5.2).
+
+    The notebook search surfaces analyst *knowledge*, not raw indicators:
+    only IOCs carrying at least one annotation (pinned, tags, note, or
+    disposition) are considered, and ``q`` matches the annotation text
+    (note, tags) as well as the IOC value. Results order pinned-first so
+    the working set of every case floats to the top.
+
+    Keyword-only for now; pgvector semantic ranking over notes is the
+    documented follow-up on #108.
+
+    Parameters
+    ----------
+    investigation_id_in : list[str] | None
+        AUTH-B1: when supplied, restrict results to IOCs whose parent
+        investigation_id is in this list; an empty list yields no rows.
+
+    Returns
+    -------
+    tuple[list[IOCRow], int]
+        (rows, total_count)
+    """
+    # ``tags`` cast to text works on both PostgreSQL (jsonb::text) and the
+    # SQLite test dialect (JSON stored as text) — an empty array is '[]'.
+    tags_text = cast(IOCRow.tags, Text)
+    annotated = or_(
+        IOCRow.pinned.is_(True),
+        IOCRow.analyst_note != "",
+        IOCRow.disposition != "",
+        tags_text != "[]",
+    )
+
+    query = select(IOCRow).where(annotated)
+    count_query = select(func.count(IOCRow.id)).where(annotated)
+
+    if investigation_id_in is not None:
+        if not investigation_id_in:
+            return [], 0
+        query = query.where(IOCRow.investigation_id.in_(investigation_id_in))
+        count_query = count_query.where(IOCRow.investigation_id.in_(investigation_id_in))
+
+    if q:
+        like_pattern = f"%{q}%"
+        text_match = or_(
+            IOCRow.value.ilike(like_pattern),
+            IOCRow.analyst_note.ilike(like_pattern),
+            tags_text.ilike(like_pattern),
+        )
+        query = query.where(text_match)
+        count_query = count_query.where(text_match)
+
+    if disposition:
+        query = query.where(IOCRow.disposition == disposition)
+        count_query = count_query.where(IOCRow.disposition == disposition)
+
+    query = query.order_by(IOCRow.pinned.desc(), IOCRow.first_seen.desc().nullslast())
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0

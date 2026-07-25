@@ -303,6 +303,52 @@ async def search_iocs(
     )
 
 
+@router.get("/notebook/search", response_model=IOCListResponse)
+async def search_notebook(
+    q: str | None = Query(None, max_length=200, description="Matches note, tags, and value"),
+    disposition: Literal["under_review", "confirmed_malicious", "benign", "false_positive"]
+    | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Search analyst-annotated IOCs across cases (#108 UC-5.2 notebook).
+
+    Unlike ``/iocs/search`` (raw indicator values), this searches the
+    notebook layer — only IOCs with at least one annotation, with ``q``
+    matching the analyst note and tags too — so "have we seen this before,
+    and what did we conclude?" is answerable across investigations.
+    """
+    user.require_permission("ioc:view")
+
+    # AUTH-B1: same tenant + (for plain analysts) ownership scoping as the
+    # sibling cross-investigation search above.
+    inv_q = select(InvestigationRow.id).where(InvestigationRow.org_id == user.org_id)
+    if user.role not in _ORG_WIDE_ROLES:
+        inv_q = inv_q.where(InvestigationRow.assigned_to == user.id)
+    inv_result = await db.execute(inv_q)
+    accessible_investigation_ids = [row[0] for row in inv_result.all()]
+    if not accessible_investigation_ids:
+        return IOCListResponse(items=[], total=0, page=page, page_size=page_size)
+
+    rows, total = await ioc_service.search_notebook(
+        db,
+        q=q,
+        disposition=disposition,
+        page=page,
+        page_size=page_size,
+        investigation_id_in=accessible_investigation_ids,
+    )
+
+    return IOCListResponse(
+        items=[_to_response(r) for r in rows],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.get("/export", response_model=None)
 async def export_stix(
     investigation_id: str = Query(...),
