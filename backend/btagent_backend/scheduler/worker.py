@@ -28,6 +28,7 @@ from btagent_backend.scheduler.jobs import (
     scheduled_email_hunt_scan,
     scheduled_hunt_pack_run,
     scheduled_ndr_hunt_scan,
+    shift_handover_digest,
     stale_suppression_sweep,
     validate_detection_proposal,
     weekly_pattern_scan,
@@ -226,6 +227,16 @@ class WorkerSettings:
             noise_digest_sweep,
             hour=6,
             minute=30,
+            unique=True,
+        ),
+        # #108 UC-5.1 shift-handover digest: at each 8h shift boundary, push
+        # every org's handover headline to analysts' bells (quiet windows stay
+        # silent inside the producer). ``unique=True`` — one tick per boundary
+        # across worker replicas.
+        cron(
+            shift_handover_digest,
+            hour={6, 14, 22},
+            minute=0,
             unique=True,
         ),
     ]
