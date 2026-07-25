@@ -19,6 +19,24 @@ EMBEDDING_DIM = 1536
 
 
 # ---------------------------------------------------------------------------
+# Errors
+# ---------------------------------------------------------------------------
+
+
+class EmbeddingProviderError(RuntimeError):
+    """Raised when the embeddings provider is misconfigured or unreachable.
+
+    GH #383: an empty OpenAI API key made ``generate_embeddings`` build an
+    ``Authorization: Bearer `` header (trailing space), which httpx rejects
+    with ``httpcore.LocalProtocolError`` — bubbling up as an opaque HTTP 500
+    on ``/knowledge/ingest`` and ``/knowledge/query``. Any provider
+    configuration/transport failure is normalised to this distinct error so
+    the API layer can map it to a clean 503 (Service Unavailable) with an
+    actionable detail instead of a raw 500.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Abstract base
 # ---------------------------------------------------------------------------
 
@@ -75,6 +93,18 @@ class OpenAIEmbeddingService(EmbeddingService):
         if not texts:
             return []
 
+        # GH #383: never build an ``Authorization: Bearer `` header from an
+        # empty key. httpx raises ``LocalProtocolError`` on the illegal header
+        # value, which otherwise surfaces as an opaque 500. Fail loudly and
+        # clearly instead so the route can map it to a 503.
+        if not self._api_key or not self._api_key.strip():
+            raise EmbeddingProviderError(
+                "OpenAI embeddings provider is not configured: no API key set "
+                "(BTAGENT_OPENAI_API_KEY). Configure a key, set "
+                "BTAGENT_EMBEDDING_PROVIDER=ollama for local embeddings, or "
+                "enable BTAGENT_MOCK_CONNECTORS in dev/test."
+            )
+
         url = f"{self._base_url}/embeddings"
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -85,9 +115,16 @@ class OpenAIEmbeddingService(EmbeddingService):
             "input": texts,
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            # Transport / protocol / non-2xx errors all become a clear,
+            # provider-level error rather than a raw 500 at the route.
+            raise EmbeddingProviderError(
+                f"OpenAI embeddings request failed ({self._model}): {exc}"
+            ) from exc
 
         data = resp.json()
         # Sort by index to guarantee ordering
@@ -129,19 +166,27 @@ class OllamaEmbeddingService(EmbeddingService):
         embeddings: list[list[float]] = []
         url = f"{self._base_url}/api/embeddings"
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            for text in texts:
-                payload = {"model": self._model, "prompt": text}
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                embedding = data.get("embedding", [])
-                # Pad or truncate to EMBEDDING_DIM if needed
-                if len(embedding) < EMBEDDING_DIM:
-                    embedding += [0.0] * (EMBEDDING_DIM - len(embedding))
-                elif len(embedding) > EMBEDDING_DIM:
-                    embedding = embedding[:EMBEDDING_DIM]
-                embeddings.append(embedding)
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                for text in texts:
+                    payload = {"model": self._model, "prompt": text}
+                    resp = await client.post(url, json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    embedding = data.get("embedding", [])
+                    # Pad or truncate to EMBEDDING_DIM if needed
+                    if len(embedding) < EMBEDDING_DIM:
+                        embedding += [0.0] * (EMBEDDING_DIM - len(embedding))
+                    elif len(embedding) > EMBEDDING_DIM:
+                        embedding = embedding[:EMBEDDING_DIM]
+                    embeddings.append(embedding)
+        except httpx.HTTPError as exc:
+            # A local Ollama endpoint that is down/unreachable must not become
+            # an opaque 500 at the route — surface a clear provider error.
+            raise EmbeddingProviderError(
+                f"Ollama embeddings request to {self._base_url} failed "
+                f"({self._model}): {exc}. Is the local Ollama server running?"
+            ) from exc
 
         logger.info(
             "Generated %d embeddings via Ollama (%s)",
@@ -220,6 +265,21 @@ def get_embedding_service(settings: Any) -> EmbeddingService:
     - If ``mock_connectors`` is True, returns MockEmbeddingService.
     - If ``embedding_provider`` is "ollama", returns OllamaEmbeddingService.
     - Otherwise returns OpenAIEmbeddingService.
+
+    GH #383: the OpenAI branch no longer blindly constructs a client with an
+    empty API key (which would emit an illegal ``Bearer `` header and 500 on
+    the first ingest/query). When no key is configured and mocks are off:
+
+    * in dev/test we fall back to the deterministic local mock embedder so the
+      stock ``make dev`` backend works out of the box; and
+    * outside dev/test we raise a clear :class:`EmbeddingProviderError` (the
+      route maps it to a 503) instead of crashing with an opaque 500.
+
+    Raises
+    ------
+    EmbeddingProviderError
+        If the OpenAI provider is selected with no API key in a non-dev/test
+        environment and mocks are disabled.
     """
     if getattr(settings, "mock_connectors", False):
         logger.info("Using mock embedding service")
@@ -234,8 +294,27 @@ def get_embedding_service(settings: Any) -> EmbeddingService:
         return OllamaEmbeddingService(model=model, base_url=base_url)
 
     # Default: OpenAI
-    api_key = getattr(settings, "openai_api_key", "")
+    api_key = getattr(settings, "openai_api_key", "") or ""
     model = getattr(settings, "embedding_model", "text-embedding-3-small")
+
+    if not api_key.strip():
+        env = getattr(settings, "env", "dev")
+        if env in ("dev", "test"):
+            logger.warning(
+                "No OpenAI API key configured (BTAGENT_OPENAI_API_KEY) and "
+                "mock_connectors is off; falling back to the local mock "
+                "embedding service in env=%s. Set BTAGENT_OPENAI_API_KEY or "
+                "BTAGENT_EMBEDDING_PROVIDER=ollama for real embeddings.",
+                env,
+            )
+            return MockEmbeddingService()
+        raise EmbeddingProviderError(
+            "OpenAI embeddings provider selected but no API key is configured "
+            "(set BTAGENT_OPENAI_API_KEY) and BTAGENT_MOCK_CONNECTORS is off. "
+            "Configure a key, set BTAGENT_EMBEDDING_PROVIDER=ollama for local "
+            "embeddings, or enable mocks."
+        )
+
     logger.info("Using OpenAI embedding service: %s", model)
     return OpenAIEmbeddingService(api_key=api_key, model=model)
 

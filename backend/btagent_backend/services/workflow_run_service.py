@@ -55,6 +55,11 @@ from btagent_engine.middleware import (
     HITLMiddleware,
     Middleware,
 )
+
+# HITLGateMiddleware is not re-exported from the middleware package __init__,
+# so import it directly from its module. It pauses explicit ``hitl_gate``
+# playbook steps (GH #389) that HITLMiddleware/ConnectorPolicy don't touch.
+from btagent_engine.middleware.hitl import HITLGateMiddleware
 from btagent_engine.node import NodeContext
 from btagent_engine.runtime import (
     WorkflowExecutionError,
@@ -233,6 +238,9 @@ def _build_middleware_chain(
     the ones the audit identified as security-critical for the executor:
 
     * :class:`HITLMiddleware` — autonomy-policy pauses on integration nodes.
+    * :class:`HITLGateMiddleware` — pauses explicit ``hitl_gate`` playbook
+      steps (the human-approval checkpoint the other two middlewares don't
+      touch; GH #389).
     * :class:`ConnectorPolicyMiddleware` — per-capability manifest policy
       (HITL, TLP, cost class).
     * :class:`EvidenceChainMiddleware` — hash-linked audit trail.
@@ -252,6 +260,11 @@ def _build_middleware_chain(
             integration_autonomy=integration_autonomy,
         )
     )
+    # Gate the explicit hitl_gate step right after the autonomy-policy HITL
+    # check. Both are no-ops for the other's node types, so grouping them
+    # keeps the two HITL concerns together without changing behaviour for
+    # any non-gate node.
+    chain.append(HITLGateMiddleware())
     chain.append(ConnectorPolicyMiddleware(active_tlp=active_tlp))
     chain.append(EvidenceChainMiddleware(records=evidence_records))
     return chain

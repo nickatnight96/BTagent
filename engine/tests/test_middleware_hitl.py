@@ -7,7 +7,10 @@ from btagent_shared.types.config import AutonomyLevel, IntegrationAutonomy
 from pydantic import BaseModel
 
 from btagent_engine import Node, NodeCategory, NodeContext, NodeMeta, Runner
+from btagent_engine.compiler.steps import HITLGateNode
 from btagent_engine.middleware.hitl import (
+    HITLGateMiddleware,
+    HITLGatePause,
     HITLMiddleware,
     HITLPause,
     requires_approval,
@@ -110,3 +113,108 @@ def test_requires_approval_l4_only_blocks_l0_actions():
     assert requires_approval("integration.disable_account", AutonomyLevel.L4_FULL_AUTO, ia)
     # virustotal lookup is L3 by default -> not blocked at L4
     assert not requires_approval("integration.virustotal.lookup", AutonomyLevel.L4_FULL_AUTO, ia)
+
+
+# --------------------------------------------------------------------------- #
+# Regression: destructive containment is always gated, even at L3/L4 (#377)
+# --------------------------------------------------------------------------- #
+
+
+def test_requires_approval_containment_gated_at_high_autonomy():
+    """host_isolation / firewall_rule nodes are destructive containment and
+    must be gated even at L3_AUTONOMOUS / L4_FULL_AUTO — the manifest marks them
+    hitl_required=True, so the autonomy table never auto-approves them (#377).
+
+    ``integration.crowdstrike.isolate_host`` also proves the token scan is
+    immune to autonomy-map ordering: ``crowdstrike`` would otherwise resolve it
+    to a benign L3 edr_query before the ``isolate`` token is ever considered.
+    """
+    ia = IntegrationAutonomy()
+    for level in (AutonomyLevel.L3_AUTONOMOUS, AutonomyLevel.L4_FULL_AUTO):
+        assert requires_approval("integration.crowdstrike.isolate_host", level, ia)
+        assert requires_approval("integration.defender.quarantine", level, ia)
+        assert requires_approval("integration.paloalto.firewall_block", level, ia)
+        assert requires_approval("integration.edge.block_domain", level, ia)
+
+
+def test_requires_approval_containment_gated_even_with_loosened_config():
+    """Even a config that sets host_isolation/firewall_rule to L4 cannot
+    auto-approve containment -- the code gates it, not the default (#377)."""
+    ia = IntegrationAutonomy(
+        host_isolation=AutonomyLevel.L4_FULL_AUTO,
+        firewall_rule=AutonomyLevel.L4_FULL_AUTO,
+    )
+    assert requires_approval("integration.crowdstrike.isolate_host", AutonomyLevel.L4_FULL_AUTO, ia)
+    assert requires_approval("integration.paloalto.firewall_block", AutonomyLevel.L4_FULL_AUTO, ia)
+
+
+def test_requires_approval_benign_query_not_gated_at_high_autonomy():
+    """A benign SIEM query stays ungated at L3/L4 (non-containment unchanged)."""
+    ia = IntegrationAutonomy()
+    assert not requires_approval("integration.splunk.search", AutonomyLevel.L3_AUTONOMOUS, ia)
+    assert not requires_approval("integration.splunk.search", AutonomyLevel.L4_FULL_AUTO, ia)
+
+
+async def test_hitl_pauses_isolation_at_l4_autonomy():
+    """End-to-end: an isolate node paused via the middleware even at L4 (#377)."""
+    mw = HITLMiddleware(agent_autonomy=AutonomyLevel.L4_FULL_AUTO)
+    runner = Runner([mw])
+    node = _make_node("integration.crowdstrike.isolate_host", NodeCategory.INTEGRATION)()
+    with pytest.raises(HITLPause) as exc:
+        await runner.execute(node, _In(q=""), _ctx())
+    assert exc.value.node_id == "integration.crowdstrike.isolate_host"
+
+
+# --------------------------------------------------------------------------- #
+# HITLGateMiddleware -- explicit hitl_gate step gating (GH #389)
+# --------------------------------------------------------------------------- #
+
+
+async def test_gate_middleware_ignores_non_gate_nodes():
+    """A gate middleware must be a no-op for anything that isn't the gate.
+
+    Even an INTEGRATION node at L0 (which the *autonomy* HITL would pause)
+    passes straight through the gate middleware -- gating that node is the
+    other middleware's job, not this one's.
+    """
+    mw = HITLGateMiddleware()
+    runner = Runner([mw])
+    node = _make_node("integration.disable_account.run", NodeCategory.INTEGRATION)()
+    out = await runner.execute(node, _In(q=""), _ctx())
+    assert out.ok is True
+
+
+async def test_gate_middleware_pauses_the_hitl_gate_node():
+    """Reaching the ``decision.hitl_gate`` node raises HITLGatePause and the
+    node's ``run`` (which would return approved=True) never executes."""
+    mw = HITLGateMiddleware()
+    runner = Runner([mw])
+    node = HITLGateNode()
+    with pytest.raises(HITLGatePause) as ei:
+        await runner.execute(
+            node,
+            {"required_role": "incident_commander", "prompt": "Approve containment?"},
+            _ctx(),
+        )
+    # required_role / prompt are propagated onto the pause for the approval card.
+    assert ei.value.node_id == HITLGateNode.meta.id
+    assert ei.value.required_role == "incident_commander"
+    assert ei.value.prompt == "Approve containment?"
+    # HITLGatePause is a HITLPause subclass so the executor's existing catch
+    # translates it to WorkflowPaused with no executor change.
+    assert isinstance(ei.value, HITLPause)
+
+
+async def test_gate_middleware_bypasses_when_step_is_approved():
+    """A resume that approved this step skips the pause -- the gate's
+    pass-through ``run`` proceeds and returns approved=True."""
+    mw = HITLGateMiddleware()
+    runner = Runner([mw])
+    node = HITLGateNode()
+    ctx = NodeContext(
+        run_id="r1",
+        org_id="org_test",
+        metadata={"current_step_id": "gate", "approved_steps": {"gate"}},
+    )
+    out = await runner.execute(node, {"required_role": "incident_commander"}, ctx)
+    assert out.approved is True

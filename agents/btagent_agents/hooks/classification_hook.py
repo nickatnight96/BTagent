@@ -191,6 +191,18 @@ class ClassificationHook(HookProvider):
         self._provider = provider
         self._investigation_id = investigation_id
 
+        # Wire the investigation's classification into the MCP dispatch path
+        # (#397). The router's TLP-egress gate reads the active classification
+        # from a request/run-scoped ContextVar; binding it here — where the
+        # per-run hook is constructed — is what makes a TLP:RED investigation
+        # actually block AMBER_STRICT-egress tools in production. Previously
+        # ``set_active_tlp`` was never called outside tests, so the gate was
+        # permanently inert (active classification stuck at None). Local import
+        # avoids any import-order coupling between hooks and the MCP package.
+        from btagent_agents.mcp.policy import set_active_tlp
+
+        set_active_tlp(tlp_level)
+
     def get_callbacks(self) -> list[BaseCallbackHandler]:
         return [
             ClassificationCallback(

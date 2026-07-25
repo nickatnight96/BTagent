@@ -29,6 +29,7 @@ Reuses the Phase 6 hunt RBAC: ``hunt:view`` (analyst+) — same as
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import UTC, datetime
 
@@ -72,6 +73,25 @@ class OAuthGrantListResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Internal helpers — pure-logic so they're trivially unit-testable
 # --------------------------------------------------------------------------- #
+
+
+# ``OAuthGrant.id`` is bounded at 200 chars, but ``principal_id`` / ``app_id``
+# are each up to 512, so the natural ``oag_{provider}_{principal}_{app}`` key
+# can overflow and 500 the endpoint on model construction. ``_grant_id`` keeps
+# the natural key verbatim when it fits (back-compatible with every id already
+# emitted and stored) and falls back to a collision-resistant hash of the full
+# tuple when it doesn't. Both the derive pass and the store overlay call it so
+# the two views produce the *same* id for the same grant and still dedupe.
+_GRANT_ID_MAXLEN = 200
+
+
+def _grant_id(provider: str, principal_id: str, app_id: str) -> str:
+    natural = f"oag_{provider}_{principal_id}_{app_id}"
+    if len(natural) <= _GRANT_ID_MAXLEN:
+        return natural
+    # NUL-delimit so distinct tuples can't alias to the same digest input.
+    digest = hashlib.sha256(f"{provider}\x00{principal_id}\x00{app_id}".encode()).hexdigest()
+    return f"oag_{digest}"  # 4 + 64 = 68 chars, comfortably under the cap
 
 
 def _parse_dt(raw: object) -> datetime | None:
@@ -141,7 +161,7 @@ def _grant_from_evidence(
         # Stable, dedup-friendly id derived from the unique grant tuple — same
         # key the dedupe step uses below, so two findings about the same grant
         # collapse to the same OAuthGrant.id.
-        id=f"oag_{provider.value}_{principal_id}_{app_id}",
+        id=_grant_id(provider.value, principal_id, app_id),
         org_id=row.org_id,
         app_id=app_id,
         app_display_name=ev.get("app_display_name") or "",
@@ -267,7 +287,7 @@ async def list_identity_grants(
     )
     for r in table_rows:
         table_grant = OAuthGrant(
-            id=f"oag_{r.provider}_{r.principal_id}_{r.app_id}"[:200],
+            id=_grant_id(r.provider, r.principal_id, r.app_id),
             org_id=r.org_id,
             app_id=r.app_id,
             app_display_name=r.app_display_name or "",

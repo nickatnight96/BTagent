@@ -70,7 +70,19 @@ export function InvestigationWorkspace() {
     const wsClient = getWSClient();
     const eventStore = useEventStore.getState();
 
+    // Chain the shared onEvent handler rather than clobbering it (GH #390).
+    // The singleton WS client exposes a single `onEvent` slot; other
+    // consumers — TlpViolationAlerts (mounted once in the persistent Layout
+    // shell) and useLiveEventRefresh — register via the same contract: save
+    // the previous handler, call it FIRST, and restore it on cleanup. A bare
+    // overwrite here would permanently silence them for the session.
+    const prev = wsClient.onEvent;
     wsClient.onEvent = (event) => {
+      // Forward to previously-registered subscribers first and
+      // unconditionally: our investigation-id guard must gate only OUR
+      // logic, never drop events destined for other consumers.
+      prev?.(event);
+
       if (event.investigation_id !== id) return;
 
       // Push to event store
@@ -128,7 +140,9 @@ export function InvestigationWorkspace() {
     }
 
     return () => {
-      wsClient.onEvent = () => {};
+      // Restore the previous handler (NOT a no-op) so chained subscribers
+      // installed before us keep receiving events after we unmount.
+      wsClient.onEvent = prev;
     };
   }, [
     id,

@@ -15,9 +15,12 @@ from btagent_shared.types.mitre import (
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.auth.scoping import assert_can_access_investigation
+from btagent_backend.db.models import InvestigationRow, IOCRow, TimelineEntryRow
 from btagent_backend.services.mitre_service import MitreService
 from btagent_backend.services.org_profile import get_org_profile
 
@@ -29,6 +32,68 @@ router = APIRouter(prefix="/mitre", tags=["mitre"])
 _DEFAULT_STIX_PATH = (
     Path(__file__).resolve().parent.parent.parent / "data" / "enterprise-attack.json"
 )
+
+
+# ---------------------------------------------------------------------------
+# Org scoping helpers (GH #375)
+# ---------------------------------------------------------------------------
+
+
+async def _load_scoped_investigation(
+    db: AsyncSession,
+    user: CurrentUser,
+    investigation_id: str,
+    *,
+    write: bool = False,
+) -> InvestigationRow:
+    """Fetch an investigation and enforce org/role scoping (404 on miss/cross-org).
+
+    The coverage / gap / export routes accept an arbitrary ``investigation_id``
+    from the query string; without this check any caller could read another
+    org's coverage. Mirrors the report/workflow scoping helpers: a 404 is
+    raised both for "no such row" and "belongs to another tenant" so
+    investigation existence never leaks across orgs.
+    """
+    inv = (
+        await db.execute(select(InvestigationRow).where(InvestigationRow.id == investigation_id))
+    ).scalar_one_or_none()
+    if inv is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    assert_can_access_investigation(user, inv, write=write)
+    return inv
+
+
+async def _assert_can_tag_entity(
+    db: AsyncSession,
+    user: CurrentUser,
+    entity_type: str,
+    entity_id: str,
+) -> None:
+    """Ensure the caller may tag ``entity_type/entity_id``.
+
+    Technique tags carry no ``org_id`` of their own, so we resolve the target
+    entity to its owning investigation and reuse
+    :func:`assert_can_access_investigation` (404 on miss/cross-org). Entity
+    kinds with no investigation linkage cannot be ownership-checked, so they
+    are refused (fail closed) rather than allow a cross-org write.
+    """
+    if entity_type == "ioc":
+        ioc = (await db.execute(select(IOCRow).where(IOCRow.id == entity_id))).scalar_one_or_none()
+        if ioc is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        await _load_scoped_investigation(db, user, ioc.investigation_id, write=True)
+        return
+    if entity_type == "timeline":
+        entry = (
+            await db.execute(select(TimelineEntryRow).where(TimelineEntryRow.id == entity_id))
+        ).scalar_one_or_none()
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        await _load_scoped_investigation(db, user, entry.investigation_id, write=True)
+        return
+    # Unknown entity kind: no investigation linkage to verify ownership against.
+    # Fail closed rather than allow a cross-org write to an arbitrary entity_id.
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +268,9 @@ async def get_coverage(
 ):
     """Get ATT&CK coverage heatmap data."""
     user.require_permission("mitre:view")
-    return await MitreService.get_coverage(db, investigation_id)
+    if investigation_id:
+        await _load_scoped_investigation(db, user, investigation_id)
+    return await MitreService.get_coverage(db, investigation_id, org_id=user.org_id)
 
 
 @router.get("/coverage/score", response_model=CoverageScoreResponse)
@@ -214,7 +281,9 @@ async def get_coverage_score(
 ):
     """Get coverage percentage score."""
     user.require_permission("mitre:view")
-    score = await MitreService.get_coverage_score(db, investigation_id)
+    if investigation_id:
+        await _load_scoped_investigation(db, user, investigation_id)
+    score = await MitreService.get_coverage_score(db, investigation_id, org_id=user.org_id)
     return CoverageScoreResponse(score=score, investigation_id=investigation_id)
 
 
@@ -358,7 +427,9 @@ async def get_detection_gaps(
 ):
     """Identify techniques without detection data."""
     user.require_permission("mitre:view")
-    return await MitreService.get_detection_gaps(db, investigation_id)
+    if investigation_id:
+        await _load_scoped_investigation(db, user, investigation_id)
+    return await MitreService.get_detection_gaps(db, investigation_id, org_id=user.org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +445,7 @@ async def search_ttps_for_environment(
     """Suggest TTPs relevant to the organisation's tech stack."""
     user.require_permission("mitre:view")
 
-    profile = await get_org_profile(db)
+    profile = await get_org_profile(db, user.org_id)
     return await MitreService.search_ttps_for_environment(db, profile.model_dump(mode="json"))
 
 
@@ -391,8 +462,10 @@ async def export_navigator_layer(
 ):
     """Export an ATT&CK Navigator compatible JSON layer for download."""
     user.require_permission("mitre:view")
+    if investigation_id:
+        await _load_scoped_investigation(db, user, investigation_id)
 
-    layer = await MitreService.export_navigator_layer(db, investigation_id)
+    layer = await MitreService.export_navigator_layer(db, investigation_id, org_id=user.org_id)
     return JSONResponse(
         content=layer.model_dump(mode="json"),
         media_type="application/json",
@@ -441,6 +514,11 @@ async def tag_technique(
 ):
     """Tag a MITRE technique to an entity."""
     user.require_permission("mitre:tag")
+
+    # Verify the target entity's investigation belongs to the caller's org
+    # before writing (404 on miss/cross-org). Closes the unchecked-write hole
+    # where any caller could tag an arbitrary entity_id in another tenant.
+    await _assert_can_tag_entity(db, user, body.entity_type, body.entity_id)
 
     row = await MitreService.tag_technique(
         db,

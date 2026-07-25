@@ -222,6 +222,12 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
             if not client.user.has_permission("investigation:chat"):
                 await _send_error(client, "Permission denied: investigation:chat")
                 continue
+            # GH #396 FIX: coarse RBAC is not enough — the user must also be
+            # authorized for *this specific* investigation (same check as
+            # subscribe). Otherwise a user could chat on a channel in another
+            # org / not assigned to them.
+            if not await _authorize_investigation(client, msg.investigation_id):
+                continue
             # Forward to the agent engine via Redis (fire-and-forget).
             redis = hub._redis
             if redis:
@@ -246,6 +252,11 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
                     client, "Permission denied: hitl:approve requires senior_analyst or higher"
                 )
                 continue
+            # GH #396 FIX: coarse RBAC is not enough — the user must also be
+            # authorized for *this specific* investigation (same check as
+            # subscribe) before their HITL decision is forwarded to the engine.
+            if not await _authorize_investigation(client, msg.investigation_id):
+                continue
             redis = hub._redis
             if redis:
                 payload = json.dumps(
@@ -261,6 +272,33 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
 
         else:
             await _send_error(client, f"Unknown message type: {msg.type}")
+
+
+async def _authorize_investigation(client: ConnectedClient, investigation_id: str) -> bool:
+    """Return True if ``client`` may act on ``investigation_id``.
+
+    GH #396 FIX: CHAT / HITL_RESPONSE previously enforced only coarse RBAC, so
+    a user could act on an investigation channel they aren't authorized for
+    (wrong org, or a plain analyst acting on another analyst's case). This runs
+    the *same* per-investigation check used at subscribe time
+    (:func:`assert_can_subscribe`). On denial (or check failure) it sends a
+    uniform error and returns False — deliberately identical wording to the
+    subscribe path so it never leaks whether the investigation exists.
+    """
+    try:
+        gen = get_session()
+        db = await gen.__anext__()
+        try:
+            await assert_can_subscribe(db, client.user, investigation_id)
+        finally:
+            await gen.aclose()
+    except AccessDenied:
+        await _send_error(client, "Permission denied")
+        return False
+    except Exception:
+        await _send_error(client, "Authorization check failed")
+        return False
+    return True
 
 
 async def _send_error(client: ConnectedClient, detail: str) -> None:

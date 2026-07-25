@@ -66,6 +66,9 @@ _REPLAY_WINDOW_MINUTES: int = 30
 _REPLAY_MIN_ASN_COUNT: int = 2
 _DORMANT_IDLE_DAYS: int = 90
 _IMPOSSIBLE_TRAVEL_MIN_SPEED_KMH: float = 900.0  # faster than a commercial jet
+# Minimum separation for a zero-Δt (simultaneous) login pair to count as
+# impossible travel — guards against co-located duplicate events (dist ~ 0 km).
+_IMPOSSIBLE_TRAVEL_SIMULTANEOUS_MIN_KM: float = 1.0
 _MFA_FATIGUE_DENIAL_THRESHOLD: int = 3
 _MFA_FATIGUE_WINDOW_MINUTES: int = 10
 
@@ -358,13 +361,26 @@ def detect_impossible_travel(
             a = evts_sorted[i]
             b = evts_sorted[i + 1]
             elapsed = b.timestamp - a.timestamp
-            speed = _speed_kmh(a.geo, b.geo, elapsed)
-            if speed is None:
-                continue
-            if speed < min_speed_kmh:
+            dist = _haversine_km(a.geo, b.geo)
+            if dist is None:
                 continue
 
-            dist = _haversine_km(a.geo, b.geo) or 0.0
+            # Exactly-simultaneous (or clock-inverted) logins from two distinct
+            # locations imply infinite velocity — same principal, two places, one
+            # instant. That is the STRONGEST impossible-travel signal, yet the old
+            # ``_speed_kmh`` returned None for a zero/negative Δt and the
+            # ``speed is None -> continue`` path silently dropped it (#407).
+            simultaneous = elapsed.total_seconds() <= 0
+            if simultaneous:
+                if dist < _IMPOSSIBLE_TRAVEL_SIMULTANEOUS_MIN_KM:
+                    continue  # co-located duplicate events, not travel
+                speed = math.inf
+            else:
+                speed = _speed_kmh(a.geo, b.geo, elapsed)
+                if speed is None or speed < min_speed_kmh:
+                    continue
+
+            speed_label = "effectively infinite" if simultaneous else f"{speed:.0f} km/h"
             results.append(
                 IdentityDetectionResult(
                     detection_id=f"idr-travel-{principal_id[:24]}-{a.id[:12]}-{b.id[:12]}",
@@ -377,7 +393,7 @@ def detect_impossible_travel(
                         f"{b.geo.city or b.geo.country or b.ip_address} "
                         f"at {b.timestamp.isoformat()} — "
                         f"{dist:.0f} km in {elapsed.total_seconds() / 60:.1f} min "
-                        f"({speed:.0f} km/h, threshold {min_speed_kmh:.0f} km/h). "
+                        f"({speed_label}, threshold {min_speed_kmh:.0f} km/h). "
                         "This pattern indicates simultaneous sessions from different "
                         "locations and is a strong indicator of account compromise (T1078)."
                     ),
@@ -405,7 +421,10 @@ def detect_impossible_travel(
                         },
                         "distance_km": round(dist, 1),
                         "elapsed_minutes": round(elapsed.total_seconds() / 60, 1),
-                        "speed_kmh": round(speed, 1),
+                        # inf is not JSON-safe; a simultaneous pair reports no
+                        # finite speed but flags the ``simultaneous`` marker.
+                        "speed_kmh": None if simultaneous else round(speed, 1),
+                        "simultaneous": simultaneous,
                     },
                 )
             )

@@ -49,6 +49,7 @@ async def notify_investigation_outcome(
     finding_count: int = 0,
     redis: Any | None = None,
     settings: Settings | None = None,
+    http: Any | None = None,
 ) -> NotificationRow | None:
     """Notify the assigned analyst that an investigation reached a terminal state.
 
@@ -71,20 +72,36 @@ async def notify_investigation_outcome(
         return None
 
     service = NotificationService(settings or get_settings(), redis=redis)
-    if final_status == FAILED_STATUS:
-        return await service.notify_investigation_failed(
+    # The completion / failure dispatch fans out to Slack via
+    # ``NotificationService.send_slack``, which no-ops unless the service's
+    # httpx client is live. Unlike the in-app-only sibling producers
+    # (hunt_notifier / hitl_notifier), this path actually needs that client —
+    # without starting it the Slack leg was silently skipped. Start it here and
+    # always close it. Tests inject a mock via ``http`` to assert dispatch
+    # without real network I/O (and own the mock's lifecycle themselves).
+    owns_http = http is None
+    if owns_http:
+        await service.start()
+    else:
+        service._http = http
+    try:
+        if final_status == FAILED_STATUS:
+            return await service.notify_investigation_failed(
+                db,
+                investigation_id,
+                error=error or "unknown error",
+                user_id=row.assigned_to,
+            )
+        return await service.notify_investigation_complete(
             db,
             investigation_id,
-            error=error or "unknown error",
+            {
+                "status": final_status,
+                "finding_count": finding_count,
+                "duration": _format_duration(duration_seconds),
+            },
             user_id=row.assigned_to,
         )
-    return await service.notify_investigation_complete(
-        db,
-        investigation_id,
-        {
-            "status": final_status,
-            "finding_count": finding_count,
-            "duration": _format_duration(duration_seconds),
-        },
-        user_id=row.assigned_to,
-    )
+    finally:
+        if owns_http:
+            await service.stop()

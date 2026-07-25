@@ -15,6 +15,8 @@ What this helper wires:
     2. ``ClassificationMiddleware``    -- TLP egress gate on input/output.
     3. ``HITLMiddleware``              -- pause on integration nodes that
        require approval.
+    3b. ``HITLGateMiddleware``         -- pause on explicit ``hitl_gate``
+       playbook steps (GH #389).
     4. ``LLMRouterMiddleware``         -- TLP-vs-provider routing for
        reasoning nodes.
     5. ``PromptBudgetMiddleware``      -- cost cap.
@@ -63,6 +65,11 @@ from btagent_engine.middleware import (
     PromptBudgetMiddleware,
     ScopeEnforcementMiddleware,
 )
+
+# HITLGateMiddleware is not re-exported from the middleware package __init__,
+# so import it directly from its module. It pauses explicit ``hitl_gate``
+# playbook steps (GH #389) that HITLMiddleware/ConnectorPolicy don't touch.
+from btagent_engine.middleware.hitl import HITLGateMiddleware
 from btagent_shared.types.config import TLP, AutonomyLevel, IntegrationAutonomy, ModelTier
 
 from btagent_agents.llm.router import TLPAwareLLMRouter
@@ -135,6 +142,11 @@ def build_middleware_chain(
             integration_autonomy=integration_autonomy,
         )
     )
+
+    # Pause explicit hitl_gate playbook steps (GH #389). Sits right after the
+    # autonomy-policy HITL check; both ignore the other's node types, so the
+    # ordering for every non-gate node is unchanged.
+    chain.append(HITLGateMiddleware())
 
     chain.append(LLMRouterMiddleware(model_to_provider=_resolve_provider_handle(llm_router, tlp)))
 

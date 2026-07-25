@@ -123,6 +123,112 @@ def test_red_tag_in_nested_metadata_blocks() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Fail-closed classification resolution (GH #379)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "bad_ctx",
+    ["purple", "top-secret", "gren", "", "   ", "red\x00green"],
+    ids=["garbage", "typo-level", "typo-green", "empty", "whitespace", "nul-injection"],
+)
+def test_unknown_classification_string_fails_closed_to_red(bad_ctx: str) -> None:
+    """A supplied-but-unrecognised classification string must block egress.
+
+    Regression for GH #379: the egress gate previously downgraded an
+    unrecognised classification to TLP:GREEN (allowed), while the LLM-routing
+    side fails closed to TLP:RED. That asymmetry let a malformed/garbage
+    classification context permit egress it should block. The gate must now
+    fail CLOSED, matching the routing side.
+    """
+    with pytest.raises(TLPViolation):
+        assert_tlp_allows_egress(
+            {"value": "8.8.8.8"},
+            "mcp_return",
+            classification_ctx=bad_ctx,
+        )
+
+
+@pytest.mark.parametrize(
+    "good_ctx",
+    ["green", "white", "GREEN", "White", "amber", "amber_strict"],
+    ids=["green", "white", "green-upper", "white-mixed", "amber", "amber_strict"],
+)
+def test_known_non_red_classification_string_still_egresses(good_ctx: str) -> None:
+    """Known non-RED classification strings must keep egressing (no over-block)."""
+    # Should not raise.
+    assert_tlp_allows_egress(
+        {"value": "8.8.8.8"},
+        "mcp_return",
+        classification_ctx=good_ctx,
+    )
+
+
+def test_none_classification_still_defaults_to_green() -> None:
+    """An *absent* classification (None) stays GREEN -- unset != malformed."""
+    # Should not raise: None is the documented AgentConfig default.
+    assert_tlp_allows_egress({"value": "8.8.8.8"}, "mcp_return", classification_ctx=None)
+
+
+def test_dict_with_uncoercible_tlp_field_fails_closed() -> None:
+    """A mapping whose TLP field holds garbage fails CLOSED to RED."""
+    with pytest.raises(TLPViolation):
+        assert_tlp_allows_egress(
+            {"value": "8.8.8.8"},
+            "mcp_return",
+            classification_ctx={"tlp_level": "not-a-level"},
+        )
+
+
+def test_dict_without_tlp_field_defaults_to_green() -> None:
+    """A mapping with no TLP field is 'unset' -> GREEN, not fail-closed."""
+    # Should not raise.
+    assert_tlp_allows_egress(
+        {"value": "8.8.8.8"},
+        "mcp_return",
+        classification_ctx={"case": "INC-1", "owner": "alice"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Deep-nesting scan (GH #379): depth cap must not certify unscanned data safe
+# --------------------------------------------------------------------------- #
+
+
+def _nest(inner: Any, levels: int) -> dict[str, Any]:
+    """Wrap *inner* in *levels* nested ``{"child": ...}`` dicts."""
+    node: Any = inner
+    for _ in range(levels):
+        node = {"child": node}
+    return node
+
+
+def test_red_tag_nested_beyond_old_depth_cap_is_detected() -> None:
+    """A ``tlp:red`` tag nested >8 levels deep must still be detected/blocked.
+
+    Regression for GH #379: the scan hard-capped at depth 8 and returned
+    ``False`` (i.e. 'no RED found') beyond it, so a RED tag hidden below the
+    horizon slipped through defense-in-depth. The clean classification context
+    means the block can only come from the recursive payload scan.
+    """
+    payload = _nest({"tlp_level": "red", "value": "1.2.3.4"}, levels=15)
+    with pytest.raises(TLPViolation):
+        assert_tlp_allows_egress(payload, "stix_export", classification_ctx=TLP.GREEN)
+
+
+def test_payload_too_deep_to_fully_scan_fails_closed() -> None:
+    """A payload nested past the scan cap cannot be certified safe -> blocked.
+
+    Even with no RED tag present, exceeding the depth cap means we cannot
+    fully scan the branch, so the gate fails CLOSED rather than certifying
+    unscanned data as egress-safe.
+    """
+    payload = _nest({"value": "benign-but-buried"}, levels=80)
+    with pytest.raises(TLPViolation):
+        assert_tlp_allows_egress(payload, "stix_export", classification_ctx=TLP.GREEN)
+
+
+# --------------------------------------------------------------------------- #
 # MCP return path
 # --------------------------------------------------------------------------- #
 

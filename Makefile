@@ -50,8 +50,9 @@ uat: ## Run UAT tests (requires running Docker stack)
 uat-smoke: ## Quick UAT smoke tests
 	python -m pytest tests/uat/ -v -m smoke --timeout=60
 
-eval: ## Run agent evaluation (DeepEval)
-	python -m pytest tests/agent_eval/ -v
+eval: ## Agent evaluation (DeepEval) — suite not implemented yet (#382)
+	@echo "make eval: the agent evaluation suite (tests/agent_eval/) is not implemented yet (#382)."
+	@echo "           No tests to run — exiting 0. Wire this up once tests/agent_eval/ exists."
 
 load: ## Run k6 load tests
 	k6 run tests/load/api_load.js

@@ -163,6 +163,25 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 7
 
+    # Webhook ingestion secret (SEC #372). External SIEM/EDR alert actions
+    # authenticate to the ``/webhooks/*`` endpoints with this shared secret
+    # (sent in the ``X-Webhook-Secret`` header). It is a DISTINCT credential
+    # from ``jwt_secret``: the two protect different trust boundaries, and
+    # reusing the JWT signing key as the webhook secret lets any webhook-secret
+    # holder (it must be embedded in every SIEM/EDR alert-action config) forge
+    # admin JWTs. Env var: ``BTAGENT_WEBHOOK_SECRET``.
+    #
+    # CI / test-mode safety: defaults to ``None`` and the validator below does
+    # NOT fail when it is unset in dev/test — ``Settings(env="test")`` must
+    # construct fine so the suite boots. The webhook auth path resolves the
+    # effective secret lazily (see ``api/v1/webhooks.py::_verify_secret``):
+    #   * if ``webhook_secret`` is set, it is used verbatim;
+    #   * else, in dev/test ONLY, it falls back to ``jwt_secret`` (with a
+    #     warning) so existing webhook tests round-trip without extra config;
+    #   * else (unset outside dev/test) the webhook endpoints deny with 401 —
+    #     a clear misconfiguration rather than a silent JWT-key reuse.
+    webhook_secret: str | None = None
+
     # MFA (opt-in TOTP, #144). ``mfa_issuer`` labels the authenticator entry.
     # ``mfa_secret_enc_key`` is the Fernet key used to encrypt TOTP secrets at
     # rest; it follows the ``${secret:...}`` / env injection pattern.
@@ -233,6 +252,50 @@ class Settings(BaseSettings):
         if len(self.jwt_secret) < 32 and self.env not in ("dev", "test"):
             raise ValueError(
                 "BTAGENT_JWT_SECRET must be at least 32 characters in non-dev environments."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_webhook_secret(self) -> "Settings":
+        """SEC #372 FIX: the webhook secret must never be the JWT signing key.
+
+        Mirrors ``_validate_jwt_secret``'s fail-loud-in-prod posture. Outside
+        dev/test, a *configured* ``webhook_secret`` must be strong and MUST
+        differ from ``jwt_secret`` — reusing the JWT key would let any webhook
+        client forge admin JWTs (the reported vulnerability).
+
+        An *unset* ``webhook_secret`` is intentionally NOT fatal at startup:
+        webhook ingestion is opt-in, the request path already fails closed
+        (401) until a secret is configured (see ``_verify_secret``), and making
+        it fatal would break prod/staging deployments that don't use webhooks
+        (and the existing prod-config tests, which never set it). We warn
+        instead so the misconfiguration is visible in logs.
+        """
+        if self.env in ("dev", "test"):
+            return self
+        if self.webhook_secret is None:
+            _config_logger.warning(
+                "BTAGENT_WEBHOOK_SECRET is not set. Webhook ingestion endpoints "
+                "will reject all requests (401) until a dedicated secret is "
+                "configured — the JWT signing key is never used as a fallback "
+                "outside dev/test."
+            )
+            return self
+        if self.webhook_secret == self.jwt_secret:
+            raise ValueError(
+                "CRITICAL: BTAGENT_WEBHOOK_SECRET must not equal BTAGENT_JWT_SECRET. "
+                "Reusing the JWT signing key as the webhook secret lets any webhook "
+                "client forge admin JWTs. Generate a distinct secret with: "
+                "openssl rand -hex 32"
+            )
+        if self.webhook_secret in _INSECURE_JWT_DEFAULTS:
+            raise ValueError(
+                "CRITICAL: BTAGENT_WEBHOOK_SECRET is set to a known default value. "
+                "Generate a secure secret with: openssl rand -hex 32"
+            )
+        if len(self.webhook_secret) < 32:
+            raise ValueError(
+                "BTAGENT_WEBHOOK_SECRET must be at least 32 characters in non-dev environments."
             )
         return self
 

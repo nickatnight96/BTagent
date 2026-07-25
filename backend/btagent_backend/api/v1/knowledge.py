@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.config import get_settings
 from btagent_backend.db.models_knowledge import KnowledgeDocumentRow
-from btagent_backend.services.embedding_service import get_embedding_service
+from btagent_backend.services.embedding_service import (
+    EmbeddingProviderError,
+    get_embedding_service,
+)
 from btagent_backend.services.knowledge_service import KnowledgeService
 
 logger = logging.getLogger("btagent.api.knowledge")
@@ -124,8 +127,11 @@ async def ingest_document(
     """
     user.require_permission("knowledge:ingest")
 
-    svc = _get_knowledge_service()
     try:
+        # ``_get_knowledge_service`` builds the embedding provider, which may
+        # itself raise ``EmbeddingProviderError`` (e.g. OpenAI selected with no
+        # key outside dev/test) — keep it inside the try so that maps to 503.
+        svc = _get_knowledge_service()
         doc = await svc.ingest_document(
             db,
             title=body.title,
@@ -133,11 +139,20 @@ async def ingest_document(
             source_type=body.source_type,
             metadata=body.metadata,
             classification=body.classification,
+            org_id=user.org_id,
         )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
+        )
+    except EmbeddingProviderError as exc:
+        # GH #383: an unconfigured/unreachable embeddings provider is a
+        # service-availability problem, not a client error — 503, not 500.
+        logger.error("Embeddings provider unavailable during ingest: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Embeddings provider not configured",
         )
     except Exception as exc:
         # ``btagent_shared.security.TLPViolation`` (raised from
@@ -176,13 +191,23 @@ async def query_knowledge_base(
     """
     user.require_permission("knowledge:query")
 
-    svc = _get_knowledge_service()
-    results = await svc.hybrid_search(
-        db,
-        query=body.query,
-        top_k=body.top_k,
-        source_type_filter=body.source_type_filter,
-    )
+    try:
+        svc = _get_knowledge_service()
+        results = await svc.hybrid_search(
+            db,
+            query=body.query,
+            top_k=body.top_k,
+            source_type_filter=body.source_type_filter,
+            org_id=user.org_id,
+        )
+    except EmbeddingProviderError as exc:
+        # GH #383: same posture as ingest — no opaque 500 when the embeddings
+        # provider is unconfigured/unreachable.
+        logger.error("Embeddings provider unavailable during query: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Embeddings provider not configured",
+        )
 
     return QueryResponse(
         query=body.query,
@@ -217,15 +242,24 @@ async def keyword_search(
     """
     user.require_permission("knowledge:query")
 
-    svc = _get_knowledge_service()
     # Use hybrid_search but the keyword component will dominate for
-    # simple keyword queries
-    results = await svc.hybrid_search(
-        db,
-        query=q,
-        top_k=top_k,
-        source_type_filter=source_type,
-    )
+    # simple keyword queries. hybrid_search still embeds the query, so guard
+    # the embeddings-provider failure the same way as /query (GH #383).
+    try:
+        svc = _get_knowledge_service()
+        results = await svc.hybrid_search(
+            db,
+            query=q,
+            top_k=top_k,
+            source_type_filter=source_type,
+            org_id=user.org_id,
+        )
+    except EmbeddingProviderError as exc:
+        logger.error("Embeddings provider unavailable during search: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Embeddings provider not configured",
+        )
 
     return QueryResponse(
         query=q,
@@ -262,6 +296,7 @@ async def list_documents(
         source_type_filter=source_type,
         page=page,
         page_size=page_size,
+        org_id=user.org_id,
     )
 
     return DocumentListResponse(
@@ -282,14 +317,14 @@ async def get_document(
     user.require_permission("knowledge:query")
 
     svc = _get_knowledge_service()
-    doc = await svc.get_document(db, document_id)
+    doc = await svc.get_document(db, document_id, org_id=user.org_id)
     if not doc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found",
         )
 
-    chunk_count = await svc.get_document_chunk_count(db, document_id)
+    chunk_count = await svc.get_document_chunk_count(db, document_id, org_id=user.org_id)
 
     return DocumentDetailResponse(
         id=doc.id,
@@ -317,7 +352,7 @@ async def delete_document(
     user.require_permission("knowledge:delete")
 
     svc = _get_knowledge_service()
-    deleted = await svc.delete_document(db, document_id)
+    deleted = await svc.delete_document(db, document_id, org_id=user.org_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

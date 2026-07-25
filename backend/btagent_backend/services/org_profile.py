@@ -15,7 +15,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.db.models import OrgConfigRow
+from btagent_backend.db.models import DEFAULT_ORG_ID, OrgConfigRow
+from btagent_backend.db.models_behavioral import OrgProfileRow
 
 logger = logging.getLogger("btagent.services.org_profile")
 
@@ -87,19 +88,22 @@ _DEFAULT_PROFILE = OrgProfile(
 # ---------------------------------------------------------------------------
 
 
-async def get_org_profile(db: AsyncSession) -> OrgProfile:
-    """Load the org profile from the ``org_config`` table.
+async def get_org_profile(db: AsyncSession, org_id: str = DEFAULT_ORG_ID) -> OrgProfile:
+    """Load the profile for ``org_id`` from the per-org ``org_profiles`` table.
 
-    Returns the default (empty) profile if nothing has been saved yet.
+    Returns the default (empty) profile if nothing has been saved for that org.
+    Scoped by ``org_id`` (GH #393) so an agent-prompt injection can never pull
+    another tenant's profile; callers must pass the authenticated user's
+    ``org_id``.
     """
-    result = await db.execute(select(OrgConfigRow).where(OrgConfigRow.key == _ORG_PROFILE_KEY))
+    result = await db.execute(select(OrgProfileRow).where(OrgProfileRow.org_id == org_id))
     row = result.scalar_one_or_none()
 
-    if row is None or row.value is None:
+    if row is None or row.profile is None:
         return _DEFAULT_PROFILE.model_copy()
 
     try:
-        return OrgProfile.model_validate(row.value)
+        return OrgProfile.model_validate(row.profile)
     except Exception:
         logger.warning("Failed to parse stored org profile; returning default")
         return _DEFAULT_PROFILE.model_copy()

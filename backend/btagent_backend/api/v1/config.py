@@ -5,18 +5,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.config import get_settings
+from btagent_backend.db.models_behavioral import OrgProfileRow
 from btagent_backend.services.data_retention import DataRetentionService
-from btagent_backend.services.org_profile import (
-    OrgProfile,
-    get_org_profile,
-    save_org_profile,
-)
+from btagent_backend.services.org_profile import OrgProfile
 
 logger = logging.getLogger("btagent.api.config")
 
@@ -54,9 +53,27 @@ async def get_org_profile_endpoint(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Get the organisation profile."""
+    """Get the organisation profile for the caller's org (GH #393).
+
+    Scoped to ``user.org_id`` — an analyst can only ever read their OWN org's
+    profile. Returns a default (empty) profile when the org has none saved yet.
+    """
     user.require_permission("config:view")
-    profile = await get_org_profile(db)
+    result = await db.execute(select(OrgProfileRow).where(OrgProfileRow.org_id == user.org_id))
+    row = result.scalar_one_or_none()
+
+    if row is None or not row.profile:
+        profile = OrgProfile()
+    else:
+        try:
+            profile = OrgProfile.model_validate(row.profile)
+        except Exception:
+            logger.warning(
+                "Failed to parse stored org profile for org %s; returning default",
+                user.org_id,
+            )
+            profile = OrgProfile()
+
     return OrgProfileResponse(profile=profile.model_dump(mode="json"))
 
 
@@ -66,12 +83,33 @@ async def update_org_profile_endpoint(
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Update the organisation profile (admin only)."""
+    """Update the organisation profile for the caller's org (admin only, GH #393).
+
+    Upserts ONLY the row for ``user.org_id`` — never a global row — so an
+    admin's update can never overwrite another org's profile.
+    """
     user.require_permission("config:org_profile")
 
-    saved = await save_org_profile(db, body, updated_by=user.id)
-    logger.info("Org profile updated by user %s", user.id)
-    return OrgProfileResponse(profile=saved.model_dump(mode="json"))
+    value = body.model_dump(mode="json")
+    result = await db.execute(select(OrgProfileRow).where(OrgProfileRow.org_id == user.org_id))
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        db.add(
+            OrgProfileRow(
+                id=generate_id("orgprof"),
+                org_id=user.org_id,
+                profile=value,
+                updated_by=user.id,
+            )
+        )
+    else:
+        row.profile = value
+        row.updated_by = user.id
+
+    await db.flush()
+    logger.info("Org profile updated for org %s by user %s", user.org_id, user.id)
+    return OrgProfileResponse(profile=body.model_dump(mode="json"))
 
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,50 @@ async def test_handover_rolls_up_window_activity(client, analyst_token):
     assert "still open" in data["headline"]
 
 
+async def test_handover_counts_active_investigation(client, analyst_token, db_session, sample_user):
+    """An investigation in an active (non-terminal) status must land in the
+    open-case rollup.
+
+    Regression for GH #387: the rollup filtered on status strings ("running",
+    "awaiting_approval") that don't exist in ``InvestigationStatus``, so a
+    genuinely active ``investigating`` case was silently dropped from the shift
+    handover.
+    """
+    from datetime import UTC, datetime
+
+    from btagent_shared.types.enums import InvestigationStatus, Severity
+    from btagent_shared.utils.ids import generate_id
+
+    from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow
+
+    inv = InvestigationRow(
+        id=generate_id("inv"),
+        org_id=DEFAULT_ORG_ID,
+        title="Active incident for handover rollup",
+        description="",
+        status=InvestigationStatus.INVESTIGATING.value,
+        # 'info' is not used by other handover tests, so the rollup count for
+        # this severity is attributable to exactly this active case.
+        severity=Severity.INFO.value,
+        tlp_level="green",
+        assigned_to=sample_user.id,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    db_session.add(inv)
+    await db_session.commit()
+
+    resp = await client.get("/api/v1/handover", headers=auth_header(analyst_token))
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+
+    by_id = {i["id"]: i for i in data["investigations"]}
+    assert inv.id in by_id
+    assert by_id[inv.id]["status"] == "investigating"
+    # The active case is counted in the open backlog (0 before the fix).
+    assert data["open_by_severity"].get("info", 0) >= 1
+
+
 async def test_handover_window_param_validated(client, analyst_token):
     ok = await client.get("/api/v1/handover?window_hours=24", headers=auth_header(analyst_token))
     assert ok.status_code == 200

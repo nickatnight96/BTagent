@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from btagent_shared.types.enums import InvestigationStatus, Severity
 from btagent_shared.utils.ids import generate_id
@@ -128,6 +128,38 @@ async def test_redis_failure_is_nonfatal(db_session, sample_user, sample_investi
     assert row is not None
     rows = await _notifications_for(db_session, sample_user.id)
     assert any(r.id == row.id for r in rows)
+
+
+async def test_outcome_dispatches_slack_when_configured(
+    db_session, sample_user, sample_investigation
+):
+    """#402: the producer must start (or accept an injected) HTTP client so the
+    Slack leg of the outcome notification actually dispatches. Before the fix
+    ``_http`` was never initialised, so ``send_slack`` silently short-circuited
+    and no Slack request was ever made."""
+    from btagent_backend.config import get_settings
+
+    settings = get_settings().model_copy(
+        update={"slack_bot_token": "xoxb-test", "slack_channel": "#sec-alerts"}
+    )
+    # httpx: ``post`` is awaited, ``resp.json()`` is called (not awaited).
+    resp = MagicMock()
+    resp.json.return_value = {"ok": True}
+    http = MagicMock()
+    http.post = AsyncMock(return_value=resp)
+
+    row = await notify_investigation_outcome(
+        db_session,
+        investigation_id=sample_investigation.id,
+        final_status="closed",
+        finding_count=1,
+        settings=settings,
+        http=http,
+    )
+    # In-app row still created AND the Slack client was actually called.
+    assert row is not None
+    http.post.assert_awaited_once()
+    assert "slack.com/api/chat.postMessage" in http.post.await_args.args[0]
 
 
 def test_format_duration():

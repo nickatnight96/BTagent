@@ -166,7 +166,10 @@ async def get_execution_detail(
     """Get execution detail with step results."""
     user.require_permission("playbook:view")
 
-    row = await _service.get_execution(db, execution_id)
+    # #394: scope to the caller's org so cross-tenant execution rows
+    # (trigger_data / step_results / investigation_id) are never disclosed.
+    # A row in another org resolves to None → 404 (not 403).
+    row = await _service.get_execution(db, execution_id, org_id=user.org_id)
     if not row:
         raise HTTPException(status_code=404, detail="Execution not found")
 
@@ -339,6 +342,7 @@ async def execute_playbook(
             playbook_id,
             trigger_data=body.trigger_data,
             investigation_id=body.investigation_id,
+            org_id=user.org_id,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -364,7 +368,7 @@ async def get_execution_history(
     user.require_permission("playbook:view")
 
     rows, total = await _service.get_execution_history(
-        db, playbook_id, page=page, page_size=page_size
+        db, playbook_id, org_id=user.org_id, page=page, page_size=page_size
     )
 
     return ExecutionListResponse(

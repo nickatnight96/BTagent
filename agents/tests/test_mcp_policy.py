@@ -22,18 +22,24 @@ from btagent_agents.mcp.policy import (
     TLP_RANK,
     evaluate_tool_call,
     get_active_tlp,
+    hitl_approval,
     is_tlp_allowed,
     reset_active_tlp,
+    reset_hitl_approved,
     set_active_tlp,
+    set_hitl_approved,
 )
 
 
 @pytest.fixture(autouse=True)
 def _unrestricted_tlp():
-    """Every test starts (and ends) with no active classification."""
+    """Every test starts (and ends) with no active classification and no
+    server-set HITL approval."""
     reset_active_tlp()
+    reset_hitl_approved()
     yield
     reset_active_tlp()
+    reset_hitl_approved()
 
 
 # --------------------------------------------------------------------------- #
@@ -144,13 +150,12 @@ class TestRouterIntegration:
         assert out["requires_hitl"] is True
 
     async def test_containment_dispatches_with_approval(self) -> None:
-        out = await mcp_router_tool.ainvoke(
-            {
-                "tool_name": "mde_isolate_machine",
-                "arguments": '{"hostname": "WS-FINANCE-07"}',
-                "hitl_approved": True,
-            }
-        )
+        # Approval comes from the server-controlled resume path (a run-scoped
+        # contextvar), NOT a model-supplied tool argument (#374).
+        with hitl_approval():
+            out = await mcp_router_tool.ainvoke(
+                {"tool_name": "mde_isolate_machine", "arguments": '{"hostname": "WS-FINANCE-07"}'}
+            )
         assert out["status"] == "success"
         assert out["isolation_state"] == "Isolated"
 
@@ -164,3 +169,114 @@ class TestRouterIntegration:
     async def test_unknown_tool_refused_before_dispatch(self) -> None:
         out = await mcp_router_tool.ainvoke({"tool_name": "totally_new_tool"})
         assert out["status"] == "undeclared"
+
+
+# --------------------------------------------------------------------------- #
+# #374 — HITL approval is server-controlled, never a model-settable tool arg
+# --------------------------------------------------------------------------- #
+
+
+class TestHitlApprovalIsServerControlled:
+    def test_hitl_approved_absent_from_model_facing_schema(self) -> None:
+        """The router must not expose ``hitl_approved`` to the model at all —
+        the LLM has no parameter to fill in to self-approve containment."""
+        assert "hitl_approved" not in mcp_router_tool.args
+
+    async def test_model_supplied_hitl_approved_cannot_bypass_gate(self) -> None:
+        """A prompt-injected/misaligned agent that tries to pass
+        ``hitl_approved`` as an argument is ignored — the HITL gate still
+        refuses the containment action (#374)."""
+        out = await mcp_router_tool.ainvoke(
+            {
+                "tool_name": "cs_isolate_host",
+                "arguments": '{"hostname": "WS-JSMITH-PC"}',
+                "hitl_approved": True,  # model-supplied — must be ignored
+            }
+        )
+        assert out["status"] == "hitl_required"
+        assert out["requires_hitl"] is True
+
+    async def test_server_set_approval_passes_gate(self) -> None:
+        """The server-controlled resume path (contextvar) CAN approve a gated
+        action — this is the only path that works."""
+        set_hitl_approved(True)
+        try:
+            out = await mcp_router_tool.ainvoke(
+                {"tool_name": "cs_isolate_host", "arguments": '{"hostname": "WS-JSMITH-PC"}'}
+            )
+        finally:
+            reset_hitl_approved()
+        assert out["status"] == "success"
+
+    async def test_approval_does_not_leak_past_resume_scope(self) -> None:
+        """Once the resume scope exits, the approval is cleared — a later
+        model-issued call is gated again (no sticky self-approval)."""
+        with hitl_approval():
+            approved = await mcp_router_tool.ainvoke(
+                {"tool_name": "cs_isolate_host", "arguments": '{"hostname": "WS-JSMITH-PC"}'}
+            )
+        after = await mcp_router_tool.ainvoke(
+            {"tool_name": "cs_isolate_host", "arguments": '{"hostname": "WS-JSMITH-PC"}'}
+        )
+        assert approved["status"] == "success"
+        assert after["status"] == "hitl_required"
+
+
+# --------------------------------------------------------------------------- #
+# #397 — the TLP-egress gate actually engages on the production dispatch path,
+# wired per-run by the classification hook, with contextvar isolation.
+# --------------------------------------------------------------------------- #
+
+
+class TestTlpGateEngagesOnDispatchPath:
+    @staticmethod
+    def _make_classification_hook(tlp: TLP):
+        """Construct the per-run ClassificationHook exactly as production does
+        (it binds the investigation's TLP into the MCP dispatch path)."""
+        from unittest.mock import AsyncMock
+
+        from btagent_shared.types.config import ModelProvider
+
+        from btagent_agents.hooks.classification_hook import ClassificationHook
+
+        return ClassificationHook(
+            emitter=AsyncMock(),
+            tlp_level=tlp,
+            provider=ModelProvider.OLLAMA,
+            investigation_id=f"inv_{tlp.value}",
+        )
+
+    async def test_red_investigation_blocks_amber_strict_tool_via_router(self) -> None:
+        """Constructing the RED classification hook makes the router refuse an
+        AMBER_STRICT-egress tool with ``tlp_blocked`` (#397). Previously
+        ``set_active_tlp`` was never called in prod, so the gate never fired."""
+        self._make_classification_hook(TLP.RED)
+        out = await mcp_router_tool.ainvoke(
+            {"tool_name": "okta_list_oauth_grants", "arguments": "{}"}
+        )
+        assert out["status"] == "tlp_blocked"
+
+    async def test_concurrent_investigations_do_not_clobber_tlp(self) -> None:
+        """Two investigations running concurrently keep independent active-TLP
+        state (ContextVar per task, not a shared process-global). A leaked
+        global would let the second run's classification overwrite the first."""
+        import asyncio
+
+        async def run_investigation(tlp: TLP) -> str:
+            self._make_classification_hook(tlp)
+            # Force interleaving: if the state were a process-global, the other
+            # task's set would clobber ours before we dispatch.
+            await asyncio.sleep(0)
+            out = await mcp_router_tool.ainvoke(
+                {"tool_name": "okta_list_oauth_grants", "arguments": "{}"}
+            )
+            return out["status"]
+
+        red_status, white_status = await asyncio.gather(
+            asyncio.create_task(run_investigation(TLP.RED)),
+            asyncio.create_task(run_investigation(TLP.WHITE)),
+        )
+        # RED context blocks the AMBER_STRICT tool; the WHITE context running
+        # alongside it dispatches successfully — no cross-contamination.
+        assert red_status == "tlp_blocked"
+        assert white_status == "success"

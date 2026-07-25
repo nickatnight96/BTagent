@@ -75,6 +75,7 @@ from tests.fixtures.identity.fixture_events import (
     non_sp_credential_addition_events,
     possible_travel_events,
     session_replay_different_token_events,
+    simultaneous_login_events,
     sp_credential_addition_events,
     token_replay_events,
     two_principals_shared_app_grants_and_events,
@@ -209,6 +210,27 @@ def test_possible_travel_not_flagged() -> None:
     """London->NY in 8 hours (~700 km/h) is below threshold — no flag."""
     results = detect_impossible_travel(possible_travel_events(), min_speed_kmh=900)
     assert results == []
+
+
+def test_simultaneous_logins_flagged_as_impossible_travel() -> None:
+    """Two logins at the SAME instant from distant locations => impossible travel.
+
+    Fix #407: a zero (Δt == 0) time delta between two distant logins is the
+    strongest signal (infinite implied velocity) and must be flagged, not
+    dropped as the old ``speed is None -> continue`` path did.
+    """
+    results = detect_impossible_travel(simultaneous_login_events(), min_speed_kmh=900)
+    assert len(results) == 1
+    r = results[0]
+    assert r.rule_id == "identity.impossible_travel"
+    assert r.evidence["simultaneous"] is True
+    assert r.evidence["speed_kmh"] is None  # inf is not JSON-safe
+    assert r.evidence["distance_km"] > 5000
+    assert r.evidence["elapsed_minutes"] == 0.0
+    assert r.severity == "high"
+    # Must still convert to a valid RecordFindingRequest.
+    req = to_record_finding_request(r)
+    assert req.domain == HuntDomain.IDENTITY
 
 
 # ── Service principal credential addition ─────────────────────────────────

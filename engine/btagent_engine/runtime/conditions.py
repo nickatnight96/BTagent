@@ -336,6 +336,21 @@ class _Evaluator:
             )
         left = self.visit(node.left)
         right = self.visit(node.right)
+        # Sequence repetition (``'x' * 10**8`` / ``[0] * 10**8``) is a
+        # memory-exhaustion DoS in the same family as ``**`` -- both operands
+        # look benign yet the product explodes. ``**`` is already blocked; block
+        # sequence * int here too, while leaving ordinary numeric ``*`` allowed.
+        # The check runs *after* visiting operands but *before* op_fn, so the
+        # oversized allocation never happens.
+        if isinstance(node.op, ast.Mult) and (
+            isinstance(left, (str, bytes, bytearray, list, tuple))
+            or isinstance(right, (str, bytes, bytearray, list, tuple))
+        ):
+            raise ConditionEvaluationError(
+                "Sequence repetition (str/list/tuple * int) is not allowed in "
+                "conditions (potential memory exhaustion)",
+                expression=self._expression,
+            )
         try:
             return op_fn(left, right)
         except (TypeError, ZeroDivisionError) as exc:

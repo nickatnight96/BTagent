@@ -23,8 +23,12 @@ Behaviour:
   :class:`TLPViolation`.
 * TLP:AMBER_STRICT and below are *allowed*; AMBER_STRICT triggers a logged
   warning so operators can audit which channels are carrying restricted data.
-* Unknown / missing classification is treated as TLP:GREEN -- matching the
-  default in :class:`btagent_shared.types.config.AgentConfig`.
+* A *missing* / unset classification (``None``, or a mapping carrying no
+  TLP field) is treated as TLP:GREEN -- matching the default in
+  :class:`btagent_shared.types.config.AgentConfig`. A classification that
+  was *supplied* but is unrecognised or empty fails CLOSED to TLP:RED
+  (blocking egress), matching the LLM-routing side which also fails closed
+  on an ambiguous classification.
 
 The helper is small and synchronous so it can be invoked from anywhere --
 sync code, async coroutines, hooks, services -- without adding a new
@@ -76,6 +80,14 @@ _VALID_EGRESS_KINDS: frozenset[str] = frozenset(
 # converters tend to put it.
 _TLP_FIELD_NAMES: tuple[str, ...] = ("tlp_level", "tlp", "TLP", "TLPLevel")
 
+# Maximum nesting depth the recursive RED-tag scan will descend before it
+# stops. Real egress payloads (STIX bundles, MCP envelopes, reports) are
+# shallow; anything past this is almost certainly adversarial nesting meant to
+# hide a ``tlp:red`` tag below the scan horizon. Kept well under CPython's
+# default recursion limit. Exceeding it fails CLOSED (see :func:`_scan`) --
+# data we cannot fully scan is never certified egress-safe.
+_MAX_SCAN_DEPTH: int = 64
+
 
 def _coerce_tlp(value: Any) -> TLP | None:
     if value is None:
@@ -95,8 +107,18 @@ def _scan_payload_for_red(payload: Any) -> bool:
 
 
 def _scan(node: Any, *, depth: int) -> bool:
-    if depth > 8:
-        return False
+    if depth > _MAX_SCAN_DEPTH:
+        # We cannot fully scan this branch, so we cannot certify it as
+        # egress-safe. Fail CLOSED: report a RED hit so the gate blocks
+        # rather than leaking data hidden beneath the depth horizon. The
+        # previous ``return False`` here silently certified deeply-nested
+        # payloads as clean, defeating defense-in-depth.
+        logger.warning(
+            "TLP egress scan exceeded max depth %d; failing closed "
+            "(treating as TLP:RED) rather than certifying unscanned data as safe",
+            _MAX_SCAN_DEPTH,
+        )
+        return True
     if isinstance(node, dict):
         for key in _TLP_FIELD_NAMES:
             if key in node and _coerce_tlp(node[key]) == TLP.RED:
@@ -115,17 +137,42 @@ def _scan(node: Any, *, depth: int) -> bool:
 def _resolve_classification(
     classification_ctx: TLP | str | dict[str, Any] | None,
 ) -> TLP:
+    """Resolve the egress classification context to a concrete TLP level.
+
+    Fail-closed semantics for the egress gate: a classification that was
+    *supplied* but cannot be recognised -- a garbage or empty string, or a
+    mapping whose TLP field holds an uncoercible value -- resolves to
+    :attr:`TLP.RED` so the gate blocks rather than silently downgrading to
+    GREEN. This mirrors the LLM-routing side
+    (``btagent_agents.middleware.llm_router._coerce_tlp``), which also fails
+    closed to RED on an ambiguous classification.
+
+    An *absent* classification -- ``None``, or a mapping carrying no TLP
+    field at all -- is treated as unset and resolves to :attr:`TLP.GREEN`,
+    matching the :attr:`btagent_shared.types.config.AgentConfig.tlp_level`
+    default. Only values that were provided yet unparseable trip the
+    fail-closed path.
+    """
     if isinstance(classification_ctx, TLP):
         return classification_ctx
     if isinstance(classification_ctx, str):
+        # A classification string was supplied: recognise it, or fail
+        # CLOSED to RED (covers garbage and empty strings). Never silently
+        # downgrade an unrecognised value to GREEN.
         coerced = _coerce_tlp(classification_ctx)
-        return coerced if coerced is not None else TLP.GREEN
+        return coerced if coerced is not None else TLP.RED
     if isinstance(classification_ctx, dict):
+        saw_tlp_field = False
         for key in _TLP_FIELD_NAMES:
             if key in classification_ctx:
+                saw_tlp_field = True
                 coerced = _coerce_tlp(classification_ctx[key])
                 if coerced is not None:
                     return coerced
+        # A TLP field was present but none parsed -> fail CLOSED to RED.
+        # No TLP field at all -> unset -> GREEN (same as ``None``).
+        return TLP.RED if saw_tlp_field else TLP.GREEN
+    # None or an unrecognised context type -> unset -> GREEN.
     return TLP.GREEN
 
 
@@ -167,8 +214,10 @@ def assert_tlp_allows_egress(
     classification_ctx:
         The investigation-wide classification (typically
         :attr:`AgentConfig.tlp_level`). May also be a string (``"red"``,
-        ``"amber"``, ...) or a mapping containing a TLP field. ``None``
-        defaults to :attr:`TLP.GREEN`.
+        ``"amber"``, ...) or a mapping containing a TLP field. ``None`` (or
+        a mapping with no TLP field) defaults to :attr:`TLP.GREEN`; a
+        *supplied* but unrecognised/empty value fails CLOSED to
+        :attr:`TLP.RED` and blocks egress.
     org_id:
         Optional org identifier carried on the emitted
         ``tlp.violation_attempt`` event so the alerter can route by tenant.
