@@ -13,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.config import get_settings
+from btagent_backend.db.models import DashboardPrefRow
 from btagent_backend.db.models_behavioral import OrgProfileRow
+from btagent_backend.services.dashboard_layout import DashboardLayout, role_default_layout
 from btagent_backend.services.data_retention import DataRetentionService
 from btagent_backend.services.org_profile import OrgProfile
 
@@ -110,6 +112,76 @@ async def update_org_profile_endpoint(
     await db.flush()
     logger.info("Org profile updated for org %s by user %s", user.org_id, user.id)
     return OrgProfileResponse(profile=body.model_dump(mode="json"))
+
+
+# ---------------------------------------------------------------------------
+# Dashboard layout (EPIC-5 role-tuned PunchList views, #108)
+# ---------------------------------------------------------------------------
+
+
+class DashboardLayoutResponse(BaseModel):
+    layout: DashboardLayout
+    # "user" when the caller saved a customization; "role_default" otherwise.
+    source: str
+    role: str
+
+
+@router.get("/dashboard-layout", response_model=DashboardLayoutResponse)
+async def get_dashboard_layout(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> DashboardLayoutResponse:
+    """The caller's PunchList layout — their saved one, else their role default.
+
+    Self-scoped (no extra permission): a user can only ever read their own
+    preference. A stored payload that no longer validates (schema drift) falls
+    back to the role default rather than 500-ing the landing page.
+    """
+    pref = await db.get(DashboardPrefRow, user.id)
+    if pref is not None and pref.layout:
+        try:
+            layout = DashboardLayout.model_validate(pref.layout)
+            return DashboardLayoutResponse(layout=layout, source="user", role=user.role)
+        except Exception:
+            logger.warning(
+                "Stored dashboard layout for user %s failed validation; using role default",
+                user.id,
+            )
+    return DashboardLayoutResponse(
+        layout=role_default_layout(user.role), source="role_default", role=user.role
+    )
+
+
+@router.put("/dashboard-layout", response_model=DashboardLayoutResponse)
+async def put_dashboard_layout(
+    body: DashboardLayout,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> DashboardLayoutResponse:
+    """Save the caller's PunchList layout (self-scoped upsert)."""
+    value = body.model_dump(mode="json")
+    pref = await db.get(DashboardPrefRow, user.id)
+    if pref is None:
+        db.add(DashboardPrefRow(user_id=user.id, layout=value))
+    else:
+        pref.layout = value
+    await db.flush()
+    return DashboardLayoutResponse(layout=body, source="user", role=user.role)
+
+
+@router.delete("/dashboard-layout", response_model=DashboardLayoutResponse)
+async def reset_dashboard_layout(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> DashboardLayoutResponse:
+    """Drop the caller's saved layout, reverting to their role default."""
+    pref = await db.get(DashboardPrefRow, user.id)
+    if pref is not None:
+        await db.delete(pref)
+        await db.flush()
+    return DashboardLayoutResponse(
+        layout=role_default_layout(user.role), source="role_default", role=user.role
+    )
 
 
 # ---------------------------------------------------------------------------
