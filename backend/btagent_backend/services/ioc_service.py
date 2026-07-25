@@ -163,6 +163,7 @@ async def list_iocs(
     ioc_type: str | None = None,
     confidence_min: float | None = None,
     enriched: bool | None = None,
+    pinned: bool | None = None,
     search: str | None = None,
     page: int = 1,
     page_size: int = 50,
@@ -210,6 +211,12 @@ async def list_iocs(
         else:
             query = query.where(IOCRow.enrichment == {})
             count_query = count_query.where(IOCRow.enrichment == {})
+
+    if pinned is not None:
+        # UC-5.2 notebook filter (#108): pinned=true → the analyst's pinned
+        # working set; pinned=false → everything not yet pinned.
+        query = query.where(IOCRow.pinned.is_(pinned))
+        count_query = count_query.where(IOCRow.pinned.is_(pinned))
 
     if search:
         # Substring match against the IOC value (case-insensitive). The
