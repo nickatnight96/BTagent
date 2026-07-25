@@ -436,6 +436,21 @@ export function IOCNotebook() {
               ))}
             </select>
           </div>
+
+          {/* Pinned-only filter (UC-5.2) — tri-state true|undefined so the
+              server only ever sees pinned=true or no param. */}
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium cursor-pointer">
+            <input
+              type="checkbox"
+              checked={filters.pinned === true}
+              onChange={(e) => setFilters({ pinned: e.target.checked ? true : undefined })}
+              aria-label="Show pinned IOCs only"
+              data-testid="ioc-notebook-pinned-filter-input"
+              className="rounded border-border bg-accent text-primary focus:ring-blue-500/50"
+            />
+            <Pin className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+            Pinned only
+          </label>
         </div>
 
         {/* Bulk actions bar */}

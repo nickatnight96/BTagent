@@ -133,6 +133,8 @@ export interface IOCFilter {
   type?: IOCType;
   confidence_min?: number;
   enriched?: boolean;
+  /** UC-5.2: true → pinned notebook set only; undefined → all. */
+  pinned?: boolean;
   investigation_id?: string;
   search?: string;
   tlp?: TLP;
