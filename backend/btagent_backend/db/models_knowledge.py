@@ -29,11 +29,13 @@ class KnowledgeDocumentRow(Base):
     # knowledge docs. Follows the UserRow convention (nullable=False, FK to
     # organizations, defaulting to the seeded org so internal callers keep
     # working); the API route sets it from the authenticated user.
+    # No ``index=True`` here: the composite ``idx_knowledge_documents_org_id``
+    # (org_id, id) index below covers the org_id-prefix filter, matching
+    # migration 0047 (which creates only the composite index).
     org_id: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("organizations.id"),
         nullable=False,
-        index=True,
         default=DEFAULT_ORG_ID,
     )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -93,11 +95,13 @@ class KnowledgeChunkRow(Base):
     # GH #386: org_id is denormalized onto the chunk so the hybrid-search
     # SQL (vector + keyword) can filter by tenant directly on the chunk row
     # without depending solely on the join to knowledge_documents.
+    # No ``index=True``: the composite ``idx_knowledge_chunks_org_id``
+    # (org_id, document_id) index below covers the org_id-prefix filter,
+    # matching migration 0047 (which creates only the composite index).
     org_id: Mapped[str] = mapped_column(
         String(64),
         ForeignKey("organizations.id"),
         nullable=False,
-        index=True,
         default=DEFAULT_ORG_ID,
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)

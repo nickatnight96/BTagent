@@ -10,6 +10,7 @@ Provides the core business logic for the pgvector RAG knowledge agent:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -65,8 +66,38 @@ class KnowledgeService:
     def __init__(
         self,
         embedding_service: EmbeddingService | None = None,
+        *,
+        embedding_factory: Callable[[], EmbeddingService] | None = None,
     ) -> None:
-        self._embedding_service = embedding_service or MockEmbeddingService()
+        # GH #383: the embedder is built LAZILY. Pure-DB operations
+        # (list/get/delete/chunk-count) must never require an embedding
+        # provider, so construction cannot depend on one — otherwise a route
+        # that never embeds still 500s when the provider is unconfigured.
+        # ``ingest_document`` and ``hybrid_search`` (the only paths that embed)
+        # call ``_require_embedder`` on demand, which resolves the embedder via
+        # ``embedding_factory`` (or the deterministic mock) the first time it is
+        # actually needed. An explicit ``embedding_service`` still wins and is
+        # used verbatim (tests inject a mock/raising service this way).
+        self._embedding_service = embedding_service
+        self._embedding_factory = embedding_factory
+
+    def _require_embedder(self) -> EmbeddingService:
+        """Return the embedding service, building it on first use (GH #383).
+
+        Building may raise :class:`EmbeddingProviderError` (e.g. OpenAI
+        selected with no key outside dev/test). This is only ever called from
+        the embed paths (``ingest_document`` / ``hybrid_search``), which the
+        API routes wrap in ``try/except EmbeddingProviderError -> 503`` — so a
+        provider outage is a clean 503 there and never touches the pure-DB
+        read/delete endpoints.
+        """
+        if self._embedding_service is None:
+            self._embedding_service = (
+                self._embedding_factory()
+                if self._embedding_factory is not None
+                else MockEmbeddingService()
+            )
+        return self._embedding_service
 
     # ------------------------------------------------------------------ #
     # Ingest
@@ -157,7 +188,7 @@ class KnowledgeService:
         if chunks:
             # Generate embeddings for all chunks
             chunk_texts = [c.content for c in chunks]
-            embeddings = await self._embedding_service.generate_embeddings(chunk_texts)
+            embeddings = await self._require_embedder().generate_embeddings(chunk_texts)
 
             # Create chunk rows
             for i, (chunk, embedding) in enumerate(zip(chunks, embeddings, strict=False)):
@@ -231,7 +262,7 @@ class KnowledgeService:
             return []
 
         # Generate query embedding
-        query_embeddings = await self._embedding_service.generate_embeddings([query])
+        query_embeddings = await self._require_embedder().generate_embeddings([query])
         query_embedding = query_embeddings[0] if query_embeddings else None
 
         # --- Vector search ---

@@ -28,7 +28,6 @@ from btagent_shared.types.enums import InvestigationStatus, Severity
 from btagent_shared.utils.ids import generate_id
 from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.auth.jwt import create_token_pair, hash_password
@@ -290,31 +289,43 @@ async def test_list_documents_is_org_scoped(db_session: AsyncSession, two_orgs: 
 
 
 @pytest.mark.asyncio
-async def test_hybrid_search_is_org_scoped(db_session: AsyncSession, two_orgs: dict):
-    """Hybrid search never surfaces another org's chunks.
+async def test_hybrid_search_binds_org_id_on_both_statements(
+    db_session: AsyncSession, two_orgs: dict
+):
+    """The cross-tenant RAG-leak surface (GH #386): ``hybrid_search`` MUST filter
+    by the caller's org on BOTH the vector and keyword SQL.
 
-    The raw vector/keyword SQL needs pgvector + ``ILIKE`` (PostgreSQL); on the
-    unit-test SQLite backend it can't execute, so the search half is skipped —
-    the scoping filter is still exercised by the ORM-level tests above.
+    The raw vector/keyword SQL needs pgvector + ``ILIKE`` (PostgreSQL) and can't
+    execute on the unit-test SQLite backend — but rather than silently skip
+    (which left the security-critical filter unverified in CI), we capture the
+    statements ``hybrid_search`` issues and assert every one binds ``:org_id`` to
+    the caller's org. This runs on any backend.
     """
     svc = KnowledgeService()
-    await svc.ingest_document(
-        db_session,
-        title="Org A search doc",
-        content="quokkarhythm forensics playbook for org A",
-        source_type="runbook",
-        org_id=two_orgs["org_a"],
-    )
-    await db_session.flush()
+    captured: list[tuple[str, dict]] = []
 
+    class _EmptyResult:
+        def fetchall(self):
+            return []
+
+    real_execute = db_session.execute
+
+    async def _spy(statement, params=None, *args, **kwargs):
+        captured.append((str(statement), dict(params or {})))
+        return _EmptyResult()
+
+    db_session.execute = _spy  # type: ignore[method-assign]
     try:
-        res_b = await svc.hybrid_search(db_session, query="quokkarhythm", org_id=two_orgs["org_b"])
-        res_a = await svc.hybrid_search(db_session, query="quokkarhythm", org_id=two_orgs["org_a"])
-    except DBAPIError as exc:  # pragma: no cover - depends on DB backend
-        pytest.skip(f"hybrid_search SQL requires pgvector/ILIKE: {exc}")
+        await svc.hybrid_search(db_session, query="quokkarhythm", org_id=two_orgs["org_a"])
+    finally:
+        db_session.execute = real_execute  # type: ignore[method-assign]
 
-    assert res_b == []
-    assert any("quokkarhythm" in r.chunk_content.lower() for r in res_a)
+    # Both the vector-similarity and keyword statements must have run and must
+    # bind the caller's org (so org B can never see org A's chunks).
+    assert len(captured) >= 2, f"expected vector + keyword statements, got {len(captured)}"
+    for sql, params in captured:
+        assert ":org_id" in sql, f"statement missing org_id bind: {sql[:120]}"
+        assert params.get("org_id") == two_orgs["org_a"]
 
 
 @pytest.mark.asyncio
