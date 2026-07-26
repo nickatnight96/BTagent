@@ -18,6 +18,7 @@ import type {
   RuntimeSurface,
 } from "@/types/configSchema";
 import { Header } from "@/components/layout/Header";
+import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 import { Card, CardContent } from "@/components/ds/card";
 import { Input } from "@/components/ds/input";
 import { Button } from "@/components/ds/button";
@@ -207,6 +208,10 @@ export function ConfigCenterPage() {
                 </p>
               </section>
             )}
+
+            {/* Per-org capability toggles (#418 slice 5) — self-contained
+             * panel; hides itself if its fetch fails. */}
+            <FeatureFlagsPanel />
 
             <section>
               <div className="flex flex-col md:flex-row md:items-center gap-2 mb-3">
