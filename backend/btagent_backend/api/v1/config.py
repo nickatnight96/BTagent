@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from btagent_shared.types.config import IntegrationAutonomy
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -56,6 +57,63 @@ class RetentionRunResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Configuration inventory (#418 — Settings / Configuration Center)
 # ---------------------------------------------------------------------------
+
+
+# Human-readable meaning of each autonomy level (mirrors the AutonomyLevel
+# enum comments in shared/btagent_shared/types/config.py).
+_AUTONOMY_LEVEL_LEGEND: dict[str, str] = {
+    "L0": "Every action requires approval",
+    "L1": "Human approves plans, agent executes",
+    "L2": "Agent executes, human reviews critical decisions",
+    "L3": "Agent runs independently, escalates on issues",
+    "L4": "Fully autonomous (scheduled tasks)",
+}
+
+# Containment categories are ALWAYS HITL-gated in code (engine middleware +
+# connector manifests mark them hitl_required), regardless of the configured
+# level — surfacing that here keeps the read view honest.
+_HITL_FORCED_CATEGORIES = frozenset({"host_isolation", "firewall_rule", "account_disable"})
+
+
+class AutonomyCategory(BaseModel):
+    key: str
+    level: str
+    hitl_forced: bool
+
+
+class AutonomyConfigResponse(BaseModel):
+    categories: list[AutonomyCategory]
+    levels: dict[str, str]
+    # False until the #418 autonomy-editing slice lands — the UI renders
+    # read-only when this is false.
+    editable: bool
+
+
+@router.get("/autonomy", response_model=AutonomyConfigResponse)
+async def get_autonomy_config(
+    user: CurrentUser = Depends(get_current_user),
+) -> AutonomyConfigResponse:
+    """The effective per-category autonomy levels (#418 slice 3, read-only).
+
+    There is no per-org autonomy store yet — every engine/agents call site
+    constructs ``IntegrationAutonomy()`` defaults — so this reports exactly
+    what deployments run today. Containment categories additionally carry
+    ``hitl_forced``: they are gated in code no matter the configured level.
+    """
+    user.require_permission("config:view")
+    autonomy = IntegrationAutonomy()
+    return AutonomyConfigResponse(
+        categories=[
+            AutonomyCategory(
+                key=key,
+                level=getattr(autonomy, key).value,
+                hitl_forced=key in _HITL_FORCED_CATEGORIES,
+            )
+            for key in IntegrationAutonomy.model_fields
+        ],
+        levels=_AUTONOMY_LEVEL_LEGEND,
+        editable=False,
+    )
 
 
 @router.get("/schema", response_model=ConfigSchemaResponse)

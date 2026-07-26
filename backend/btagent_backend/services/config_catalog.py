@@ -101,11 +101,11 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
     {
         "key": "autonomy",
         "title": "Autonomy & HITL Gates",
-        "description": "Per-containment-category autonomy levels (L0–L4) governing which agent actions pause for human approval. Config-file backed today; in-app editing is a #418 follow-up.",
+        "description": "Per-category autonomy levels (L0–L4) governing which agent actions pause for human approval. Read-only surface today (defaults; containment always HITL-gated in code); in-app editing is the #418 follow-up.",
         "scope": "org",
         "write_permission": "config:edit",
-        "api": None,  # not yet runtime-editable — documented gap (#418)
-        "ui": None,
+        "api": "/api/v1/config/autonomy",  # read-only; editing is the follow-up
+        "ui": "/config",
     },
 ]
 
