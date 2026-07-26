@@ -1,20 +1,21 @@
-"""Config API endpoints — org profile and data retention."""
+"""Config API endpoints — org profile, config inventory, flags, retention."""
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from btagent_shared.types.config import IntegrationAutonomy
 from btagent_shared.utils.ids import generate_id
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.config import get_settings
-from btagent_backend.db.models import DashboardPrefRow
+from btagent_backend.db.models import DashboardPrefRow, FeatureFlagRow
 from btagent_backend.db.models_behavioral import OrgProfileRow
 from btagent_backend.services.config_catalog import build_config_catalog
 from btagent_backend.services.dashboard_layout import DashboardLayout, role_default_layout
@@ -268,6 +269,77 @@ async def reset_dashboard_layout(
     return DashboardLayoutResponse(
         layout=role_default_layout(user.role), source="role_default", role=user.role
     )
+
+
+# ---------------------------------------------------------------------------
+# Feature flags (#418 — per-org capability toggles)
+# ---------------------------------------------------------------------------
+
+# lowercase snake_case, 1-64 chars, must start with a letter.
+_FLAG_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_MAX_FLAGS = 100
+
+
+class FeatureFlags(BaseModel):
+    """The org's complete flag set — PUT replaces it wholesale."""
+
+    flags: dict[str, bool] = Field(default_factory=dict, max_length=_MAX_FLAGS)
+
+
+@router.get("/feature-flags", response_model=FeatureFlags)
+async def get_feature_flags(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> FeatureFlags:
+    """The caller's org's feature flags (empty when never configured)."""
+    user.require_permission("config:view")
+    result = await db.execute(select(FeatureFlagRow).where(FeatureFlagRow.org_id == user.org_id))
+    return FeatureFlags(flags={row.key: row.value for row in result.scalars()})
+
+
+@router.put("/feature-flags", response_model=FeatureFlags)
+async def put_feature_flags(
+    body: FeatureFlags,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> FeatureFlags:
+    """Replace the org's flag set (admin only; org-scoped; keys validated).
+
+    Wholesale-replace semantics keep the API unambiguous: the stored set
+    after the call is exactly the request body. Flags absent from the body
+    are deleted, present ones upserted.
+    """
+    user.require_permission("config:edit")
+
+    for key in body.flags:
+        if not _FLAG_KEY_RE.match(key):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid flag key {key!r}: must match {_FLAG_KEY_RE.pattern}",
+            )
+
+    result = await db.execute(select(FeatureFlagRow).where(FeatureFlagRow.org_id == user.org_id))
+    existing = {row.key: row for row in result.scalars()}
+
+    for key, row in existing.items():
+        if key not in body.flags:
+            await db.delete(row)
+    for key, value in body.flags.items():
+        row = existing.get(key)
+        if row is None:
+            db.add(FeatureFlagRow(org_id=user.org_id, key=key, value=value, updated_by=user.id))
+        elif row.value != value:
+            row.value = value
+            row.updated_by = user.id
+
+    await db.flush()
+    logger.info(
+        "Feature flags replaced for org %s by user %s (%d flag(s))",
+        user.org_id,
+        user.id,
+        len(body.flags),
+    )
+    return FeatureFlags(flags=dict(body.flags))
 
 
 # ---------------------------------------------------------------------------

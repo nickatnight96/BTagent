@@ -90,6 +90,15 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
         "ui": "/settings/mfa",
     },
     {
+        "key": "feature_flags",
+        "title": "Feature Flags",
+        "description": "Per-org boolean capability toggles (wholesale-replace PUT; keys are lowercase snake_case).",
+        "scope": "org",
+        "write_permission": "config:edit",
+        "api": "/api/v1/config/feature-flags",
+        "ui": "/config",
+    },
+    {
         "key": "data_retention",
         "title": "Data Retention",
         "description": "Retention statistics and manual cleanup runs (event/investigation archival, audit verification).",

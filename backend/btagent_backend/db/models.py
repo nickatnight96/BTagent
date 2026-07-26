@@ -411,6 +411,27 @@ class DashboardPrefRow(Base):
     )
 
 
+class FeatureFlagRow(Base):
+    """Per-org capability toggles (#418 — the feature-flag home).
+
+    One row per ``(org_id, key)``. Booleans only by design: flags gate
+    capabilities on/off; anything needing richer configuration belongs in a
+    dedicated settings surface, not a flag.
+    """
+
+    __tablename__ = "org_feature_flags"
+
+    org_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("organizations.id"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class OrgConfigRow(Base):
     __tablename__ = "org_config"
 
