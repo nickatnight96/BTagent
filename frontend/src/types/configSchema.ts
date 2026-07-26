@@ -26,3 +26,17 @@ export interface ConfigSchema {
   runtime: RuntimeSurface[];
   deploy_time: DeployTimeEntry[];
 }
+
+/** Effective autonomy levels (#418 slice 3, `GET /api/v1/config/autonomy`). */
+export interface AutonomyCategory {
+  key: string;
+  level: string;
+  /** Containment categories are HITL-gated in code regardless of level. */
+  hitl_forced: boolean;
+}
+
+export interface AutonomyConfig {
+  categories: AutonomyCategory[];
+  levels: Record<string, string>;
+  editable: boolean;
+}

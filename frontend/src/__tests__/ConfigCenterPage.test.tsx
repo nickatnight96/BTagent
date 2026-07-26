@@ -9,9 +9,11 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 const getConfigSchema = vi.fn();
+const getAutonomyConfig = vi.fn();
 
 vi.mock("@/api/configSchema", () => ({
   getConfigSchema: (...a: unknown[]) => getConfigSchema(...a),
+  getAutonomyConfig: (...a: unknown[]) => getAutonomyConfig(...a),
 }));
 
 vi.mock("@/components/layout/Header", () => ({
@@ -69,10 +71,20 @@ function renderPage() {
   );
 }
 
+const AUTONOMY = {
+  categories: [
+    { key: "siem_query", level: "L3", hitl_forced: false },
+    { key: "host_isolation", level: "L0", hitl_forced: true },
+  ],
+  levels: { L0: "Every action requires approval", L3: "Agent runs independently" },
+  editable: false,
+};
+
 describe("ConfigCenterPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getConfigSchema.mockResolvedValue(SCHEMA);
+    getAutonomyConfig.mockResolvedValue(AUTONOMY);
   });
 
   it("renders runtime surfaces with scope badge and link, and the no-editor gap", async () => {
@@ -114,6 +126,23 @@ describe("ConfigCenterPage", () => {
       target: { value: "zzz-no-match" },
     });
     expect(screen.getByTestId("config-center-env-empty")).toBeTruthy();
+  });
+
+  it("renders autonomy levels with the HITL lock on containment", async () => {
+    renderPage();
+    await screen.findByTestId("config-center-autonomy");
+    expect(screen.getByTestId("autonomy-category-siem_query").textContent).toContain(
+      "L3",
+    );
+    expect(screen.queryByTestId("autonomy-hitl-lock-siem_query")).toBeNull();
+    expect(screen.getByTestId("autonomy-hitl-lock-host_isolation")).toBeTruthy();
+  });
+
+  it("omits the autonomy section when its fetch fails, without blanking the page", async () => {
+    getAutonomyConfig.mockRejectedValue(new Error("boom"));
+    renderPage();
+    await screen.findByTestId("config-center-env-table");
+    expect(screen.queryByTestId("config-center-autonomy")).toBeNull();
   });
 
   it("shows the error state when the fetch fails", async () => {
