@@ -250,6 +250,31 @@ def test_requires_approval_policy_matches_docstring() -> None:
     assert requires_approval("isolate_host", AutonomyLevel.L2_SUPERVISED, integ) is True
 
 
+def test_requires_approval_manifest_containment_gated_at_all_autonomy() -> None:
+    """Regression for the review finding: manifest containment tools whose
+    names don't match a substring token (notably ``s1_mitigate_threat``) must
+    still be force-gated at every autonomy level, incl. L3/L4."""
+    integ = IntegrationAutonomy()
+    containment = [
+        "s1_mitigate_threat",  # SentinelOne — the miss the review caught
+        "cs_isolate_host",
+        "mde_isolate_machine",
+        "cortex_isolate_endpoint",
+    ]
+    for tool in containment:
+        for level in (
+            AutonomyLevel.L2_SUPERVISED,
+            AutonomyLevel.L3_AUTONOMOUS,
+            AutonomyLevel.L4_FULL_AUTO,
+        ):
+            assert requires_approval(tool, level, integ) is True, f"{tool} must be gated at {level}"
+
+    # Benign read-only tools stay ungated at high autonomy (incl. the
+    # ``sentinel`` SIEM vs ``sentinelone`` EDR substring collision).
+    assert requires_approval("splunk_search", AutonomyLevel.L4_FULL_AUTO, integ) is False
+    assert requires_approval("sentinel_query", AutonomyLevel.L4_FULL_AUTO, integ) is False
+
+
 class _RecordingEmitter:
     """Stand-in for ``RedisEmitter`` — just records emitted events."""
 

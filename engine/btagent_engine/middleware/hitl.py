@@ -45,13 +45,17 @@ _HITL_GATE_NODE_ID = HITLGateNode.meta.id
 
 
 # Maps substring tokens found in a node id to a field on
-# ``IntegrationAutonomy``. Order matters where overlap is possible (e.g.
-# ``elastic`` before ``last``-anything would conflict): keep specific
-# tokens before generic ones. Source of truth for ports of the legacy
-# ``_TOOL_AUTONOMY_MAP``.
+# ``IntegrationAutonomy``. Order matters where one token is a substring of
+# another: ``sentinelone`` (SentinelOne, an EDR/containment console) MUST
+# precede ``sentinel`` (Microsoft Sentinel, a SIEM) so a SentinelOne node id
+# is never resolved to the benign ``siem_query`` category by the ``sentinel``
+# substring (#377 follow-up). Keep specific tokens before generic ones. This
+# is kept in lockstep with the agents-side ``_TOOL_AUTONOMY_MAP`` by hand (the
+# engine tier has zero deps on ``btagent_agents``).
 _NODE_AUTONOMY_MAP: dict[str, str] = {
     "splunk": "siem_query",
     "elastic": "siem_query",
+    "sentinelone": "edr_query",
     "sentinel": "siem_query",
     "siem": "siem_query",
     "crowdstrike": "edr_query",
@@ -68,6 +72,7 @@ _NODE_AUTONOMY_MAP: dict[str, str] = {
     "isolate": "host_isolation",
     "quarantine": "host_isolation",
     "contain": "host_isolation",
+    "mitigate": "host_isolation",
     "firewall": "firewall_rule",
     "block_ip": "firewall_rule",
     "block_domain": "firewall_rule",
@@ -93,7 +98,10 @@ _ALWAYS_GATE_CATEGORIES: frozenset[str] = frozenset(
 # map's iteration order: a node id like ``integration.crowdstrike.isolate_host``
 # matches ``crowdstrike``->edr_query *first* in the map, which would
 # misclassify containment as a benign EDR query -- the token scan below is
-# immune to that ordering.
+# immune to that ordering. ``mitigate`` is included (via the map) so a
+# SentinelOne containment node (``s1_mitigate_threat`` /
+# ``integration.sentinelone.mitigate_threat``) -- which carries none of the
+# isolate/quarantine/contain substrings -- is still gated (#377).
 _CONTAINMENT_TOKENS: tuple[str, ...] = tuple(
     token
     for token, field_name in _NODE_AUTONOMY_MAP.items()
@@ -104,8 +112,11 @@ _CONTAINMENT_TOKENS: tuple[str, ...] = tuple(
 def _is_containment_node(node_id: str) -> bool:
     """True when *node_id* is a destructive containment action.
 
-    Containment is HITL-gated in every connector manifest, so it is always
-    gated by the autonomy layer too -- independent of the configured level.
+    Containment is ``hitl_required=True`` in every connector manifest, so it is
+    always gated by the autonomy layer too -- independent of the configured
+    level. The engine can't read the agents-side manifests (zero-dep boundary),
+    so it relies on the containment-token scan; ``ConnectorPolicyMiddleware``
+    provides the manifest-driven backstop on nodes that carry a manifest.
     """
     lower = node_id.lower()
     return any(token in lower for token in _CONTAINMENT_TOKENS)
