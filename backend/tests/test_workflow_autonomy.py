@@ -224,6 +224,47 @@ async def test_run_inherits_default_l2_investigation_and_completes(
     assert run["agent_autonomy"] == "L2"
 
 
+async def test_org_autonomy_override_reaches_execution(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    admin_token: str,
+    analyst_token: str,
+):
+    """A stored org override changes real run behavior (#418 slice 7).
+
+    Default posture: L2 agent + siem_query=L3 → splunk runs straight
+    through. With the org overriding siem_query to L1, the same launch
+    must pause at s1 (an L2 agent pauses integrations at L1 or below) —
+    proving PUT /config/autonomy flows into the middleware chain, not
+    just the settings page.
+    """
+    wf_id = await _seed_workflow(client, admin_token, SPLUNK_DEF)
+
+    baseline = await _launch(client, analyst_token, wf_id)
+    assert baseline["status"] == "succeeded"
+
+    put = await client.put(
+        "/api/v1/config/autonomy",
+        json={"overrides": {"siem_query": "L1"}},
+        headers=auth_header(admin_token),
+    )
+    assert put.status_code == 200, put.text
+
+    gated = await _launch(client, analyst_token, wf_id)
+    assert gated["status"] == "paused"
+    assert gated["paused_node_id"] == "s1"
+
+    # Clearing the override restores the default flow-through.
+    cleared = await client.put(
+        "/api/v1/config/autonomy",
+        json={"overrides": {}},
+        headers=auth_header(admin_token),
+    )
+    assert cleared.status_code == 200
+    restored = await _launch(client, analyst_token, wf_id)
+    assert restored["status"] == "succeeded"
+
+
 async def test_resume_reexecutes_under_snapshotted_autonomy(
     client: AsyncClient,
     db_session: AsyncSession,
