@@ -7,29 +7,15 @@ import {
   ShieldCheck,
   ExternalLink,
   EyeOff,
-  Lock,
-  Bot,
 } from "lucide-react";
-import { getAutonomyConfig, getConfigSchema } from "@/api/configSchema";
-import type {
-  AutonomyConfig,
-  ConfigSchema,
-  DeployTimeEntry,
-  RuntimeSurface,
-} from "@/types/configSchema";
+import { getConfigSchema } from "@/api/configSchema";
+import type { ConfigSchema, DeployTimeEntry, RuntimeSurface } from "@/types/configSchema";
 import { Header } from "@/components/layout/Header";
+import { AutonomyPanel } from "./AutonomyPanel";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 import { Card, CardContent } from "@/components/ds/card";
 import { Input } from "@/components/ds/input";
 import { Button } from "@/components/ds/button";
-
-const LEVEL_BADGE: Record<string, string> = {
-  L0: "border-rose-500/40 text-rose-300",
-  L1: "border-amber-500/40 text-amber-300",
-  L2: "border-sky-500/40 text-sky-300",
-  L3: "border-emerald-500/40 text-emerald-300",
-  L4: "border-emerald-500/40 text-emerald-300",
-};
 
 const SCOPE_BADGE: Record<string, string> = {
   org: "border-sky-500/40 text-sky-300",
@@ -95,7 +81,6 @@ function SurfaceCard({ surface }: { surface: RuntimeSurface }) {
  */
 export function ConfigCenterPage() {
   const [schema, setSchema] = useState<ConfigSchema | null>(null);
-  const [autonomy, setAutonomy] = useState<AutonomyConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
 
@@ -104,10 +89,6 @@ export function ConfigCenterPage() {
     getConfigSchema()
       .then(setSchema)
       .catch(() => setError("Could not load the configuration inventory"));
-    // Autonomy is a sibling read — its failure must not blank the page.
-    getAutonomyConfig()
-      .then(setAutonomy)
-      .catch(() => setAutonomy(null));
   };
 
   useEffect(load, []);
@@ -167,47 +148,9 @@ export function ConfigCenterPage() {
               </div>
             </section>
 
-            {autonomy && (
-              <section data-testid="config-center-autonomy">
-                <div className="flex items-center gap-2 mb-3">
-                  <Bot className="w-4 h-4 text-primary" aria-hidden="true" />
-                  <h2 className="text-sm font-semibold">Autonomy &amp; HITL gates</h2>
-                  <span className="text-xs text-muted-foreground">
-                    {autonomy.editable ? "editable" : "read-only — editing is a follow-up"}
-                  </span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {autonomy.categories.map((cat) => (
-                    <span
-                      key={cat.key}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card/50 px-2.5 py-1.5 text-xs"
-                      data-testid={`autonomy-category-${cat.key}`}
-                      title={autonomy.levels[cat.level] ?? cat.level}
-                    >
-                      {cat.key.replace(/_/g, " ")}
-                      <span
-                        className={`rounded border px-1 py-0.5 text-[10px] font-semibold ${
-                          LEVEL_BADGE[cat.level] ?? "border-border text-muted-foreground"
-                        }`}
-                      >
-                        {cat.level}
-                      </span>
-                      {cat.hitl_forced && (
-                        <Lock
-                          className="w-3 h-3 text-rose-300"
-                          aria-label="Always HITL-gated in code"
-                          data-testid={`autonomy-hitl-lock-${cat.key}`}
-                        />
-                      )}
-                    </span>
-                  ))}
-                </div>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Containment actions stay human-gated in code regardless of the
-                  configured level.
-                </p>
-              </section>
-            )}
+            {/* Autonomy & HITL gates (#418 slices 3+8) — self-contained
+             * panel with admin editing; hides itself if its fetch fails. */}
+            <AutonomyPanel />
 
             {/* Per-org capability toggles (#418 slice 5) — self-contained
              * panel; hides itself if its fetch fails. */}
