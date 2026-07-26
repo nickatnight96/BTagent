@@ -75,6 +75,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow, WorkflowVersionRow
+from btagent_backend.services import autonomy_service
 
 logger = logging.getLogger("btagent.services.workflow_run")
 
@@ -296,11 +297,16 @@ async def execute_version(
     an inferred GREEN. Callers must pass the classification of the
     triggering context (the API route defaults to TLP:RED — fail-closed
     — when the request body doesn't specify it).
-    ``agent_autonomy`` / ``integration_autonomy`` default to the
-    standard supervised analyst posture (L2 agent + the
-    :class:`IntegrationAutonomy` defaults).
+    ``agent_autonomy`` defaults to the standard supervised analyst posture
+    (L2). ``integration_autonomy``, when not supplied by the caller, resolves
+    to the workflow org's effective levels — shared defaults merged with any
+    stored org overrides (#418) — so a CISO-tuned per-category posture takes
+    execution effect without every caller knowing about the store.
     """
     wf = _load_workflow(version)  # may raise WorkflowNotExecutable (pre-flight)
+
+    if integration_autonomy is None:
+        integration_autonomy = await autonomy_service.get_effective_autonomy(db, workflow.org_id)
 
     run_id = generate_id("wfrun")
     ctx = NodeContext(
@@ -318,7 +324,7 @@ async def execute_version(
         ctx=ctx,
         active_tlp=active_tlp,
         agent_autonomy=agent_autonomy,
-        integration_autonomy=integration_autonomy or IntegrationAutonomy(),
+        integration_autonomy=integration_autonomy,
     )
 
     run = WorkflowRunRow(
@@ -451,7 +457,9 @@ async def execute_pending_run(db: AsyncSession, *, run_id: str) -> WorkflowRunRo
         ctx=ctx,
         active_tlp=active_tlp,
         agent_autonomy=agent_autonomy,
-        integration_autonomy=IntegrationAutonomy(),
+        # Org-effective levels (#418): background runs honor the same
+        # per-category posture as inline ones.
+        integration_autonomy=await autonomy_service.get_effective_autonomy(db, workflow.org_id),
     )
 
     run.status = outcome.status.value
@@ -582,7 +590,12 @@ async def resume_run(
         ctx=ctx,
         active_tlp=active_tlp,
         agent_autonomy=agent_autonomy,
-        integration_autonomy=integration_autonomy or IntegrationAutonomy(),
+        # Unlike TLP/agent posture (snapshotted on the row), integration
+        # autonomy is org policy: a resume runs under the org's CURRENT
+        # per-category levels (#418) — approving one step doesn't freeze
+        # yesterday's policy for the rest of the run.
+        integration_autonomy=integration_autonomy
+        or await autonomy_service.get_effective_autonomy(db, workflow.org_id),
         resume_state=resume_state,
         approved_steps=approved,
         prior_evidence=prior_evidence,
