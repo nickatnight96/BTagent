@@ -17,6 +17,7 @@ from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import DashboardPrefRow, FeatureFlagRow
 from btagent_backend.db.models_behavioral import OrgProfileRow
+from btagent_backend.services import autonomy_service
 from btagent_backend.services.config_catalog import build_config_catalog
 from btagent_backend.services.dashboard_layout import DashboardLayout, role_default_layout
 from btagent_backend.services.data_retention import DataRetentionService
@@ -70,51 +71,87 @@ _AUTONOMY_LEVEL_LEGEND: dict[str, str] = {
     "L4": "Fully autonomous (scheduled tasks)",
 }
 
-# Containment categories are ALWAYS HITL-gated in code (engine middleware +
-# connector manifests mark them hitl_required), regardless of the configured
-# level — surfacing that here keeps the read view honest.
-_HITL_FORCED_CATEGORIES = frozenset({"host_isolation", "firewall_rule", "account_disable"})
-
 
 class AutonomyCategory(BaseModel):
     key: str
     level: str
     hitl_forced: bool
+    # True when the org has a stored override for this category.
+    overridden: bool = False
 
 
 class AutonomyConfigResponse(BaseModel):
     categories: list[AutonomyCategory]
     levels: dict[str, str]
-    # False until the #418 autonomy-editing slice lands — the UI renders
-    # read-only when this is false.
+    # PUT /config/autonomy exists (config:edit); containment stays locked.
     editable: bool
 
 
-@router.get("/autonomy", response_model=AutonomyConfigResponse)
-async def get_autonomy_config(
-    user: CurrentUser = Depends(get_current_user),
-) -> AutonomyConfigResponse:
-    """The effective per-category autonomy levels (#418 slice 3, read-only).
+class AutonomyOverridesRequest(BaseModel):
+    """Wholesale replacement of the org's override set; {} clears to defaults."""
 
-    There is no per-org autonomy store yet — every engine/agents call site
-    constructs ``IntegrationAutonomy()`` defaults — so this reports exactly
-    what deployments run today. Containment categories additionally carry
-    ``hitl_forced``: they are gated in code no matter the configured level.
-    """
-    user.require_permission("config:view")
-    autonomy = IntegrationAutonomy()
+    overrides: dict[str, str] = Field(default_factory=dict, max_length=32)
+
+
+async def _autonomy_response(db: AsyncSession, org_id: str) -> AutonomyConfigResponse:
+    autonomy = await autonomy_service.get_effective_autonomy(db, org_id)
+    overrides = await autonomy_service.get_overrides(db, org_id)
     return AutonomyConfigResponse(
         categories=[
             AutonomyCategory(
                 key=key,
                 level=getattr(autonomy, key).value,
-                hitl_forced=key in _HITL_FORCED_CATEGORIES,
+                hitl_forced=key in autonomy_service.HITL_FORCED_CATEGORIES,
+                overridden=key in overrides,
             )
             for key in IntegrationAutonomy.model_fields
         ],
         levels=_AUTONOMY_LEVEL_LEGEND,
-        editable=False,
+        editable=True,
     )
+
+
+@router.get("/autonomy", response_model=AutonomyConfigResponse)
+async def get_autonomy_config(
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> AutonomyConfigResponse:
+    """Effective per-category autonomy levels (#418): shared defaults merged
+    with the caller's org overrides. Containment categories carry
+    ``hitl_forced`` — gated in code no matter the configured level."""
+    user.require_permission("config:view")
+    return await _autonomy_response(db, user.org_id)
+
+
+@router.put("/autonomy", response_model=AutonomyConfigResponse)
+async def put_autonomy_config(
+    body: AutonomyOverridesRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> AutonomyConfigResponse:
+    """Replace the org's autonomy overrides (#418 slice 6, admin only).
+
+    Containment categories are rejected with 422 — the store never even
+    claims to loosen the code-enforced HITL gate. An empty override set
+    reverts the org to pure shared defaults. Engine call sites still read
+    defaults today; wiring them to the org overrides is the next slice.
+    """
+    user.require_permission("config:edit")
+
+    reason = autonomy_service.validate_overrides(body.overrides)
+    if reason is not None:
+        raise HTTPException(status_code=422, detail=reason)
+
+    await autonomy_service.set_overrides(
+        db, org_id=user.org_id, overrides=body.overrides, updated_by=user.id
+    )
+    logger.info(
+        "Autonomy overrides replaced for org %s by user %s (%d override(s))",
+        user.org_id,
+        user.id,
+        len(body.overrides),
+    )
+    return await _autonomy_response(db, user.org_id)
 
 
 @router.get("/schema", response_model=ConfigSchemaResponse)

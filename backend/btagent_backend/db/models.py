@@ -432,6 +432,27 @@ class FeatureFlagRow(Base):
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class OrgAutonomyRow(Base):
+    """Per-org autonomy-level overrides (#418 — Autonomy & HITL gates).
+
+    ``overrides`` maps editable ``IntegrationAutonomy`` categories to L0–L4
+    values; containment categories are rejected at the API layer and ignored
+    at merge time, so this row can never loosen the code-enforced HITL gate.
+    Absence of a row (or an empty dict) means pure shared defaults.
+    """
+
+    __tablename__ = "org_autonomy"
+
+    org_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("organizations.id"), primary_key=True
+    )
+    overrides: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class OrgConfigRow(Base):
     __tablename__ = "org_config"
 
