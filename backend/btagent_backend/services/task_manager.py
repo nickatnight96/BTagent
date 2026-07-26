@@ -26,6 +26,7 @@ from sqlalchemy import select, update
 from btagent_backend.config import get_settings
 from btagent_backend.db.engine import async_session_factory
 from btagent_backend.db.models import InvestigationRow
+from btagent_backend.services import autonomy_service
 from btagent_backend.services.investigation_notifier import notify_investigation_outcome
 
 if TYPE_CHECKING:
@@ -482,8 +483,13 @@ class TaskManager:
             emitter = RedisEmitter(investigation_id, self._redis_url)
             await emitter.connect()
 
-            # 2. Build hook registry with all applicable hooks.
-            registry = self._build_hooks(emitter, investigation_id, agent_config)
+            # 2. Build hook registry with all applicable hooks. The org's
+            # per-category autonomy (#418) gates integration tool calls, so
+            # resolve it before the hooks are wired.
+            integration_autonomy = await self._resolve_integration_autonomy(investigation_id)
+            registry = self._build_hooks(
+                emitter, investigation_id, agent_config, integration_autonomy
+            )
             callbacks = registry.get_all_callbacks()
 
             # 3. Emit INVESTIGATION_INIT event.
@@ -700,8 +706,15 @@ class TaskManager:
         emitter: RedisEmitter,
         investigation_id: str,
         agent_config: Any,
+        integration_autonomy: Any = None,
     ) -> HookRegistry:
-        """Construct the hook registry for an investigation."""
+        """Construct the hook registry for an investigation.
+
+        ``integration_autonomy`` is the org's effective per-category policy
+        (see :meth:`_resolve_integration_autonomy`); ``None`` falls back to
+        the shared defaults, which is what callers that don't care about
+        org tuning (and the tests) get.
+        """
         registry = HookRegistry()
 
         # Event emitter -- always register, critical.
@@ -733,6 +746,7 @@ class TaskManager:
                 emitter=emitter,
                 investigation_id=investigation_id,
                 agent_autonomy=autonomy,
+                integration_autonomy=integration_autonomy,
             ),
         )
 
@@ -878,6 +892,53 @@ class TaskManager:
                 investigation_id,
                 status,
             )
+
+    async def _autonomy_for_org_of(self, session: Any, investigation_id: str) -> Any:
+        """Effective autonomy for the org that owns ``investigation_id``."""
+        from btagent_shared.types.config import IntegrationAutonomy
+
+        result = await session.execute(
+            select(InvestigationRow.org_id).where(InvestigationRow.id == investigation_id)
+        )
+        org_id = result.scalar_one_or_none()
+        if org_id is None:
+            return IntegrationAutonomy()
+        return await autonomy_service.get_effective_autonomy(session, org_id)
+
+    async def _resolve_integration_autonomy(
+        self,
+        investigation_id: str,
+        *,
+        session: Any = None,
+    ) -> Any:
+        """The org's effective per-category autonomy for this investigation (#418).
+
+        Org admins tune per-category levels through ``PUT /config/autonomy``;
+        without this lookup the agent path would silently run on the shared
+        defaults while workflow runs honored the org's policy.
+
+        ``session`` follows the codebase's ``service(db, ...)`` convention:
+        callers holding a session pass it; the background-task path (which has
+        no request-scoped session) omits it and gets its own.
+
+        Never raises: a config lookup failing must not abort a running
+        investigation, so any error falls back to the shared defaults — which
+        are no looser than the platform baseline. Containment stays
+        force-gated in the middleware regardless of what's returned.
+        """
+        from btagent_shared.types.config import IntegrationAutonomy
+
+        try:
+            if session is not None:
+                return await self._autonomy_for_org_of(session, investigation_id)
+            async with async_session_factory() as own_session:
+                return await self._autonomy_for_org_of(own_session, investigation_id)
+        except Exception:
+            logger.exception(
+                "Failed to resolve org autonomy for investigation %s; using defaults",
+                investigation_id,
+            )
+            return IntegrationAutonomy()
 
     async def _load_investigation_config(
         self,
