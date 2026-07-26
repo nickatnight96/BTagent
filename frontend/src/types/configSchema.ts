@@ -33,6 +33,8 @@ export interface AutonomyCategory {
   level: string;
   /** Containment categories are HITL-gated in code regardless of level. */
   hitl_forced: boolean;
+  /** True when the org has a stored override for this category. */
+  overridden?: boolean;
 }
 
 export interface AutonomyConfig {

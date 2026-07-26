@@ -16,6 +16,7 @@ const putFeatureFlags = vi.fn();
 vi.mock("@/api/configSchema", () => ({
   getConfigSchema: (...a: unknown[]) => getConfigSchema(...a),
   getAutonomyConfig: (...a: unknown[]) => getAutonomyConfig(...a),
+  putAutonomyOverrides: vi.fn(),
   getFeatureFlags: (...a: unknown[]) => getFeatureFlags(...a),
   putFeatureFlags: (...a: unknown[]) => putFeatureFlags(...a),
 }));

@@ -8,9 +8,20 @@ export async function getConfigSchema(): Promise<ConfigSchema> {
   return api.get<ConfigSchema>("/v1/config/schema");
 }
 
-/** Effective per-category autonomy levels (read-only until editing lands). */
+/** Effective per-category autonomy levels (defaults merged with org overrides). */
 export async function getAutonomyConfig(): Promise<AutonomyConfig> {
   return api.get<AutonomyConfig>("/v1/config/autonomy");
+}
+
+/**
+ * Replace the org's autonomy overrides wholesale (admin): the stored set is
+ * exactly `overrides` — always send the FULL dict; `{}` reverts to defaults.
+ * Containment categories are rejected server-side (422).
+ */
+export async function putAutonomyOverrides(
+  overrides: Record<string, string>,
+): Promise<AutonomyConfig> {
+  return api.put<AutonomyConfig>("/v1/config/autonomy", { overrides });
 }
 
 export interface FeatureFlags {
