@@ -10,10 +10,19 @@ import { MemoryRouter } from "react-router-dom";
 
 const getConfigSchema = vi.fn();
 const getAutonomyConfig = vi.fn();
+const getFeatureFlags = vi.fn();
+const putFeatureFlags = vi.fn();
 
 vi.mock("@/api/configSchema", () => ({
   getConfigSchema: (...a: unknown[]) => getConfigSchema(...a),
   getAutonomyConfig: (...a: unknown[]) => getAutonomyConfig(...a),
+  getFeatureFlags: (...a: unknown[]) => getFeatureFlags(...a),
+  putFeatureFlags: (...a: unknown[]) => putFeatureFlags(...a),
+}));
+
+vi.mock("@/stores/authStore", () => ({
+  useAuthStore: (selector: (s: unknown) => unknown) =>
+    selector({ user: { role: "analyst" } }),
 }));
 
 vi.mock("@/components/layout/Header", () => ({
@@ -85,6 +94,7 @@ describe("ConfigCenterPage", () => {
     vi.clearAllMocks();
     getConfigSchema.mockResolvedValue(SCHEMA);
     getAutonomyConfig.mockResolvedValue(AUTONOMY);
+    getFeatureFlags.mockResolvedValue({ flags: {} });
   });
 
   it("renders runtime surfaces with scope badge and link, and the no-editor gap", async () => {
