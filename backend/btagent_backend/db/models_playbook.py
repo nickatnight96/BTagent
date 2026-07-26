@@ -58,7 +58,6 @@ class PlaybookExecutionRow(Base):
         String(64),
         ForeignKey("organizations.id"),
         nullable=False,
-        index=True,
         default=DEFAULT_ORG_ID,
     )
     playbook_id: Mapped[str] = mapped_column(

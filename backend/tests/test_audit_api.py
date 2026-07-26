@@ -8,7 +8,7 @@ from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from httpx import AsyncClient
 from sqlalchemy import delete
 
-from btagent_backend.db.models import AuditLogRow
+from btagent_backend.db.models import DEFAULT_ORG_ID, AuditLogRow
 from btagent_backend.services.audit_trail import AuditTrail
 from tests.helpers import auth_header
 
@@ -34,6 +34,7 @@ async def _seed(db_session, n: int = 3):
     trail = AuditTrail(db_session)
     for i in range(n):
         await trail.record(
+            org_id=DEFAULT_ORG_ID,
             actor=f"usr_{i}",
             category=AuditCategory.AGENT_ACTION,
             action=f"action_{i}",

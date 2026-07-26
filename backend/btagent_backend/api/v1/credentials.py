@@ -107,6 +107,7 @@ async def upsert_credential(
             actor_id=user.id,
         )
         await AuditTrail(db).record(
+            org_id=user.org_id,
             actor=user.id,
             category=AuditCategory.CONFIG_CHANGE,
             action="connector_credential_bound",
@@ -134,6 +135,7 @@ async def delete_credential(
     if not deleted:
         raise HTTPException(status_code=404, detail=f"No credential bound for '{connector_name}'")
     await AuditTrail(db).record(
+        org_id=user.org_id,
         actor=user.id,
         category=AuditCategory.CONFIG_CHANGE,
         action="connector_credential_removed",

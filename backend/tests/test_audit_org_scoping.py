@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
 import pytest_asyncio
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from btagent_shared.utils.ids import generate_id
@@ -20,7 +21,8 @@ from httpx import AsyncClient
 from sqlalchemy import delete
 
 from btagent_backend.auth.jwt import create_token_pair
-from btagent_backend.db.models import AuditLogRow, OrganizationRow
+from btagent_backend.config import OIDCProviderConfig, get_settings
+from btagent_backend.db.models import DEFAULT_ORG_ID, AuditLogRow, OrganizationRow, UserRow
 from btagent_backend.services.audit_trail import AuditTrail
 from tests.helpers import auth_header
 
@@ -156,3 +158,21 @@ async def test_lineage_up_to_hash_cannot_probe_other_org(client: AsyncClient, db
         headers=auth_header(_admin_token(_ORG_B)),
     )
     assert resp.status_code == 404
+
+
+async def test_record_requires_org_id_kwarg(db_session, two_orgs):
+    """``org_id`` is a REQUIRED keyword on ``record()``.
+
+    This is the structural guard against the regression the review caught: with
+    a default of ``org_default``, callers silently mis-tenanted every write and
+    the read-scoping (#385) left non-default orgs with empty ledgers. Making the
+    kwarg required turns a forgotten org into a hard error, not a silent leak.
+    """
+    with pytest.raises(TypeError):
+        await AuditTrail(db_session).record(
+            actor="x",
+            category=AuditCategory.AGENT_ACTION,
+            action="a",
+            resource="r",
+            outcome=AuditOutcome.SUCCESS,
+        )  # no org_id -> TypeError
