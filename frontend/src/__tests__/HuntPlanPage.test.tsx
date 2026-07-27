@@ -216,6 +216,9 @@ describe("HuntPlanPage", () => {
       expect(mockGeneratePlan).toHaveBeenCalledWith({
         adversaries: ["APT29", "FIN7"],
         ttps: ["T1059.001", "T1078.004"],
+        // #99 added IOCs as a third input; an untouched field sends an
+        // empty list, matching how adversaries/ttps already behave.
+        iocs: [],
       }),
     );
   });

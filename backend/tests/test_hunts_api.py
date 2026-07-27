@@ -281,6 +281,93 @@ async def test_hunt_plan_requires_a_target(client: AsyncClient, analyst_token: s
     assert resp.status_code == 422
 
 
+# --- IOC-only planning (#99) ---------------------------------------------- #
+
+
+async def test_generate_hunt_plan_from_iocs_alone(client: AsyncClient, analyst_token: str):
+    """An analyst holding only indicators — no actor, no technique — still
+    gets a runbook: HypothesisGen maps each IOC type to a technique."""
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={
+            "iocs": [
+                {"type": "domain", "value": "evil.example.com"},
+                {"type": "cve", "value": "CVE-2024-3094"},
+            ]
+        },
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    assert plan["state"] == "ready"
+    assert plan["hypotheses"], "IOC-only input must still produce hypotheses"
+
+    # The type->technique map is the whole point of accepting IOCs, so pin
+    # the mapping rather than merely asserting "some hypotheses appeared":
+    # domain -> DNS (T1071.004), cve -> Exploit Public-Facing App (T1190).
+    ttp_ids = {e["ttp_id"] for e in plan["ttp_entries"]}
+    assert {"T1071.004", "T1190"} <= ttp_ids
+
+    # Provenance survives to the plan so the analyst can see *why* each
+    # hypothesis is there.
+    sources = {s for h in plan["hypotheses"] for s in h["sources"]}
+    assert "ioc:domain:evil.example.com" in sources
+
+
+async def test_hunt_plan_iocs_combine_with_ttps(client: AsyncClient, analyst_token: str):
+    """IOC-derived and analyst-named techniques coexist in one plan."""
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={
+            "ttps": ["T1059.001"],
+            "iocs": [{"type": "domain", "value": "evil.example.com"}],
+        },
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    ttp_ids = {e["ttp_id"] for e in resp.json()["ttp_entries"]}
+    assert {"T1059.001", "T1071.004"} <= ttp_ids
+
+
+async def test_hunt_plan_rejects_unknown_ioc_type(client: AsyncClient, analyst_token: str):
+    """The type is a closed enum — a typo must 422, not silently drop."""
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={"iocs": [{"type": "not_a_type", "value": "x"}]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 422
+
+
+async def test_hunt_plan_rejects_empty_ioc_value(client: AsyncClient, analyst_token: str):
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={"iocs": [{"type": "domain", "value": ""}]},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 422
+
+
+async def test_unmapped_ioc_type_is_accepted_but_adds_no_hypothesis(
+    client: AsyncClient, analyst_token: str
+):
+    """``other`` has no technique mapping. It must not error, and must not
+    invent a hypothesis — the plan simply rests on the other inputs."""
+    resp = await client.post(
+        "/api/v1/hunts/plan",
+        json={
+            "ttps": ["T1059.001"],
+            "iocs": [{"type": "other", "value": "something-odd"}],
+        },
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    sources = {s for h in plan["hypotheses"] for s in h["sources"]}
+    assert not any(s.startswith("ioc:other:") for s in sources)
+    assert {e["ttp_id"] for e in plan["ttp_entries"]} == {"T1059.001"}
+
+
 async def test_hunt_plan_requires_auth(client: AsyncClient):
     resp = await client.post("/api/v1/hunts/plan", json={"adversaries": ["APT29"]})
     assert resp.status_code in (401, 403)

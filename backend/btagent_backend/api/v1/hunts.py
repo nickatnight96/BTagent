@@ -30,6 +30,7 @@ from btagent_shared.types.correlation import CorrelationTimeline
 from btagent_shared.types.enums import InvestigationStatus, IOCType, Severity
 from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan, HuntScope
 from btagent_shared.types.hunt_package import HuntPackage
+from btagent_shared.types.investigation import IOC
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -284,6 +285,19 @@ async def promote_hunt_package(
     )
 
 
+class HuntPlanIOC(BaseModel):
+    """One indicator supplied as hunt input (#99).
+
+    Deliberately *not* the full :class:`btagent_shared.types.investigation.IOC`:
+    that model requires ``id`` and ``investigation_id``, and an ad-hoc hunt
+    has neither — the analyst is hunting *before* there is a case. The route
+    synthesises the missing identity fields.
+    """
+
+    type: IOCType
+    value: str = Field(..., min_length=1, max_length=2048)
+
+
 class HuntPlanRequest(BaseModel):
     """Direct hunt-plan generation (#99 Phase A) — analyst names the target."""
 
@@ -297,6 +311,16 @@ class HuntPlanRequest(BaseModel):
         max_length=50,
         description="ATT&CK technique ids ('T1059.001', ...).",
     )
+    iocs: list[HuntPlanIOC] = Field(
+        default_factory=list,
+        max_length=100,
+        description=(
+            "Indicators to hunt from. HypothesisGen maps each to a plausible "
+            "technique (ip/url -> T1071.001, domain -> T1071.004, hashes -> "
+            "T1027, cve -> T1190, ...), so an analyst holding only indicators "
+            "can still get a plan. Types with no mapping are ignored."
+        ),
+    )
     backends: list[Backend] = Field(
         default_factory=list,
         description="Backends to synthesise queries for. Empty == default fan-out.",
@@ -304,8 +328,8 @@ class HuntPlanRequest(BaseModel):
 
     @model_validator(mode="after")
     def _at_least_one_target(self) -> HuntPlanRequest:
-        if not self.adversaries and not self.ttps:
-            raise ValueError("at least one of adversaries / ttps must be non-empty")
+        if not self.adversaries and not self.ttps and not self.iocs:
+            raise ValueError("at least one of adversaries / ttps / iocs must be non-empty")
         return self
 
 
@@ -328,6 +352,20 @@ async def generate_hunt_plan(
     hunt_input = HuntInput(
         adversaries=body.adversaries,
         ttps=body.ttps,
+        # A direct hunt has no case yet, so there is no investigation to
+        # attach these to. The sentinel keeps the shared IOC model's contract
+        # (both fields are required) without inventing a plausible-looking
+        # investigation id that would later be mistaken for a real one.
+        iocs=[
+            IOC(
+                id=generate_id("ioc"),
+                investigation_id="",
+                type=i.type,
+                value=i.value,
+                source=f"hunt_plan:{user.id}",
+            )
+            for i in body.iocs
+        ],
         scope=HuntScope(backends=body.backends),
         initiated_by=user.id,
     )

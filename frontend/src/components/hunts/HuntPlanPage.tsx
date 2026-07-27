@@ -29,6 +29,7 @@ import {
 } from "@/components/ds/card";
 import {
   generateHuntPlan,
+  inferIOCType,
   listHuntPlans,
   getHuntPlan,
   executeHuntPlan,
@@ -66,13 +67,20 @@ function formatRelativeTime(dateStr: string): string {
 function planLabel(s: HuntPlanSummary): string {
   const parts = [...s.adversaries, ...s.ttps];
   if (parts.length === 0) return s.id;
-  return parts.slice(0, 4).join(", ") + (parts.length > 4 ? ` +${parts.length - 4}` : "");
+  return (
+    parts.slice(0, 4).join(", ") +
+    (parts.length > 4 ? ` +${parts.length - 4}` : "")
+  );
 }
 
 export function HuntPlanPage() {
   const navigate = useNavigate();
   const [adversariesText, setAdversariesText] = useState("");
   const [ttpsText, setTtpsText] = useState("");
+  // #99: an analyst often holds only indicators — from an advisory, a peer,
+  // an alert — and no actor name or technique id yet. Typed as raw values;
+  // the type is inferred so they don't have to tag each one.
+  const [iocsText, setIocsText] = useState("");
   const [plan, setPlan] = useState<HuntPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +93,9 @@ export function HuntPlanPage() {
 
   // Runbook execution (#339): run the open plan, hits land in triage.
   const [executing, setExecuting] = useState(false);
-  const [execResult, setExecResult] = useState<ExecuteHuntPlanResponse | null>(null);
+  const [execResult, setExecResult] = useState<ExecuteHuntPlanResponse | null>(
+    null,
+  );
 
   // Per-run history (#341) of the open stored plan.
   const [runs, setRuns] = useState<HuntPlanRun[]>([]);
@@ -147,7 +157,12 @@ export function HuntPlanPage() {
 
   const adversaries = tokens(adversariesText);
   const ttps = tokens(ttpsText);
-  const hasTarget = adversaries.length > 0 || ttps.length > 0;
+  const iocs = tokens(iocsText).map((value) => ({
+    type: inferIOCType(value),
+    value,
+  }));
+  const hasTarget =
+    adversaries.length > 0 || ttps.length > 0 || iocs.length > 0;
 
   const handleGenerate = useCallback(async () => {
     if (!hasTarget) return;
@@ -155,7 +170,7 @@ export function HuntPlanPage() {
     setError(null);
     setPlan(null);
     try {
-      const result = await generateHuntPlan({ adversaries, ttps });
+      const result = await generateHuntPlan({ adversaries, ttps, iocs });
       setPlan(result);
       setExecResult(null);
       void fetchHistory();
@@ -166,7 +181,7 @@ export function HuntPlanPage() {
     }
     // tokens() derivations are stable for the same text inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasTarget, adversariesText, ttpsText, fetchHistory]);
+  }, [hasTarget, adversariesText, ttpsText, iocsText, fetchHistory]);
 
   const handleReopen = useCallback(async (id: string) => {
     setReopeningId(id);
@@ -202,7 +217,10 @@ export function HuntPlanPage() {
   return (
     <>
       <Header title="Hunt Planner" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-6" data-testid="hunt-plan-page">
+      <div
+        className="flex-1 overflow-y-auto p-6 space-y-6"
+        data-testid="hunt-plan-page"
+      >
         {/* Input */}
         <Card>
           <CardHeader>
@@ -239,6 +257,29 @@ export function HuntPlanPage() {
                   data-testid="plan-ttps-input"
                 />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="plan-iocs">Indicators</Label>
+              <Input
+                id="plan-iocs"
+                value={iocsText}
+                onChange={(e) => setIocsText(e.target.value)}
+                placeholder="8.8.8.8, evil.example.com, CVE-2024-3094…"
+                className="font-mono"
+                data-testid="plan-iocs-input"
+              />
+              {/* Show the inferred type back to the analyst: inference is a
+               * guess, and a value typed as "other" contributes no
+               * hypothesis. Silently dropping it would look like the planner
+               * ignored their input. */}
+              {iocs.length > 0 && (
+                <p
+                  className="text-xs text-muted-foreground"
+                  data-testid="plan-iocs-preview"
+                >
+                  {iocs.map((i) => `${i.value} → ${i.type}`).join(" · ")}
+                </p>
+              )}
             </div>
             <Button
               onClick={handleGenerate}
@@ -305,12 +346,14 @@ export function HuntPlanPage() {
                       <p className="truncate font-medium text-foreground">
                         {planLabel(h)}
                         {plan?.id === h.id && (
-                          <span className="ml-2 text-xs text-primary">(open)</span>
+                          <span className="ml-2 text-xs text-primary">
+                            (open)
+                          </span>
                         )}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {h.hypothesis_count} hypotheses · {h.entry_count} entries ·{" "}
-                        {formatRelativeTime(h.created_at)}
+                        {h.hypothesis_count} hypotheses · {h.entry_count}{" "}
+                        entries · {formatRelativeTime(h.created_at)}
                         {h.last_run_findings != null && h.last_run_at && (
                           <span data-testid={`last-run-${h.id}`}>
                             {" "}
@@ -420,13 +463,15 @@ export function HuntPlanPage() {
                 )}
                 {plan.executive_summary.success_criteria && (
                   <p className="text-muted-foreground">
-                    <span className="font-semibold text-foreground">Success: </span>
+                    <span className="font-semibold text-foreground">
+                      Success:{" "}
+                    </span>
                     {plan.executive_summary.success_criteria}
                   </p>
                 )}
                 <p className="text-muted-foreground">
-                  {plan.hypotheses.length} hypotheses · {plan.ttp_entries.length}{" "}
-                  runbook entries
+                  {plan.hypotheses.length} hypotheses ·{" "}
+                  {plan.ttp_entries.length} runbook entries
                   {plan.executive_summary.estimated_effort_hours != null &&
                     ` · ~${plan.executive_summary.estimated_effort_hours}h estimated`}
                 </p>
@@ -482,7 +527,9 @@ export function HuntPlanPage() {
                         {formatRelativeTime(r.started_at)}
                       </p>
                       <Badge
-                        variant={r.status === "completed" ? "secondary" : "outline"}
+                        variant={
+                          r.status === "completed" ? "secondary" : "outline"
+                        }
                         className="shrink-0"
                       >
                         {r.status}
@@ -528,7 +575,9 @@ export function HuntPlanPage() {
                 <CardHeader>
                   <CardTitle className="text-base font-mono">
                     {entry.ttp_id}{" "}
-                    <span className="font-sans font-semibold">{entry.ttp_name}</span>
+                    <span className="font-sans font-semibold">
+                      {entry.ttp_name}
+                    </span>
                   </CardTitle>
                   <CardDescription>{entry.rationale}</CardDescription>
                 </CardHeader>
@@ -559,8 +608,8 @@ export function HuntPlanPage() {
 
                   {entry.expected_noise.expected_hits_per_day != null && (
                     <p className="text-xs text-muted-foreground">
-                      Expected noise: ~{entry.expected_noise.expected_hits_per_day}{" "}
-                      hits/day
+                      Expected noise: ~
+                      {entry.expected_noise.expected_hits_per_day} hits/day
                       {entry.expected_noise.sample_window_days != null &&
                         ` over a ${entry.expected_noise.sample_window_days}-day sample`}
                     </p>
@@ -569,7 +618,8 @@ export function HuntPlanPage() {
                   {entry.pivot_questions.length > 0 && (
                     <div>
                       <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                        <HelpCircle className="w-3.5 h-3.5" /> Pivot questions on hit
+                        <HelpCircle className="w-3.5 h-3.5" /> Pivot questions
+                        on hit
                       </p>
                       <ul className="list-disc space-y-0.5 pl-5 text-muted-foreground">
                         {entry.pivot_questions.map((q, i) => (
@@ -582,7 +632,8 @@ export function HuntPlanPage() {
                   {entry.evidence_checklist.length > 0 && (
                     <div>
                       <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                        <ListChecks className="w-3.5 h-3.5" /> Evidence to collect
+                        <ListChecks className="w-3.5 h-3.5" /> Evidence to
+                        collect
                       </p>
                       <ul className="list-disc space-y-0.5 pl-5 text-muted-foreground">
                         {entry.evidence_checklist.map((c, i) => (
