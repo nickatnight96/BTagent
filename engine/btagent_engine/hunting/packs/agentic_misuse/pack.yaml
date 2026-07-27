@@ -98,6 +98,16 @@ rules:
       btagent_shared.hunt.agentic.detect_agent_identity_abuse.
       Entry point: detectors/agent_identity_abuse.py::run.
 
+  - file: _code_shadow_mcp_correlation.yml
+    enabled: true
+    notes: >
+      Pure-Python detector.  Correlates process-cmdline + DNS-resolution
+      telemetry to surface a shadow MCP server resolving an unsanctioned
+      endpoint — the code-side complement to the mcp_server_egress_to_unknown_
+      endpoint.yml Sigma rule.  Carries evidence["shadow_workload"]=True so it
+      converges with the shadow-agent findings in the governance queue.
+      Entry point: detectors/shadow_mcp_correlation.py::run.
+
 # ── Code-based detector wiring (documentation only) ───────────────────────────
 # The runner discovers detectors by module path; this block documents the
 # mapping.  No loader semantics beyond comment.
@@ -111,3 +121,6 @@ detectors:
   - module: detectors/agent_identity_abuse.py
     entrypoint: run
     descriptor: _code_agent_identity_abuse.yml
+  - module: detectors/shadow_mcp_correlation.py
+    entrypoint: run
+    descriptor: _code_shadow_mcp_correlation.yml

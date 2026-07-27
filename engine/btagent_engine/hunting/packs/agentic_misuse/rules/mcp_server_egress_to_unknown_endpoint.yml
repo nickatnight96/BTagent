@@ -44,3 +44,8 @@ notes: >
   fire in production.  Code-based identity-abuse detection in
   btagent_shared.hunt.agentic.detect_agent_identity_abuse covers the
   control-plane equivalent (an MCP tool invoked outside the declared catalogue).
+  The code-side complement that performs the process-cmdline + DNS-resolution
+  correlation itself (rather than relying on an already-joined process+network
+  event) is packs/agentic_misuse/detectors/shadow_mcp_correlation.py::run
+  (descriptor _code_shadow_mcp_correlation.yml); both emit the same
+  evidence["shadow_workload"]=True governance routing marker.
