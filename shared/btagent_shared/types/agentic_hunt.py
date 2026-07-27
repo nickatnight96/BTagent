@@ -35,7 +35,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Agent identity / capability enumerations
@@ -78,6 +78,7 @@ class PromptInjectionCategory(StrEnum):
     ENCODED_PAYLOAD = "encoded_payload"  # base64 / hex blobs embedded in user text
     DATA_EXFIL_REQUEST = "data_exfil_request"  # "print your system prompt" / secret leak
     TOOL_ABUSE_REQUEST = "tool_abuse_request"  # "call delete_all() with arg=..."
+    LLM_JUDGED = "llm_judged"  # caught by the injected LLM-judge tier, no clean regex mapping
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,19 @@ class PromptInjectionSignal(BaseModel):
         default=None,
         max_length=512,
         description="Identity reference (ARN / SA email / pod UID) of the receiving agent.",
+    )
+    # Populated ONLY for signals produced by the injected LLM-judge tier
+    # (:func:`btagent_shared.hunt.agentic.scan_for_prompt_injection` escalates
+    # ambiguous inputs the regex library could not conclusively rate). Carries
+    # the judge's one-sentence justification; ``None`` for regex/heuristic signals.
+    judge_rationale: str | None = Field(
+        default=None,
+        max_length=1024,
+        description=(
+            "One concise sentence from the injected LLM judge explaining why an "
+            "ambiguous input was rated a prompt-injection attempt. None for the "
+            "regex/heuristic default tier."
+        ),
     )
 
 
@@ -276,3 +290,53 @@ class AgentCallEvent(BaseModel):
     )
     # Free-form context from the telemetry source.
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# AgentIdentityDrift — declared vs. observed identity set-difference
+# ---------------------------------------------------------------------------
+
+
+class AgentIdentityDrift(BaseModel):
+    """Set-difference between an agent fleet's *declared* and *observed* identities.
+
+    ``drift`` is **derived**, not supplied — a model validator always recomputes
+    it as ``sorted(set(observed_identities) - set(declared_identities))`` so the
+    invariant *drift = observed − declared* cannot be violated. It is the set of
+    identity references seen acting at runtime that never appear in the declared
+    (registered) inventory.
+
+    A non-empty drift is the signal :func:`btagent_shared.hunt.agentic.detect_identity_drift`
+    turns into a finding: an identity operating outside the registered set may be
+    a shadow agent that slipped registration, an impersonated identity, or a
+    replayed credential.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent_identity_ref: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Optional focal agent the drift is scoped to (None = fleet-wide sweep).",
+    )
+    declared_identities: list[str] = Field(
+        default_factory=list,
+        description="Identity refs the agent(s) are registered / declared to run as.",
+    )
+    observed_identities: list[str] = Field(
+        default_factory=list,
+        description="Identity refs actually observed acting in the telemetry window.",
+    )
+    drift: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Derived: sorted(observed − declared). Any supplied value is ignored "
+            "and recomputed on validation so the invariant always holds."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _recompute_drift(self) -> AgentIdentityDrift:
+        declared = set(self.declared_identities)
+        self.drift = sorted(set(self.observed_identities) - declared)
+        return self

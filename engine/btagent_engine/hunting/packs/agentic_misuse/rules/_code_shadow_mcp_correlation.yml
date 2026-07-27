@@ -1,0 +1,52 @@
+title: Shadow MCP Correlation (CODE DETECTOR)
+id: a1d12101-1a1b-4c8d-a8f7-000000000104
+status: unsupported
+description: >
+  CODE-BASED DETECTOR descriptor — not transpiled by Sigma backends.
+
+  Authoritative implementation:
+    packs/agentic_misuse/detectors/shadow_mcp_correlation.py::run
+
+  Correlates two host-telemetry streams — process-cmdline (processes whose
+  name/command line identify an MCP server or agent runtime) and DNS resolution
+  (outbound name lookups) — to surface a shadow MCP server: an unsanctioned
+  MCP-server process reaching an endpoint outside the approved allowlist.
+
+  Code-side (control-plane) complement to the network-side Sigma rule
+  mcp_server_egress_to_unknown_endpoint.yml: where that rule fires on the wire
+  (needing an already-joined EDR process+network feed), this detector performs
+  the join itself over the two raw streams and carries the same governance
+  routing marker (evidence["shadow_workload"] = True) as the shadow-agent
+  detectors so cloud-, agentic-, and host-discovered shadow MCP servers
+  converge in one governance queue.
+
+  Live-wiring TODO: replace fixture-supplied dns_events + process_events with a
+  live pull from an EDR process+DNS telemetry MCP connector (CrowdStrike /
+  Defender / SentinelOne process-tree + DNS-request events), normalised to
+  DnsResolutionEvent + ProcessCmdlineEvent.
+references:
+  - https://attack.mitre.org/techniques/T1071/001/
+  - https://attack.mitre.org/techniques/T1567/
+  - https://owasp.org/www-project-top-10-for-large-language-model-applications/
+author: BTagent (#121)
+date: 2026-07-27
+logsource:
+  product: btagent
+  service: host_telemetry
+detection:
+  selection:
+    detector: code.agentic.shadow_mcp_correlation
+  condition: selection
+falsepositives:
+  - First-time integration with a new approved external MCP endpoint
+    (add its host suffix to sanctioned_endpoint_suffixes)
+  - Health-check probes to public endpoints from an MCP runtime
+level: high
+tags:
+  - attack.command-and-control
+  - attack.t1071.001
+  - attack.exfiltration
+  - attack.t1567
+  - agentic.mcp
+  - agentic.shadow-workload
+  - code-detector
