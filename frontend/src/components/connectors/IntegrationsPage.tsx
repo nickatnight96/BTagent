@@ -7,6 +7,8 @@ import {
   ChevronRight,
   KeyRound,
   Trash2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Badge } from "@/components/ds/badge";
@@ -25,10 +27,12 @@ import {
   listCredentials,
   upsertCredential,
   deleteCredential,
+  verifyCredential,
   type ConnectorSummary,
   type ConnectorManifest,
   type Capability,
   type ConnectorCredential,
+  type CredentialVerification,
 } from "@/api/connectors";
 import { useAuthStore } from "@/stores/authStore";
 import { UserRole } from "@/types/config";
@@ -99,6 +103,12 @@ function CredentialPanel({
   const [label, setLabel] = useState(credential?.label ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #101: last resolve-check for this binding. Held only in component state —
+  // a verification is a point-in-time fact about the secret backend, not
+  // something to persist and later present as if it were still true.
+  const [verification, setVerification] =
+    useState<CredentialVerification | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   const refValid = REFERENCE_RE.test(secretRef.trim());
 
@@ -110,6 +120,9 @@ function CredentialPanel({
         secret_ref: secretRef.trim(),
         label,
       });
+      // The binding just changed, so the previous verdict describes a
+      // reference that is no longer bound. Showing it would be a lie.
+      setVerification(null);
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save credential");
@@ -125,6 +138,7 @@ function CredentialPanel({
       await deleteCredential(connectorName);
       setSecretRef("");
       setLabel("");
+      setVerification(null);
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to remove credential");
@@ -132,6 +146,19 @@ function CredentialPanel({
       setBusy(false);
     }
   }, [connectorName, onChanged]);
+
+  const verify = useCallback(async () => {
+    setVerifying(true);
+    setError(null);
+    setVerification(null);
+    try {
+      setVerification(await verifyCredential(connectorName));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to verify credential");
+    } finally {
+      setVerifying(false);
+    }
+  }, [connectorName]);
 
   return (
     <div
@@ -208,6 +235,21 @@ function CredentialPanel({
             {credential && (
               <Button
                 size="sm"
+                variant="outline"
+                disabled={busy || verifying}
+                onClick={verify}
+                data-testid={`credential-verify-${connectorName}`}
+              >
+                {verifying ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Verify"
+                )}
+              </Button>
+            )}
+            {credential && (
+              <Button
+                size="sm"
                 variant="destructive"
                 disabled={busy}
                 onClick={remove}
@@ -218,6 +260,34 @@ function CredentialPanel({
               </Button>
             )}
           </div>
+          {/* #101: does the bound reference actually resolve? A typo'd
+           * ${env:...} resolves to nothing and stays silent until a hunt
+           * comes back empty, so the unresolved case gets the same visual
+           * weight as an error rather than a muted note. */}
+          {verification && (
+            <p
+              className={
+                verification.resolved
+                  ? "flex items-start gap-1.5 text-xs text-severity-low"
+                  : "flex items-start gap-1.5 text-xs text-destructive"
+              }
+              role="status"
+              data-testid={`credential-verify-result-${connectorName}`}
+            >
+              {verification.resolved ? (
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              )}
+              <span>
+                {verification.resolved ? "Resolves" : "Does not resolve"}
+                {verification.provider !== "none" &&
+                  ` via ${verification.provider}`}
+                {" — "}
+                {verification.detail}
+              </span>
+            </p>
+          )}
         </div>
       )}
     </div>
