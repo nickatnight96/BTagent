@@ -35,6 +35,7 @@ from btagent_backend.db.models import (
     InvestigationRow,
     IOCRow,
     OrganizationRow,
+    TimelineEntryRow,
 )
 from btagent_backend.db.models_pattern import PatternHuntProposalRow, WeakSignalRow
 
@@ -128,12 +129,14 @@ async def load_corpus(
 ) -> list[pattern_logic.ClosedInvestigationRecord]:
     """Load closed investigations + their IOCs into the pure-logic input shape.
 
-    Org-scoped. One DB round-trip for investigations, one for their IOCs;
-    flattened into :class:`ClosedInvestigationRecord` s so the pure extractor
-    never touches the ORM. Asset refs come from the investigation's
-    ``config`` (``assets`` / ``hosts``); ASNs + cmdline fragments from IOC
-    enrichment; techniques from timeline entries are out of scope for the
-    Phase A slice (IOC-driven extraction is the keystone).
+    Org-scoped. One DB round-trip for investigations, one for their IOCs, one
+    for their timeline technique attributions; flattened into
+    :class:`ClosedInvestigationRecord` s so the pure extractor never touches
+    the ORM. Asset refs come from the investigation's ``config`` (``assets`` /
+    ``hosts``); ASNs + cmdline fragments from IOC enrichment; ATT&CK technique
+    ids from each investigation's timeline entries (the analyst-/agent-attested
+    ``technique_id`` column) so ``WeakSignalKind.TECHNIQUE`` patterns surface
+    from the real corpus.
     """
     inv_result = await db.execute(
         select(InvestigationRow).where(
@@ -150,6 +153,8 @@ async def load_corpus(
     iocs_by_inv: dict[str, list[IOCRow]] = {}
     for ioc in ioc_result.scalars().all():
         iocs_by_inv.setdefault(ioc.investigation_id, []).append(ioc)
+
+    techniques_by_inv = await _load_techniques_by_investigation(db, inv_ids=inv_ids)
 
     records: list[pattern_logic.ClosedInvestigationRecord] = []
     for inv in investigations:
@@ -180,7 +185,7 @@ async def load_corpus(
                 investigation_id=inv.id,
                 closed_at=ts,
                 iocs=observed,
-                techniques=[],
+                techniques=techniques_by_inv.get(inv.id, []),
                 cmdline_fragments=cmdline,
                 assets=assets,
                 asns=asns,
@@ -188,6 +193,38 @@ async def load_corpus(
             )
         )
     return records
+
+
+async def _load_techniques_by_investigation(
+    db: AsyncSession,
+    *,
+    inv_ids: list[str],
+) -> dict[str, list[str]]:
+    """Map each investigation id to its de-duplicated timeline technique ids.
+
+    Reads the ``timeline_entries.technique_id`` column — the ATT&CK id an
+    analyst (or the MITRE mapper node) attributed to a timeline event. Only
+    non-empty ids are kept; duplicates within an investigation collapse (the
+    extractor keys diversity on *distinct investigations*, so an id appearing
+    on ten entries of one case must still count as one).
+    """
+    if not inv_ids:
+        return {}
+    result = await db.execute(
+        select(TimelineEntryRow.investigation_id, TimelineEntryRow.technique_id).where(
+            TimelineEntryRow.investigation_id.in_(inv_ids),
+            TimelineEntryRow.technique_id.isnot(None),
+        )
+    )
+    techniques_by_inv: dict[str, list[str]] = {}
+    for inv_id, technique_id in result.all():
+        if not technique_id or not technique_id.strip():
+            continue
+        seen = techniques_by_inv.setdefault(inv_id, [])
+        tid = technique_id.strip()
+        if tid not in seen:
+            seen.append(tid)
+    return techniques_by_inv
 
 
 def _aware(ts: datetime | None) -> datetime | None:
@@ -264,6 +301,24 @@ async def _suppressed_cluster_ids(db: AsyncSession, *, org_id: str) -> set[str]:
     return {row[0] for row in result.all()}
 
 
+async def _prior_cluster_outcomes(db: AsyncSession, *, org_id: str) -> dict[str, str]:
+    """Map cluster id → the terminal ``outcome`` of its last launched hunt.
+
+    Phase-C feedback: a proposal whose hunt confirmed activity carries
+    ``outcome == HIT``; one that hunted-and-found-nothing carries ``CLEAN``.
+    The clusterer folds this into the rank (:func:`pattern.outcome_factor`) so a
+    confirmed campaign shape is boosted and a clean one down-weighted on the
+    next scan. Only proposals with a recorded outcome are returned.
+    """
+    result = await db.execute(
+        select(PatternHuntProposalRow.cluster_id, PatternHuntProposalRow.outcome).where(
+            PatternHuntProposalRow.org_id == org_id,
+            PatternHuntProposalRow.outcome.isnot(None),
+        )
+    )
+    return {cluster_id: outcome for cluster_id, outcome in result.all() if outcome}
+
+
 # --------------------------------------------------------------------------- #
 # Top-level scan
 # --------------------------------------------------------------------------- #
@@ -304,12 +359,14 @@ async def scan_corpus(
     signals = extractor.extract(records)
     result.weak_signals_upserted = await _upsert_weak_signals(db, org_id=org_id, signals=signals)
 
+    prior_outcomes = await _prior_cluster_outcomes(db, org_id=org_id)
     clusterer = pattern_logic.WeakSignalClusterer()
     clusters = clusterer.cluster(
         signals,
         now=now,
         top_n=None,  # rank everything, then filter suppressed, then cap
         min_distinct_investigations=min_distinct_investigations,
+        prior_outcomes=prior_outcomes,
     )
 
     suppressed = await _suppressed_cluster_ids(db, org_id=org_id)
