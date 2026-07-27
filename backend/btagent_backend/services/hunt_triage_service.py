@@ -665,6 +665,7 @@ async def create_suppression(
         resource=f"suppression:{rule.id}",
         outcome=AuditOutcome.SUCCESS,
         details=audit_details,
+        org_id=rule.org_id,
     )
     await db.flush()
     return rule, suppressed
@@ -746,6 +747,7 @@ async def _audit_sweep_flip(audit: AuditTrail, *, rule: SuppressionRuleRow, acti
             "expires_at": rule.expires_at.isoformat() if rule.expires_at else None,
             "reconfirm_at": rule.reconfirm_at.isoformat() if rule.reconfirm_at else None,
         },
+        org_id=rule.org_id,
     )
 
 
@@ -899,6 +901,7 @@ async def promote_to_investigation(
                             "harmful_finding_id": first_finding.id,
                             "investigation_id": inv.id,
                         },
+                        org_id=org_id,
                     )
 
     await AuditTrail(db).record(
@@ -915,6 +918,7 @@ async def promote_to_investigation(
             "mitre_techniques": techniques,
             "revocation_proposed": revocation is not None,
         },
+        org_id=org_id,
     )
     await db.flush()
 

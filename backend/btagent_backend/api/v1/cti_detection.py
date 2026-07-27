@@ -234,6 +234,7 @@ async def _review(
             "title": row.title,
             "rationale": rationale,
         },
+        org_id=user.org_id,
     )
     return DetectionProposalRecord.model_validate(row)
 
@@ -401,5 +402,6 @@ async def compose_detection_pr(
             "rule_count": result["rule_count"],
             "branch": result["branch"],
         },
+        org_id=user.org_id,
     )
     return ComposePRResponse(**result)

@@ -497,6 +497,7 @@ async def link_sso_identity(
             "identity_id": identity.id,
             "target_username": target.username,
         },
+        org_id=user.org_id,
     )
     await db.commit()
     logger.info(
@@ -570,6 +571,7 @@ async def unlink_sso_identity(
             "subject": identity.subject,
             "identity_id": identity.id,
         },
+        org_id=owner.org_id,
     )
     await db.delete(identity)
     await db.commit()

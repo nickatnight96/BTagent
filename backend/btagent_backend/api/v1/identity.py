@@ -455,6 +455,7 @@ async def accept_revocation_proposal(
             "target_count": len(proposal.targets),
             "rationale": body.rationale,
         },
+        org_id=user.org_id,
     )
     return proposal
 
@@ -497,5 +498,6 @@ async def reject_revocation_proposal(
             "target_count": len(proposal.targets),
             "rationale": body.rationale,
         },
+        org_id=user.org_id,
     )
     return proposal
