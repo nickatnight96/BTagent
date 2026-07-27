@@ -26,6 +26,33 @@ def test_role_defaults_are_tuned_per_role():
     assert "handover" in role_default_layout("analyst").sections
 
 
+def test_uc51_personas_yield_distinct_layouts():
+    """Each UC-5.1 SOC persona lands on its own board, not the generic analyst
+    view (which is what unmapped roles used to collapse to)."""
+    personas = ["tier1", "tier2", "tier3", "ir_analyst", "detection_engineer", "cti_analyst"]
+
+    # A layout is uniquely identified by its (sections, status-pill) pair.
+    def _fingerprint(role: str) -> tuple[tuple[str, ...], str]:
+        layout = role_default_layout(role)
+        return (tuple(layout.sections), layout.default_status_filter)
+
+    fingerprints = {role: _fingerprint(role) for role in personas}
+    # All six are mutually distinct.
+    assert len(set(fingerprints.values())) == len(personas), fingerprints
+    # And none of them is the plain-analyst fallback — i.e. the persona was
+    # actually resolved, not silently defaulted.
+    analyst_fp = _fingerprint("analyst")
+    for role, fp in fingerprints.items():
+        assert fp != analyst_fp, f"{role} collapsed to the analyst default"
+
+
+def test_detection_and_cti_personas_hide_the_handover_card():
+    # The two non-shift personas drop the handover card; "investigations" is
+    # always retained by the validator.
+    assert role_default_layout("detection_engineer").sections == ["investigations"]
+    assert role_default_layout("cti_analyst").sections == ["investigations"]
+
+
 def test_sections_validator_keeps_investigations_and_dedupes():
     layout = DashboardLayout(sections=["handover", "handover"])
     assert layout.sections == ["handover", "investigations"]

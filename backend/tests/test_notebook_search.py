@@ -6,6 +6,7 @@ well as the value, pinned rows order first, disposition filters exactly, and
 AUTH-B1 scoping hides other analysts' cases from plain-analyst callers.
 """
 
+from btagent_shared.types.enums import InvestigationStatus
 from conftest import auth_header
 
 from btagent_backend.db.models import InvestigationRow
@@ -78,6 +79,28 @@ async def test_only_annotated_iocs_appear_and_pinned_first(client, analyst_token
     assert ids["bare"] not in returned
     # Pinned rows float to the top of the notebook.
     assert returned[0] == ids["tagged_pinned"]
+
+
+async def test_closed_investigation_iocs_stay_in_the_notebook(client, analyst_token, db_session):
+    """The notebook is cross-case *historical* recall: annotated IOCs from a
+    CLOSED investigation must still be searchable, not just those on the active
+    case. The search scopes by tenant + ownership only — never by case status.
+    """
+    ids = await _seed_notebook(client, analyst_token)
+
+    # Resolve the now-historical case (parent of the pinned/tagged IOC).
+    case_b = await db_session.get(InvestigationRow, ids["case_b"])
+    assert case_b is not None
+    case_b.status = InvestigationStatus.CLOSED.value
+    await db_session.flush()
+
+    resp = await client.get(URL, headers=auth_header(analyst_token))
+    assert resp.status_code == 200, resp.text
+    returned = [i["id"] for i in resp.json()["items"]]
+    # The annotated IOC on the closed case is still surfaced (alongside the
+    # annotated IOC on the still-open case A).
+    assert ids["tagged_pinned"] in returned
+    assert ids["noted"] in returned
 
 
 async def test_q_matches_note_and_tags(client, analyst_token):

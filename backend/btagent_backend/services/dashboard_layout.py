@@ -56,6 +56,15 @@ class DashboardLayout(BaseModel):
 
 
 # Role → default layout. Unknown/future roles fall back to the analyst view.
+#
+# The keys cover both the coarse ``UserRole`` enum (analyst / senior_analyst /
+# incident_commander / admin) and the finer UC-5.1 SOC personas (Tier1-3, IR,
+# detection engineer, CTI analyst) that a customer's SSO ``role_map`` can hand
+# us verbatim. Each persona lands on a board tuned to its first question, so a
+# Tier1 triager and a CTI analyst no longer share one generic view. The two
+# levers are which cards show (``sections`` — dropping "handover" hides the
+# shift card) and which status pill is preselected (``default_status_filter``);
+# the values below are chosen so no two personas resolve to the same board.
 _ROLE_DEFAULTS: dict[str, DashboardLayout] = {
     # Line analysts triage the whole board.
     "analyst": DashboardLayout(),
@@ -64,6 +73,25 @@ _ROLE_DEFAULTS: dict[str, DashboardLayout] = {
     # ICs (and admins acting as ICs) unblock the HITL queue first.
     "incident_commander": DashboardLayout(default_status_filter="awaiting_hitl"),
     "admin": DashboardLayout(default_status_filter="awaiting_hitl"),
+    # --- UC-5.1 SOC personas --------------------------------------------
+    # Tier1 front-line triage: starts the shift from the handover, then works
+    # the untriaged/new queue.
+    "tier1": DashboardLayout(default_status_filter="pending"),
+    # Tier2 owns the escalations that are actively being worked.
+    "tier2": DashboardLayout(default_status_filter="running"),
+    # Tier3 subject-matter escalation: digs into the runs that stalled or
+    # failed and the lower tiers couldn't close.
+    "tier3": DashboardLayout(default_status_filter="failed"),
+    # IR analyst drives containment; the HITL-gated queue is the first stop.
+    "ir_analyst": DashboardLayout(default_status_filter="awaiting_hitl"),
+    # Detection engineer backfills coverage off resolved cases — not a
+    # shift-driven role, so the handover card is dropped.
+    "detection_engineer": DashboardLayout(
+        sections=["investigations"], default_status_filter="completed"
+    ),
+    # CTI analyst scans the whole board for cross-case patterns with no
+    # status focus; also not shift-driven, so the handover card is dropped.
+    "cti_analyst": DashboardLayout(sections=["investigations"]),
 }
 
 
