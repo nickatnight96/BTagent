@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
+from btagent_shared.security import TLPViolation
 from btagent_shared.types.enums import IOCType
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -18,6 +19,7 @@ from btagent_backend.auth.scoping import (
 )
 from btagent_backend.db.models import InvestigationRow, IOCRow
 from btagent_backend.services import ioc_service, stix_service
+from btagent_backend.services.tlp_egress_guard import assert_org_policy_allows_egress
 
 logger = logging.getLogger("btagent.api.iocs")
 
@@ -371,6 +373,17 @@ async def export_stix(
     # AUTH-B1: scope check on the parent investigation before exporting.
     inv = await _load_investigation_or_404(db, investigation_id)
     assert_can_access_investigation(user, inv)
+
+    # UC-7.2: this org's TLP policies may forbid this channel carrying this
+    # classification even though the universal gate above permits it. Org
+    # policies can only ever *subtract* permission here — see
+    # services/tlp_egress_guard.py.
+    try:
+        await assert_org_policy_allows_egress(
+            db, org_id=user.org_id, tlp=tlp_level, egress_kind="stix_export"
+        )
+    except TLPViolation as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     rows, _ = await ioc_service.list_iocs(
         db,
