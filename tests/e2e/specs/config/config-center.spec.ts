@@ -109,6 +109,42 @@ test.describe("Configuration Center", () => {
     await expect(select).toHaveValue("");
   });
 
+  test("admin can add and remove a never-block safelist entry", async ({ adminPage }) => {
+    await gotoConfig(adminPage);
+
+    // Timestamped so repeat runs against a dirty DB don't collide, and
+    // removed at the end so nothing accumulates in the org safelist.
+    const domain = `e2e-${Date.now()}.example.com`;
+    await adminPage.getByTestId("safelist-panel").waitFor({ state: "visible" });
+    await adminPage.getByTestId("safelist-add-type").selectOption("domain");
+    await adminPage.getByTestId("safelist-add-value").fill(domain);
+    await adminPage.getByTestId("safelist-add-reason").fill("e2e fixture");
+    await adminPage.getByTestId("safelist-add-button").click();
+
+    const row = adminPage.locator('[data-testid^="safelist-entry-"]', {
+      hasText: domain,
+    });
+    await expect(row).toBeVisible({ timeout: 10_000 });
+
+    // Removal is two-step: the first click only arms the confirmation, because
+    // dropping a never-block guard re-enables containment against that target.
+    await row.locator('[data-testid^="safelist-remove-"]').first().click();
+    await expect(
+      row.locator('[data-testid^="safelist-remove-confirm-"]'),
+    ).toBeVisible();
+    await row.locator('[data-testid^="safelist-remove-confirm-"]').click();
+    await expect(row).toBeHidden({ timeout: 10_000 });
+  });
+
+  test("a senior analyst cannot see the safelist at all", async ({ seniorPage }) => {
+    // The tighter half of the RBAC gate: senior_analyst is the highest role
+    // BELOW incident_commander, so it must get nothing — not a read-only view.
+    // Reading the safelist reveals which hosts are shielded from containment.
+    await gotoConfig(seniorPage);
+    await expect(seniorPage.getByTestId("feature-flags-panel")).toBeVisible();
+    await expect(seniorPage.getByTestId("safelist-panel")).toHaveCount(0);
+  });
+
   test("analyst sees the inventory read-only", async ({ analystPage }) => {
     await gotoConfig(analystPage);
 
