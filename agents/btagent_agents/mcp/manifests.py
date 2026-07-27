@@ -104,6 +104,13 @@ MANIFESTS: dict[str, ConnectorManifest] = {
                 tlp=TLP.RED,
                 cost=CostClass.MODERATE,
             ),
+            _query(
+                "cs_process_telemetry",
+                "Raw ProcessRollup2 telemetry per host for behavioral baselining.",
+                [_O.PROCESS_ACTIVITY],
+                tlp=TLP.RED,
+                cost=CostClass.MODERATE,
+            ),
         ],
         actions=[
             ActionCapability(

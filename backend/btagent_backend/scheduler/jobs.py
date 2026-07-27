@@ -346,14 +346,19 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
       decommissioned hosts. The list is logged here; the destructive archival
       action (and the per-entity ``BehavioralEntityRow`` lifecycle column) is a
       Phase B follow-up — surfacing the count is the Phase A slice.
-    * **Baseline rebuild** — gated. There is NO live EDR telemetry feed wired
-      yet, so there is no event source to fold into fresh baselines. Rather
-      than fabricate data, the baseline-build half is skipped with a single
-      clear "no telemetry source wired" warning whenever
-      ``behavioral_schedule_enabled`` is false (the default with mocks off).
-      An operator who wires a telemetry source sets
-      ``BTAGENT_BEHAVIORAL_SCHEDULE_ENABLED=true`` to flip this on; the actual
-      ingest+build wiring lands with that feed.
+    * **Baseline rebuild** — gated on ``behavioral_schedule_enabled``. When on,
+      the job pulls last-``behavioral_stale_after_days`` EDR process telemetry
+      per host from the mock-first CrowdStrike MCP, embeds each host's cmdlines
+      via the configured embedding service, and builds one fresh baseline
+      window per host (see
+      :func:`behavioral_ingest_service.rebuild_baselines_from_edr`). When off
+      (the default with mocks off, since the CrowdStrike live path raises), the
+      build half is skipped with a single clear "no telemetry source wired"
+      warning per tick rather than fabricating data. An operator who has wired
+      a live EDR feed forces it on via ``BTAGENT_BEHAVIORAL_SCHEDULE_ENABLED=true``.
+
+    Org scope: v1 rebuilds baselines for the **default org** (mirrors the other
+    scheduled hunt jobs — there is no per-org EDR binding yet).
 
     Returns the sweep counts so they show up in arq's job result + our logs.
     """
@@ -362,14 +367,24 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
 
     from btagent_backend.services import behavioral_service
 
+    baselines_built = 0
     async with async_session_factory() as session:
         stale = await behavioral_service.stale_entities(
             session,
             stale_after=timedelta(days=settings.behavioral_stale_after_days),
         )
-        # Read-only sweep in the Phase A slice — nothing to commit yet, but the
-        # session is committed for symmetry with the other jobs (and so a future
-        # archival mutation needs no shell change).
+        if settings.behavioral_schedule_enabled:
+            # Lazy import: the rebuild path pulls the agents MCP stack.
+            from btagent_backend.services import behavioral_ingest_service
+
+            summary = await behavioral_ingest_service.rebuild_baselines_from_edr(
+                session,
+                org_id=DEFAULT_ORG_ID,
+                lookback_days=settings.behavioral_stale_after_days,
+            )
+            baselines_built = summary["baselines_built"]
+        # The single commit lives here (stale sweep is read-only; the rebuild
+        # half flushes new entity/profile rows that this commit persists).
         await session.commit()
 
     if not settings.behavioral_schedule_enabled:
@@ -382,7 +397,7 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
             "configured to enable the baseline rebuild half of this sweep"
         )
 
-    counts = {"stale_entities": len(stale), "baselines_built": 0}
+    counts = {"stale_entities": len(stale), "baselines_built": baselines_built}
     logger.info("behavioral_baseline_sweep: %s", counts)
     return counts
 

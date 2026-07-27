@@ -299,6 +299,126 @@ _MOCK_EVENTS = [
     },
 ]
 
+# Per-host ProcessRollup2 baseline telemetry for the Behavioral Hunter (#114).
+# A mostly-benign body of process-creation events grouped by host so the
+# baseline builder has believable per-entity command-line / process-lineage
+# data to learn a centroid + frequency map from. This is the mock-first EDR
+# feed the ``behavioral_baseline_sweep`` cron pulls when the schedule is on.
+_MOCK_PROCESS_TELEMETRY = [
+    # --- WS-JSMITH-PC: an engineer's workstation (benign developer/office mix) ---
+    {
+        "event_id": "evt_pt_ws_001",
+        "timestamp": "2026-07-14T09:02:11Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "WS-JSMITH-PC",
+        "user_name": "ACME\\jsmith",
+        "filename": "cmd.exe",
+        "parent_image_filename": "explorer.exe",
+        "cmdline": "cmd.exe /c dir",
+    },
+    {
+        "event_id": "evt_pt_ws_002",
+        "timestamp": "2026-07-14T09:05:47Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "WS-JSMITH-PC",
+        "user_name": "ACME\\jsmith",
+        "filename": "Code.exe",
+        "parent_image_filename": "explorer.exe",
+        "cmdline": '"C:\\Users\\jsmith\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe"',
+    },
+    {
+        "event_id": "evt_pt_ws_003",
+        "timestamp": "2026-07-14T09:12:03Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "WS-JSMITH-PC",
+        "user_name": "ACME\\jsmith",
+        "filename": "git.exe",
+        "parent_image_filename": "Code.exe",
+        "cmdline": "git.exe fetch --all --prune",
+    },
+    {
+        "event_id": "evt_pt_ws_004",
+        "timestamp": "2026-07-14T10:31:22Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "WS-JSMITH-PC",
+        "user_name": "ACME\\jsmith",
+        "filename": "chrome.exe",
+        "parent_image_filename": "explorer.exe",
+        "cmdline": '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"',
+    },
+    {
+        "event_id": "evt_pt_ws_005",
+        "timestamp": "2026-07-14T11:48:59Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "WS-JSMITH-PC",
+        "user_name": "ACME\\jsmith",
+        "filename": "OUTLOOK.EXE",
+        "parent_image_filename": "explorer.exe",
+        "cmdline": '"C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE"',
+    },
+    {
+        "event_id": "evt_pt_ws_006",
+        "timestamp": "2026-07-15T08:22:14Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "WS-JSMITH-PC",
+        "user_name": "ACME\\jsmith",
+        "filename": "python.exe",
+        "parent_image_filename": "Code.exe",
+        "cmdline": "python.exe -m pytest -q",
+    },
+    {
+        "event_id": "evt_pt_ws_007",
+        "timestamp": "2026-07-15T13:10:40Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "WS-JSMITH-PC",
+        "user_name": "ACME\\jsmith",
+        "filename": "Teams.exe",
+        "parent_image_filename": "explorer.exe",
+        "cmdline": '"C:\\Users\\jsmith\\AppData\\Local\\Microsoft\\Teams\\Teams.exe"',
+    },
+    # --- SRV-DB-02: a database server (benign service-account maintenance) ---
+    {
+        "event_id": "evt_pt_srv_001",
+        "timestamp": "2026-07-14T02:00:05Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "SRV-DB-02",
+        "user_name": "ACME\\svc_backup",
+        "filename": "sqlservr.exe",
+        "parent_image_filename": "services.exe",
+        "cmdline": '"C:\\Program Files\\Microsoft SQL Server\\MSSQL16\\sqlservr.exe"',
+    },
+    {
+        "event_id": "evt_pt_srv_002",
+        "timestamp": "2026-07-14T02:00:12Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "SRV-DB-02",
+        "user_name": "ACME\\svc_backup",
+        "filename": "sqlmaint.exe",
+        "parent_image_filename": "sqlservr.exe",
+        "cmdline": "sqlmaint.exe -BkUpDB C:\\Backups -BkUpMedia DISK",
+    },
+    {
+        "event_id": "evt_pt_srv_003",
+        "timestamp": "2026-07-14T02:30:44Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "SRV-DB-02",
+        "user_name": "ACME\\svc_backup",
+        "filename": "svchost.exe",
+        "parent_image_filename": "services.exe",
+        "cmdline": "svchost.exe -k netsvcs -p",
+    },
+    {
+        "event_id": "evt_pt_srv_004",
+        "timestamp": "2026-07-15T02:00:07Z",
+        "event_type": "ProcessRollup2",
+        "hostname": "SRV-DB-02",
+        "user_name": "ACME\\svc_backup",
+        "filename": "MsMpEng.exe",
+        "parent_image_filename": "services.exe",
+        "cmdline": '"C:\\ProgramData\\Microsoft\\Windows Defender\\Platform\\MsMpEng.exe"',
+    },
+]
+
 
 # ---------------------------------------------------------------------------
 # CrowdStrike MCP server class
@@ -384,6 +504,29 @@ class CrowdStrikeMCPServer:
             return self._mock_search_events(query, timeframe)
         return self._real_search_events(query, timeframe)
 
+    async def cs_process_telemetry(
+        self,
+        hostname: str | None = None,
+        lookback_days: int = 30,
+    ) -> dict[str, Any]:
+        """Retrieve raw ProcessRollup2 (process-creation) telemetry for baselining.
+
+        Feeds the Behavioral Hunter's per-entity baseline builder (#114): each
+        event carries ``hostname``, ``user_name``, ``filename`` (child image),
+        ``parent_image_filename``, and ``cmdline`` so a per-host command-line
+        centroid + process-lineage frequency map can be learned.
+
+        Args:
+            hostname: Restrict to one host (all hosts when omitted).
+            lookback_days: Historical window in days (honored in live mode).
+
+        Returns:
+            Process telemetry events grouped-friendly (flat list, host-tagged).
+        """
+        if self.mock_mode:
+            return self._mock_process_telemetry(hostname, lookback_days)
+        return self._real_process_telemetry(hostname, lookback_days)
+
     # ---- mock implementations ----
 
     def _mock_get_detections(self, limit: int, severity: str) -> dict[str, Any]:
@@ -456,6 +599,21 @@ class CrowdStrikeMCPServer:
             "is_mock": True,
         }
 
+    def _mock_process_telemetry(self, hostname: str | None, lookback_days: int) -> dict[str, Any]:
+        # The mock fixtures stand in for "the last ``lookback_days`` window"; the
+        # time filter is a live-mode concern, so we return the fixture body as-is
+        # (optionally narrowed to one host).
+        events = _MOCK_PROCESS_TELEMETRY
+        if hostname:
+            events = [e for e in events if e["hostname"] == hostname]
+        return {
+            "status": "success",
+            "lookback_days": lookback_days,
+            "total": len(events),
+            "events": events,
+            "is_mock": True,
+        }
+
     # ---- real implementations (placeholders) ----
 
     def _real_get_detections(self, limit: int, severity: str) -> dict[str, Any]:
@@ -469,6 +627,9 @@ class CrowdStrikeMCPServer:
 
     def _real_search_events(self, query: str, timeframe: str) -> dict[str, Any]:
         raise NotImplementedError("Real CrowdStrike event search not yet implemented")
+
+    def _real_process_telemetry(self, hostname: str | None, lookback_days: int) -> dict[str, Any]:
+        raise NotImplementedError("Real CrowdStrike process telemetry not yet implemented")
 
     # ---- tool metadata ----
 
@@ -563,6 +724,28 @@ class CrowdStrikeMCPServer:
                     "required": ["query"],
                 },
             },
+            {
+                "name": "cs_process_telemetry",
+                "description": (
+                    "Retrieve raw ProcessRollup2 process-creation telemetry "
+                    "(cmdline + process lineage) per host for behavioral baselining."
+                ),
+                "server_id": self.server_id,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "hostname": {
+                            "type": "string",
+                            "description": "Restrict to one host (all hosts when omitted)",
+                        },
+                        "lookback_days": {
+                            "type": "integer",
+                            "description": "Historical window in days",
+                            "default": 30,
+                        },
+                    },
+                },
+            },
         ]
 
 
@@ -618,3 +801,17 @@ async def cs_search_events(
         timeframe: Time window (e.g. 1h, 24h, 7d).
     """
     return await _server.cs_search_events(query, timeframe)
+
+
+@tool
+async def cs_process_telemetry(
+    hostname: str | None = None,
+    lookback_days: int = 30,
+) -> dict[str, Any]:
+    """Retrieve raw ProcessRollup2 process-creation telemetry for baselining.
+
+    Args:
+        hostname: Restrict to one host (all hosts when omitted).
+        lookback_days: Historical window in days.
+    """
+    return await _server.cs_process_telemetry(hostname, lookback_days)
