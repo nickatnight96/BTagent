@@ -77,3 +77,68 @@ async def test_file_extension_not_treated_as_domain():
 async def test_empty_text():
     out = await _extract("")
     assert out.iocs == []
+
+
+# --- YARA rule extraction (UC-2.2, #105) ----------------------------------- #
+
+_YARA_RULE = """rule EvilDropper : trojan
+{
+    meta:
+        description = "Detects the Evil dropper"
+    strings:
+        $a = "evil-c2.example"
+        $hex = { 6A 40 68 00 30 00 00 }
+    condition:
+        $a or $hex
+}"""
+
+
+async def test_extracts_yara_rule_alongside_iocs():
+    text = (
+        "Advisory AA26-001: infra 185.220.101.42, C2 evil-c2.example. "
+        "Deploy the detection rule below:\n\n" + _YARA_RULE
+    )
+    out = await _extract(text)
+    assert len(out.yara_rules) == 1
+    rule = out.yara_rules[0]
+    assert rule.name == "EvilDropper"
+    # Brace-balanced: the hex-string braces don't close the block early.
+    assert "$hex = { 6A 40 68 00 30 00 00 }" in rule.rule
+    assert rule.rule.strip().endswith("}")
+    assert "condition:" in rule.rule
+    # Indicators still surface alongside the rule.
+    assert "185.220.101.42" in _values(out, IOCType.IP)
+
+
+async def test_yara_requires_condition_section():
+    """A bare ``rule <name> { ... }`` with no condition is not a YARA rule."""
+    text = "The firewall rule Blocklist { deny all } was applied at the edge."
+    out = await _extract(text)
+    assert out.yara_rules == []
+
+
+async def test_yara_brace_inside_string_literal_does_not_terminate_block():
+    text = (
+        "rule BraceInString {\n"
+        "    strings:\n"
+        '        $s = "literal close brace } here"\n'
+        "    condition:\n"
+        "        $s\n"
+        "}"
+    )
+    out = await _extract(text)
+    assert len(out.yara_rules) == 1
+    assert out.yara_rules[0].name == "BraceInString"
+    assert out.yara_rules[0].rule.strip().endswith("}")
+    assert "literal close brace } here" in out.yara_rules[0].rule
+
+
+async def test_multiple_yara_rules_extracted():
+    text = _YARA_RULE + "\n\n" + _YARA_RULE.replace("EvilDropper", "SecondStage")
+    out = await _extract(text)
+    assert sorted(r.name for r in out.yara_rules) == ["EvilDropper", "SecondStage"]
+
+
+async def test_no_yara_rules_when_absent():
+    out = await _extract("Prose about 1.2.3.4 and evil.example, no detections here.")
+    assert out.yara_rules == []

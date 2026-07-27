@@ -24,6 +24,7 @@ from btagent_engine.data.coverage_gap import (
 )
 from btagent_engine.data.ioc_extractor import (
     ExtractedIOC,
+    ExtractedYaraRule,
     IOCExtractorInput,
     IOCExtractorNode,
     IOCExtractorOutput,
@@ -62,6 +63,7 @@ __all__ = [
     "CoverageGapOutput",
     "TechniqueRef",
     "ExtractedIOC",
+    "ExtractedYaraRule",
     "IOCExtractorInput",
     "IOCExtractorNode",
     "IOCExtractorOutput",

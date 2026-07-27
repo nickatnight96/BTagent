@@ -51,6 +51,130 @@ async def test_hunt_package_requires_auth(client: AsyncClient):
     assert resp.status_code in (401, 403)
 
 
+# --------------------------------------------------------------------------- #
+# Server-side advisory decode: PDF / CSV upload (UC-2.2, #105)
+# --------------------------------------------------------------------------- #
+
+_YARA_RULE = """rule EvilDropper
+{
+    meta:
+        description = "Detects the Evil dropper"
+    strings:
+        $a = "evil-c2.example"
+        $hex = { 6A 40 68 00 30 00 00 }
+    condition:
+        $a or $hex
+}"""
+
+
+def _build_pdf(lines: list[str]) -> bytes:
+    """A minimal single-page PDF carrying ``lines`` as drawn text."""
+    import io
+
+    from reportlab.pdfgen import canvas
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf)
+    y = 800
+    for ln in lines:
+        c.drawString(40, y, ln)
+        y -= 20
+    c.save()
+    return buf.getvalue()
+
+
+def _build_csv(rows: list[list[str]]) -> bytes:
+    import csv
+    import io
+
+    sio = io.StringIO()
+    writer = csv.writer(sio)
+    for row in rows:
+        writer.writerow(row)
+    return sio.getvalue().encode("utf-8")
+
+
+async def test_generate_hunt_package_from_pdf_upload(client: AsyncClient, analyst_token: str):
+    """A PDF advisory is decoded server-side and yields a hunt package —
+    indicators extracted, techniques derived, retro-hunt run, persisted."""
+    pdf = _build_pdf(
+        [
+            "CISA advisory AA26-001. Actor infrastructure:",
+            "IP 10.1.42.17 and domain evil-c2.example.",
+            "SHA256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.",
+            "Exploited CVE-2026-12345.",
+        ]
+    )
+    resp = await client.post(
+        "/api/v1/hunts/package/upload",
+        files={"file": ("advisory.pdf", pdf, "application/pdf")},
+        data={"source_label": "AA26-001.pdf"},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    pkg = resp.json()
+    assert pkg["source_label"] == "AA26-001.pdf"
+    assert pkg["extracted_ioc_count"] >= 3
+    assert pkg["derived_techniques"]
+    # 10.1.42.17 is in the correlation fixtures -> retro-hunt flags a sighting.
+    assert pkg["retro_report"]["compromise_suspected"] is True
+    assert pkg["id"], "uploaded package must be persisted"
+
+
+async def test_generate_hunt_package_from_csv_upload_extracts_iocs_and_yara(
+    client: AsyncClient, analyst_token: str
+):
+    """A CSV advisory is flattened server-side; indicators AND an embedded
+    YARA rule surface in the package (UC-2.2)."""
+    csv_bytes = _build_csv(
+        [
+            ["indicator", "note"],
+            ["10.1.42.17", "c2 ip"],
+            ["evil-c2.example", "c2 domain"],
+            [_YARA_RULE, "detection rule"],
+        ]
+    )
+    resp = await client.post(
+        "/api/v1/hunts/package/upload",
+        files={"file": ("indicators.csv", csv_bytes, "text/csv")},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    pkg = resp.json()
+    # Filename is the default source label when none is supplied.
+    assert pkg["source_label"] == "indicators.csv"
+    assert pkg["extracted_ioc_count"] >= 2
+    # The embedded YARA rule is surfaced verbatim alongside the IOCs.
+    assert pkg["yara_rules"]
+    assert any("rule EvilDropper" in y for y in pkg["yara_rules"])
+
+
+async def test_hunt_package_upload_rejects_empty_file(client: AsyncClient, analyst_token: str):
+    resp = await client.post(
+        "/api/v1/hunts/package/upload",
+        files={"file": ("empty.csv", b"", "text/csv")},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 422
+
+
+async def test_hunt_package_upload_rejects_undecodable_pdf(client: AsyncClient, analyst_token: str):
+    resp = await client.post(
+        "/api/v1/hunts/package/upload",
+        files={"file": ("broken.pdf", b"%PDF-1.4 this is not a real pdf", "application/pdf")},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code in (400, 422)
+
+
+async def test_hunt_package_upload_requires_auth(client: AsyncClient):
+    resp = await client.post(
+        "/api/v1/hunts/package/upload",
+        files={"file": ("x.csv", b"1.2.3.4", "text/csv")},
+    )
+    assert resp.status_code in (401, 403)
+
+
 async def test_hunt_package_rejects_empty_text(client: AsyncClient, analyst_token: str):
     resp = await client.post(
         "/api/v1/hunts/package",
