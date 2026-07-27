@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { LogOut, Menu } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { useUIStore } from "@/stores/uiStore";

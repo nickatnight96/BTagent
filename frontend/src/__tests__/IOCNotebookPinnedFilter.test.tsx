@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 
 const setFilters = vi.fn();
 let mockFilters: Record<string, unknown> = {};

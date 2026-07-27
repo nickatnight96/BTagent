@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ComponentType } from "react";
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter } from "react-router";
 import { Layout } from "@/components/layout/Layout";
 import { LoginPage } from "@/components/auth/LoginPage";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";

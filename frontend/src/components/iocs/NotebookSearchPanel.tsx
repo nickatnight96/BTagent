@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import { BookOpen, Loader2, Search, ExternalLink } from "lucide-react";
 import { searchNotebook } from "@/api/iocs";
 import type { IOC, IOCDisposition } from "@/types/ioc";

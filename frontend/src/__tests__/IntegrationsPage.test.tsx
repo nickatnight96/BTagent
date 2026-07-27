@@ -6,7 +6,7 @@ import {
   within,
   fireEvent,
 } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import type { ReactElement } from "react";
 
 const listConnectors = vi.fn();

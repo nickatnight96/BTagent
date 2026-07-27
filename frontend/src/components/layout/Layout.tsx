@@ -1,4 +1,4 @@
-import { Outlet } from "react-router-dom";
+import { Outlet } from "react-router";
 import { Sidebar } from "./Sidebar";
 import { CommandPalette } from "@/components/command-palette";
 import { TlpViolationAlerts } from "@/components/governance/TlpViolationAlerts";

@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 
 // ---- API mocks ----
 
@@ -30,8 +30,8 @@ vi.mock("@/components/layout/Header", () => ({
 
 // Spy on navigation so promote tests can assert the target route.
 const navigateSpy = vi.fn();
-vi.mock("react-router-dom", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("react-router-dom")>();
+vi.mock("react-router", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("react-router")>();
   return { ...mod, useNavigate: () => navigateSpy };
 });
 

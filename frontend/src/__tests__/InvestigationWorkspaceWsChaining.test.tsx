@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, cleanup, act } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route } from "react-router";
 import { EventType } from "@/types/events";
 import type { AgentEvent } from "@/types/events";
 import { UserRole } from "@/types/config";

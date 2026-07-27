@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import type { ReactElement } from "react";
 
 const listNotifications = vi.fn();
@@ -28,8 +28,8 @@ vi.mock("@/api/ws", () => ({
 
 // Spy on navigation so deep-link tests can assert the target route.
 const navigateSpy = vi.fn();
-vi.mock("react-router-dom", async (importOriginal) => {
-  const mod = await importOriginal<typeof import("react-router-dom")>();
+vi.mock("react-router", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("react-router")>();
   return { ...mod, useNavigate: () => navigateSpy };
 });
 
