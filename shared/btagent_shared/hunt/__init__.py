@@ -12,4 +12,6 @@ Modules
 - :mod:`btagent_shared.hunt.triage` — Finding cluster + suppression matching (#119)
 - :mod:`btagent_shared.hunt.schedule` — Hunt schedule helpers
 - :mod:`btagent_shared.hunt.identity` — Identity detectors (#116)
+- :mod:`btagent_shared.hunt.cti_to_detection` — Deterministic STIX → Sigma (#113)
+- :mod:`btagent_shared.hunt.detection_engineer` — Agentic report → Sigma (#113)
 """

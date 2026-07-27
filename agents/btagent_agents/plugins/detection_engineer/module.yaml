@@ -1,0 +1,21 @@
+name: detection_engineer
+description: >
+  Agentic detection-engineering persona (#113 "do both"). Turns a prose
+  threat-intel report into behavioral TTP tuples (CTIExtractor), drafts a
+  Sigma rule per TTP (RuleDrafter — deterministic templating by default,
+  LLM-authored on request), and reconciles each rule's required OCSF
+  telemetry against connected connectors (DataSourceMatcher). Complements
+  the deterministic STIX -> Sigma pipeline; HITL-gated before any PR.
+version: "0.1.0"
+author: BTagent Team
+capabilities:
+  - cti_ttp_extraction
+  - sigma_rule_drafting
+  - data_source_matching
+  - mitre_attack_mapping
+supported_data_sources:
+  - misp           # intel-report ingestion
+  - splunk         # detection telemetry (process/network)
+  - crowdstrike    # detection telemetry (process)
+  - sentinel       # detection telemetry (auth/network)
+  - git            # HITL-gated detection-repo PR

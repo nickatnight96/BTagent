@@ -30,6 +30,7 @@ PLUGIN_MODULES: Mapping[str, str] = MappingProxyType(
         "coordination": "btagent_agents.plugins.coordination",
         "report": "btagent_agents.plugins.report",
         "mitigation": "btagent_agents.plugins.mitigation",
+        "detection_engineer": "btagent_agents.plugins.detection_engineer",
     }
 )
 
