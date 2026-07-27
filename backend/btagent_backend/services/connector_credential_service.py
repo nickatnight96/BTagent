@@ -17,13 +17,23 @@ commit.
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
+
 from btagent_shared.utils.ids import generate_id
-from btagent_shared.utils.secrets import is_secret_reference
+from btagent_shared.utils.secrets import (
+    SECRET_PATTERN,
+    UnresolvedSecretError,
+    is_secret_reference,
+    resolve_secret,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models_connector import ConnectorCredentialRow
 from btagent_backend.services import connector_catalog
+
+logger = logging.getLogger("btagent.services.connector_credential")
 
 
 class InvalidCredentialReference(ValueError):
@@ -122,3 +132,143 @@ async def delete_credential(db: AsyncSession, *, org_id: str, connector_name: st
     await db.delete(row)
     await db.flush()
     return True
+
+
+# --------------------------------------------------------------------------- #
+# Reference verification (#101)
+# --------------------------------------------------------------------------- #
+
+# The resolver emits this shape in non-prod when a vault/aws reference has no
+# client wired in and the env fallback also missed. It is a *placeholder*, not
+# a credential — a naive truthiness check would report a broken Vault binding
+# as healthy in every non-prod deployment, which is exactly the failure this
+# endpoint exists to catch.
+_UNRESOLVED_PREFIX = "<unresolved:"
+
+
+@dataclass(frozen=True)
+class CredentialVerification:
+    """Outcome of resolving a stored credential reference.
+
+    Deliberately carries **no** secret material — not the resolved value, and
+    not its length either, since a length is an entropy hint an operator
+    never needs and an attacker sometimes does. Only whether resolution
+    succeeded, which provider it targeted, and a human-readable reason.
+    """
+
+    connector_name: str
+    bound: bool
+    secret_ref: str
+    provider: str
+    resolved: bool
+    detail: str
+
+
+def _provider_of(secret_ref: str) -> str:
+    """Which backend a reference targets — for 'go fix it *there*' guidance."""
+    match = SECRET_PATTERN.fullmatch(secret_ref.strip())
+    if match is None:
+        return "unknown"
+    if match.group("provider"):
+        return str(match.group("provider"))
+    if match.group("env"):
+        return "env"
+    if match.group("legacy"):
+        return "env"
+    return "unknown"
+
+
+async def verify_credential(
+    db: AsyncSession, *, org_id: str, connector_name: str
+) -> CredentialVerification:
+    """Check that an org's stored credential reference actually resolves.
+
+    This is the honest half of a "test connection": it verifies the
+    *reference*, not the vendor endpoint (which needs live credentials the
+    deployment may not have). That is the failure mode worth catching early —
+    a typo'd ``${env:SPLUNK_TOKN}`` resolves to the empty string and every
+    downstream consumer accepts it silently, so the binding looks fine right
+    up until a hunt returns nothing.
+
+    Only the **already-stored** reference for ``org_id`` is resolved. The
+    caller cannot pass a reference in: an endpoint that resolved arbitrary
+    user-supplied references would be a probe for the server's environment
+    and Vault namespace, reporting hit/miss for any path an admin cared to
+    guess. Verifying only what is already bound keeps it a diagnostic.
+
+    Raises :class:`UnknownConnector` for a connector that isn't installed.
+    Never raises for a resolution failure — that *is* the result.
+    """
+    _require_known_connector(connector_name)
+
+    row = await get_credential(db, org_id=org_id, connector_name=connector_name)
+    if row is None:
+        return CredentialVerification(
+            connector_name=connector_name,
+            bound=False,
+            secret_ref="",
+            provider="none",
+            resolved=False,
+            detail="No credential reference is bound for this connector.",
+        )
+
+    secret_ref = row.secret_ref or ""
+    provider = _provider_of(secret_ref)
+
+    try:
+        value = resolve_secret(secret_ref)
+    except UnresolvedSecretError as exc:
+        # prod turns an unresolvable vault/aws reference into a hard error.
+        return CredentialVerification(
+            connector_name=connector_name,
+            bound=True,
+            secret_ref=secret_ref,
+            provider=provider,
+            resolved=False,
+            detail=str(exc),
+        )
+    except Exception:
+        # A misbehaving provider client must not 500 a diagnostic endpoint.
+        logger.exception(
+            "Credential verification failed for connector %s (org=%s)", connector_name, org_id
+        )
+        return CredentialVerification(
+            connector_name=connector_name,
+            bound=True,
+            secret_ref=secret_ref,
+            provider=provider,
+            resolved=False,
+            detail="The secret provider raised an error while resolving this reference.",
+        )
+
+    if value.startswith(_UNRESOLVED_PREFIX):
+        return CredentialVerification(
+            connector_name=connector_name,
+            bound=True,
+            secret_ref=secret_ref,
+            provider=provider,
+            resolved=False,
+            detail=(
+                f"No {provider} client is configured and the environment fallback is unset, "
+                "so this reference resolves to a placeholder rather than a credential."
+            ),
+        )
+
+    if not value.strip():
+        return CredentialVerification(
+            connector_name=connector_name,
+            bound=True,
+            secret_ref=secret_ref,
+            provider=provider,
+            resolved=False,
+            detail=f"The reference resolves to an empty value — check it exists in {provider}.",
+        )
+
+    return CredentialVerification(
+        connector_name=connector_name,
+        bound=True,
+        secret_ref=secret_ref,
+        provider=provider,
+        resolved=True,
+        detail=f"Reference resolves to a non-empty value via {provider}.",
+    )

@@ -144,3 +144,72 @@ async def delete_credential(
         details={"org_id": user.org_id},
     )
     await db.commit()
+
+
+class CredentialVerifyResponse(BaseModel):
+    """Whether a bound reference resolves — never what it resolves to."""
+
+    connector_name: str
+    bound: bool
+    secret_ref: str
+    provider: str
+    resolved: bool
+    detail: str
+
+
+@router.post("/{connector_name}/verify", response_model=CredentialVerifyResponse)
+async def verify_credential(
+    connector_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> CredentialVerifyResponse:
+    """Check that this connector's bound reference actually resolves (#101).
+
+    Verifies the *reference*, not the vendor endpoint — reaching the vendor
+    needs live credentials the deployment may not have. The reference is the
+    part that fails silently: a typo'd ``${env:SPLUNK_TOKN}`` resolves to the
+    empty string and every downstream consumer accepts it, so the binding
+    looks healthy until a hunt quietly returns nothing.
+
+    Takes no request body **by design**. Resolving a caller-supplied
+    reference would turn this into a probe for the server's environment and
+    Vault namespace, answering hit/miss for any path an admin cared to
+    guess; only the reference already bound for the caller's org is touched.
+    The response carries no secret material — not the value, not its length.
+
+    Admin-only (``credential:manage``): it is a privileged diagnostic that
+    reads the secret backend, so it sits with the write permission rather
+    than the broader ``credential:view``. Audited under ``data_access``,
+    since a resolution attempt against the secret store is worth a ledger
+    entry even though nothing changed.
+    """
+    user.require_permission("credential:manage")
+    try:
+        result = await svc.verify_credential(db, org_id=user.org_id, connector_name=connector_name)
+    except svc.UnknownConnector as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    await AuditTrail(db).record(
+        org_id=user.org_id,
+        actor=user.id,
+        category=AuditCategory.DATA_ACCESS,
+        action="connector_credential_verified",
+        resource=f"connector:{connector_name}",
+        outcome=AuditOutcome.SUCCESS if result.resolved else AuditOutcome.FAILURE,
+        details={
+            "org_id": user.org_id,
+            "bound": result.bound,
+            "provider": result.provider,
+            "resolved": result.resolved,
+        },
+    )
+    await db.commit()
+
+    return CredentialVerifyResponse(
+        connector_name=result.connector_name,
+        bound=result.bound,
+        secret_ref=result.secret_ref,
+        provider=result.provider,
+        resolved=result.resolved,
+        detail=result.detail,
+    )
