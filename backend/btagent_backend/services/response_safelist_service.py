@@ -121,6 +121,40 @@ async def list_entries(db: AsyncSession, *, org_id: str) -> list[ResponseSafelis
     return list(result.scalars().all())
 
 
+async def remove_entry(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    entry_id: str,
+) -> ResponseSafelistRow | None:
+    """Delete one org-scoped safelist entry. Not committed.
+
+    Returns the removed row so the caller can audit *what* stopped being
+    protected, or ``None`` when the id isn't this org's — the route turns
+    that into a 404 identical to "no such entry", so a safelist id cannot be
+    probed across tenants.
+
+    Removal only ever drops an *org* row. The universal baseline in
+    :class:`btagent_shared.security.safelist.SafelistPolicy` (public
+    resolvers, critical-infra domains, RFC1918/reserved ranges) is code, not
+    data, and stays in force — so this can widen what an org may block, but
+    never below the floor every org shares.
+    """
+    row = await db.get(ResponseSafelistRow, entry_id)
+    if row is None or row.org_id != org_id:
+        return None
+
+    await db.delete(row)
+    await db.flush()
+    logger.info(
+        "response_safelist remove org=%s type=%s value=%s",
+        org_id,
+        row.entry_type,
+        row.value,
+    )
+    return row
+
+
 async def load_policy(db: AsyncSession, *, org_id: str) -> SafelistPolicy:
     """Build the effective never-block policy for an org: baseline + org rows."""
     rows = await list_entries(db, org_id=org_id)

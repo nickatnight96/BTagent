@@ -341,3 +341,150 @@ async def test_safelist_rejects_bad_entry(client: AsyncClient, db_session):
         headers=auth_header(token),
     )
     assert resp.status_code == 422, resp.text
+
+
+# --------------------------------------------------------------------------- #
+# Safelist removal (#106 follow-up) — the safelist was add-only, so a mistaken
+# never-block entry permanently shielded a malicious target from containment.
+# --------------------------------------------------------------------------- #
+
+
+async def _add_safelist(client, token, *, entry_type="ip", value="9.9.9.9", reason="typo"):
+    resp = await client.post(
+        "/api/v1/containment/safelist",
+        json={"entry_type": entry_type, "value": value, "reason": reason},
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def test_removing_an_entry_restores_the_ability_to_block(client: AsyncClient, db_session):
+    """The whole point: an entry added by mistake can be undone.
+
+    Before removal the target is refused (the safelist guard fires); after
+    removal the same block executes. This is what makes a typo correctable
+    rather than a permanent shield over a malicious target.
+    """
+    _org_id, _user_id, token = await _seed_ic(db_session)
+    # A genuinely public IP. The RFC 5737 documentation ranges (192.0.2.x /
+    # 198.51.100.x / 203.0.113.x) are all structurally reserved, so the
+    # universal baseline would keep refusing the block even after the org row
+    # is gone — which would test nothing about removal.
+    entry = await _add_safelist(client, token, value="93.184.216.34")
+
+    blocked = await client.post(
+        "/api/v1/containment/execute/bulk-block",
+        json={
+            "action_id": "act_1",
+            "ioc_type": "ip",
+            "ioc_value": "93.184.216.34",
+            "tool": "panorama",
+            "approved": True,
+        },
+        headers=auth_header(token),
+    )
+    assert blocked.status_code == 403, blocked.text
+
+    removed = await client.delete(
+        f"/api/v1/containment/safelist/{entry['id']}", headers=auth_header(token)
+    )
+    assert removed.status_code == 204, removed.text
+
+    now_allowed = await client.post(
+        "/api/v1/containment/execute/bulk-block",
+        json={
+            "action_id": "act_2",
+            "ioc_type": "ip",
+            "ioc_value": "93.184.216.34",
+            "tool": "panorama",
+            "approved": True,
+        },
+        headers=auth_header(token),
+    )
+    assert now_allowed.status_code == 200, now_allowed.text
+
+
+async def test_removal_is_audited_with_what_stopped_being_protected(
+    client: AsyncClient, db_session
+):
+    """Dropping a never-block guard re-enables containment against a target
+    someone deliberately protected — the ledger must say which one."""
+    org_id, user_id, token = await _seed_ic(db_session)
+    entry = await _add_safelist(client, token, entry_type="domain", value="dns.example.org")
+
+    resp = await client.delete(
+        f"/api/v1/containment/safelist/{entry['id']}", headers=auth_header(token)
+    )
+    assert resp.status_code == 204
+
+    rows = await _audit_rows(db_session, org_id=org_id)
+    removals = [r for r in rows if r.action == "safelist_entry_removed"]
+    assert len(removals) == 1
+    row = removals[0]
+    assert row.actor == user_id
+    assert row.category == "containment"
+    # The value, not merely "an entry", so the ledger is usable as evidence.
+    assert row.details["value"] == "dns.example.org"
+    assert row.details["entry_type"] == "domain"
+    assert "dns.example.org" in row.resource
+
+
+async def test_removal_cannot_drop_the_universal_baseline(client: AsyncClient, db_session):
+    """The shared floor is code, not org rows — removal can't reach it.
+
+    A public resolver is safelisted by the baseline in SafelistPolicy even
+    with zero org rows, so there is no entry id to delete and blocking it
+    stays refused.
+    """
+    _org_id, _user_id, token = await _seed_ic(db_session)
+
+    listed = await client.get("/api/v1/containment/safelist", headers=auth_header(token))
+    assert listed.json() == []
+
+    still_refused = await client.post(
+        "/api/v1/containment/execute/bulk-block",
+        json={
+            "action_id": "act_3",
+            "ioc_type": "ip",
+            "ioc_value": "8.8.8.8",
+            "tool": "panorama",
+            "approved": True,
+        },
+        headers=auth_header(token),
+    )
+    assert still_refused.status_code == 403, still_refused.text
+
+
+async def test_removal_of_another_orgs_entry_is_404(client: AsyncClient, db_session):
+    """Indistinguishable from 'no such entry' — no cross-tenant probing."""
+    _org_a, _user_a, token_a = await _seed_ic(db_session, org_name="Org A")
+    _org_b, _user_b, token_b = await _seed_ic(db_session, org_name="Org B")
+    theirs = await _add_safelist(client, token_b, value="198.51.100.4")
+
+    resp = await client.delete(
+        f"/api/v1/containment/safelist/{theirs['id']}", headers=auth_header(token_a)
+    )
+    assert resp.status_code == 404
+
+    missing = await client.delete(
+        "/api/v1/containment/safelist/safe_does_not_exist", headers=auth_header(token_a)
+    )
+    assert missing.status_code == 404
+
+    # Org B's entry survived A's attempt.
+    still_there = await client.get("/api/v1/containment/safelist", headers=auth_header(token_b))
+    assert [e["id"] for e in still_there.json()] == [theirs["id"]]
+
+
+async def test_removal_requires_containment_execute_scope(
+    client: AsyncClient, analyst_token: str, db_session
+):
+    """An analyst cannot drop a never-block guard."""
+    _org_id, _user_id, token = await _seed_ic(db_session)
+    entry = await _add_safelist(client, token, value="192.0.2.55")
+
+    resp = await client.delete(
+        f"/api/v1/containment/safelist/{entry['id']}", headers=auth_header(analyst_token)
+    )
+    assert resp.status_code == 403
