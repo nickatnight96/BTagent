@@ -46,7 +46,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -54,6 +54,7 @@ from btagent_shared.types.enums import IOCType
 from btagent_shared.types.hunt import HuntInput, HuntScope
 from btagent_shared.types.investigation import IOC
 from btagent_shared.types.pattern_hunt import (
+    ProposalOutcome,
     WeakSignal,
     WeakSignalCluster,
     WeakSignalKind,
@@ -368,6 +369,36 @@ _RECENCY_HALF_LIFE_DAYS = 90.0
 # Floor so an ancient-but-broadly-spread pattern still scores non-trivially.
 _RECENCY_FLOOR = 0.05
 
+# Phase-C outcome→ranking feedback. When a hunt launched from a proposal
+# confirms real activity (``HIT``), the same cross-case shape recurring later
+# is worth surfacing *more* prominently — so a prior HIT multiplies the score.
+# A prior ``CLEAN`` outcome (hunted, nothing found) is weak evidence the shape
+# is benign, so it down-weights (but never zeroes — a clean pattern that later
+# spreads much wider should still be able to climb back). No prior outcome is
+# neutral (factor 1.0).
+_HIT_OUTCOME_BOOST = 1.5
+_CLEAN_OUTCOME_PENALTY = 0.5
+
+
+def outcome_factor(prior_outcome: ProposalOutcome | str | None) -> float:
+    """Ranking multiplier for a cluster's prior hunt outcome (Phase C feedback).
+
+    ``HIT`` → :data:`_HIT_OUTCOME_BOOST`; ``CLEAN`` →
+    :data:`_CLEAN_OUTCOME_PENALTY`; anything else (including ``None`` — never
+    hunted) → ``1.0`` (neutral). Accepts either a :class:`ProposalOutcome` or
+    its raw string value so the pure logic stays callable without the enum.
+    """
+    if prior_outcome is None:
+        return 1.0
+    value = (
+        prior_outcome.value if isinstance(prior_outcome, ProposalOutcome) else str(prior_outcome)
+    )
+    if value == ProposalOutcome.HIT.value:
+        return _HIT_OUTCOME_BOOST
+    if value == ProposalOutcome.CLEAN.value:
+        return _CLEAN_OUTCOME_PENALTY
+    return 1.0
+
 
 def frequency_factor(total_occurrences: int) -> float:
     """Saturating contribution of raw occurrence count.
@@ -410,14 +441,22 @@ def recency_factor(
     return max(_RECENCY_FLOOR, decay)
 
 
-def score_cluster(cluster_members: Sequence[WeakSignal], *, now: datetime) -> float:
-    """Score a cluster as ``frequency × recency × diversity``.
+def score_cluster(
+    cluster_members: Sequence[WeakSignal],
+    *,
+    now: datetime,
+    prior_outcome: ProposalOutcome | str | None = None,
+) -> float:
+    """Score a cluster as ``frequency × recency × diversity × outcome``.
 
     * frequency — saturating ``log1p`` of total occurrences across members
       (occurrences ≈ each member's investigation_ref count summed).
     * recency — decay on the cluster's most-recent ``last_seen``.
     * diversity — squared count of **distinct** investigations across all
       members (the dominant, hard-to-fake term).
+    * outcome — Phase-C feedback multiplier from the prior hunt result of the
+      proposal this cluster maps to (see :func:`outcome_factor`): a confirmed
+      ``HIT`` boosts, a ``CLEAN`` down-weights, ``None`` is neutral.
 
     Returns ``0.0`` for an empty cluster.
     """
@@ -439,7 +478,7 @@ def score_cluster(cluster_members: Sequence[WeakSignal], *, now: datetime) -> fl
     freq = frequency_factor(total_occurrences)
     rec = recency_factor(latest, now=now)
     div = diversity_factor(len(distinct_invs))
-    return freq * rec * div
+    return freq * rec * div * outcome_factor(prior_outcome)
 
 
 def diversity_dominates_frequency(
@@ -495,6 +534,7 @@ class WeakSignalClusterer:
         now: datetime,
         top_n: int | None = None,
         min_distinct_investigations: int = 2,
+        prior_outcomes: Mapping[str, ProposalOutcome | str] | None = None,
     ) -> list[WeakSignalCluster]:
         """Build ranked clusters from ``signals``.
 
@@ -503,15 +543,24 @@ class WeakSignalClusterer:
         touch more than one case (default 2). Clusters are returned sorted by
         descending score (ties broken deterministically by signature), capped
         to ``top_n`` when given.
+
+        ``prior_outcomes`` maps a *cluster id* to the terminal outcome of the
+        last hunt launched from its proposal (Phase-C feedback). A cluster with
+        a prior ``HIT`` is boosted in the ranking, a ``CLEAN`` one
+        down-weighted (see :func:`outcome_factor`) — so a confirmed campaign
+        shape keeps re-surfacing prominently while a hunted-and-clean shape
+        recedes without being fully suppressed.
         """
+        outcomes = prior_outcomes or {}
         clusters: list[WeakSignalCluster] = []
         for sig in signals:
             if sig.distinct_investigation_count < min_distinct_investigations:
                 continue
-            score = score_cluster([sig], now=now)
+            cluster_id = _cluster_id(sig.kind, sig.value)
+            score = score_cluster([sig], now=now, prior_outcome=outcomes.get(cluster_id))
             clusters.append(
                 WeakSignalCluster(
-                    id=_cluster_id(sig.kind, sig.value),
+                    id=cluster_id,
                     members=[sig],
                     score=round(score, 6),
                     rationale=_cluster_rationale(sig, now=now),
