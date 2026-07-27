@@ -20,11 +20,13 @@ from datetime import datetime
 from btagent_shared.security.tlp import EgressKind
 from btagent_shared.security.tlp_policy import TLPPolicy, TLPPolicyAction
 from btagent_shared.types.config import TLP
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.services.audit_trail import AuditTrail
 from btagent_backend.services.tlp_policy_service import TLPPolicyService
 
 logger = logging.getLogger("btagent.api.tlp_policies")
@@ -105,6 +107,29 @@ async def create_policy(
         valid_until=body.valid_until,
         created_by=user.id,
     )
+    # A policy is an exception to default-deny egress, so its creation is
+    # itself a governance event: EPIC-7 requires the approval to be
+    # defensible on the 7-year ledger, not just in an app log. ``resource``
+    # is the policy id so an auditor can pull one policy's whole life via
+    # /audit/entries?incident_id=<policy id>.
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.CONFIG_CHANGE,
+        action="tlp_policy_created",
+        resource=policy.id,
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "policy_action": policy.action.value,
+            "egress_kinds": list(policy.egress_kinds),
+            "applies_to_tlp": [t.value for t in policy.applies_to_tlp],
+            "downgrade_to": policy.downgrade_to.value if policy.downgrade_to else None,
+            "approver_id": policy.approver_id,
+            "rationale": policy.rationale,
+            "valid_until": policy.valid_until.isoformat() if policy.valid_until else None,
+        },
+        org_id=user.org_id,
+    )
     await db.commit()
     logger.info("TLP policy %s created by %s (org=%s)", policy.id, user.username, user.org_id)
     return policy
@@ -118,9 +143,30 @@ async def delete_policy(
 ) -> None:
     """Revoke a policy (admin only). 404 if it isn't this org's."""
     user.require_permission("policy:manage")
-    deleted = await TLPPolicyService(db).delete_policy(user.org_id, policy_id)
-    if not deleted:
+    svc = TLPPolicyService(db)
+    # Read before deleting: revocation is the more security-relevant half of
+    # the policy lifecycle, and the ledger entry is worthless if it only says
+    # "some policy was revoked". The row is gone after delete_policy(), so
+    # the terms have to be captured first.
+    policy = await svc.get_policy(user.org_id, policy_id)
+    if policy is None or not await svc.delete_policy(user.org_id, policy_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.CONFIG_CHANGE,
+        action="tlp_policy_revoked",
+        resource=policy.id,
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "policy_action": policy.action.value,
+            "egress_kinds": list(policy.egress_kinds),
+            "applies_to_tlp": [t.value for t in policy.applies_to_tlp],
+            "downgrade_to": policy.downgrade_to.value if policy.downgrade_to else None,
+            "approver_id": policy.approver_id,
+        },
+        org_id=user.org_id,
+    )
     await db.commit()
 
 

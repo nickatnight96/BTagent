@@ -169,6 +169,7 @@ async def soft_delete_workflow(
         resource=f"workflow:{workflow.id}",
         outcome=AuditOutcome.SUCCESS,
         details={"name": workflow.name, "org_id": workflow.org_id},
+        org_id=workflow.org_id,
     )
     await db.flush()
     return workflow
@@ -416,6 +417,7 @@ async def publish_version(
                 "version_id": row.id,
                 "superseded_by_version": version.version_number,
             },
+            org_id=row.org_id,
         )
 
     version.state = WorkflowVersionState.PUBLISHED.value
@@ -427,6 +429,7 @@ async def publish_version(
         resource=f"workflow:{version.workflow_id}",
         outcome=AuditOutcome.SUCCESS,
         details={"version_number": version.version_number, "version_id": version.id},
+        org_id=version.org_id,
     )
     await db.flush()
     return version
@@ -461,6 +464,7 @@ async def deprecate_version(
         resource=f"workflow:{version.workflow_id}",
         outcome=AuditOutcome.SUCCESS,
         details={"version_number": version.version_number, "version_id": version.id},
+        org_id=version.org_id,
     )
     await db.flush()
     return version
