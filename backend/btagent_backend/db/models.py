@@ -452,6 +452,50 @@ class OrgAutonomyRow(Base):
     updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class ReportDistributionRow(Base):
+    """Audit record of a single report distribution (EPIC-6 UC-6.2).
+
+    One row per delivery of a generated report to an audience/recipient. The
+    ledger is org-scoped — required, indexed, defaulted to the seeded
+    ``org_default`` row — so one tenant can never see another tenant's
+    distribution history. Written by
+    :meth:`~btagent_backend.services.report_service.ReportService.record_distribution`
+    and surfaced read-only via ``GET /reports/distributions``.
+
+    ``report_id`` is a free-form report reference (reports are generated on the
+    fly rather than persisted, so there is no FK target). ``tlp_applied``
+    records the TLP marking stamped on the delivered artifact and
+    ``approver_id`` records who signed off on the release — both make the row a
+    standalone audit fact for the HITL-gated release path.
+    """
+
+    __tablename__ = "report_distributions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
+    report_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    audience: Mapped[str] = mapped_column(String(64), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(500), nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    tlp_applied: Mapped[str] = mapped_column(String(20), nullable=False, default="amber")
+    approver_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        # Covers the org-scoped read path with an optional report_id filter.
+        Index("idx_report_distributions_org_report", "org_id", "report_id"),
+        # Covers the org-scoped list ordered by send time (audit surface).
+        Index("idx_report_distributions_org_sent", "org_id", "sent_at"),
+    )
+
+
 class OrgConfigRow(Base):
     __tablename__ = "org_config"
 

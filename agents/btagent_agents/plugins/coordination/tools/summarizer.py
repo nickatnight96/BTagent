@@ -379,6 +379,186 @@ def format_agency_report(summary_json: str, format: str) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- #
+# Cover-communication drafting (EPIC-6 UC-6.2 part B)
+# --------------------------------------------------------------------------- #
+#
+# Per-audience cover notes built from the exec/technical summaries. These are
+# DRAFTS ONLY: nothing is sent here. Each draft is routed through the *draft*
+# path of its MCP connector (email ``create_draft`` / Slack
+# ``send_message_draft``) and is HITL-gated — an analyst must review and
+# approve before any actual send. ``auto_send`` is always False.
+_COVER_COMM_AUDIENCES: dict[str, dict[str, str]] = {
+    "cisa_liaison": {
+        "channel": "email",
+        # Route through the Email MCP draft path — never a direct send.
+        "mcp_draft_path": "email.create_draft",
+        "recipient": "CISA agency liaison",
+    },
+    "leadership": {
+        "channel": "slack",
+        # Route through the Slack MCP draft path — never a direct send.
+        "mcp_draft_path": "slack.send_message_draft",
+        "recipient": "Leadership channel (#leadership)",
+    },
+}
+
+
+def _draft_cisa_liaison_email(
+    exec_summary: str,
+    technical_summary: str,
+    iocs: list[dict],
+    techniques: list[str],
+    recommendations: list[str],
+    incident_ref: str,
+    timestamp: str,
+) -> dict[str, Any]:
+    """Build a DRAFT cover email to a CISA liaison from the summaries."""
+    ref = incident_ref or "(assign incident reference)"
+    tech_line = ", ".join(techniques) if techniques else "None identified"
+    rec_lines = "\n".join(f"  {i + 1}. {r}" for i, r in enumerate(recommendations)) or "  (none)"
+
+    body = (
+        f"Dear CISA Liaison,\n\n"
+        f"We are sharing the following incident summary for coordination and, "
+        f"where applicable, formal notification. This is a working draft pending "
+        f"internal review and approval.\n\n"
+        f"Incident reference: {ref}\n"
+        f"Prepared: {timestamp}\n\n"
+        f"EXECUTIVE SUMMARY\n{exec_summary}\n\n"
+        f"TECHNICAL DETAIL\n{technical_summary}\n\n"
+        f"MITRE ATT&CK techniques: {tech_line}\n"
+        f"Indicators of compromise shared: {len(iocs)}\n\n"
+        f"RECOMMENDED / PLANNED ACTIONS\n{rec_lines}\n\n"
+        f"We will follow up with any formal filing required under applicable "
+        f"reporting obligations. Please advise on preferred coordination steps.\n\n"
+        f"Regards,\n[Reporting organization — analyst to complete]"
+    )
+    meta = _COVER_COMM_AUDIENCES["cisa_liaison"]
+    return {
+        "audience": "cisa_liaison",
+        "channel": meta["channel"],
+        "mcp_draft_path": meta["mcp_draft_path"],
+        "to": meta["recipient"],
+        "subject": f"[DRAFT] Incident coordination summary {ref}".strip(),
+        "body": body,
+        # Guardrails: this is a draft only and must pass HITL before any send.
+        "send": False,
+        "requires_approval": True,
+    }
+
+
+def _draft_leadership_slack(
+    exec_summary: str,
+    overall_severity: str,
+    status: str,
+    incident_ref: str,
+    timestamp: str,
+) -> dict[str, Any]:
+    """Build a DRAFT Slack post to leadership from the executive summary."""
+    ref = incident_ref or "(assign incident reference)"
+    text = (
+        f":rotating_light: *Incident update (DRAFT — pending approval)*\n"
+        f"*Reference:* {ref}\n"
+        f"*Severity:* {overall_severity}    *Status:* {status}\n"
+        f"*Prepared:* {timestamp}\n\n"
+        f"{exec_summary}\n\n"
+        f"_This is a draft cover note for leadership. Review and approve before "
+        f"posting._"
+    )
+    meta = _COVER_COMM_AUDIENCES["leadership"]
+    return {
+        "audience": "leadership",
+        "channel": meta["channel"],
+        "mcp_draft_path": meta["mcp_draft_path"],
+        "to": meta["recipient"],
+        "text": text,
+        # Guardrails: this is a draft only and must pass HITL before any send.
+        "send": False,
+        "requires_approval": True,
+    }
+
+
+@tool
+def draft_cover_communications(summary_json: str, incident_ref: str = "") -> dict[str, Any]:
+    """Draft per-audience cover communications from an investigation summary.
+
+    Builds DRAFT-ONLY cover notes from the executive / technical summaries
+    already produced by ``summarize_investigation`` or ``summarize_multiple``:
+
+    * an **email to a CISA liaison**, and
+    * a **Slack post to leadership**.
+
+    These are drafts only — nothing is sent. Each draft is routed through the
+    *draft* path of its MCP connector (email ``create_draft`` / Slack
+    ``send_message_draft``) and is HITL-gated: an analyst must review and
+    approve before any send. Every draft carries ``send: false`` /
+    ``requires_approval: true`` and the top-level ``auto_send`` is always
+    ``False``.
+
+    Args:
+        summary_json: JSON string of a summary dict (from
+            ``summarize_investigation`` or ``summarize_multiple``).
+        incident_ref: Optional human-facing incident reference / case id to
+            cite in the cover comms (e.g. "INC-2025-0421").
+    """
+    try:
+        summary = json.loads(summary_json)
+    except (json.JSONDecodeError, TypeError):
+        return {"error": "Invalid JSON in summary_json", "status": "failed"}
+
+    exec_summary = summary.get("executive_summary", "No executive summary available.")
+    # ``technical_summary`` is present on single-investigation summaries; the
+    # multi-investigation reduce output has none, so synthesize a compact one.
+    technical_summary = summary.get("technical_summary")
+    iocs = summary.get("ioc_list") or summary.get("aggregated_iocs", [])
+    techniques = summary.get("mitre_techniques", [])
+    recommendations = summary.get("recommendations", [])
+    if not technical_summary:
+        tech_line = ", ".join(techniques) if techniques else "None identified"
+        technical_summary = (
+            f"Aggregated {len(iocs)} indicator(s) of compromise across "
+            f"{summary.get('investigation_count', 1)} investigation(s). "
+            f"MITRE ATT&CK techniques: {tech_line}."
+        )
+
+    overall_severity = summary.get("overall_severity") or summary.get("severity", "unknown")
+    # NB: the summary's ``status`` key is the *operation* status ("success"),
+    # not the investigation lifecycle state — use an explicit label if present,
+    # otherwise a neutral placeholder rather than leaking "success".
+    status = summary.get("status_label", "under review")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+    drafts = [
+        _draft_cisa_liaison_email(
+            exec_summary,
+            technical_summary,
+            iocs,
+            techniques,
+            recommendations,
+            incident_ref,
+            now_iso,
+        ),
+        _draft_leadership_slack(
+            exec_summary,
+            overall_severity,
+            status,
+            incident_ref,
+            now_iso,
+        ),
+    ]
+
+    return {
+        "drafts": drafts,
+        "draft_count": len(drafts),
+        # Hard invariant surfaced to any caller/orchestrator: cover comms are
+        # never auto-sent; they route through the HITL-gated MCP draft path.
+        "auto_send": False,
+        "generated_at": now_iso,
+        "status": "success",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Agency formatting helpers
 # --------------------------------------------------------------------------- #
 

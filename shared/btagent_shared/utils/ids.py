@@ -31,6 +31,7 @@ PREFIXES = {
     "phpr": "phpr",  # Pattern-hunt proposal (#120)
     "hplan": "hplan",  # Compiled hunt plan for an accepted proposal (#120 Phase C)
     "plrun": "plrun",  # Persisted hunt-plan run history row (#120 follow-up)
+    "rdist": "rdist",  # Report distribution audit record (EPIC-6 UC-6.2, #109)
 }
 
 
