@@ -86,6 +86,41 @@ _PIVOTS_BY_TTP: dict[str, list[str]] = {
         "Are ransom notes present anywhere on the host?",
         "Were shadow copies deleted?",
     ],
+    # ── Identity-plane techniques (#116 Identity Hunt follow-up) ──────────
+    "T1550.001": [
+        "Was the same access token or session ID presented from more than one ASN, IP, or geography?",
+        "Is the token being used past its normal idle window or replayed after the "
+        "originating session ended?",
+        "Does the token reach resources or scopes the principal has never touched before?",
+    ],
+    "T1621": [
+        "How many MFA challenges were pushed to the user, and over what interval, before "
+        "one was approved?",
+        "Did the approved sign-in come from a different device, IP, or ASN than the user's "
+        "normal MFA device?",
+        "Was the correct primary password already supplied before the push storm "
+        "(indicating prior credential theft)?",
+    ],
+    "T1098.001": [
+        "Was the new secret or certificate added to a service principal / app registration "
+        "rather than a human account?",
+        "Is there an approved change record or CAB entry for the credential addition?",
+        "Has the newly added credential already authenticated, and from what IP or location?",
+    ],
+    "T1484.002": [
+        "Which federated domain or trust was modified, and does the actor normally "
+        "administer federation?",
+        "Was a new token-signing certificate or issuer/IdP URI introduced that the tenant "
+        "did not previously use?",
+        "Did the change occur inside an approved maintenance window, or outside any change record?",
+    ],
+    "T1556": [
+        "Which authentication control was changed — federation, a Conditional Access policy, "
+        "an MFA method, or directory sync?",
+        "Did the change weaken enforcement (disable MFA, add a bypass/exclusion, allow "
+        "single-factor or legacy auth)?",
+        "Was the modification made by an account outside the expected identity-administrator set?",
+    ],
 }
 
 _PIVOTS_FALLBACK = [

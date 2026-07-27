@@ -616,7 +616,7 @@ describe("useIdentityStore.setStateFilter", () => {
 // buildGrantGraph (#116 Phase C — live grant graph)
 // --------------------------------------------------------------------------- //
 
-import type { OAuthGrant } from "@/types/identity_hunt";
+import type { OAuthGrant, IdentityEvent } from "@/types/identity_hunt";
 
 function grant(overrides: Partial<OAuthGrant> & { id: string }): OAuthGrant {
   return {
@@ -630,6 +630,24 @@ function grant(overrides: Partial<OAuthGrant> & { id: string }): OAuthGrant {
     granted_at: "2026-06-20T00:00:00Z",
     last_used: null,
     revoked_at: null,
+    raw: {},
+    ...overrides,
+  };
+}
+
+function event(overrides: Partial<IdentityEvent> & { id: string }): IdentityEvent {
+  return {
+    org_id: "org_test",
+    provider: "okta",
+    kind: "login_success",
+    principal_id: "alice@example.com",
+    app_id: "",
+    session_id: "",
+    token_id: "",
+    ip_address: "",
+    geo: { country: "", city: "", latitude: null, longitude: null, asn: "" },
+    user_agent: "",
+    timestamp: "2026-06-20T00:00:00Z",
     raw: {},
     ...overrides,
   };
@@ -704,5 +722,46 @@ describe("buildGrantGraph", () => {
       grant({ id: "g1", principal_id: "shared", app_id: "shared" }),
     ]);
     expect(g.nodes.map((n) => n.id).sort()).toEqual(["a:shared", "p:shared"]);
+  });
+
+  it("omits session nodes/edges when no events are supplied", () => {
+    const g = buildGrantGraph([grant({ id: "g1", principal_id: "alice", app_id: "slack" })]);
+    expect(g.nodes.some((n) => n.kind === "session")).toBe(false);
+    expect(g.edges.some((e) => e.relation === "assumed")).toBe(false);
+  });
+
+  it("emits one session node + assumed edge per distinct session_id from events", () => {
+    const g = buildGrantGraph(
+      [grant({ id: "g1", principal_id: "alice", app_id: "slack" })],
+      [
+        event({ id: "e1", principal_id: "alice", session_id: "sess-1" }),
+        event({ id: "e2", principal_id: "alice", session_id: "sess-1" }), // same session
+        event({ id: "e3", principal_id: "alice", session_id: "" }), // no session — ignored
+      ],
+    );
+    const sessionNodes = g.nodes.filter((n) => n.kind === "session");
+    expect(sessionNodes.map((n) => n.id)).toEqual(["s:sess-1"]);
+    // Session column sits left of the principals (negative x).
+    expect(sessionNodes[0]!.position.x).toBeLessThan(0);
+
+    const sessionEdges = g.edges.filter((e) => e.relation === "assumed");
+    expect(sessionEdges).toHaveLength(1);
+    expect(sessionEdges[0]!.id).toBe("se:sess-1");
+    expect(sessionEdges[0]!.source).toBe("s:sess-1");
+    expect(sessionEdges[0]!.target).toBe("p:alice");
+    // Grant edge is still present alongside the session edge.
+    expect(g.edges.some((e) => e.id === "e:g1" && e.relation === "grant")).toBe(true);
+  });
+
+  it("adds a principal node for a session whose principal holds no grant", () => {
+    const g = buildGrantGraph(
+      [grant({ id: "g1", principal_id: "alice", app_id: "slack" })],
+      [event({ id: "e1", principal_id: "mallory", session_id: "sess-x" })],
+    );
+    // Mallory has no grant but must get a principal node so the edge resolves.
+    expect(g.nodes.some((n) => n.id === "p:mallory" && n.kind === "principal")).toBe(true);
+    const edge = g.edges.find((e) => e.id === "se:sess-x")!;
+    expect(edge.source).toBe("s:sess-x");
+    expect(edge.target).toBe("p:mallory");
   });
 });
