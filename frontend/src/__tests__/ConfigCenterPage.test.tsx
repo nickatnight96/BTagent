@@ -21,6 +21,20 @@ vi.mock("@/api/configSchema", () => ({
   putFeatureFlags: (...a: unknown[]) => putFeatureFlags(...a),
 }));
 
+const getOrgProfile = vi.fn();
+
+vi.mock("@/api/orgProfile", () => ({
+  getOrgProfile: (...a: unknown[]) => getOrgProfile(...a),
+  updateOrgProfile: vi.fn(),
+  emptyOrgProfile: () => ({
+    industry: "",
+    compliance: [],
+    tech_stack: {},
+    critical_assets: [],
+    ir_team: { shifts: [], escalation_paths: [], on_call: {} },
+  }),
+}));
+
 vi.mock("@/stores/authStore", () => ({
   useAuthStore: (selector: (s: unknown) => unknown) =>
     selector({ user: { role: "analyst" } }),
@@ -96,6 +110,15 @@ describe("ConfigCenterPage", () => {
     getConfigSchema.mockResolvedValue(SCHEMA);
     getAutonomyConfig.mockResolvedValue(AUTONOMY);
     getFeatureFlags.mockResolvedValue({ flags: {} });
+    getOrgProfile.mockResolvedValue({
+      profile: {
+        industry: "",
+        compliance: [],
+        tech_stack: {},
+        critical_assets: [],
+        ir_team: { shifts: [], escalation_paths: [], on_call: {} },
+      },
+    });
   });
 
   it("renders runtime surfaces with scope badge and link, and the no-editor gap", async () => {

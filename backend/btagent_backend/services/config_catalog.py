@@ -42,7 +42,7 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
         "scope": "org",
         "write_permission": "config:org_profile",
         "api": "/api/v1/config/org-profile",
-        "ui": "/settings",
+        "ui": "/config",
     },
     {
         "key": "tlp_policies",
@@ -51,7 +51,7 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
         "scope": "org",
         "write_permission": "policy:manage",
         "api": "/api/v1/tlp-policies",
-        "ui": "/settings/tlp",
+        "ui": "/policies",
     },
     {
         "key": "connector_credentials",
@@ -60,7 +60,7 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
         "scope": "org",
         "write_permission": "credential:manage",
         "api": "/api/v1/credentials",
-        "ui": "/settings/integrations",
+        "ui": "/integrations",
     },
     {
         "key": "notification_prefs",
@@ -87,7 +87,7 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
         "scope": "user",
         "write_permission": None,  # self-scoped
         "api": "/api/v1/mfa",
-        "ui": "/settings/mfa",
+        "ui": "/security",
     },
     {
         "key": "feature_flags",
@@ -105,7 +105,7 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
         "scope": "global",
         "write_permission": "config:edit",
         "api": "/api/v1/config/retention",
-        "ui": "/settings",
+        "ui": "/config",
     },
     {
         "key": "autonomy",

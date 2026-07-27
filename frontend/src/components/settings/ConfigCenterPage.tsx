@@ -13,6 +13,7 @@ import type { ConfigSchema, DeployTimeEntry, RuntimeSurface } from "@/types/conf
 import { Header } from "@/components/layout/Header";
 import { AutonomyPanel } from "./AutonomyPanel";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
+import { OrgProfilePanel } from "./OrgProfilePanel";
 import { Card, CardContent } from "@/components/ds/card";
 import { Input } from "@/components/ds/input";
 import { Button } from "@/components/ds/button";
@@ -147,6 +148,11 @@ export function ConfigCenterPage() {
                 ))}
               </div>
             </section>
+
+            {/* Organisation profile (#418 / GH #393) — admin-editable
+             * context injected into agent prompts; hides itself if its
+             * fetch fails. */}
+            <OrgProfilePanel />
 
             {/* Autonomy & HITL gates (#418 slices 3+8) — self-contained
              * panel with admin editing; hides itself if its fetch fails. */}

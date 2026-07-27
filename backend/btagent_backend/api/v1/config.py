@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from btagent_shared.types.config import IntegrationAutonomy
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -18,6 +19,7 @@ from btagent_backend.config import get_settings
 from btagent_backend.db.models import DashboardPrefRow, FeatureFlagRow
 from btagent_backend.db.models_behavioral import OrgProfileRow
 from btagent_backend.services import autonomy_service
+from btagent_backend.services.audit_trail import AuditTrail
 from btagent_backend.services.config_catalog import build_config_catalog
 from btagent_backend.services.dashboard_layout import DashboardLayout, role_default_layout
 from btagent_backend.services.data_retention import DataRetentionService
@@ -133,8 +135,10 @@ async def put_autonomy_config(
 
     Containment categories are rejected with 422 — the store never even
     claims to loosen the code-enforced HITL gate. An empty override set
-    reverts the org to pure shared defaults. Engine call sites still read
-    defaults today; wiring them to the org overrides is the next slice.
+    reverts the org to pure shared defaults. Stored overrides now take
+    execution effect (PR #430): investigation runs (``task_manager``) and
+    workflow runs (``workflow_run_service``) resolve the org's effective
+    per-category levels via ``get_effective_autonomy`` before dispatch.
     """
     user.require_permission("config:edit")
 
@@ -144,6 +148,23 @@ async def put_autonomy_config(
 
     await autonomy_service.set_overrides(
         db, org_id=user.org_id, overrides=body.overrides, updated_by=user.id
+    )
+    # Autonomy governs which agent actions pause for a human, so replacing the
+    # org's posture is a security-relevant config change — record it on the
+    # hash-chained ledger, not just the app log. ``resource`` keys the org's
+    # autonomy config so an auditor can pull its whole change history.
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.CONFIG_CHANGE,
+        action="config_autonomy_overrides_replaced",
+        resource=f"org_autonomy:{user.org_id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "override_count": len(body.overrides),
+            "overrides": dict(body.overrides),
+        },
+        org_id=user.org_id,
     )
     logger.info(
         "Autonomy overrides replaced for org %s by user %s (%d override(s))",
@@ -234,6 +255,21 @@ async def update_org_profile_endpoint(
         row.updated_by = user.id
 
     await db.flush()
+    # The org profile is injected into agent prompts, so a change steers every
+    # subsequent investigation's context — audit it on the ledger.
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.CONFIG_CHANGE,
+        action="config_org_profile_updated",
+        resource=f"org_profile:{user.org_id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "industry": body.industry,
+            "compliance": list(body.compliance),
+        },
+        org_id=user.org_id,
+    )
     logger.info("Org profile updated for org %s by user %s", user.org_id, user.id)
     return OrgProfileResponse(profile=body.model_dump(mode="json"))
 
@@ -370,6 +406,21 @@ async def put_feature_flags(
             row.updated_by = user.id
 
     await db.flush()
+    # Flags gate per-org capabilities, so a wholesale replacement is a config
+    # change worth pinning on the ledger.
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.CONFIG_CHANGE,
+        action="config_feature_flags_replaced",
+        resource=f"feature_flags:{user.org_id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "flag_count": len(body.flags),
+            "flags": dict(body.flags),
+        },
+        org_id=user.org_id,
+    )
     logger.info(
         "Feature flags replaced for org %s by user %s (%d flag(s))",
         user.org_id,
@@ -419,6 +470,24 @@ async def run_retention_cleanup(
     events_result = await svc.archive_old_events(db)
     inv_result = await svc.cleanup_old_investigations(db)
     audit_result = await svc.verify_audit_retention(db)
+
+    # A manual retention run irreversibly deletes events and archives
+    # investigations, so the destructive action itself must be defensible on
+    # the ledger with the counts it affected.
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.CONFIG_CHANGE,
+        action="config_retention_cleanup_run",
+        resource="data_retention",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "events_deleted": events_result["deleted_count"],
+            "investigations_archived": inv_result["archived_count"],
+            "audit_verification": audit_result,
+        },
+        org_id=user.org_id,
+    )
 
     logger.info(
         "Retention cleanup triggered by user %s: %d events deleted, %d investigations archived",
