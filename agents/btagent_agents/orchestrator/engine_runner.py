@@ -17,6 +17,9 @@ What this helper wires:
        require approval.
     3b. ``HITLGateMiddleware``         -- pause on explicit ``hitl_gate``
        playbook steps (GH #389).
+    3c. ``ConnectorPolicyMiddleware``  -- per-capability manifest backstop
+       (hitl_required / tlp_egress / cost), mirroring the backend chain
+       (#377).
     4. ``LLMRouterMiddleware``         -- TLP-vs-provider routing for
        reasoning nodes.
     5. ``PromptBudgetMiddleware``      -- cost cap.
@@ -57,6 +60,7 @@ from btagent_engine import (
 )
 from btagent_engine.middleware import (
     ClassificationMiddleware,
+    ConnectorPolicyMiddleware,
     EventEmitterMiddleware,
     EvidenceChainMiddleware,
     HITLMiddleware,
@@ -147,6 +151,15 @@ def build_middleware_chain(
     # autonomy-policy HITL check; both ignore the other's node types, so the
     # ordering for every non-gate node is unchanged.
     chain.append(HITLGateMiddleware())
+
+    # Manifest backstop: enforce each node's ConnectorManifest policy
+    # (hitl_required / tlp_egress / cost) directly, mirroring the backend
+    # executor chain (workflow_run_service.build_workflow_middlewares). The
+    # substring-driven HITLMiddleware can't see a node's declared
+    # hitl_required flag, so this closes the gap for any manifest-bearing
+    # containment node the token scan would miss (#377). No-op for nodes
+    # without a manifest.
+    chain.append(ConnectorPolicyMiddleware(active_tlp=tlp))
 
     chain.append(LLMRouterMiddleware(model_to_provider=_resolve_provider_handle(llm_router, tlp)))
 

@@ -444,6 +444,7 @@ async def accept_revocation_proposal(
     _store_proposal(inv, proposal)
 
     await AuditTrail(db).record(
+        org_id=user.org_id,
         actor=user.id,
         category=AuditCategory.HUNT,
         action="revocation_accept",
@@ -488,6 +489,7 @@ async def reject_revocation_proposal(
     _store_proposal(inv, proposal)
 
     await AuditTrail(db).record(
+        org_id=user.org_id,
         actor=user.id,
         category=AuditCategory.HUNT,
         action="revocation_reject",

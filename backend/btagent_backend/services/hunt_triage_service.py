@@ -659,6 +659,7 @@ async def create_suppression(
         audit_details["approver_role"] = caller_role
 
     await AuditTrail(db).record(
+        org_id=org_id,
         actor=actor or created_by or "system",
         category=AuditCategory.HUNT,
         action="suppress",
@@ -735,6 +736,7 @@ async def _audit_sweep_flip(audit: AuditTrail, *, rule: SuppressionRuleRow, acti
     ``hunt``; action ``suppression_expired`` / ``suppression_needs_reconfirm``.
     """
     await audit.record(
+        org_id=rule.org_id,
         actor="system:suppression_sweep",
         category=AuditCategory.HUNT,
         action=action,
@@ -889,6 +891,7 @@ async def promote_to_investigation(
                     rule.harmful_reason = harm_reason
                     rule.harmful_finding_id = first_finding.id
                     await AuditTrail(db).record(
+                        org_id=org_id,
                         actor=actor or assigned_to or "system",
                         category=AuditCategory.HUNT,
                         action="suppression_flagged_harmful",
@@ -905,6 +908,7 @@ async def promote_to_investigation(
                     )
 
     await AuditTrail(db).record(
+        org_id=org_id,
         actor=actor or assigned_to or "system",
         category=AuditCategory.HUNT,
         action="promote",

@@ -296,7 +296,6 @@ class AuditLogRow(Base):
         String(64),
         ForeignKey("organizations.id"),
         nullable=False,
-        index=True,
         default=DEFAULT_ORG_ID,
     )
     seq: Mapped[int] = mapped_column(Integer, autoincrement=True, unique=True)

@@ -91,10 +91,17 @@ class DocumentListResponse(BaseModel):
 
 
 def _get_knowledge_service() -> KnowledgeService:
-    """Build a KnowledgeService with the configured embedding service."""
+    """Build a KnowledgeService with a LAZY embedding provider (GH #383).
+
+    The embedder is NOT constructed here: ``get_embedding_service`` can raise
+    ``EmbeddingProviderError`` (OpenAI selected, no key, outside dev/test,
+    mocks off), and the pure-DB endpoints (list/get/delete) must keep working
+    (200) when embeddings are unconfigured. The factory is invoked only by
+    ``ingest_document`` / ``hybrid_search`` inside a route
+    ``try/except EmbeddingProviderError -> 503``.
+    """
     settings = get_settings()
-    embedding_svc = get_embedding_service(settings)
-    return KnowledgeService(embedding_service=embedding_svc)
+    return KnowledgeService(embedding_factory=lambda: get_embedding_service(settings))
 
 
 def _to_doc_response(row: KnowledgeDocumentRow) -> DocumentResponse:
@@ -128,9 +135,10 @@ async def ingest_document(
     user.require_permission("knowledge:ingest")
 
     try:
-        # ``_get_knowledge_service`` builds the embedding provider, which may
-        # itself raise ``EmbeddingProviderError`` (e.g. OpenAI selected with no
-        # key outside dev/test) — keep it inside the try so that maps to 503.
+        # ``ingest_document`` builds the embedding provider lazily (GH #383),
+        # which may raise ``EmbeddingProviderError`` (e.g. OpenAI selected with
+        # no key outside dev/test) — keep the call inside the try so that maps
+        # to 503 rather than an opaque 500.
         svc = _get_knowledge_service()
         doc = await svc.ingest_document(
             db,

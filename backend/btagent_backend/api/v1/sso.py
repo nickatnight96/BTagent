@@ -486,6 +486,7 @@ async def link_sso_identity(
     await db.flush()
 
     await AuditTrail(db).record(
+        org_id=user.org_id,
         actor=user.username,
         category=AuditCategory.AUTHORIZATION,
         action="sso.identity.link",
@@ -561,6 +562,7 @@ async def unlink_sso_identity(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO identity not found")
 
     await AuditTrail(db).record(
+        org_id=user.org_id,
         actor=user.username,
         category=AuditCategory.AUTHORIZATION,
         action="sso.identity.unlink",

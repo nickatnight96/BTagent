@@ -223,6 +223,7 @@ async def _review(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     await AuditTrail(db).record(
+        org_id=user.org_id,
         actor=user.id,
         category=AuditCategory.HUNT,
         action=f"detection_proposal_{state.value}",
@@ -391,6 +392,7 @@ async def compose_detection_pr(
         raise HTTPException(status_code=501, detail=str(exc)) from exc
 
     await AuditTrail(db).record(
+        org_id=user.org_id,
         actor=user.id,
         category=AuditCategory.HUNT,
         action="detection_pr_composed",

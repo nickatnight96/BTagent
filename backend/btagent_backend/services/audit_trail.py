@@ -64,7 +64,8 @@ class AuditTrail:
         resource: str = "",
         outcome: AuditOutcome = AuditOutcome.SUCCESS,
         details: dict[str, Any] | None = None,
-        org_id: str = DEFAULT_ORG_ID,
+        *,
+        org_id: str,
     ) -> AuditLogRow:
         """Append a new entry to the audit chain.
 
@@ -74,8 +75,13 @@ class AuditTrail:
         GH #385: ``org_id`` stamps the writing tenant so the read surfaces can
         scope by org. It is *not* part of the hash — the chain stays a single
         global, tamper-evident sequence; org_id only governs read visibility.
-        Defaults to ``DEFAULT_ORG_ID`` so existing internal callers that do not
-        yet thread a tenant keep working; API-driven writers pass ``user.org_id``.
+        ``org_id`` is a **required keyword-only** argument (no default): every
+        caller must pass the tenant of the entity being audited — API routes
+        pass ``user.org_id``; service callers pass the audited row's ``org_id``.
+        Making it required means an un-stamped write is a hard error at call
+        time rather than silently landing in ``DEFAULT_ORG_ID`` — which would
+        both hide the row from its own tenant's compliance ledger and disclose
+        it to an ``org_default`` admin.
         """
         details = details or {}
         entry_id = generate_id("aud")

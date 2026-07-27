@@ -20,14 +20,20 @@ from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
 
 from btagent_agents.events.emitter import RedisEmitter
 from btagent_agents.hooks.base import HookProvider
+from btagent_agents.mcp.manifests import MANIFESTS
 
 logger = logging.getLogger("btagent.hooks.hitl")
 
-# Maps tool name patterns to IntegrationAutonomy fields
+# Maps tool name patterns to IntegrationAutonomy fields. Order matters where
+# one token is a substring of another: ``sentinelone`` (SentinelOne, an
+# EDR/containment console) MUST precede ``sentinel`` (Microsoft Sentinel, a
+# SIEM) so a SentinelOne tool is never resolved to the benign ``siem_query``
+# category by the ``sentinel`` substring (#377 follow-up).
 _TOOL_AUTONOMY_MAP: dict[str, str] = {
     "siem": "siem_query",
     "splunk": "siem_query",
     "elastic": "siem_query",
+    "sentinelone": "edr_query",
     "sentinel": "siem_query",
     "edr": "edr_query",
     "crowdstrike": "edr_query",
@@ -41,6 +47,7 @@ _TOOL_AUTONOMY_MAP: dict[str, str] = {
     "isolate": "host_isolation",
     "quarantine": "host_isolation",
     "contain": "host_isolation",
+    "mitigate": "host_isolation",
     "firewall": "firewall_rule",
     "block_ip": "firewall_rule",
     "block_domain": "firewall_rule",
@@ -71,12 +78,39 @@ _ALWAYS_GATE_CATEGORIES: frozenset[str] = frozenset(
 # of ``_TOOL_AUTONOMY_MAP`` iteration order: a name like
 # ``cs_isolate_host`` matches ``crowdstrike``->edr_query *first* in that map,
 # which would misclassify containment as a benign EDR query — the token scan
-# below is immune to that ordering.
+# below is immune to that ordering. ``mitigate`` is included (via the map)
+# so SentinelOne's ``s1_mitigate_threat`` — which carries none of the
+# isolate/quarantine/contain substrings — is still caught by the fallback
+# scan when it has no manifest entry (#377).
 _CONTAINMENT_TOKENS: tuple[str, ...] = tuple(
     token
     for token, field_name in _TOOL_AUTONOMY_MAP.items()
     if field_name in _ALWAYS_GATE_CATEGORIES
 )
+
+
+def _manifest_hitl_required_ids() -> frozenset[str]:
+    """Capability ids that every connector manifest declares ``hitl_required``.
+
+    This is the authoritative, drift-locked source of truth for gating: the
+    dispatch-boundary policy (:func:`btagent_agents.mcp.policy.evaluate_tool_call`)
+    refuses any ``hitl_required=True`` capability, and the autonomy layer mirrors
+    that here so such an action is ALWAYS gated regardless of the configured
+    autonomy level — even when its name carries none of the fallback containment
+    substrings (the documented containment action ``s1_mitigate_threat`` is the
+    motivating case, #377).
+    """
+    ids: set[str] = set()
+    for manifest in MANIFESTS.values():
+        for cap in (*manifest.queries, *manifest.actions, *manifest.streams):
+            if cap.hitl_required:
+                ids.add(cap.id)
+    return frozenset(ids)
+
+
+# Snapshot at import — ``MANIFESTS`` is a static module-level table kept in sync
+# with the registered MCP tools by ``test_mcp_server_manifests.py``.
+_MANIFEST_GATED_TOOLS: frozenset[str] = _manifest_hitl_required_ids()
 
 
 def _coerce_mapping(raw: Any) -> dict[str, Any] | None:
@@ -125,12 +159,20 @@ def _resolve_effective_tool_name(tool_name: str, tool_input: Any = None) -> str:
     return tool_name
 
 
-def _is_containment_tool(tool_name: str) -> bool:
-    """True when *tool_name* is a destructive containment action.
+def _is_always_gated_tool(tool_name: str) -> bool:
+    """True when *tool_name* must ALWAYS be HITL-gated, independent of autonomy.
 
-    Containment is HITL-gated in every connector manifest, so it is always
-    gated by the autonomy layer too — independent of the configured level.
+    Authoritative source is the connector manifests: any capability declared
+    ``hitl_required=True`` (the containment actions ``cs_isolate_host`` /
+    ``mde_isolate_machine`` / ``s1_mitigate_threat`` /
+    ``cortex_isolate_endpoint``, and the detection-PR composer) is always gated
+    by exact tool-name match. The substring-token scan is a *secondary*
+    fallback for tools that have no manifest entry — e.g. a node-id form like
+    ``integration.crowdstrike.isolate_host`` — so drift or an unmanifested
+    connector still cannot auto-run destructive containment (#377).
     """
+    if tool_name in _MANIFEST_GATED_TOOLS:
+        return True
     lower = tool_name.lower()
     return any(token in lower for token in _CONTAINMENT_TOKENS)
 
@@ -202,11 +244,13 @@ def requires_approval(
     # router-dispatched containment tool is classified as containment (#377).
     effective_name = _resolve_effective_tool_name(tool_name, tool_input)
 
-    # Destructive containment is HITL-gated in every connector manifest
-    # (hitl_required=True). Treat that intent as the source of truth: never
-    # auto-approve it — not at L3/L4, and not even if a config sets a higher
-    # per-integration level (#377).
-    if _is_containment_tool(effective_name):
+    # Any capability declared ``hitl_required=True`` in a connector manifest
+    # (all containment actions + the detection-PR composer) is HITL-gated at
+    # the dispatch boundary. Treat that manifest intent as the source of truth:
+    # never auto-approve it — not at L3/L4, and not even if a config sets a
+    # higher per-integration level (#377). Falls back to a substring scan for
+    # unmanifested tools.
+    if _is_always_gated_tool(effective_name):
         return True
 
     tool_level = _resolve_tool_autonomy(effective_name, integration_autonomy)

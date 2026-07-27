@@ -163,6 +163,7 @@ async def soft_delete_workflow(
     workflow.deleted_at = now
     workflow.updated_at = now
     await AuditTrail(db).record(
+        org_id=workflow.org_id,
         actor=actor,
         category=AuditCategory.WORKFLOW,
         action="delete",
@@ -407,6 +408,7 @@ async def publish_version(
         row.state = WorkflowVersionState.DEPRECATED.value
         row.deprecated_at = now
         await trail.record(
+            org_id=row.org_id,
             actor=actor,
             category=AuditCategory.WORKFLOW,
             action="auto_deprecate",
@@ -423,6 +425,7 @@ async def publish_version(
     version.state = WorkflowVersionState.PUBLISHED.value
     version.published_at = now
     await trail.record(
+        org_id=version.org_id,
         actor=actor,
         category=AuditCategory.WORKFLOW,
         action="publish",
@@ -458,6 +461,7 @@ async def deprecate_version(
     version.state = WorkflowVersionState.DEPRECATED.value
     version.deprecated_at = _utcnow()
     await AuditTrail(db).record(
+        org_id=version.org_id,
         actor=actor,
         category=AuditCategory.WORKFLOW,
         action="deprecate",
