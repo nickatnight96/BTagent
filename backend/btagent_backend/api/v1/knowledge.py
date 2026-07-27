@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from btagent_shared.security import TLPViolation
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,7 @@ from btagent_backend.services.embedding_service import (
     get_embedding_service,
 )
 from btagent_backend.services.knowledge_service import KnowledgeService
+from btagent_backend.services.tlp_egress_guard import assert_org_policy_allows_egress
 
 logger = logging.getLogger("btagent.api.knowledge")
 
@@ -134,6 +136,21 @@ async def ingest_document(
     """
     user.require_permission("knowledge:ingest")
 
+    # UC-7.2: this org's TLP policies may forbid knowledge_ingest carrying
+    # this classification even though the universal gate inside
+    # ``ingest_document`` permits it. Org policies can only ever *subtract*
+    # permission — see services/tlp_egress_guard.py. Checked here rather than
+    # in the service so a denial 403s before any embedding work is done.
+    try:
+        await assert_org_policy_allows_egress(
+            db,
+            org_id=user.org_id,
+            tlp=body.classification,
+            egress_kind="knowledge_ingest",
+        )
+    except TLPViolation as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+
     try:
         # ``ingest_document`` builds the embedding provider lazily (GH #383),
         # which may raise ``EmbeddingProviderError`` (e.g. OpenAI selected with
@@ -167,8 +184,9 @@ async def ingest_document(
         # ``assert_tlp_allows_egress`` on TLP:RED ingest) propagates
         # uncaught otherwise. Surface it as 403 so the API contract
         # asserted in tests/e2e/specs/knowledge/tlp-block.spec.ts holds.
-        from btagent_shared.security import TLPViolation
-
+        # NB: imported at module scope — a function-local ``import`` here
+        # would make the name local to the WHOLE function and shadow the
+        # module-level one in the org-policy check above (UnboundLocalError).
         if isinstance(exc, TLPViolation):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -2,13 +2,26 @@
 
 The hardcoded egress gate in :mod:`btagent_shared.security.tlp` is
 default-deny for TLP:RED. This module layers an **org-scoped policy
-registry** on top so a CISO can, with an explicit and approved policy,
-permit a specific egress channel to carry a given classification —
-optionally downgrading it first. It also defines the
+registry** on top, expressing what a CISO has approved for a given
+egress channel and classification. It also defines the
 ``tlp.violation_attempt`` event emitted whenever an egress is refused,
 plus a process-local *sink* so the host application can forward those
 events to its own alerter (event bus / PagerDuty / Slack) without
 ``btagent_shared`` taking a dependency on any of them.
+
+**How much of this is enforced at runtime, precisely.** The evaluator
+below is pure and models all three actions, but only its *restrictive*
+half currently governs real egress:
+
+* ``DENY`` — **enforced.** ``btagent_backend.services.tlp_egress_guard``
+  consults an org's policies after the baseline gate has run and refuses
+  the egress if one denies it.
+* ``ALLOW`` / ``DOWNGRADE_THEN_ALLOW`` — **inert at runtime.** Honouring
+  them would widen the default-deny gate that protects TLP:RED, which is
+  an enclave-owner's decision rather than an implementation detail, so
+  the guard never acts on a permit. They evaluate correctly here and via
+  the dry-run ``POST /tlp-policies/evaluate``, and are ready to be wired
+  the day that call is made.
 
 Design constraints (why it lives here and looks like this):
 
@@ -16,9 +29,7 @@ Design constraints (why it lives here and looks like this):
   imports. The sink is a plain callable the host registers, mirroring
   the LLM-client registry pattern used elsewhere.
 * **Default-deny is preserved.** With no matching policy, RED egress is
-  refused exactly as before. Policies can only *widen* access
-  (allow / downgrade) or *explicitly deny*; a matching DENY always wins
-  (fail-safe).
+  refused exactly as before.
 * Pure, synchronous, side-effect-free evaluation so it can be called
   from sync code, coroutines, hooks, or services alike.
 """
@@ -131,6 +142,10 @@ def evaluate_egress_policy(
 
     The caller is responsible for passing only the *relevant org's*
     policies — this function does not filter by ``org_id``.
+
+    This function is pure and models all three actions. Which of its
+    outcomes actually govern a live egress is a separate question — see
+    the module docstring: today only ``allowed=False`` is acted on.
     """
     now = _aware(now or datetime.now(UTC))
     matching = [p for p in policies if p.matches(tlp=tlp, egress_kind=egress_kind, now=now)]

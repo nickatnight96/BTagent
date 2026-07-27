@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any, Literal
 
+from btagent_shared.security import TLPViolation
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -15,6 +16,7 @@ from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.auth.scoping import assert_can_access_investigation
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services.report_service import ReportService
+from btagent_backend.services.tlp_egress_guard import assert_org_policy_allows_egress
 
 
 async def _load_scoped_investigation(
@@ -176,6 +178,19 @@ async def export_report(
             status_code=403,
             detail="Cannot export a TLP:RED report. Downgrade the classification before export.",
         )
+
+    # UC-7.2: an org policy may forbid report_export carrying this
+    # classification even when the universal gate permits it. Org policies can
+    # only ever *subtract* permission — see services/tlp_egress_guard.py.
+    try:
+        await assert_org_policy_allows_egress(
+            db,
+            org_id=inv.org_id or user.org_id,
+            tlp=inv.tlp_level or "green",
+            egress_kind="report_export",
+        )
+    except TLPViolation as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     if format != "pdf":
         raise HTTPException(status_code=400, detail=f"Unsupported export format: {format}")
