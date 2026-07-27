@@ -28,6 +28,7 @@ from btagent_engine.reasoning.hunt_package import (
     HuntPackageOutput,
 )
 from btagent_engine.reasoning.hypothesis_gen import (
+    AdversaryResolver,
     HypothesisGenInput,
     HypothesisGenNode,
     HypothesisGenOutput,
@@ -71,6 +72,7 @@ from btagent_engine.reasoning.retro_hunt import (
 )
 
 __all__ = [
+    "AdversaryResolver",
     "AlertTriageInput",
     "AlertTriageNode",
     "AlertTriageOutput",

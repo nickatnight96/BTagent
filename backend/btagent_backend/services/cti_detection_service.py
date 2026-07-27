@@ -232,6 +232,36 @@ async def persist_proposals(
     return (created, updated, unchanged)
 
 
+async def get_deployed_technique_ids(db: AsyncSession, *, org_id: str) -> set[str]:
+    """Return the ATT&CK techniques an org already covers with a deployed detection.
+
+    "Deployed" == a detection proposal the analyst **accepted** (state
+    ``accepted``) or one that already **shipped** to the detection repo
+    (``pr_url`` set — a modified-then-composed rule counts too). The result is
+    the union of those rows' ``technique_ids``.
+
+    Used to populate :attr:`ExecSummary.coverage_delta` on a compiled HuntPlan
+    (#99 Bet-1 cross-reference), so the plan flags which of its hunted
+    techniques are already alerting via a rule vs. genuinely dark. Filtering is
+    Python-side (no JSONB operators) so it runs identically on Postgres and the
+    SQLite test backend.
+    """
+    rows = (
+        await db.execute(
+            select(
+                DetectionProposalRow.technique_ids,
+                DetectionProposalRow.state,
+                DetectionProposalRow.pr_url,
+            ).where(DetectionProposalRow.org_id == org_id)
+        )
+    ).all()
+    deployed: set[str] = set()
+    for technique_ids, state, pr_url in rows:
+        if state == ProposalState.ACCEPTED.value or pr_url:
+            deployed.update(technique_ids or [])
+    return deployed
+
+
 async def list_proposals(
     db: AsyncSession,
     *,

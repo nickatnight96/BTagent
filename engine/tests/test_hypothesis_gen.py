@@ -57,6 +57,65 @@ async def test_named_adversary_expands_to_stock_ttps(monkeypatch):
         assert "adversary:APT29" in h.sources
 
 
+async def test_injected_resolver_pulls_real_group_techniques(monkeypatch):
+    """#99: an injected adversary resolver replaces the stock set with the
+    group's *real* technique set (the seeded mitre_groups mapping)."""
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "true")
+
+    def _resolver(name: str):
+        if name.strip().lower() == "apt29":
+            return [("T1071.001", "Web Protocols"), ("T1567.002", "Exfil to Cloud")]
+        return None
+
+    out = await HypothesisGenNode(adversary_resolver=_resolver).run(
+        HypothesisGenInput(hunt_input=_hi(adversaries=["APT29"])),
+        _ctx(),
+    )
+    ttps = {h.ttp_id for h in out.hypotheses}
+    # Resolved real set, not the built-in stock set.
+    assert ttps == {"T1071.001", "T1567.002"}
+    assert "T1059.001" not in ttps  # stock APT29 technique is displaced
+    for h in out.hypotheses:
+        assert "mitre_group:APT29" in h.sources
+        assert h.priority >= 0.85 - 0.01
+    # The technique name flows through from the resolver into the hypothesis.
+    web = next(h for h in out.hypotheses if h.ttp_id == "T1071.001")
+    assert web.ttp_name == "Web Protocols"
+
+
+async def test_resolver_miss_falls_back_to_stock(monkeypatch):
+    """When the resolver doesn't know the group, the node still emits the
+    built-in stock fallback (offline-friendly)."""
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "true")
+
+    def _resolver(name: str):
+        return None  # resolver has no mapping for this actor
+
+    out = await HypothesisGenNode(adversary_resolver=_resolver).run(
+        HypothesisGenInput(hunt_input=_hi(adversaries=["APT29"])),
+        _ctx(),
+    )
+    ttps = {h.ttp_id for h in out.hypotheses}
+    assert {"T1059.001", "T1078.004", "T1566.001"}.issubset(ttps)
+    for h in out.hypotheses:
+        assert "adversary:APT29" in h.sources
+
+
+async def test_resolver_fault_degrades_to_stock(monkeypatch):
+    """A raising resolver must degrade to the stock set, never crash the node."""
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "true")
+
+    def _resolver(name: str):
+        raise RuntimeError("resolver boom")
+
+    out = await HypothesisGenNode(adversary_resolver=_resolver).run(
+        HypothesisGenInput(hunt_input=_hi(adversaries=["APT29"])),
+        _ctx(),
+    )
+    ttps = {h.ttp_id for h in out.hypotheses}
+    assert {"T1059.001", "T1078.004", "T1566.001"}.issubset(ttps)
+
+
 async def test_unknown_adversary_emits_placeholder_hypothesis(monkeypatch):
     monkeypatch.setenv("BTAGENT_MOCK_LLM", "true")
     out = await HypothesisGenNode().run(
