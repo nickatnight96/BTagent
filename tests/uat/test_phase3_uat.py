@@ -44,17 +44,19 @@ class TestCoordinationPlugin:
         assert plugin.name == "coordination"
 
     def test_coordination_plugin_has_tools(self):
-        """Coordination plugin provides 3 tools."""
+        """Coordination plugin provides its summarization + cover-comm tools."""
         from btagent_agents.plugins import load_plugin
 
         plugin = load_plugin("coordination")
         assert plugin is not None
         tools = plugin.get_tools()
-        assert len(tools) == 3
+        assert len(tools) == 4
         tool_names = {t.name for t in tools}
         assert "summarize_investigation" in tool_names
         assert "summarize_multiple" in tool_names
         assert "format_agency_report" in tool_names
+        # EPIC-6 UC-6.2 part B: per-audience cover-comm drafting.
+        assert "draft_cover_communications" in tool_names
 
     def test_coordination_system_prompt_has_org_profile(self):
         """System prompt contains {org_profile} placeholder."""

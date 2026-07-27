@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -85,6 +86,22 @@ class RemediationRequest(BaseModel):
 class DetectionContentRequest(BaseModel):
     investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
     platform: Literal["splunk", "elastic", "sentinel"] = "splunk"
+
+
+class ReportDistributionOut(BaseModel):
+    id: str
+    report_id: str
+    audience: str
+    recipient: str
+    sent_at: datetime
+    tlp_applied: str
+    approver_id: str | None = None
+
+
+class ListDistributionsResponse(BaseModel):
+    distributions: list[ReportDistributionOut]
+    count: int
+    status: str
 
 
 # --------------------------------------------------------------------------- #
@@ -192,6 +209,44 @@ async def list_templates(
     """
     user.require_permission("report:view")
     return await _report_service.list_templates()
+
+
+@router.get("/distributions")
+async def list_report_distributions(
+    report_id: str | None = Query(None, pattern=r"^[a-zA-Z0-9_-]+$"),
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ListDistributionsResponse:
+    """List report distributions for the caller's org (read-only audit surface).
+
+    Returns the distribution ledger — who received which report, when, under
+    which TLP marking, and who approved the release — newest first. Strictly
+    org-scoped: a caller only ever sees their own tenant's rows. Pass
+    ``report_id`` to narrow to a single report.
+
+    Requires ``report:view`` permission.
+    """
+    user.require_permission("report:view")
+
+    rows = await _report_service.list_distributions(db, org_id=user.org_id, report_id=report_id)
+
+    distributions = [
+        ReportDistributionOut(
+            id=row.id,
+            report_id=row.report_id,
+            audience=row.audience,
+            recipient=row.recipient,
+            sent_at=row.sent_at,
+            tlp_applied=row.tlp_applied,
+            approver_id=row.approver_id,
+        )
+        for row in rows
+    ]
+    return ListDistributionsResponse(
+        distributions=distributions,
+        count=len(distributions),
+        status="success",
+    )
 
 
 @router.post("/summarize")

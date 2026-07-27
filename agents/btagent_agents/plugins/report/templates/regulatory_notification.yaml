@@ -21,6 +21,16 @@ sections:
     title: Notification Timeline
     required: true
     description: When the breach was detected and notification milestones
+  - name: regulatory_deadline
+    title: Regulatory Notification Deadlines
+    # Auto-computed from the detection time by the report service (SEC Form 8-K
+    # Item 1.05 = 4 business days, EU NIS2 early warning = 24h, EU DORA initial
+    # notification = 72h). Not an analyst-input field, so it does not gate
+    # report completeness.
+    required: false
+    description: >
+      Statutory initial-notification deadlines computed from the incident
+      detection time — SEC (4 business days), NIS2 (24 hours), DORA (72 hours).
   - name: recommendations
     title: Steps for Affected Individuals
     required: true

@@ -8,9 +8,83 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover - import only for type hints
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from btagent_backend.db.models import ReportDistributionRow
 
 logger = logging.getLogger("btagent.services.report")
+
+
+# --------------------------------------------------------------------------- #
+# Regulatory-notification clock (EPIC-6 UC-6.2 part C)
+# --------------------------------------------------------------------------- #
+#
+# Statutory initial-notification windows that start ticking at incident
+# detection/determination. Each entry is (human label, kind, amount) where
+# ``kind`` is "business_days" or "hours". These are the mandated *initial*
+# reporting deadlines, not the full-report deadlines.
+_REGULATORY_REGIMES: dict[str, tuple[str, str, int]] = {
+    "sec": ("SEC Form 8-K Item 1.05 (material cybersecurity incident)", "business_days", 4),
+    "nis2": ("EU NIS2 Article 23 early warning", "hours", 24),
+    "dora": ("EU DORA major ICT-related incident initial notification", "hours", 72),
+}
+
+
+def _add_business_days(start: datetime, days: int) -> datetime:
+    """Return ``start`` advanced by ``days`` business days (Mon–Fri)."""
+    current = start
+    remaining = days
+    while remaining > 0:
+        current = current + timedelta(days=1)
+        if current.weekday() < 5:  # 0–4 == Mon–Fri
+            remaining -= 1
+    return current
+
+
+def _compute_regulatory_deadlines(detected_at: datetime) -> dict[str, dict[str, Any]]:
+    """Compute per-regime regulatory notification deadlines from a detection time.
+
+    Returns a mapping keyed by regime (``sec`` / ``nis2`` / ``dora``) with the
+    human label, the window, and the absolute ISO-8601 deadline. Purely
+    derived — the clock start is ``detected_at``.
+    """
+    deadlines: dict[str, dict[str, Any]] = {}
+    for regime, (label, kind, amount) in _REGULATORY_REGIMES.items():
+        if kind == "business_days":
+            deadline = _add_business_days(detected_at, amount)
+            window = f"{amount} business days"
+        else:
+            deadline = detected_at + timedelta(hours=amount)
+            window = f"{amount} hours"
+        deadlines[regime] = {
+            "label": label,
+            "window": window,
+            "deadline": deadline.isoformat(),
+        }
+    return deadlines
+
+
+def _render_regulatory_deadline_section(
+    detected_at: datetime, deadlines: dict[str, dict[str, Any]]
+) -> str:
+    """Render the ``regulatory_deadline`` report section from computed deadlines."""
+    lines = [
+        "## Regulatory Notification Deadlines\n",
+        f"Clock start (incident detection/determination): {detected_at.isoformat()}\n",
+        "The following statutory *initial* notification deadlines apply. Confirm "
+        "applicability with legal/compliance before relying on any single window.\n",
+    ]
+    for regime in ("sec", "nis2", "dora"):
+        info = deadlines[regime]
+        lines.append(
+            f"- **{regime.upper()}** — {info['label']}: within {info['window']} "
+            f"(by {info['deadline']})"
+        )
+    return "\n".join(lines)
 
 
 class ReportService:
@@ -24,6 +98,8 @@ class ReportService:
         self,
         investigation_id: str,
         template: str = "incident_report",
+        *,
+        detected_at: datetime | None = None,
     ) -> dict[str, Any]:
         """Generate a full report from investigation data.
 
@@ -34,11 +110,18 @@ class ReportService:
         template : str
             Template name (incident_report, ioc_report, executive_briefing,
             regulatory_notification, cisa_incident, external_advisory).
+        detected_at : datetime | None
+            Incident detection/determination time used as the start of the
+            regulatory-notification clock for the ``regulatory_notification``
+            template. Defaults to "now" when not supplied.
 
         Returns
         -------
         dict
-            Report sections and metadata.
+            Report sections and metadata. For the ``regulatory_notification``
+            template the result also carries a ``regulatory_deadlines`` block
+            (SEC 4 business days / NIS2 24h / DORA 72h) and a populated
+            ``regulatory_deadline`` section.
         """
         from btagent_agents.plugins.report.tools.report_generator import (
             generate_report as report_tool,
@@ -69,8 +152,31 @@ class ReportService:
                 investigation_id,
                 result.get("section_count", 0),
             )
+            if template == "regulatory_notification":
+                self._attach_regulatory_clock(result, detected_at)
 
         return result
+
+    @staticmethod
+    def _attach_regulatory_clock(result: dict[str, Any], detected_at: datetime | None) -> None:
+        """Stamp the regulatory-notification clock onto a generated report.
+
+        Adds a structured ``regulatory_deadlines`` block and fills the
+        ``regulatory_deadline`` section content (the template declares the
+        section; the deadlines are auto-computed here rather than authored by
+        the analyst).
+        """
+        clock_start = detected_at or datetime.now(UTC)
+        deadlines = _compute_regulatory_deadlines(clock_start)
+        result["regulatory_deadlines"] = {
+            "detected_at": clock_start.isoformat(),
+            "regimes": deadlines,
+        }
+        sections = result.get("sections")
+        if isinstance(sections, dict) and "regulatory_deadline" in sections:
+            sections["regulatory_deadline"] = _render_regulatory_deadline_section(
+                clock_start, deadlines
+            )
 
     async def export_report_pdf(
         self,
@@ -279,3 +385,95 @@ class ReportService:
                 "platform": platform,
             }
         )
+
+    # ----------------------------------------------------------------------- #
+    # Distribution tracking (EPIC-6 UC-6.2 part A)
+    # ----------------------------------------------------------------------- #
+
+    async def record_distribution(
+        self,
+        db: AsyncSession,
+        *,
+        org_id: str,
+        report_id: str,
+        audience: str,
+        recipient: str,
+        tlp_applied: str = "amber",
+        approver_id: str | None = None,
+        sent_at: datetime | None = None,
+    ) -> ReportDistributionRow:
+        """Record a single report distribution and persist it to the audit ledger.
+
+        Writes one org-scoped ``report_distributions`` row capturing who
+        received a generated report, when, under which TLP marking, and who
+        approved the release. Returns the persisted row.
+
+        Parameters
+        ----------
+        db : AsyncSession
+            Active DB session (the caller owns commit/rollback).
+        org_id : str
+            Owning tenant — the row is only ever visible to this org.
+        report_id : str
+            Free-form report reference (reports are generated on the fly).
+        audience : str
+            Distribution audience (e.g. ``cisa_liaison``, ``leadership``).
+        recipient : str
+            The concrete recipient (mailbox, channel, contact).
+        tlp_applied : str
+            TLP marking stamped on the delivered artifact.
+        approver_id : str | None
+            Identifier of whoever signed off on the release (HITL gate).
+        sent_at : datetime | None
+            Delivery time; defaults to "now".
+        """
+        from btagent_shared.utils.ids import generate_id
+
+        from btagent_backend.db.models import ReportDistributionRow
+
+        row = ReportDistributionRow(
+            id=generate_id("rdist"),
+            org_id=org_id,
+            report_id=report_id,
+            audience=audience,
+            recipient=recipient,
+            tlp_applied=tlp_applied,
+            approver_id=approver_id,
+            sent_at=sent_at or datetime.now(UTC),
+        )
+        db.add(row)
+        await db.commit()
+        await db.refresh(row)
+        logger.info(
+            "Recorded report distribution %s (report=%s audience=%s org=%s)",
+            row.id,
+            report_id,
+            audience,
+            org_id,
+        )
+        return row
+
+    async def list_distributions(
+        self,
+        db: AsyncSession,
+        *,
+        org_id: str,
+        report_id: str | None = None,
+    ) -> list[ReportDistributionRow]:
+        """Return an org's report distributions, newest first (read-only audit).
+
+        Strictly org-scoped: only rows belonging to ``org_id`` are returned, so
+        one tenant can never read another's distribution ledger. When
+        ``report_id`` is supplied, the result is narrowed to that report.
+        """
+        from sqlalchemy import select
+
+        from btagent_backend.db.models import ReportDistributionRow
+
+        stmt = select(ReportDistributionRow).where(ReportDistributionRow.org_id == org_id)
+        if report_id is not None:
+            stmt = stmt.where(ReportDistributionRow.report_id == report_id)
+        stmt = stmt.order_by(ReportDistributionRow.sent_at.desc())
+
+        rows = (await db.execute(stmt)).scalars().all()
+        return list(rows)

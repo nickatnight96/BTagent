@@ -9,6 +9,7 @@ import yaml
 
 from btagent_agents.plugins.base import DefensivePlugin, DefensivePluginMetadata
 from btagent_agents.plugins.coordination.tools.summarizer import (
+    draft_cover_communications,
     format_agency_report,
     summarize_investigation,
     summarize_multiple,
@@ -47,7 +48,12 @@ class CoordinationPlugin(DefensivePlugin):
 
     def get_tools(self) -> list[Any]:
         """Return LangChain tool instances for coordination operations."""
-        return [summarize_investigation, summarize_multiple, format_agency_report]
+        return [
+            summarize_investigation,
+            summarize_multiple,
+            format_agency_report,
+            draft_cover_communications,
+        ]
 
     def get_system_prompt(self) -> str:
         """Return the coordination agent system prompt.
