@@ -204,13 +204,24 @@ class HuntPackRunRow(Base):
     hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     findings_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # Terminal status. ``completed`` (no execution errors) |
-    # ``completed_with_errors`` (some rule×backend executions errored, some
-    # succeeded) | ``failed`` (every execution errored, or the run itself
-    # raised before finishing). ``completed_with_errors`` is 21 chars, hence
-    # the 32-char column (widened from 16 in migration 0022, Codex #202 P2).
+    # Status. ``running`` (in flight — one or more rules still to process; the
+    # resume cursor lives in ``progress``) is the transient state a resumable
+    # run wears until it lands one of the terminal values: ``completed`` (no
+    # execution errors) | ``completed_with_errors`` (some rule×backend
+    # executions errored, some succeeded) | ``failed`` (every execution
+    # errored, or the run itself raised before finishing).
+    # ``completed_with_errors`` is 21 chars, hence the 32-char column (widened
+    # from 16 in migration 0022, Codex #202 P2). ``running`` added in migration
+    # 0055 (#112 resume-from-checkpoint).
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="completed")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Per-rule resume cursor (#112): ``{"completed_rule_ids": [...]}`` — the
+    # rules whose hits have already been converted, ingested, and checkpointed.
+    # Written incrementally (one commit per rule) so a worker restart mid-run
+    # resumes at the first not-yet-completed rule instead of re-doing finished
+    # work. Empty ``{}`` on a legacy row / a run that never checkpointed.
+    # Migration 0055_huntpack_resume.
+    progress: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
@@ -220,6 +231,10 @@ class HuntPackRunRow(Base):
         # The history list is org-scoped and newest-first.
         Index("idx_hunt_pack_runs_org_started", "org_id", "started_at"),
         Index("idx_hunt_pack_runs_pack_id", "pack_id"),
+        # Resume lookup: the newest in-flight run for one org's pack (migration
+        # 0055) — org_id + pack_id + status, so a restart finds the row to
+        # resume in one index scan.
+        Index("idx_hunt_pack_runs_org_pack_status", "org_id", "pack_id", "status"),
     )
 
 

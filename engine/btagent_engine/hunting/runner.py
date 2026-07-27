@@ -356,6 +356,7 @@ async def run_pack(
     *,
     lookback_hours: int = 24,
     max_hits_per_query: int = 100,
+    run_id: str | None = None,
 ) -> PackRunResult:
     """Run every enabled rule of ``pack`` on every requested backend.
 
@@ -364,6 +365,12 @@ async def run_pack(
     is captured as that ``BackendRunResult.error`` — it never aborts the rest
     of the pack run. Disabled rules are skipped (listed in
     ``skipped_rule_ids``).
+
+    ``run_id`` may be supplied so a resumable run (#112) stamps the same stable
+    ``source_run_id`` onto every hit across re-runs — the backend's
+    checkpointing loop passes the history row's run id so findings ingested
+    before and after a restart correlate to one logical run. When omitted a
+    fresh ``hrun_`` id is generated (the original behaviour).
     """
     unknown = [b for b in backends if b not in SUPPORTED_BACKENDS]
     if unknown:
@@ -371,7 +378,7 @@ async def run_pack(
     if not backends:
         raise ValueError("at least one backend is required")
 
-    run_id = generate_id("hrun")
+    run_id = run_id or generate_id("hrun")
     result = PackRunResult(
         run_id=run_id,
         pack_id=pack.id,

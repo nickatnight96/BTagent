@@ -41,6 +41,9 @@ const HuntPackagePage = lazy(() =>
 const HuntPlanPage = lazy(() =>
   import("@/components/hunts/HuntPlanPage").then((m) => ({ default: m.HuntPlanPage })),
 );
+const HuntPacksPage = lazy(() =>
+  import("@/components/hunts/HuntPacksPage").then((m) => ({ default: m.HuntPacksPage })),
+);
 const AgenticRiskPage = lazy(() =>
   import("@/components/agentic/AgenticRiskPage").then((m) => ({ default: m.AgenticRiskPage })),
 );
@@ -204,6 +207,10 @@ export const router = createBrowserRouter([
       {
         path: "hunts",
         element: lazyRoute(HuntPackagePage),
+      },
+      {
+        path: "hunt-packs",
+        element: lazyRoute(HuntPacksPage),
       },
       {
         path: "hunt-plan",

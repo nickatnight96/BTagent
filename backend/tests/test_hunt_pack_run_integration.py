@@ -214,6 +214,198 @@ async def test_persist_pack_run_records_derived_status(db_session):
 
 
 # --------------------------------------------------------------------------- #
+# Resume-from-checkpoint (#112 — "survives worker restart")
+# --------------------------------------------------------------------------- #
+
+
+def _hit_for(rule_id: str, run_id: str) -> "SigmaHit":
+    """One hit for ``rule_id`` on splunk, correlated to ``run_id``."""
+    return SigmaHit(
+        source_run_id=run_id,
+        pack_id="hpack_resume",
+        rule_id=rule_id,
+        rule_title=f"Rule {rule_id}",
+        backend="splunk",
+        severity=Severity.HIGH,
+        mitre_techniques=["T1059"],
+        entities=[SigmaHitEntity(kind="host", value=f"host-{rule_id}")],
+        observable=None,
+        observable_type=None,
+        summary=f"hit for {rule_id}",
+        raw={"host": f"host-{rule_id}"},
+    )
+
+
+def _result_with_hits(run_id: str, *rule_ids: str) -> "engine_runner.PackRunResult":
+    """A PackRunResult where each rule fires exactly one splunk hit."""
+    PackRunResult = engine_runner.PackRunResult
+    RuleRunResult = engine_runner.RuleRunResult
+    BackendRunResult = engine_runner.BackendRunResult
+    now = datetime.now(UTC)
+    rule_results = [
+        RuleRunResult(
+            rule_id=rid,
+            rule_title=f"Rule {rid}",
+            backend_results=[
+                BackendRunResult(
+                    backend="splunk", query="q", hit_count=1, hits=[_hit_for(rid, run_id)]
+                )
+            ],
+        )
+        for rid in rule_ids
+    ]
+    return PackRunResult(
+        run_id=run_id,
+        pack_id="hpack_resume",
+        pack_name="Resume Pack",
+        pack_version="1",
+        backends=["splunk"],
+        started_at=now,
+        completed_at=now,
+        rule_results=rule_results,
+    )
+
+
+async def _seed_org(db) -> str:
+    """A dedicated org (SHARED-DB isolation rule) so exact counts don't drift."""
+    from btagent_backend.db.models import OrganizationRow
+
+    org_id = generate_id("org")
+    db.add(OrganizationRow(id=org_id, name=f"Resume Org {org_id}", created_at=datetime.now(UTC)))
+    await db.commit()
+    return org_id
+
+
+async def _run_row_by_run_id(db, run_id: str) -> "HuntPackRunRow":
+    from sqlalchemy import select
+
+    return (
+        await db.execute(select(HuntPackRunRow).where(HuntPackRunRow.run_id == run_id))
+    ).scalar_one()
+
+
+async def test_hunt_pack_run_resume(db_session, monkeypatch):
+    """A run interrupted after rule N resumes at rule N+1 (no re-ingest).
+
+    Three-rule run; ``persist_hunt_findings`` is made to fail on its second
+    call, so the run dies after rule 1 has been converted, ingested, and
+    checkpointed. A fresh call with the same result + row (a "restarted
+    worker") must skip rule 1 and land only rules 2 and 3.
+    """
+    org_id = await _seed_org(db_session)
+    run_id = generate_id("hrun")
+    result = _result_with_hits(run_id, "r1", "r2", "r3")
+
+    real_persist = svc.persist_hunt_findings
+    calls = {"n": 0}
+
+    async def flaky_persist(db, *, org_id, findings):
+        calls["n"] += 1
+        if calls["n"] == 2:  # rule 1 lands; rule 2 dies mid-run
+            raise RuntimeError("worker died mid-run")
+        return await real_persist(db, org_id=org_id, findings=findings)
+
+    monkeypatch.setattr(prs.hunt_triage_service, "persist_hunt_findings", flaky_persist)
+
+    with pytest.raises(RuntimeError):
+        await prs.persist_pack_run(db_session, org_id=org_id, result=result)
+
+    # Checkpoint survived: a 'running' row naming exactly rule 1 as done.
+    row = await _run_row_by_run_id(db_session, run_id)
+    assert row.status == "running"
+    assert row.progress["completed_rule_ids"] == ["r1"]
+    assert row.findings_created == 1
+    assert row.hit_count == 1
+
+    # Restart: the fault is gone; resume the SAME run.
+    monkeypatch.setattr(prs.hunt_triage_service, "persist_hunt_findings", real_persist)
+    resumed, created = await prs.persist_pack_run(
+        db_session, org_id=org_id, result=result, run_row=row
+    )
+
+    assert resumed.id == row.id  # the same history row, not a new one
+    assert resumed.status == "completed"
+    assert resumed.progress["completed_rule_ids"] == ["r1", "r2", "r3"]
+    # Counters are cumulative; this call created only the two remaining rules.
+    assert created == 2
+    assert resumed.findings_created == 3
+    assert resumed.hit_count == 3
+
+    # Rule 1's finding was ingested once — the resume did not duplicate it.
+    from sqlalchemy import select
+
+    from btagent_backend.db.models_hunt import HuntFindingRow
+
+    findings = (
+        (await db_session.execute(select(HuntFindingRow).where(HuntFindingRow.org_id == org_id)))
+        .scalars()
+        .all()
+    )
+    mine = [f for f in findings if (f.evidence or {}).get("source_run_id") == run_id]
+    rule_ids = sorted((f.evidence or {}).get("rule_id") for f in mine)
+    assert rule_ids == ["r1", "r2", "r3"]  # exactly one finding per rule
+
+
+async def test_run_pack_and_ingest_resumes_running_row(db_session, monkeypatch):
+    """run_pack_and_ingest picks up an in-flight row and skips finished rules.
+
+    Pre-seed a ``running`` row for the builtin pack with its first two rules
+    already checkpointed; the resumed sweep must reuse that same row/run_id and
+    only process the remaining rules, ending with every rule in the cursor.
+    """
+    monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+    from btagent_backend.config import get_settings
+
+    get_settings.cache_clear()
+
+    from btagent_engine.hunting.pack import load_builtin_pack
+
+    pack = load_builtin_pack("windows_baseline")
+    enabled = [r.id for r in pack.enabled_rules]
+    assert len(enabled) >= 3, "need a multi-rule pack to prove resume-at-N+1"
+    already_done = enabled[:2]
+
+    org_id = await _seed_org(db_session)
+    seeded_run_id = generate_id("hrun")
+    seeded = HuntPackRunRow(
+        id=generate_id("hpkrun"),
+        org_id=org_id,
+        run_id=seeded_run_id,
+        pack_id=pack.id,
+        pack_name=pack.name,
+        pack_version=pack.version,
+        backends=["splunk"],
+        rule_stats={rid: {"title": rid, "hits": 0, "errors": 0} for rid in already_done},
+        hit_count=0,
+        error_count=0,
+        findings_created=0,
+        status="running",
+        progress={"completed_rule_ids": list(already_done)},
+        started_at=datetime.now(UTC),
+    )
+    db_session.add(seeded)
+    await db_session.commit()
+
+    run_rows = await prs.run_pack_and_ingest(
+        db_session,
+        org_id=org_id,
+        backends=["splunk"],
+        max_hits_per_query=5,
+        emit_events=False,
+    )
+    get_settings.cache_clear()
+
+    assert len(run_rows) == 1
+    run = run_rows[0]
+    # Same logical run — resumed in place, not a fresh row.
+    assert run.id == seeded.id
+    assert run.run_id == seeded_run_id
+    assert run.status in ("completed", "completed_with_errors")
+    # Every enabled rule is now in the cursor; the first two were not re-run.
+    assert set(run.progress["completed_rule_ids"]) == set(enabled)
+
+
+# --------------------------------------------------------------------------- #
 # Scheduled-run service end-to-end (engine mock connectors)
 # --------------------------------------------------------------------------- #
 

@@ -18,11 +18,22 @@ Three layers, mirroring the rest of the hunt backend:
   them through the engine runner against the configured backends, converts,
   persists, and (best-effort) emits the run events.
 
-Per the codebase convention the persistence helpers never commit — the arq
-job wrapper owns the commit. Event emission follows the ``TaskManager``
-precedent (a backend-side service *does* emit, via a short-lived
-``RedisEmitter`` keyed on the run id) rather than the route layer, because a
-scheduled run has no HTTP request to hang emission off.
+Resume-from-checkpoint (#112, "survives worker restart"): a pack run advertises
+an in-flight ``running`` status and records, per rule, which rules it has
+already converted + ingested under :attr:`HuntPackRunRow.progress`
+(``{"completed_rule_ids": [...]}``). :func:`persist_pack_run` writes that cursor
+**incrementally — one commit per rule** — so a worker that dies mid-run resumes
+at the first not-yet-completed rule instead of re-doing finished work (and
+re-emitting its findings). This is a deliberate exception to the usual
+"persistence helpers never commit — the arq job wrapper owns the commit"
+convention: durability across a restart *requires* the intermediate commits
+(``checkpoint=True``, the default). Callers that want the old flush-only
+behaviour (the whole run in one outer transaction) pass ``checkpoint=False``.
+
+Event emission follows the ``TaskManager`` precedent (a backend-side service
+*does* emit, via a short-lived ``RedisEmitter`` keyed on the run id) rather than
+the route layer, because a scheduled run has no HTTP request to hang emission
+off.
 
 Mapping decisions (documented for review):
 
@@ -59,6 +70,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from btagent_shared.types.enums import Severity
@@ -78,7 +90,7 @@ from btagent_backend.db.models_hunt import HuntPackRunRow
 from btagent_backend.services import hunt_triage_service
 
 if TYPE_CHECKING:  # avoid importing the (pysigma-heavy) engine at module load
-    from btagent_engine.hunting.runner import PackRunResult, SigmaHit
+    from btagent_engine.hunting.runner import PackRunResult, RuleRunResult, SigmaHit
 
 logger = logging.getLogger("btagent.services.hunt_pack_run")
 
@@ -92,6 +104,9 @@ _RAW_PREVIEW_CHARS = 512
 # The builtin packs run by the scheduled job. v1 ships the one builtin pack;
 # enabling/disabling per-org is a follow-up (the pack store, #112 FE).
 DEFAULT_BUILTIN_PACKS: tuple[str, ...] = ("windows_baseline",)
+
+# In-flight status a resumable run wears until it lands a terminal status.
+_RUNNING = "running"
 
 
 # --------------------------------------------------------------------------- #
@@ -215,21 +230,74 @@ def _derive_run_status(result: PackRunResult) -> str:
     return "completed_with_errors"
 
 
-def _rule_stats(result: PackRunResult) -> dict[str, dict[str, Any]]:
-    """Per-rule hit/error rollup for the history row."""
-    stats: dict[str, dict[str, Any]] = {}
-    for rule in result.rule_results:
-        stats[rule.rule_id] = {
-            "title": rule.rule_title,
-            "hits": rule.hit_count,
-            "errors": len(rule.errors),
-        }
-    return stats
+def _rule_stat_entry(rule: RuleRunResult) -> dict[str, Any]:
+    """One rule's rollup for the history row's ``rule_stats`` map.
+
+    ``{"title", "hits", "errors", "queries"}`` — ``queries`` is the transpiled
+    query string per backend (``{backend: query}``, omitting backends whose
+    transpile itself failed). The Phase-B HuntPacks view reads it to render the
+    per-backend query in a rule's detail panel; the noise baseline ignores the
+    extra keys (it only reads ``hits`` / ``title``).
+    """
+    return {
+        "title": rule.rule_title,
+        "hits": rule.hit_count,
+        "errors": len(rule.errors),
+        "queries": {b.backend: b.query for b in rule.backend_results if b.query},
+    }
 
 
 # --------------------------------------------------------------------------- #
 # Persistence (no commit — the arq job wrapper commits)
 # --------------------------------------------------------------------------- #
+
+
+def _completed_rule_ids(run_row: HuntPackRunRow) -> list[str]:
+    """The rules already converted + ingested for ``run_row`` (resume cursor)."""
+    return list((run_row.progress or {}).get("completed_rule_ids", []))
+
+
+async def _find_resumable_run(
+    db: AsyncSession, *, org_id: str, pack_id: str
+) -> HuntPackRunRow | None:
+    """The newest in-flight (``running``) run for one org's pack, or ``None``.
+
+    A worker restart calls this to pick up where the previous invocation left
+    off. Keyed on ``(org_id, pack_id, status)`` — served by the composite index
+    added in migration 0055.
+    """
+    result = await db.execute(
+        select(HuntPackRunRow)
+        .where(
+            HuntPackRunRow.org_id == org_id,
+            HuntPackRunRow.pack_id == pack_id,
+            HuntPackRunRow.status == _RUNNING,
+        )
+        .order_by(HuntPackRunRow.started_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+def _new_running_row(*, org_id: str, result: PackRunResult) -> HuntPackRunRow:
+    """A fresh ``running`` history row with an empty resume cursor."""
+    return HuntPackRunRow(
+        id=generate_id("hpkrun"),
+        org_id=org_id,
+        run_id=result.run_id,
+        pack_id=result.pack_id,
+        pack_name=result.pack_name,
+        pack_version=result.pack_version,
+        backends=[str(b) for b in result.backends],
+        rule_stats={},
+        hit_count=0,
+        error_count=0,
+        findings_created=0,
+        status=_RUNNING,
+        progress={"completed_rule_ids": []},
+        started_at=result.started_at,
+        completed_at=None,
+    )
 
 
 async def persist_pack_run(
@@ -239,44 +307,74 @@ async def persist_pack_run(
     result: PackRunResult,
     status: str | None = None,
     error: str | None = None,
+    run_row: HuntPackRunRow | None = None,
+    checkpoint: bool = True,
 ) -> tuple[HuntPackRunRow, int]:
     """Ingest a run's hits into the #119 store and record its history row.
 
-    Converts + dedupes the run's hits, lands them via
-    :func:`hunt_triage_service.persist_hunt_findings` (so active suppressions
-    are applied pre-insert), then writes a :class:`HuntPackRunRow`. Returns
-    the history row and the number of findings created. Not committed.
+    Processes the run **rule by rule** so the work is resumable (#112). For
+    each rule not already in the row's resume cursor
+    (:attr:`HuntPackRunRow.progress`) it converts + dedupes that rule's hits,
+    lands them via :func:`hunt_triage_service.persist_hunt_findings` (so active
+    suppressions apply pre-insert), accumulates the row's counters +
+    ``rule_stats``, appends the rule to the cursor, and — when
+    ``checkpoint`` — commits. A worker that dies part-way therefore leaves a
+    ``running`` row whose cursor names the rules already done; a later call
+    with the same ``result`` + ``run_row`` skips them and picks up at the next
+    rule. Findings that were already ingested are never re-created.
 
-    ``status`` is derived from the run's per-rule×backend execution outcomes
-    when not supplied (Codex #202 P2 — see :func:`_derive_run_status`): a run
-    where every execution errored is ``failed``; a partial one is
-    ``completed_with_errors``; a clean one is ``completed``.
+    ``run_row`` is the row to resume (from :func:`_find_resumable_run`); when
+    ``None`` a fresh ``running`` row is created for this run. The row's
+    counters are **cumulative** across resumes; the returned int is the number
+    of findings created *in this call* (the not-yet-completed rules only).
+
+    ``status`` is the terminal status stamped once every rule is done; when not
+    supplied it is derived from the run's per-rule×backend execution outcomes
+    (Codex #202 P2 — see :func:`_derive_run_status`): a run where every
+    execution errored is ``failed``; a partial one is ``completed_with_errors``;
+    a clean one is ``completed``.
     """
-    if status is None:
-        status = _derive_run_status(result)
-    requests = hits_to_finding_requests(result.all_hits)
-    rows = await hunt_triage_service.persist_hunt_findings(db, org_id=org_id, findings=requests)
+    if run_row is None:
+        run_row = _new_running_row(org_id=org_id, result=result)
+        db.add(run_row)
+        await db.flush()
 
-    run_row = HuntPackRunRow(
-        id=generate_id("hpkrun"),
-        org_id=org_id,
-        run_id=result.run_id,
-        pack_id=result.pack_id,
-        pack_name=result.pack_name,
-        pack_version=result.pack_version,
-        backends=[str(b) for b in result.backends],
-        rule_stats=_rule_stats(result),
-        hit_count=len(result.all_hits),
-        error_count=result.error_count,
-        findings_created=len(rows),
-        status=status,
-        error=error,
-        started_at=result.started_at,
-        completed_at=result.completed_at,
-    )
-    db.add(run_row)
+    completed = _completed_rule_ids(run_row)
+    completed_set = set(completed)
+    created_this_call = 0
+
+    for rule in result.rule_results:
+        if rule.rule_id in completed_set:
+            continue
+        rule_hits = [hit for backend in rule.backend_results for hit in backend.hits]
+        requests = hits_to_finding_requests(rule_hits)
+        rows = await hunt_triage_service.persist_hunt_findings(db, org_id=org_id, findings=requests)
+
+        # Accumulate onto the row (reassign JSON columns so SQLAlchemy sees the
+        # change — in-place mutation of a plain JSON column is not tracked).
+        run_row.hit_count += rule.hit_count
+        run_row.error_count += len(rule.errors)
+        run_row.findings_created += len(rows)
+        created_this_call += len(rows)
+        stats = dict(run_row.rule_stats or {})
+        stats[rule.rule_id] = _rule_stat_entry(rule)
+        run_row.rule_stats = stats
+        completed.append(rule.rule_id)
+        completed_set.add(rule.rule_id)
+        run_row.progress = {"completed_rule_ids": completed}
+
+        await db.flush()
+        if checkpoint:
+            await db.commit()
+
+    # Every rule done — land the terminal status + completion timestamp.
+    run_row.status = status if status is not None else _derive_run_status(result)
+    run_row.error = error
+    run_row.completed_at = result.completed_at
     await db.flush()
-    return run_row, len(rows)
+    if checkpoint:
+        await db.commit()
+    return run_row, created_this_call
 
 
 async def list_pack_runs(
@@ -323,14 +421,22 @@ async def run_pack_and_ingest(
     lookback_hours: int = 24,
     max_hits_per_query: int = 100,
     emit_events: bool = True,
+    checkpoint: bool = True,
 ) -> list[HuntPackRunRow]:
     """Run the enabled builtin packs and land their hits in the triage inbox.
 
     Org-aware: ingests into ``org_id`` (the default org in v1 — scheduled
     runs have no per-org pack store yet; see ``DEFAULT_BUILTIN_PACKS``). One
     history row per pack. A failure running a single pack is captured as a
-    ``failed`` history row and does not abort the rest. Not committed — the
-    arq job wrapper commits once.
+    ``failed`` history row and does not abort the rest.
+
+    Resume-aware (#112): before running a pack it looks for the newest
+    in-flight (``running``) run for ``(org_id, pack)`` — the remnant of a
+    worker that died mid-run — and resumes it, reusing its stable ``run_id``
+    (so findings ingested before and after the restart correlate to one run)
+    and skipping the rules already checkpointed. With ``checkpoint`` the
+    per-rule progress is committed as it lands, so the resume survives a real
+    process restart; the arq job wrapper still owns the final commit.
     """
     # Lazy: the engine pulls pysigma, only present in the worker image.
     from btagent_engine.hunting.pack import load_builtin_pack
@@ -343,22 +449,51 @@ async def run_pack_and_ingest(
 
     run_rows: list[HuntPackRunRow] = []
     for name in pack_names:
+        run_row: HuntPackRunRow | None = None
         try:
             pack = load_builtin_pack(name)
-            ctx = NodeContext(run_id=generate_id("hrun"), org_id=org_id)
+            # Resume the in-flight run for this pack if one survived a restart,
+            # else open a fresh one. Either way we run against its stable id.
+            run_row = await _find_resumable_run(db, org_id=org_id, pack_id=pack.id)
+            if run_row is None:
+                run_row = HuntPackRunRow(
+                    id=generate_id("hpkrun"),
+                    org_id=org_id,
+                    run_id=generate_id("hrun"),
+                    pack_id=pack.id,
+                    pack_name=pack.name,
+                    pack_version=pack.version,
+                    backends=[str(b) for b in backends],
+                    rule_stats={},
+                    hit_count=0,
+                    error_count=0,
+                    findings_created=0,
+                    status=_RUNNING,
+                    progress={"completed_rule_ids": []},
+                    started_at=datetime.now(UTC),
+                    completed_at=None,
+                )
+                db.add(run_row)
+                await db.flush()
+                if checkpoint:
+                    await db.commit()
+            ctx = NodeContext(run_id=run_row.run_id, org_id=org_id)
             result = await run_pack(
                 pack,
                 backends,
                 ctx,
                 lookback_hours=lookback_hours,
                 max_hits_per_query=max_hits_per_query,
+                run_id=run_row.run_id,
             )
-            run_row, created = await persist_pack_run(db, org_id=org_id, result=result)
+            run_row, created = await persist_pack_run(
+                db, org_id=org_id, result=result, run_row=run_row, checkpoint=checkpoint
+            )
             run_rows.append(run_row)
             logger.info(
                 "scheduled hunt pack run pack=%s run=%s hits=%d findings=%d errors=%d",
                 pack.id,
-                result.run_id,
+                run_row.run_id,
                 run_row.hit_count,
                 created,
                 run_row.error_count,
@@ -367,17 +502,31 @@ async def run_pack_and_ingest(
                 await _emit_run_events(org_id=org_id, run_row=run_row, redis_url=settings.redis_url)
         except Exception as exc:  # one bad pack must not kill the sweep
             logger.exception("scheduled hunt pack run failed: pack=%s", name)
-            run_rows.append(
-                await _record_failed_run(db, org_id=org_id, pack_name=name, error=str(exc))
+            # Clear any half-open transaction from the failing rule so the next
+            # pack in the sweep starts clean; committed checkpoints survive the
+            # rollback.
+            pack_id = run_row.pack_id if run_row is not None else None
+            await db.rollback()
+            # A run that got far enough to commit its ``running`` row has its
+            # progress checkpointed; leave it in place so the next invocation
+            # resumes it rather than burying it under a ``failed`` row. Only
+            # record a failed row when nothing resumable survived (e.g. the pack
+            # failed to load, or the row was never committed).
+            resumable = (
+                await _find_resumable_run(db, org_id=org_id, pack_id=pack_id) if pack_id else None
             )
+            if resumable is not None:
+                run_rows.append(resumable)
+            else:
+                run_rows.append(
+                    await _record_failed_run(db, org_id=org_id, pack_name=name, error=str(exc))
+                )
     return run_rows
 
 
 async def _record_failed_run(
     db: AsyncSession, *, org_id: str, pack_name: str, error: str
 ) -> HuntPackRunRow:
-    from datetime import UTC, datetime
-
     now = datetime.now(UTC)
     row = HuntPackRunRow(
         id=generate_id("hpkrun"),
