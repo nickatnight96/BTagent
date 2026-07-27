@@ -48,9 +48,11 @@ class ProposalState(StrEnum):
 class DetectionProposal(BaseModel):
     """A Sigma rule proposal generated from a STIX 2.1 indicator.
 
-    Proposals are returned to the caller and are not persisted in this slice.
-    An analyst reviews, modifies, accepts, or rejects the proposal via the
-    hunt workflow (deferred to a follow-up PR).
+    Proposals are returned to the caller *and* persisted, org-scoped, to
+    ``detection_proposals`` by
+    :func:`btagent_backend.services.cti_detection_service.persist_proposals`.
+    An analyst then reviews, validates, accepts, or rejects each one through
+    ``/cti/proposals`` and the Detection Proposals page.
 
     The ``sigma_yaml`` field contains a complete, valid Sigma rule YAML string
     that the existing hunt-pack transpiler can compile without modification.

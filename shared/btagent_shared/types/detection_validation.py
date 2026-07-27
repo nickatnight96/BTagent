@@ -210,9 +210,13 @@ class ValidationReport(BaseModel):
     """Result of one detection-validation run.
 
     Returned by :func:`btagent_shared.hunt.validation.replay_scenario` /
-    :func:`btagent_backend.services.validation_service.run_validation`.
-    The report is a *returned value*, not a persisted row, in this slice.
-    Live ART/Caldera wiring (deferred) will populate the same shape.
+    :func:`btagent_backend.services.validation_service.run_validation`, and
+    persisted per run to ``detection_validation_runs``
+    (:class:`btagent_backend.db.models_validation.DetectionValidationRunRow`).
+
+    Still deterministic simulation/replay: live ART/Caldera execution is
+    deferred (#118) and needs security sign-off, but it will populate this
+    same shape.
     """
 
     model_config = ConfigDict(extra="forbid")
