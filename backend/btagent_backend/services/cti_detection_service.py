@@ -409,6 +409,8 @@ async def get_proposal(
 
 import re as _re  # noqa: E402
 
+from btagent_shared.hunt.detection_engineer import draft_evidence_sha256  # noqa: E402
+
 _SLUG_RE = _re.compile(r"[^a-z0-9]+")
 
 
@@ -418,12 +420,28 @@ def _rule_slug(title: str) -> str:
     return slug or "rule"
 
 
-def build_pr_files(rows: list[DetectionProposalRow]) -> list[dict[str, str]]:
+def _shipped_yaml(row: DetectionProposalRow, final_yaml_by_row: dict[str, str] | None) -> str:
+    """The YAML that actually ships for ``row`` — an in-memory final override
+    (draft-vs-final, no schema change) or the stored draft when none is given."""
+    if final_yaml_by_row and row.id in final_yaml_by_row:
+        return final_yaml_by_row[row.id]
+    return row.sigma_yaml
+
+
+def build_pr_files(
+    rows: list[DetectionProposalRow],
+    *,
+    final_yaml_by_row: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
     """Map accepted proposal rows to detection-repo file payloads.
 
     Layout: ``rules/<primary-technique|uncategorized>/<slug>.yml``. Path
     collisions (same title twice) are disambiguated with the row id suffix
     so the Git connector's duplicate-path guard never fires spuriously.
+
+    ``final_yaml_by_row`` optionally supplies analyst-edited "final" rule bodies
+    (keyed by row id) that ship instead of the stored draft — the migration-free
+    draft-vs-final path (the edited text is in-memory, never a new column).
     """
     files: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -433,24 +451,65 @@ def build_pr_files(rows: list[DetectionProposalRow]) -> list[dict[str, str]]:
         if path in seen:
             path = f"rules/{technique}/{_rule_slug(row.title)}_{row.id[-6:].lower()}.yml"
         seen.add(path)
-        files.append({"path": path, "content": row.sigma_yaml})
+        files.append({"path": path, "content": _shipped_yaml(row, final_yaml_by_row)})
     return files
 
 
-def _pr_body(rows: list[DetectionProposalRow]) -> str:
-    """Markdown PR body summarising each rule + its telemetry verdict."""
+def _pr_body(
+    rows: list[DetectionProposalRow],
+    *,
+    final_yaml_by_row: dict[str, str] | None = None,
+) -> str:
+    """Markdown PR body: a summary table + a per-rule provenance/evidence block.
+
+    Beyond the at-a-glance table, each rule carries (issue #113 richer body):
+
+    * an **evidence-chain SHA-256** of the exact rule body being shipped,
+    * an **intel-source citation** (source STIX indicator id + bundle id),
+    * a **validation hit-count** line (telemetry verdict + total hits), and
+    * a **draft-vs-final note** — whether an analyst edited the rule before it
+      shipped (derived by comparing the shipped body to the stored draft).
+    """
     lines = [
         "Accepted Sigma rule proposals from the CTI → Detection pipeline (#113).",
         "",
-        "| Rule | Techniques | Confidence | Telemetry verdict |",
-        "|------|------------|------------|-------------------|",
+        "| Rule | Techniques | Confidence | Telemetry verdict | Hits |",
+        "|------|------------|------------|-------------------|------|",
     ]
     for row in rows:
-        verdict = (row.validation or {}).get("verdict", "not validated")
+        validation = row.validation or {}
+        verdict = validation.get("verdict", "not validated")
+        hits = validation.get("total_hits")
+        hits_cell = str(hits) if hits is not None else "—"
         techniques = ", ".join(row.technique_ids or []) or "—"
-        lines.append(f"| {row.title} | {techniques} | {row.confidence:.2f} | {verdict} |")
+        lines.append(
+            f"| {row.title} | {techniques} | {row.confidence:.2f} | {verdict} | {hits_cell} |"
+        )
+
+    lines += ["", "## Provenance & evidence chain", ""]
+    for row in rows:
+        shipped = _shipped_yaml(row, final_yaml_by_row)
+        evidence_sha = draft_evidence_sha256(shipped)
+        edited = shipped.strip() != (row.sigma_yaml or "").strip()
+        draft_note = "edited from draft before shipping" if edited else "unchanged from draft"
+        validation = row.validation or {}
+        verdict = validation.get("verdict", "not validated")
+        hits = validation.get("total_hits")
+        if hits is not None:
+            validation_line = f"{verdict} — {hits} hit(s) over the validation window"
+        else:
+            validation_line = f"{verdict} (no validation run recorded)"
+        lines += [
+            f"### {row.title}",
+            f"- Intel source: indicator `{row.source_stix_id or '—'}` "
+            f"from bundle `{row.bundle_id or '—'}`",
+            f"- Rule evidence SHA-256: `{evidence_sha}`",
+            f"- Validation: {validation_line}",
+            f"- Draft vs. final: {draft_note}",
+            "",
+        ]
+
     lines += [
-        "",
         "Every rule in this PR was individually accepted by an analyst "
         "(one-shot review decision) before composition.",
     ]
@@ -463,6 +522,7 @@ async def compose_detection_pr(
     org_id: str,
     row_ids: list[str],
     title: str | None = None,
+    final_yaml_by_row: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Compose a detection-repo PR from accepted proposals (#113 slice 3).
 
@@ -470,6 +530,11 @@ async def compose_detection_pr(
     eligible, and the route gates on a senior-analyst permission — two human
     gates before anything reaches the repo. Rows that already shipped
     (non-null ``pr_url``) are refused; a rule ships once.
+
+    ``final_yaml_by_row`` optionally supplies analyst-edited "final" rule bodies
+    (keyed by row id) that ship — and are cited as *edited from draft* in the PR
+    body — instead of the stored draft. This is the migration-free draft-vs-final
+    path: the edited text rides in on the (in-memory) request, never a new column.
 
     Raises :class:`LookupError` when any row is missing / cross-org (404) and
     :class:`ValueError` for eligibility violations (409). Never commits.
@@ -504,7 +569,7 @@ async def compose_detection_pr(
         raise ValueError(f"Proposal(s) already shipped in a PR: {', '.join(shipped)}")
 
     ordered = sorted(rows, key=lambda r: r.id)
-    files = build_pr_files(ordered)
+    files = build_pr_files(ordered, final_yaml_by_row=final_yaml_by_row)
     now = _utcnow()
     branch = f"detections/cti-{now.strftime('%Y%m%d')}-{len(ordered)}-rules"
     pr_title = title or f"detections: {len(ordered)} CTI-derived Sigma rule(s)"
@@ -514,7 +579,7 @@ async def compose_detection_pr(
     from btagent_agents.mcp.servers.git_mcp import GitMCPServer
 
     envelope = await GitMCPServer().git_open_detection_pr(
-        branch, pr_title, _pr_body(ordered), files
+        branch, pr_title, _pr_body(ordered, final_yaml_by_row=final_yaml_by_row), files
     )
 
     pr_url = envelope["pr_url"]
