@@ -28,7 +28,10 @@ import {
   type ResponsePlanOutput,
   type TypedIntent,
 } from "@/api/response-plan";
+import { executeResponseAction, type ExecutionResult } from "@/api/containment";
 import type { Severity } from "@/api/triage";
+import { useAuthStore } from "@/stores/authStore";
+import { UserRole } from "@/types/config";
 
 const INTENTS: TypedIntent[] = [
   "malware_detected",
@@ -81,6 +84,17 @@ export function ResponsePlanPage() {
   const [staged, setStaged] = useState<ResponseAction[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [results, setResults] = useState<Record<string, ExecutionResult> | null>(
+    null,
+  );
+
+  // Execution is gated on the caller's scope: only incident_commander+ (or
+  // admin) hold `containment:execute`. Analysts see the plan but not the button;
+  // the backend re-enforces the scope regardless, so this is UX, not security.
+  const role = useAuthStore((s) => s.user?.role);
+  const canExecute =
+    role === UserRole.INCIDENT_COMMANDER || role === UserRole.ADMIN;
 
   const handleGenerate = useCallback(async () => {
     setLoading(true);
@@ -88,6 +102,7 @@ export function ResponsePlanPage() {
     setOutput(null);
     setApprovals({});
     setStaged(null);
+    setResults(null);
     try {
       const entities: Record<string, string[]> = {};
       const h = splitEntities(host);
@@ -118,7 +133,28 @@ export function ResponsePlanPage() {
   const handleStage = useCallback(() => {
     const chosen = steps.filter((s) => !s.requires_approval || approvals[s.id]);
     setStaged(chosen);
+    setResults(null);
   }, [steps, approvals]);
+
+  const handleExecute = useCallback(async () => {
+    if (!staged || !canExecute) return;
+    setExecuting(true);
+    setError(null);
+    const collected: Record<string, ExecutionResult> = {};
+    try {
+      // Only destructive/contain steps go through the connector layer; read-only
+      // steps (investigate/document) are informational and skipped here.
+      for (const action of staged.filter((s) => s.destructive)) {
+        collected[action.id] = await executeResponseAction(action);
+      }
+      setResults(collected);
+    } catch (e) {
+      setResults(collected);
+      setError(e instanceof Error ? e.message : "Execution failed");
+    } finally {
+      setExecuting(false);
+    }
+  }, [staged, canExecute]);
 
   return (
     <>
@@ -134,8 +170,9 @@ export function ResponsePlanPage() {
             <CardDescription>
               For a confirmed true positive, generate a dual-path plan: a strategic
               goal plus a tactical list of connector actions. Destructive steps need
-              explicit approval and carry a rollback. Nothing executes here — you
-              review, approve, and stage. (UC-3.2)
+              explicit approval and carry a rollback. Planning runs nothing; only an
+              incident commander can then execute the approved, safelist-guarded,
+              audited containment. (UC-3.2)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -353,7 +390,7 @@ export function ResponsePlanPage() {
 
                 {staged && (
                   <div
-                    className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm space-y-1"
+                    className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm space-y-2"
                     data-testid="response-plan-staged"
                     role="status"
                   >
@@ -361,9 +398,66 @@ export function ResponsePlanPage() {
                       <CheckCircle2 className="w-4 h-4 text-primary" />
                       Staged {staged.length} action(s) for execution.
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      Execution requires incident-commander sign-off — nothing has run.
-                    </p>
+                    {canExecute ? (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Button
+                          onClick={handleExecute}
+                          disabled={executing || staged.every((s) => !s.destructive)}
+                          data-testid="response-plan-execute"
+                        >
+                          {executing ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Executing…
+                            </>
+                          ) : (
+                            "Execute approved containment"
+                          )}
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          Runs the destructive steps through the connector layer,
+                          safelist-guarded and audited.
+                        </span>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Execution requires incident-commander sign-off
+                        (containment:execute) — nothing has run.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {results && (
+                  <div
+                    className="rounded-md border border-border p-3 text-sm space-y-1"
+                    data-testid="response-plan-results"
+                    role="status"
+                  >
+                    <p className="font-medium text-foreground">Execution results</p>
+                    <ul className="space-y-1">
+                      {Object.entries(results).map(([id, r]) => (
+                        <li key={id} className="flex items-center gap-2">
+                          <Badge
+                            variant={
+                              r.outcome === "success"
+                                ? "secondary"
+                                : "destructive"
+                            }
+                          >
+                            {r.outcome}
+                          </Badge>
+                          <span className="text-muted-foreground">
+                            {r.tool} → {r.target || "n/a"}
+                          </span>
+                          {r.change_ref && (
+                            <span className="text-xs text-muted-foreground">
+                              change: {r.change_ref}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </CardContent>

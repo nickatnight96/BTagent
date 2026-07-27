@@ -540,3 +540,54 @@ class TLPPolicyRow(Base):
     )
 
     __table_args__ = (Index("idx_tlp_policies_org_id", "org_id"),)
+
+
+class ResponseSafelistRow(Base):
+    """Org-scoped never-block safelist entry (EPIC-3 #106 — collateral-outage guard).
+
+    Replaces the hard-coded never-block allowlist that used to live inside the
+    bulk-mitigation engine node. Each row pins one IP or domain that must never
+    be pushed to a perimeter/EDR blocklist for this org — blocking it would be a
+    self-inflicted outage (a corporate proxy, a business-critical SaaS domain,
+    an upstream resolver, etc.).
+
+    A universal baseline (public resolvers, critical-infra domains, RFC1918/
+    reserved IPs) is always enforced in code
+    (``btagent_shared.security.safelist.BASELINE_SAFELIST``); these rows *extend*
+    that baseline per tenant. Operators manage entries through the containment
+    API — no code change needed. The safelist is consulted at BOTH plan time
+    (skip → ``skip_allowlisted``) and, authoritatively, at execute time (a
+    safelisted target is refused before any block dispatch, with an audited
+    denial).
+
+    Org-scoped (FK to ``organizations``, cascade) so one tenant can neither read
+    nor be governed by another tenant's safelist. ``(org_id, entry_type, value)``
+    is unique so an entry can't be double-added.
+    """
+
+    __tablename__ = "response_safelist"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        default=DEFAULT_ORG_ID,
+    )
+    # "ip" | "domain" — matches SafelistPolicy semantics (exact IP, domain
+    # suffix). Kept as a plain string (not an enum) to stay create_all-friendly.
+    entry_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    value: Mapped[str] = mapped_column(String(255), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "entry_type", "value", name="uq_response_safelist_org_entry"),
+        Index("idx_response_safelist_org", "org_id"),
+    )

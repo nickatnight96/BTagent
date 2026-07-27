@@ -32,8 +32,10 @@ from btagent_engine.reasoning import (
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.api.deps import CurrentUser, get_current_user
+from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
+from btagent_backend.services import response_safelist_service
 
 logger = logging.getLogger("btagent.api.mitigation")
 
@@ -60,13 +62,27 @@ class MitigationPlanRequest(BaseModel):
 async def plan_bulk_mitigation(
     body: MitigationPlanRequest,
     user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> BulkMitigationOutput:
-    """Plan a bulk IOC block across connectors (UC-3.3). Proposal only."""
+    """Plan a bulk IOC block across connectors (UC-3.3). Proposal only.
+
+    #106: the org's ``response_safelist`` entries are threaded into the planner
+    (on top of the universal baseline) so the proposal already skips
+    org-safelisted targets. Execution re-checks the safelist authoritatively.
+    """
     user.require_permission("mitigation:plan")
 
+    safelist_ips, safelist_suffixes = await response_safelist_service.load_policy_tuples(
+        db, org_id=user.org_id
+    )
     ctx = NodeContext(run_id=generate_id("run"), org_id=user.org_id)
     out = await BulkMitigationNode().run(
-        BulkMitigationInput(iocs=body.iocs, extra_allowlist=body.extra_allowlist),
+        BulkMitigationInput(
+            iocs=body.iocs,
+            extra_allowlist=body.extra_allowlist,
+            safelist_ips=safelist_ips,
+            safelist_domain_suffixes=safelist_suffixes,
+        ),
         ctx,
     )
     logger.info(
