@@ -154,7 +154,9 @@ async def test_compile_failure_marks_row_failed_but_accept_succeeds(
 ):
     from btagent_backend.services import proposal_huntplan
 
-    async def _boom(proposal, *, backends=None):
+    async def _boom(
+        proposal, *, backends=None, adversary_resolver=None, deployed_technique_ids=None
+    ):
         raise RuntimeError("engine exploded")
 
     monkeypatch.setattr(proposal_huntplan, "compile_proposal_to_huntplan", _boom)

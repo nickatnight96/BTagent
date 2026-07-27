@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Callable
 from typing import ClassVar
 
 from btagent_shared.types.hunt import HuntInput, Hypothesis
@@ -47,6 +48,15 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+
+# An adversary -> technique-set resolver. Given a threat-actor name (as the
+# analyst typed it — e.g. "APT29"), returns that group's ordered technique set
+# as ``(ttp_id, ttp_name)`` tuples, or ``None`` when the group is unknown to
+# the resolver. Injected into :class:`HypothesisGenNode`; the backend builds
+# one backed by the seeded ``mitre_groups`` ATT&CK-Groups mapping. Kept a plain
+# sync callable over already-fetched data so the engine stays DB- and
+# network-free at node-run time (offline / mock friendly).
+AdversaryResolver = Callable[[str], list[tuple[str, str]] | None]
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -64,10 +74,12 @@ _PRIORITY_IOC: float = 0.60
 # later; for now a sane default.
 _MAX_HYPOTHESES: int = 25
 
-# Adversary stock-set: a tiny built-in mapping so mock mode can produce
-# plausible hypotheses for the most-named groups without depending on
-# MISP being live. Real adversary -> TTP resolution lives in the MISP
-# integration (Phase B follow-up).
+# Adversary stock-set: a tiny built-in *fallback* mapping. Real adversary ->
+# TTP resolution now runs against the seeded ``mitre_groups`` ATT&CK-Groups
+# table via an injected :data:`AdversaryResolver`; this dict is used only when
+# no resolver is wired (pure offline unit tests) or the resolver doesn't know
+# the named group, so mock mode still produces a plausible hypothesis set for
+# the most-named actors without a DB.
 _ADVERSARY_STOCK_TTPS: dict[str, list[tuple[str, str]]] = {
     "apt29": [
         ("T1059.001", "PowerShell"),
@@ -171,6 +183,17 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
     input_schema: ClassVar[type[BaseModel]] = HypothesisGenInput
     output_schema: ClassVar[type[BaseModel]] = HypothesisGenOutput
 
+    def __init__(self, *, adversary_resolver: AdversaryResolver | None = None) -> None:
+        """Optionally inject an adversary -> technique-set resolver.
+
+        When provided, named adversaries resolve against it (the seeded
+        ``mitre_groups`` mapping the backend builds) before falling back to the
+        built-in :data:`_ADVERSARY_STOCK_TTPS`. Default ``None`` keeps the node
+        fully offline — the deterministic stock path used by the engine's own
+        unit tests and any pipeline that doesn't wire a resolver.
+        """
+        self._adversary_resolver = adversary_resolver
+
     async def run(
         self,
         input: HypothesisGenInput,
@@ -196,7 +219,7 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
                     exc_info=True,
                 )
 
-        hyps = self._mock_generate(input.hunt_input)
+        hyps = self._mock_generate(input.hunt_input, resolver=self._adversary_resolver)
         return HypothesisGenOutput(hypotheses=hyps, mock_mode=True)
 
     # --- LLM generator ---------------------------------------------------- #
@@ -274,12 +297,18 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
     # --- Mock generator --------------------------------------------------- #
 
     @staticmethod
-    def _mock_generate(hunt_input: HuntInput) -> list[Hypothesis]:
+    def _mock_generate(
+        hunt_input: HuntInput,
+        *,
+        resolver: AdversaryResolver | None = None,
+    ) -> list[Hypothesis]:
         """Deterministic synthesis used in mock mode and in tests.
 
         Strategy:
-          1. For each named adversary, emit the stock TTP set (or a
-             single placeholder if we don't know the adversary).
+          1. For each named adversary, resolve its technique set — first via
+             the injected :data:`AdversaryResolver` (the seeded ``mitre_groups``
+             mapping), then the built-in :data:`_ADVERSARY_STOCK_TTPS` fallback,
+             then a single placeholder if the group is unknown to both.
           2. For each explicit TTP id in the input, emit one
              hypothesis. Explicit input always wins over inferred.
           3. For each IOC, infer a default TTP from its type and emit
@@ -290,11 +319,24 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
         candidates: list[Hypothesis] = []
         idx_counter = 0
 
-        # 1. Adversary stock-set expansion
+        # 1. Adversary technique-set expansion (resolver first, stock fallback)
         for adv in hunt_input.adversaries:
             key = adv.lower().strip()
-            stock = _ADVERSARY_STOCK_TTPS.get(key)
-            if stock is None:
+            resolved: list[tuple[str, str]] | None = None
+            if resolver is not None:
+                try:
+                    resolved = resolver(adv)
+                except Exception:  # noqa: BLE001 - a resolver fault must degrade to stock
+                    resolved = None
+
+            if resolved:
+                stock = resolved
+                from_group = True
+            else:
+                stock = _ADVERSARY_STOCK_TTPS.get(key)
+                from_group = False
+
+            if not stock:
                 # Unknown adversary -> single placeholder so downstream nodes
                 # know there's *something* to anchor on.
                 idx_counter += 1
@@ -305,8 +347,9 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
                         ttp_name=f"Unknown TTPs for {adv}",
                         rationale=(
                             f"Adversary '{adv}' is named but absent from the "
-                            "local adversary -> TTP map. Resolve via MISP / "
-                            "MITRE Groups before executing this hypothesis."
+                            "seeded MITRE ATT&CK Groups mapping and the local "
+                            "fallback. Resolve via MISP / MITRE Groups before "
+                            "executing this hypothesis."
                         ),
                         behavioral_description=(
                             f"Look for behaviours consistent with '{adv}' "
@@ -317,22 +360,31 @@ class HypothesisGenNode(Node[HypothesisGenInput, HypothesisGenOutput]):
                     )
                 )
                 continue
+
+            source_tag = f"mitre_group:{adv}" if from_group else f"adversary:{adv}"
             for ttp_id, ttp_name in stock:
                 idx_counter += 1
+                if from_group:
+                    rationale = (
+                        f"{adv} uses {ttp_id} ({ttp_name}) per the seeded MITRE "
+                        "ATT&CK Groups technique mapping."
+                    )
+                else:
+                    rationale = (
+                        f"{adv} has used {ttp_id} ({ttp_name}) in prior "
+                        "campaigns per the local adversary -> TTP fallback map."
+                    )
                 candidates.append(
                     Hypothesis(
                         id=_stable_hypothesis_id(idx_counter, f"{key}:{ttp_id}"),
                         ttp_id=ttp_id,
                         ttp_name=ttp_name,
-                        rationale=(
-                            f"{adv} has used {ttp_id} ({ttp_name}) in prior "
-                            "campaigns per the local adversary -> TTP map."
-                        ),
+                        rationale=rationale,
                         behavioral_description=(
                             f"Hunt for behavioural indicators of {ttp_name} ({ttp_id})."
                         ),
                         priority=_PRIORITY_ADVERSARY,
-                        sources=[f"adversary:{adv}"],
+                        sources=[source_tag],
                     )
                 )
 

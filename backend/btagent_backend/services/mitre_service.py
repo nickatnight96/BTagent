@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -956,3 +957,72 @@ def _row_to_technique(row: MitreTechniqueRow) -> MitreTechnique:
         url=row.url or "",
         is_subtechnique=row.is_subtechnique,
     )
+
+
+# ---------------------------------------------------------------------------
+# Adversary -> technique-set resolver (#99: real adversary resolution)
+# ---------------------------------------------------------------------------
+
+
+async def build_adversary_ttp_resolver(
+    db: AsyncSession,
+    adversaries: list[str],
+) -> Callable[[str], list[tuple[str, str]] | None] | None:
+    """Build an offline adversary -> technique-set resolver from ``mitre_groups``.
+
+    Resolves the named ``adversaries`` against the seeded ATT&CK Groups table
+    (``MitreGroupRow`` — name + aliases + ``technique_ids``), pairing each
+    technique with its human name from ``mitre_techniques`` where available.
+    Returns a plain **sync** callable ``name -> [(ttp_id, ttp_name), ...] |
+    None`` over the already-fetched data, so the engine's
+    :class:`HypothesisGenNode` stays DB- and network-free at run time (the
+    injection point for #99's "Hunt for APT29 -> that group's real technique
+    set"). Falls back to ``None`` (→ the node's built-in stock set) when no
+    named group matches, or when ``adversaries`` is empty.
+
+    Matching is case-insensitive over both the canonical group name and its
+    aliases; the canonical name wins when a token matches more than one group.
+    All filtering happens in Python (no JSONB operators) so it runs identically
+    on Postgres and the SQLite test backend.
+    """
+    wanted = {a.strip().lower() for a in adversaries if a and a.strip()}
+    if not wanted:
+        return None
+
+    groups = (await db.execute(select(MitreGroupRow))).scalars().all()
+
+    # Alias pass first, then names, so a canonical name wins over an alias
+    # collision across groups.
+    resolved: dict[str, list[str]] = {}
+    for g in groups:
+        for alias in g.aliases or []:
+            k = str(alias).strip().lower()
+            if k in wanted:
+                resolved.setdefault(k, list(g.technique_ids or []))
+    for g in groups:
+        k = str(g.name).strip().lower()
+        if k in wanted:
+            resolved[k] = list(g.technique_ids or [])
+
+    if not resolved:
+        return None
+
+    all_tids = {tid for tids in resolved.values() for tid in tids}
+    tid_to_name: dict[str, str] = {}
+    if all_tids:
+        rows = (
+            await db.execute(
+                select(MitreTechniqueRow.id, MitreTechniqueRow.name).where(
+                    MitreTechniqueRow.id.in_(all_tids)
+                )
+            )
+        ).all()
+        tid_to_name = {r[0]: r[1] for r in rows}
+
+    def _resolve(name: str) -> list[tuple[str, str]] | None:
+        tids = resolved.get(name.strip().lower())
+        if not tids:
+            return None
+        return [(tid, tid_to_name.get(tid, tid)) for tid in tids]
+
+    return _resolve

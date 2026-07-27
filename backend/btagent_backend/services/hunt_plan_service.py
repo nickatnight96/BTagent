@@ -40,6 +40,8 @@ from btagent_backend.db.models_pattern import HuntPlanRow, PatternHuntProposalRo
 if TYPE_CHECKING:  # avoid importing the (pysigma-heavy) engine at module load
     from btagent_engine.hunting.plan_runner import PlanRunResult
 
+    from btagent_backend.db.models_hunt import HuntFindingRow
+
 logger = logging.getLogger("btagent.services.hunt_plan")
 
 # Row-level compile lifecycle values (deliberately not HuntPlanState — that
@@ -127,10 +129,23 @@ async def compile_and_store(db: AsyncSession, *, plan_row_id: str) -> HuntPlanRo
 
     # Lazy import — the compiler pulls the engine (pysigma / LLM stack) onto
     # the import path; keep that off consumers that never compile.
+    from btagent_backend.services.cti_detection_service import get_deployed_technique_ids
+    from btagent_backend.services.mitre_service import build_adversary_ttp_resolver
     from btagent_backend.services.proposal_huntplan import compile_proposal_to_huntplan
 
     try:
-        plan = await compile_proposal_to_huntplan(row_to_proposal(proposal_row))
+        # #99: real adversary resolution + coverage cross-reference, built here
+        # with the DB session and injected into the side-effect-free compiler.
+        # Kept inside the try so a malformed proposal (e.g. a hunt_input that no
+        # longer validates) also lands as ``failed`` rather than escaping.
+        proposal = row_to_proposal(proposal_row)
+        resolver = await build_adversary_ttp_resolver(db, proposal.hunt_input.adversaries)
+        deployed = await get_deployed_technique_ids(db, org_id=row.org_id)
+        plan = await compile_proposal_to_huntplan(
+            proposal,
+            adversary_resolver=resolver,
+            deployed_technique_ids=deployed,
+        )
     except Exception as exc:  # noqa: BLE001 — any compile failure lands on the row
         logger.exception("HuntPlan compile failed for proposal %s", row.proposal_id)
         row.status = STATUS_FAILED
@@ -345,8 +360,9 @@ async def execute_plan_and_ingest(
     from btagent_backend.services import hunt_triage_service
 
     findings_created = 0
+    hit_finding_rows: list[HuntFindingRow] = []
     for hit in result.all_hits:
-        await hunt_triage_service.record_finding(
+        finding_row = await hunt_triage_service.record_finding(
             db,
             org_id=row.org_id,
             source=HuntSource.CROSS_INVESTIGATION.value,
@@ -368,7 +384,25 @@ async def execute_plan_and_ingest(
                 "raw": hit.raw,
             },
         )
+        hit_finding_rows.append(finding_row)
         findings_created += 1
+
+    # #99 Task C: the plan's correlation_rules + post_actions finally FIRE. A
+    # hit spawns an Investigation; 3+ distinct correlated TTP hits escalate it
+    # to IR. Autonomy-aware (L0/L1 defer to HITL). Best-effort — a correlation
+    # fault must never sink an ingest that already landed findings.
+    try:
+        from btagent_backend.services import hunt_correlation_service
+
+        await hunt_correlation_service.fire_plan_correlations(
+            db,
+            plan=plan,
+            org_id=row.org_id,
+            hit_findings=hit_finding_rows,
+            run_id=result.run_id,
+        )
+    except Exception:  # noqa: BLE001 — correlation firing is auxiliary
+        logger.warning("hunt correlation executor failed for plan %s", plan.id, exc_info=True)
 
     # Fold a per-TTP execution summary back into the stored plan JSON and
     # flip its execution lifecycle to COMPLETED.

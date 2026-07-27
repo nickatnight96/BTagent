@@ -30,12 +30,19 @@ follows.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan
 from btagent_shared.types.pattern_hunt import PatternHuntProposal
 from btagent_shared.utils.ids import generate_id
 
 logger = logging.getLogger("btagent.services.proposal_huntplan")
+
+# Adversary -> technique-set resolver, injected into the HypothesisGen node so
+# named actors resolve against the seeded ``mitre_groups`` mapping (built by
+# ``mitre_service.build_adversary_ttp_resolver``). ``None`` keeps the node on
+# its built-in stock fallback — the DB-free unit-test path.
+AdversaryResolver = Callable[[str], list[tuple[str, str]] | None]
 
 # Backends to synthesise queries for when a proposal's scope does not pin any.
 # Mirrors the connector-tier ordering in #100; DEFENDER/SIGMA are intentionally
@@ -53,18 +60,24 @@ async def compile_proposal_to_huntplan(
     proposal: PatternHuntProposal,
     *,
     backends: list[Backend] | None = None,
+    adversary_resolver: AdversaryResolver | None = None,
+    deployed_technique_ids: set[str] | None = None,
 ) -> HuntPlan:
     """Compile a proposal's ``HuntInput`` into a ready-to-run ``HuntPlan``.
 
     Thin wrapper over :func:`compile_huntinput_to_huntplan` — the proposal
     contributes its ``hunt_input`` verbatim, its ``org_id`` as tenant scope,
-    and its id as the log reference.
+    and its id as the log reference. ``adversary_resolver`` and
+    ``deployed_technique_ids`` are forwarded unchanged (the caller builds them
+    from the DB before invoking this side-effect-free compiler).
     """
     return await compile_huntinput_to_huntplan(
         proposal.hunt_input,
         org_id=proposal.org_id,
         backends=backends,
         log_ref=f"proposal {proposal.id}",
+        adversary_resolver=adversary_resolver,
+        deployed_technique_ids=deployed_technique_ids,
     )
 
 
@@ -74,6 +87,8 @@ async def compile_huntinput_to_huntplan(
     org_id: str,
     backends: list[Backend] | None = None,
     log_ref: str = "direct",
+    adversary_resolver: AdversaryResolver | None = None,
+    deployed_technique_ids: set[str] | None = None,
 ) -> HuntPlan:
     """Compile a raw ``HuntInput`` into a ready-to-run ``HuntPlan`` (#99 Phase A).
 
@@ -101,6 +116,16 @@ async def compile_huntinput_to_huntplan(
             the input's ``scope.backends`` is empty. Defaults to
             :data:`_DEFAULT_BACKENDS`.
         log_ref: Human-readable provenance tag for log lines.
+        adversary_resolver: Optional sync resolver (built by the caller from
+            the seeded ``mitre_groups`` table) that maps a named actor to its
+            real technique set. Injected into :class:`HypothesisGenNode`; when
+            ``None`` the node uses its built-in stock fallback.
+        deployed_technique_ids: Optional set of techniques the org already
+            covers with a deployed detection (built by the caller from
+            ``cti_detection_service.get_deployed_technique_ids``). When
+            provided, the compiler cross-references each hypothesis's technique
+            and populates :attr:`ExecSummary.coverage_delta` (``ttp_id ->
+            already_covered``). When ``None`` the delta is left empty.
 
     Returns:
         A :class:`HuntPlan` in ``READY`` state (id ``hunt_<ULID>``), tenant-
@@ -133,14 +158,26 @@ async def compile_huntinput_to_huntplan(
         user_id=hunt_input.initiated_by or None,
     )
 
-    # 1. Hypotheses.
-    hyp_out = await HypothesisGenNode().run(HypothesisGenInput(hunt_input=hunt_input), ctx)
+    # 1. Hypotheses. The injected resolver (when present) pulls a named actor's
+    # real technique set from the seeded mitre_groups mapping; otherwise the
+    # node falls back to its built-in stock set.
+    hyp_out = await HypothesisGenNode(adversary_resolver=adversary_resolver).run(
+        HypothesisGenInput(hunt_input=hunt_input), ctx
+    )
     logger.info(
         "%s -> %d hypotheses (mock_mode=%s)",
         log_ref,
         len(hyp_out.hypotheses),
         hyp_out.mock_mode,
     )
+
+    # Coverage cross-reference: for every hypothesised technique, is it already
+    # covered by a deployed detection? Populates ExecSummary.coverage_delta so
+    # the IC sees which hunted TTPs are dark vs. already alerting. Skipped
+    # (empty) when the caller didn't supply the deployed set.
+    coverage_delta: dict[str, bool] = {}
+    if deployed_technique_ids is not None:
+        coverage_delta = {h.ttp_id: h.ttp_id in deployed_technique_ids for h in hyp_out.hypotheses}
 
     # 2. Per-hypothesis query synthesis + noise baseline. Degrade gracefully.
     per_ttp_queries: dict[str, dict[Backend, object]] = {}
@@ -186,6 +223,7 @@ async def compile_huntinput_to_huntplan(
             hypotheses=hyp_out.hypotheses,
             per_ttp_queries=per_ttp_queries,  # type: ignore[arg-type]
             per_ttp_noise=per_ttp_noise,  # type: ignore[arg-type]
+            coverage_delta=coverage_delta,
         ),
         ctx,
     )

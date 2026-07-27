@@ -172,24 +172,30 @@ _EVIDENCE_FALLBACK = [
 ]
 
 
-# Cross-TTP correlation rules emitted by default. Real per-org rules
-# will load from config in a follow-up; these are sensible defaults.
+# Cross-TTP correlation rules emitted by default. Real per-org rules will load
+# from config in a follow-up; these are sensible defaults. The finding-ingest
+# executor (``backend...hunt_correlation_service``) fires them: a hit spawns an
+# investigation, and 3+ distinct correlated TTP hits escalate it to IR — so the
+# thresholds in the trigger text match what the executor actually evaluates.
 def _default_correlation_rules() -> list[CorrelationRule]:
     return [
         CorrelationRule(
-            id="corr_co_t1059_001_t1078_004",
-            description="PowerShell + cloud-account use on the same host within 24h.",
-            trigger=("Both T1059.001 and T1078.004 land hits on the same host within 24h."),
-            action="escalate_to_ir",
+            id="corr_hit_spawn_investigation",
+            description=(
+                "Any hunt finding spawns an investigation so a hit is never left "
+                "sitting only in the triage inbox."
+            ),
+            trigger="One or more TTP entries land a hit in a plan run.",
+            action="spawn_investigation",
         ),
         CorrelationRule(
-            id="corr_multi_ttp_burst",
+            id="corr_multi_ttp_escalate_ir",
             description=(
-                "Three or more uncorrelated TTP hits within the same scope "
-                "window — likely an active intrusion."
+                "Three or more distinct TTPs hitting in a single run — likely an "
+                "active intrusion, not isolated noise."
             ),
-            trigger="3+ TTPs hit within the scope's date window.",
-            action="spawn_investigation",
+            trigger="3+ distinct TTPs land hits within the same plan run.",
+            action="escalate_to_ir",
         ),
     ]
 

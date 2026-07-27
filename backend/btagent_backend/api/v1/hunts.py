@@ -51,6 +51,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.services import hunt_package_store, hunt_plan_service
+from btagent_backend.services.cti_detection_service import get_deployed_technique_ids
+from btagent_backend.services.mitre_service import build_adversary_ttp_resolver
 from btagent_backend.services.proposal_huntplan import compile_huntinput_to_huntplan
 from btagent_backend.services.task_manager import TaskManager
 
@@ -494,11 +496,19 @@ async def generate_hunt_plan(
         scope=HuntScope(backends=body.backends),
         initiated_by=user.id,
     )
+    # #99: resolve named actors against the seeded ATT&CK Groups table, and
+    # cross-reference the org's deployed detections so the plan's exec summary
+    # carries a real coverage delta. Both are built here (with the DB session)
+    # and injected into the side-effect-free compiler.
+    resolver = await build_adversary_ttp_resolver(db, hunt_input.adversaries)
+    deployed = await get_deployed_technique_ids(db, org_id=user.org_id)
     try:
         plan = await compile_huntinput_to_huntplan(
             hunt_input,
             org_id=user.org_id,
             log_ref=f"direct plan by {user.id}",
+            adversary_resolver=resolver,
+            deployed_technique_ids=deployed,
         )
     except NotImplementedError as exc:
         raise HTTPException(
