@@ -1,4 +1,5 @@
 import api from "./client";
+import type { IOCType } from "@/types/ioc";
 
 // Mirrors btagent_shared.types.hunt_package.HuntPackage (UC-2.2).
 export interface Sighting {
@@ -62,7 +63,7 @@ export interface HuntPackageRequest {
 }
 
 export async function generateHuntPackage(
-  req: HuntPackageRequest
+  req: HuntPackageRequest,
 ): Promise<HuntPackage> {
   return api.post<HuntPackage>("/v1/hunts/package", req);
 }
@@ -88,13 +89,15 @@ export interface HuntPackageListResponse {
 }
 
 export async function listHuntPackages(
-  params: { page?: number; page_size?: number } = {}
+  params: { page?: number; page_size?: number } = {},
 ): Promise<HuntPackageListResponse> {
   const sp = new URLSearchParams();
   if (params.page) sp.set("page", String(params.page));
   if (params.page_size) sp.set("page_size", String(params.page_size));
   const q = sp.toString();
-  return api.get<HuntPackageListResponse>(`/v1/hunts/packages${q ? `?${q}` : ""}`);
+  return api.get<HuntPackageListResponse>(
+    `/v1/hunts/packages${q ? `?${q}` : ""}`,
+  );
 }
 
 export async function getHuntPackage(id: string): Promise<HuntPackage> {
@@ -110,7 +113,9 @@ export interface PromotePackageResponse {
 }
 
 /** Open an investigation from a stored package (one-shot; 409 if already promoted). */
-export async function promoteHuntPackage(id: string): Promise<PromotePackageResponse> {
+export async function promoteHuntPackage(
+  id: string,
+): Promise<PromotePackageResponse> {
   return api.post<PromotePackageResponse>(`/v1/hunts/packages/${id}/promote`);
 }
 
@@ -175,14 +180,55 @@ export interface HuntPlan {
   created_at: string;
 }
 
+/** One indicator submitted as hunt input (#99) — mirrors HuntPlanIOC. */
+export interface HuntPlanIOC {
+  type: IOCType;
+  value: string;
+}
+
 export interface HuntPlanRequest {
   adversaries?: string[];
   ttps?: string[];
+  /**
+   * Indicators to hunt from. The backend maps each to a plausible technique,
+   * so an analyst holding only indicators can still get a plan.
+   */
+  iocs?: HuntPlanIOC[];
   backends?: string[];
 }
 
-/** Generate a full hunt runbook from adversaries and/or ATT&CK technique ids. */
-export async function generateHuntPlan(req: HuntPlanRequest): Promise<HuntPlan> {
+/**
+ * Best-effort IOC type from a raw indicator string.
+ *
+ * The analyst pastes bare values; asking them to tag each one by hand would
+ * make the field unusable for the case it exists for (a handful of
+ * indicators from an advisory). Ordered most- to least-specific: hashes are
+ * fixed-length hex, so they must be tested before the looser domain rule,
+ * and a bare "8.8.8.8" must not be read as a domain.
+ *
+ * Anything unrecognised returns "other", which the backend's technique map
+ * has no entry for — such an IOC is carried but contributes no hypothesis,
+ * rather than silently inventing the wrong one.
+ */
+export function inferIOCType(raw: string): IOCType {
+  const v = raw.trim();
+  if (/^[a-fA-F0-9]{32}$/.test(v)) return "hash_md5";
+  if (/^[a-fA-F0-9]{40}$/.test(v)) return "hash_sha1";
+  if (/^[a-fA-F0-9]{64}$/.test(v)) return "hash_sha256";
+  if (/^CVE-\d{4}-\d{4,}$/i.test(v)) return "cve";
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(v)) return "url";
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "email";
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(v)) return "ip";
+  if (/^[/\\]|^[a-zA-Z]:[/\\]/.test(v)) return "file_path";
+  if (/^(?=.{1,253}$)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,}$/.test(v))
+    return "domain";
+  return "other";
+}
+
+/** Generate a full hunt runbook from adversaries, ATT&CK technique ids, and/or IOCs. */
+export async function generateHuntPlan(
+  req: HuntPlanRequest,
+): Promise<HuntPlan> {
   return api.post<HuntPlan>("/v1/hunts/plan", req);
 }
 
@@ -210,7 +256,7 @@ export interface HuntPlanListResponse {
 }
 
 export async function listHuntPlans(
-  params: { page?: number; page_size?: number } = {}
+  params: { page?: number; page_size?: number } = {},
 ): Promise<HuntPlanListResponse> {
   const sp = new URLSearchParams();
   if (params.page) sp.set("page", String(params.page));
@@ -233,14 +279,16 @@ export interface ExecuteHuntPlanResponse {
 }
 
 /** Run a stored plan's runbook; hits land in the hunt triage inbox. */
-export async function executeHuntPlan(id: string): Promise<ExecuteHuntPlanResponse> {
+export async function executeHuntPlan(
+  id: string,
+): Promise<ExecuteHuntPlanResponse> {
   return api.post<ExecuteHuntPlanResponse>(`/v1/hunts/plans/${id}/execute`);
 }
 
 /** Download a stored plan's runbook as a Markdown or PDF blob (#343). */
 export async function exportHuntPlan(
   id: string,
-  format: "md" | "pdf"
+  format: "md" | "pdf",
 ): Promise<Blob> {
   const response = await fetch(
     `${import.meta.env.VITE_API_BASE_URL ?? "/api"}/v1/hunts/plans/${id}/export?format=${format}`,
@@ -248,7 +296,7 @@ export async function exportHuntPlan(
       method: "GET",
       // httpOnly-cookie auth, same as the main api client.
       credentials: "include",
-    }
+    },
   );
   if (!response.ok) {
     throw new Error(`Export failed (${response.status})`);
@@ -281,13 +329,13 @@ export interface HuntPlanRunListResponse {
 
 export async function listHuntPlanRuns(
   id: string,
-  params: { page?: number; page_size?: number } = {}
+  params: { page?: number; page_size?: number } = {},
 ): Promise<HuntPlanRunListResponse> {
   const sp = new URLSearchParams();
   if (params.page) sp.set("page", String(params.page));
   if (params.page_size) sp.set("page_size", String(params.page_size));
   const q = sp.toString();
   return api.get<HuntPlanRunListResponse>(
-    `/v1/hunts/plans/${id}/runs${q ? `?${q}` : ""}`
+    `/v1/hunts/plans/${id}/runs${q ? `?${q}` : ""}`,
   );
 }
