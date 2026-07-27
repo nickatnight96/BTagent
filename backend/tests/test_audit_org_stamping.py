@@ -10,6 +10,13 @@ These tests pin both directions of the fix: an entry written by tenant B is
 visible to tenant B and *invisible* to the default org. The service-path
 case matters most — there the org must come from the row being acted on,
 not from the caller.
+
+#434 landed the same fix concurrently and went further, making ``org_id``
+a required keyword-only argument on ``record()``. That is the stronger
+guarantee — an un-stamped write is now a hard error at call time rather
+than a row silently filed under ``DEFAULT_ORG_ID``, where it would be both
+hidden from its own tenant and visible to an ``org_default`` admin. The
+last test pins that.
 """
 
 from __future__ import annotations
@@ -182,18 +189,26 @@ async def test_service_write_takes_the_org_from_the_row_not_the_actor(db_session
     assert await _entries(db_session, DEFAULT_ORG_ID) == []
 
 
-async def test_org_id_still_defaults_for_callers_that_do_not_thread_a_tenant(db_session):
-    """The default is deliberate — internal writers without a tenant keep working."""
+async def test_an_unstamped_write_is_rejected_outright(db_session):
+    """No silent DEFAULT_ORG_ID fallback — omitting the tenant must fail loudly.
+
+    A fallback would file the row under ``org_default``: invisible to the
+    tenant whose compliance ledger needs it, and visible to an
+    ``org_default`` admin who should never see it. Failing at call time
+    makes a missed call site a bug the test suite catches, not a quiet
+    mis-attribution nobody notices until an audit.
+    """
+    import pytest
     from btagent_shared.types.enums import AuditCategory, AuditOutcome
 
-    await AuditTrail(db_session).record(
-        actor="system",
-        category=AuditCategory.AGENT_ACTION,
-        action="untenanted_write",
-        resource="res_x",
-        outcome=AuditOutcome.SUCCESS,
-    )
-    await db_session.commit()
+    with pytest.raises(TypeError):
+        await AuditTrail(db_session).record(
+            actor="system",
+            category=AuditCategory.AGENT_ACTION,
+            action="untenanted_write",
+            resource="res_x",
+            outcome=AuditOutcome.SUCCESS,
+        )
 
-    assert [e.action for e in await _entries(db_session, DEFAULT_ORG_ID)] == ["untenanted_write"]
+    assert await _entries(db_session, DEFAULT_ORG_ID) == []
     assert await _entries(db_session, TENANT_B) == []

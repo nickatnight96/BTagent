@@ -114,7 +114,6 @@ async def upsert_credential(
             resource=f"connector:{connector_name}",
             outcome=AuditOutcome.SUCCESS,
             details={"org_id": user.org_id, "label": body.label},
-            org_id=user.org_id,
         )
         await db.commit()
     except svc.UnknownConnector as exc:
@@ -143,6 +142,5 @@ async def delete_credential(
         resource=f"connector:{connector_name}",
         outcome=AuditOutcome.SUCCESS,
         details={"org_id": user.org_id},
-        org_id=user.org_id,
     )
     await db.commit()
