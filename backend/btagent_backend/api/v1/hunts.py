@@ -14,6 +14,8 @@ a 501.
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import os
 from datetime import datetime
@@ -32,7 +34,17 @@ from btagent_shared.types.hunt import Backend, HuntInput, HuntPlan, HuntScope
 from btagent_shared.types.hunt_package import HuntPackage
 from btagent_shared.types.investigation import IOC
 from btagent_shared.utils.ids import generate_id
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+)
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,43 +59,86 @@ logger = logging.getLogger("btagent.api.hunts")
 router = APIRouter(prefix="/hunts", tags=["hunts"])
 
 
+# Upper bound on advisory text fed to the engine, shared by the paste path
+# (validated on the request model) and the server-side decode path (enforced
+# after PDF/CSV -> text). Keeps a runaway upload from ballooning the run.
+_MAX_ADVISORY_CHARS = 200_000
+
+
 class HuntPackageRequest(BaseModel):
     text: str = Field(
         ...,
         min_length=1,
-        max_length=200_000,
-        description="Advisory text to analyze (decoded from a PDF/CSV client-side or pasted).",
+        max_length=_MAX_ADVISORY_CHARS,
+        description="Advisory text to analyze (decoded from a PDF/CSV server-side or pasted).",
     )
     source_label: str = Field(default="advisory", max_length=200)
     backends: list[Backend] = Field(default_factory=list)
     window_days: int = Field(default=90, ge=1, le=730)
 
 
-@router.post("/package", response_model=HuntPackage)
-async def generate_hunt_package(
-    body: HuntPackageRequest,
-    db: AsyncSession = Depends(get_db),
-    user: CurrentUser = Depends(get_current_user),
-) -> HuntPackage:
-    """Generate a hunt package from advisory text (UC-2.2).
+def _decode_pdf(data: bytes) -> str:
+    """Extract text from an uploaded PDF (pypdf, pure-Python, no system libs)."""
+    from pypdf import PdfReader
 
-    The package is persisted to the org-scoped store (#99 follow-through) —
-    the response carries its ``id`` so the analyst can re-open it from
-    ``GET /hunts/packages`` later instead of losing the artifact on
-    navigation.
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:  # noqa: BLE001 — any parse failure is a bad upload
+        raise HTTPException(status_code=400, detail="Uploaded PDF could not be decoded.") from exc
+
+
+def _decode_csv(data: bytes) -> str:
+    """Flatten an uploaded CSV to whitespace-delimited text for extraction.
+
+    Joining cells with spaces (rows with newlines) means indicators packed
+    into adjacent columns tokenise cleanly for the regex-based extractor.
     """
-    user.require_permission("hunt:run")
+    text = data.decode("utf-8", errors="replace")
+    try:
+        rows = csv.reader(io.StringIO(text))
+        return "\n".join(" ".join(cell for cell in row) for row in rows)
+    except csv.Error:
+        return text
 
+
+def _decode_upload(filename: str | None, content_type: str | None, data: bytes) -> str:
+    """Dispatch an uploaded advisory to the right decoder (PDF / CSV / text)."""
+    name = (filename or "").lower()
+    ctype = (content_type or "").lower()
+    if ctype == "application/pdf" or name.endswith(".pdf"):
+        return _decode_pdf(data)
+    if "csv" in ctype or name.endswith(".csv"):
+        return _decode_csv(data)
+    # Fallback: treat anything else as UTF-8 text (a pasted .txt advisory).
+    return data.decode("utf-8", errors="replace")
+
+
+async def _generate_and_store_package(
+    db: AsyncSession,
+    user: CurrentUser,
+    *,
+    text: str,
+    source_label: str,
+    backends: list[Backend],
+    window_days: int,
+) -> HuntPackage:
+    """Run HuntPackageNode over decoded/pasted advisory text and persist it.
+
+    Shared by the paste path (``POST /hunts/package``) and the server-side
+    decode path (``POST /hunts/package/upload``); both persist to the same
+    org-scoped store so the artifact is re-openable from history.
+    """
     node = HuntPackageNode()
     ctx = NodeContext(run_id=generate_id("run"), org_id=user.org_id)
     try:
         out = await node.run(
             HuntPackageInput(
-                text=body.text,
-                source_label=body.source_label,
+                text=text,
+                source_label=source_label,
                 initiated_by=user.id,
-                backends=body.backends,
-                window_days=body.window_days,
+                backends=backends,
+                window_days=window_days,
             ),
             ctx,
         )
@@ -105,9 +160,79 @@ async def generate_hunt_package(
             "investigation_id": None,
             "extracted_iocs": out.package.extracted_ioc_count,
             "techniques": len(out.package.derived_techniques),
+            "yara_rules": len(out.package.yara_rules),
         },
     )
     return out.package
+
+
+@router.post("/package", response_model=HuntPackage)
+async def generate_hunt_package(
+    body: HuntPackageRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPackage:
+    """Generate a hunt package from pasted advisory text (UC-2.2).
+
+    The package is persisted to the org-scoped store (#99 follow-through) —
+    the response carries its ``id`` so the analyst can re-open it from
+    ``GET /hunts/packages`` later instead of losing the artifact on
+    navigation. Uploading a PDF/CSV file instead of pasting text is
+    ``POST /hunts/package/upload``.
+    """
+    user.require_permission("hunt:run")
+    return await _generate_and_store_package(
+        db,
+        user,
+        text=body.text,
+        source_label=body.source_label,
+        backends=body.backends,
+        window_days=body.window_days,
+    )
+
+
+@router.post("/package/upload", response_model=HuntPackage)
+async def generate_hunt_package_from_upload(
+    file: UploadFile = File(..., description="Advisory file — PDF or CSV."),
+    source_label: str | None = Form(default=None, max_length=200),
+    backends: list[Backend] = Form(default=[]),
+    window_days: int = Form(default=90, ge=1, le=730),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPackage:
+    """Generate a hunt package from an uploaded advisory file (UC-2.2, #105).
+
+    Decodes the upload server-side — PDF via pypdf, CSV flattened to text —
+    then runs the same HuntPackageNode flow as the paste path (extracted
+    indicators + YARA rules + 90-day sighting check + per-backend queries +
+    Sigma drafts) and persists the result. ``source_label`` defaults to the
+    uploaded filename. 400 on an undecodable PDF; 422 on an empty upload or
+    one that yields no text.
+    """
+    user.require_permission("hunt:run")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty.")
+
+    text = _decode_upload(file.filename, file.content_type, data)
+    if not text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="No text could be extracted from the uploaded file.",
+        )
+    if len(text) > _MAX_ADVISORY_CHARS:
+        text = text[:_MAX_ADVISORY_CHARS]
+
+    label = source_label or file.filename or "advisory"
+    return await _generate_and_store_package(
+        db,
+        user,
+        text=text,
+        source_label=label,
+        backends=backends,
+        window_days=window_days,
+    )
 
 
 class HuntPackageSummary(BaseModel):

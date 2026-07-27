@@ -30,6 +30,10 @@ dependencies = [
     # PDF report export (#145) — reportlab ships pure-Python wheels (no system
     # libs), unlike weasyprint/wkhtmltopdf which need cairo/pango/wkhtmltopdf.
     "reportlab>=4.2.0",
+    # Server-side advisory decode (#105 / UC-2.2) — pypdf is a pure-Python PDF
+    # text extractor (no system libs) used by the hunt-package upload endpoint
+    # to turn an uploaded PDF advisory into text before IOC/YARA extraction.
+    "pypdf>=5.0.0",
     # ── Transitive-dependency security floors (#380) ──────────────────────────
     # These are pulled in transitively, not imported directly here; the explicit
     # floors force the resolver onto CVE-patched releases instead of relying on

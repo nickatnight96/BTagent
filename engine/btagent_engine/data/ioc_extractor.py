@@ -1,9 +1,15 @@
 """IOCExtractorNode — pull indicators out of advisory text (UC-2.2, #105).
 
-Extracts IPs, domains, URLs, file hashes (MD5/SHA1/SHA256), emails, and
-CVEs from free-form advisory text (a CISA bulletin, vendor report, ISAC
-note). Handles common *defanging* (hxxp://, 1[.]2[.]3[.]4, evil[.]com,
-foo(at)bar.com) by normalizing before extraction.
+Extracts IPs, domains, URLs, file hashes (MD5/SHA1/SHA256), emails,
+CVEs, and embedded YARA rules from free-form advisory text (a CISA
+bulletin, vendor report, ISAC note). Handles common *defanging* (hxxp://,
+1[.]2[.]3[.]4, evil[.]com, foo(at)bar.com) by normalizing before
+extraction.
+
+YARA rules (``rule <name> { ... }`` blocks) are lifted verbatim from the
+*raw* text (before defang normalization, which would corrupt rule
+bodies) and surfaced alongside the indicators so an analyst gets a
+ready-to-deploy detection straight out of the advisory.
 
 Pure deterministic parsing — no LLM, no mock gate. The PDF/CSV → text
 step (binary decode + OCR) is the dep-needing follow-up; this node takes
@@ -65,6 +71,68 @@ _DOMAIN_RE = re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+
 # TLDs that are almost always false positives in prose (file extensions).
 _NON_DOMAIN_TLDS = {"exe", "dll", "doc", "docx", "pdf", "txt", "zip", "ps1", "py", "sh", "bat"}
 
+# --- YARA rule extraction --------------------------------------------------- #
+
+# Start of a YARA rule: ``rule <name>`` then, before the opening brace, only
+# whitespace and an optional ``: tag1 tag2`` list — the gap must not span a
+# further ``rule`` keyword, so prose like "deploy the rule below:\n\nrule Foo {"
+# anchors on ``Foo`` rather than swallowing it as ``below``'s tags. The brace
+# is matched here; the closing brace is found by a balance scan (rule bodies
+# nest braces in hex strings / regex quantifiers).
+_YARA_RULE_START_RE = re.compile(r"\brule\s+([A-Za-z_]\w*)(?:(?!\brule\b)[^{])*\{")
+# Every well-formed YARA rule carries a mandatory ``condition:`` section; we
+# require it so a stray "rule foo { ... }" in prose isn't mistaken for one.
+_YARA_CONDITION_RE = re.compile(r"\bcondition\s*:", re.I)
+
+
+class ExtractedYaraRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., description="The rule identifier from `rule <name>`.")
+    rule: str = Field(..., description="The full rule block, verbatim.")
+
+
+def _extract_yara_rules(text: str) -> list[ExtractedYaraRule]:
+    """Pull whole ``rule <name> { ... }`` blocks out of *raw* advisory text.
+
+    Brace-balanced (hex strings and regex quantifiers nest braces), and
+    string-aware so a ``"}"`` inside a YARA string literal doesn't close the
+    block early. Only blocks with a ``condition:`` section are accepted.
+    """
+    rules: list[ExtractedYaraRule] = []
+    for m in _YARA_RULE_START_RE.finditer(text):
+        name = m.group(1)
+        depth = 0
+        end: int | None = None
+        in_str = False
+        i = m.end() - 1  # index of the opening '{'
+        n = len(text)
+        while i < n:
+            c = text[i]
+            if in_str:
+                if c == "\\":
+                    i += 2
+                    continue
+                if c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+            i += 1
+        if end is None:
+            continue  # unbalanced block — skip rather than swallow the rest
+        body = text[m.start() : end]
+        if not _YARA_CONDITION_RE.search(body):
+            continue
+        rules.append(ExtractedYaraRule(name=name, rule=body))
+    return rules
+
 
 class ExtractedIOC(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -85,6 +153,10 @@ class IOCExtractorOutput(BaseModel):
 
     iocs: list[ExtractedIOC] = Field(default_factory=list)
     deduped_count: int = Field(default=0, description="Duplicates removed during extraction.")
+    yara_rules: list[ExtractedYaraRule] = Field(
+        default_factory=list,
+        description="YARA rule blocks lifted verbatim from the advisory (UC-2.2).",
+    )
 
 
 class IOCExtractorNode(Node[IOCExtractorInput, IOCExtractorOutput]):
@@ -109,6 +181,9 @@ class IOCExtractorNode(Node[IOCExtractorInput, IOCExtractorOutput]):
         ctx: NodeContext,
     ) -> IOCExtractorOutput:
         raw = input.text
+        # YARA rules are extracted from the raw text — defang normalization
+        # (e.g. [.] -> .) would silently rewrite rule bodies.
+        yara_rules = _extract_yara_rules(raw)
         text = _defang_normalize(raw)
         was_defanged = text != raw
 
@@ -174,7 +249,7 @@ class IOCExtractorNode(Node[IOCExtractorInput, IOCExtractorOutput]):
             seen.add(key)
             unique.append(ExtractedIOC(type=t, value=v, was_defanged=was_defanged))
 
-        return IOCExtractorOutput(iocs=unique, deduped_count=dupes)
+        return IOCExtractorOutput(iocs=unique, deduped_count=dupes, yara_rules=yara_rules)
 
 
 NodeRegistry.register(IOCExtractorNode)
@@ -182,6 +257,7 @@ NodeRegistry.register(IOCExtractorNode)
 
 __all__ = [
     "ExtractedIOC",
+    "ExtractedYaraRule",
     "IOCExtractorInput",
     "IOCExtractorNode",
     "IOCExtractorOutput",

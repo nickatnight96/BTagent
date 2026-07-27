@@ -9,10 +9,11 @@ package. Composes existing nodes:
       -> QuerySynthNode         (pre-built hunt queries per derived TTP)
       -> Sigma drafts           (one per derived technique)
 
-Mock-first (BTAGENT_MOCK_CONNECTORS gate, matching RetroHunt). The
-PDF/CSV -> text decode step is the dep-needing follow-up; this node
-takes text. The case-notebook attachment (UC-5.2 lineage) is a backend
-concern once the notebook surface lands.
+Mock-first (BTAGENT_MOCK_CONNECTORS gate, matching RetroHunt). This node
+takes already-decoded text; the PDF/CSV -> text decode step lives in the
+backend hunt-package endpoint (server-side, #105). The case-notebook
+attachment (UC-5.2 lineage) is a backend concern once the notebook
+surface lands.
 """
 
 from __future__ import annotations
@@ -159,6 +160,7 @@ class HuntPackageNode(Node[HuntPackageInput, HuntPackageOutput]):
             retro_report=retro.report,
             queries=queries,
             sigma_drafts=sigma_drafts,
+            yara_rules=[y.rule for y in extract.yara_rules],
             mock_mode=True,
         )
         return HuntPackageOutput(package=package)

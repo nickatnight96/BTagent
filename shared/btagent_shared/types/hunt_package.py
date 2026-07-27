@@ -52,6 +52,10 @@ class HuntPackage(BaseModel):
         description="Per-technique, per-backend pre-built hunt queries.",
     )
     sigma_drafts: list[SigmaDraft] = Field(default_factory=list)
+    yara_rules: list[str] = Field(
+        default_factory=list,
+        description="YARA rule blocks extracted verbatim from the advisory (UC-2.2).",
+    )
     generated_at: datetime = Field(default_factory=datetime.utcnow)
     mock_mode: bool = False
 
