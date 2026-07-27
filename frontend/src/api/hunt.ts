@@ -12,6 +12,7 @@ import type {
   NdrHuntRunResponse,
   HuntFinding,
   HuntFindingClusterListResponse,
+  HuntPackRunListResponse,
   NoiseBaseline,
   PromoteClusterRequest,
   PromoteFindingsResponse,
@@ -136,4 +137,16 @@ export async function promoteCluster(
 /** Chronically-hitting pack rules — advisory suppression candidates (#112). */
 export async function getNoiseBaseline(): Promise<NoiseBaseline> {
   return api.get<NoiseBaseline>(`${BASE}/noise-baseline`);
+}
+
+/** Org-scoped hunt-pack run history, newest-first (#112 Phase B). */
+export async function listPackRuns(params?: {
+  page?: number;
+  page_size?: number;
+}): Promise<HuntPackRunListResponse> {
+  const search = new URLSearchParams();
+  if (params?.page) search.set("page", String(params.page));
+  if (params?.page_size) search.set("page_size", String(params.page_size));
+  const qs = search.toString();
+  return api.get<HuntPackRunListResponse>(`${BASE}/pack-runs${qs ? `?${qs}` : ""}`);
 }

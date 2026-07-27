@@ -243,3 +243,53 @@ export interface NoiseBaseline {
   min_runs: number;
   hit_rate_threshold: number;
 }
+
+/**
+ * Per-rule health relative to its noise baseline (#112 Phase B).
+ * Mirrors ``btagent_shared.types.huntpack.HuntRuleState``.
+ */
+export type HuntRuleState =
+  | "clean"
+  | "firing_as_expected"
+  | "over_firing"
+  | "under_firing"
+  | "errored";
+
+/** One rule's rollup inside a pack run's ``rule_stats`` map. */
+export interface HuntPackRunRuleStat {
+  title: string;
+  hits: number;
+  errors: number;
+  /** Transpiled query string per backend (``backend -> query``). */
+  queries?: Record<string, string>;
+}
+
+/**
+ * One scheduled / ad-hoc hunt-pack execution's history record (#112).
+ * Mirrors ``btagent_shared.types.hunt_finding.HuntPackRun`` /
+ * ``HuntPackRunRow``. ``status`` is ``running`` while in flight (resumable),
+ * else a terminal ``completed`` / ``completed_with_errors`` / ``failed``.
+ */
+export interface HuntPackRun {
+  id: string;
+  org_id: string;
+  run_id: string;
+  pack_id: string;
+  pack_name: string;
+  pack_version: string;
+  backends: string[];
+  rule_stats: Record<string, HuntPackRunRuleStat>;
+  hit_count: number;
+  error_count: number;
+  findings_created: number;
+  status: string;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+/** Response from GET /hunt/pack-runs. */
+export interface HuntPackRunListResponse {
+  items: HuntPackRun[];
+  total: number;
+}

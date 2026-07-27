@@ -31,6 +31,7 @@ import {
   Bot,
   FileText,
   SlidersHorizontal,
+  Package,
 } from "lucide-react";
 import { useUIStore } from "@/stores/uiStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -88,6 +89,12 @@ const navItems: NavItem[] = [
     path: "/hunts",
     icon: <FileSearch className="w-5 h-5" />,
     testId: "nav-hunts-link",
+  },
+  {
+    label: "Hunt Packs",
+    path: "/hunt-packs",
+    icon: <Package className="w-5 h-5" />,
+    testId: "nav-hunt-packs-link",
   },
   {
     label: "Hunt Planner",
