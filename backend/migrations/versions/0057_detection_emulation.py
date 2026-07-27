@@ -13,7 +13,7 @@ pySigma replay. A run that went through an emulator records:
 Additive + fully reversible. Existing replay rows default to
 ``emulated=false`` / ``target_env=NULL`` / ``verdicts=[]`` — no backfill needed.
 
-Revision ID: 0057_detection_validation_verdicts
+Revision ID: 0057_detection_emulation
 Revises: 0056_response_safelist
 Create Date: 2026-07-27
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision: str = "0057_detection_validation_verdicts"
+revision: str = "0057_detection_emulation"
 down_revision: str | None = "0056_response_safelist"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
