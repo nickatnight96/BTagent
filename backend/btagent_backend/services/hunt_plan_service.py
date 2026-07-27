@@ -826,3 +826,93 @@ async def _index_hunt_lesson(
         },
     )
     logger.info("hunt lesson indexed for plan %s as knowledge doc %s", plan.id, doc.id)
+
+
+# --------------------------------------------------------------------------- #
+# Hunt-pack suggestions — read + analyst decision (#120 Phase C / #112)
+#
+# ``_file_hunt_pack_suggestion`` above writes these rows; without the reads
+# below the table is write-only and the analyst promotion the design depends
+# on ("we don't silently auto-arm a recurring pack") cannot happen.
+# --------------------------------------------------------------------------- #
+
+# The analyst review lifecycle stored in ``HuntPackSuggestionRow.state``.
+SUGGESTION_STATES: tuple[str, ...] = ("suggested", "accepted", "dismissed")
+# States an analyst may move a suggestion *to*. "suggested" is the writer's
+# initial value, not a decision, so it is not re-selectable — a decision is
+# a one-way step that the HIT write-back path deliberately never overwrites.
+SUGGESTION_DECISIONS: tuple[str, ...] = ("accepted", "dismissed")
+
+
+async def list_pack_suggestions(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    state: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[list, int]:
+    """Org-scoped hunt-pack suggestions, most-reinforced first.
+
+    Ordered by ``hit_count`` descending then recency: a shape confirmed by
+    several separate hunts is a stronger scheduling candidate than one
+    confirmed once, and that is the ranking an analyst triaging the queue
+    actually wants.
+    """
+    from btagent_backend.db.models_pattern import HuntPackSuggestionRow
+
+    where = [HuntPackSuggestionRow.org_id == org_id]
+    if state is not None:
+        where.append(HuntPackSuggestionRow.state == state)
+
+    total = (
+        await db.execute(select(func.count()).select_from(HuntPackSuggestionRow).where(*where))
+    ).scalar_one() or 0
+
+    rows = (
+        (
+            await db.execute(
+                select(HuntPackSuggestionRow)
+                .where(*where)
+                .order_by(
+                    HuntPackSuggestionRow.hit_count.desc(),
+                    HuntPackSuggestionRow.updated_at.desc(),
+                    HuntPackSuggestionRow.id,
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows), int(total)
+
+
+async def decide_pack_suggestion(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    suggestion_id: str,
+    state: str,
+):
+    """Record an analyst's accept/dismiss on a suggestion. Not committed.
+
+    Returns ``None`` when the suggestion isn't this org's (the route 404s),
+    so a suggestion id from another tenant is indistinguishable from one that
+    doesn't exist. Raises :class:`ValueError` for a state outside
+    :data:`SUGGESTION_DECISIONS`.
+    """
+    from btagent_backend.db.models_pattern import HuntPackSuggestionRow
+
+    if state not in SUGGESTION_DECISIONS:
+        raise ValueError(f"state must be one of {list(SUGGESTION_DECISIONS)}; got {state!r}")
+
+    row = await db.get(HuntPackSuggestionRow, suggestion_id)
+    if row is None or row.org_id != org_id:
+        return None
+
+    row.state = state
+    row.updated_at = _utcnow()
+    await db.flush()
+    return row

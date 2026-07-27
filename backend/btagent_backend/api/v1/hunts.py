@@ -806,3 +806,128 @@ async def correlate_entity(
         ) from exc
 
     return out.timeline
+
+
+# --------------------------------------------------------------------------- #
+# Hunt-pack suggestions (#120 Phase C -> #112)
+# --------------------------------------------------------------------------- #
+
+
+class HuntPackSuggestionSummary(BaseModel):
+    """A suggested recurring pack — the draft manifest plus its provenance."""
+
+    id: str
+    proposal_id: str
+    plan_id: str
+    title: str
+    technique_ids: list[str]
+    rationale: str
+    state: str
+    hit_count: int
+    created_at: str
+    updated_at: str
+    # The promotable HuntPackManifest draft, so an analyst can review the
+    # actual Sigma before arming anything.
+    manifest: dict
+
+
+class HuntPackSuggestionListResponse(BaseModel):
+    items: list[HuntPackSuggestionSummary]
+    total: int
+
+
+class DecideHuntPackSuggestionRequest(BaseModel):
+    state: Literal["accepted", "dismissed"] = Field(
+        ...,
+        description=(
+            "Analyst decision. 'suggested' is the writer's initial value, not a "
+            "decision, so it cannot be selected here."
+        ),
+    )
+
+
+def _suggestion_to_summary(row) -> HuntPackSuggestionSummary:
+    return HuntPackSuggestionSummary(
+        id=row.id,
+        proposal_id=row.proposal_id,
+        plan_id=row.plan_id,
+        title=row.title,
+        technique_ids=list(row.technique_ids or []),
+        rationale=row.rationale or "",
+        state=row.state,
+        hit_count=row.hit_count,
+        created_at=row.created_at.isoformat(),
+        updated_at=row.updated_at.isoformat(),
+        manifest=dict(row.manifest or {}),
+    )
+
+
+@router.get("/pack-suggestions", response_model=HuntPackSuggestionListResponse)
+async def list_hunt_pack_suggestions(
+    state: str | None = Query(
+        None,
+        description="Filter by review state: suggested / accepted / dismissed.",
+    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPackSuggestionListResponse:
+    """Recurring-pack suggestions filed by confirmed-HIT pattern hunts (#120).
+
+    A confirmed HIT means a cross-investigation shape both recurred across
+    closed cases *and* fired against current telemetry — a strong candidate
+    for a scheduled #112 pack. Nothing is auto-armed; this is the queue an
+    analyst reviews before promoting one.
+
+    Most-reinforced first: a shape several separate hunts confirmed outranks
+    one confirmed once.
+    """
+    user.require_permission("hunt:view")
+    if state is not None and state not in hunt_plan_service.SUGGESTION_STATES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unknown state {state!r}; expected one of "
+                f"{list(hunt_plan_service.SUGGESTION_STATES)}."
+            ),
+        )
+    rows, total = await hunt_plan_service.list_pack_suggestions(
+        db, org_id=user.org_id, state=state, page=page, page_size=page_size
+    )
+    return HuntPackSuggestionListResponse(
+        items=[_suggestion_to_summary(r) for r in rows], total=total
+    )
+
+
+@router.post(
+    "/pack-suggestions/{suggestion_id}/decide",
+    response_model=HuntPackSuggestionSummary,
+)
+async def decide_hunt_pack_suggestion(
+    suggestion_id: str,
+    body: DecideHuntPackSuggestionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> HuntPackSuggestionSummary:
+    """Accept or dismiss a suggestion (senior-analyst).
+
+    Gated on ``hunt:promote`` rather than the ``hunt:view`` used to read the
+    queue, because the decision is **durable**: the HIT write-back path
+    deliberately never overwrites a decided row, so a dismiss permanently
+    stops a confirmed-HIT shape from re-surfacing however many times it
+    recurs. That is the same "shapes what the SOC does (and doesn't) look
+    at" reasoning the RBAC map already uses to put suppress/promote at
+    senior-analyst.
+
+    Accepting records the intent to schedule the draft; it does not itself
+    arm a pack.
+    """
+    user.require_permission("hunt:promote")
+    row = await hunt_plan_service.decide_pack_suggestion(
+        db, org_id=user.org_id, suggestion_id=suggestion_id, state=body.state
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Hunt-pack suggestion not found")
+    await db.commit()
+    return _suggestion_to_summary(row)
