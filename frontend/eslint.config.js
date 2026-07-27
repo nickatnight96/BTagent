@@ -53,7 +53,12 @@ export default [
         requireConfigFile: false,
         babelOptions: {
           presets: [
-            ["@babel/preset-typescript", { isTSX: true, allExtensions: true }],
+            // Babel 8 removed `isTSX` / `allExtensions`. They forced every
+            // file to be parsed as TSX; the replacement is Babel's own
+            // extension-based detection, which is what we actually want —
+            // JSX lives only in .tsx/.jsx here, and parsing a .ts file as
+            // TSX makes `<T>` ambiguous between a cast and a JSX element.
+            "@babel/preset-typescript",
             ["@babel/preset-react", { runtime: "automatic" }],
           ],
         },
