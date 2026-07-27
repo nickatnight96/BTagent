@@ -76,6 +76,11 @@ class AuditCategory(StrEnum):
     # Suppressing shapes what the SOC stops looking at and promoting spawns
     # an investigation, so both must land on the hash-chain ledger.
     HUNT = "hunt"
+    # Detection-validation adversary emulation (#118). Every emulation trigger
+    # AND every sandbox-refused trigger (target_env not an approved sandbox)
+    # lands here — the emulators fire real ATT&CK techniques in live mode, so
+    # both the go and the no-go must be tamper-evident ledger facts.
+    DETECTION_VALIDATION = "detection_validation"
 
 
 class AuditOutcome(StrEnum):

@@ -47,8 +47,13 @@ from typing import Any
 
 from btagent_shared.hunt.validation import build_report, replay_scenario
 from btagent_shared.types.detection_validation import (
+    CoverageResult,
+    EmulationRequest,
     SimulationScenario,
+    TechniqueVerdict,
     ValidationReport,
+    ValidationSummary,
+    ValidationVerdict,
 )
 
 logger = logging.getLogger("btagent.services.validation")
@@ -306,3 +311,46 @@ async def run_validation(
     )
 
     return report
+
+
+def build_emulation_report(
+    *,
+    run_id: str,
+    request: EmulationRequest,
+    verdict: TechniqueVerdict,
+    generated_at: datetime,
+) -> ValidationReport:
+    """Fold a single-technique emulation ``verdict`` into a ``ValidationReport``.
+
+    Maps the orchestrator's :class:`TechniqueVerdict` onto the same report shape
+    the in-process replay path produces so persistence and the API are uniform.
+    A verdict counts as "detected" coverage only when it is ``validated`` — a
+    ``wrong_severity`` / ``late`` / ``silent_gap`` / ``errored`` verdict leaves
+    the technique as a gap so it surfaces to analysts.
+    """
+    detected = 1 if verdict.verdict == ValidationVerdict.VALIDATED else 0
+    missed = 0 if verdict.verdict == ValidationVerdict.VALIDATED else 1
+
+    coverage = CoverageResult(
+        technique_id=verdict.technique_id,
+        total_simulated=1,
+        detected=detected,
+        missed=missed,
+        false_positives=0,
+        rules_fired=[f.rule_id for f in verdict.fired_rules],
+        rules_expected_but_missed=list(verdict.coverage_delta.missing_rules),
+    )
+    summary = ValidationSummary(
+        detected_pct=100.0 if detected else 0.0,
+        total_techniques=1,
+        gaps=[] if detected else [verdict.technique_id],
+    )
+    return ValidationReport(
+        run_id=run_id,
+        scenarios_run=1,
+        coverage_by_technique=[coverage],
+        summary=summary,
+        generated_at=generated_at,
+        emulation_target_env=request.target_env,
+        verdicts=[verdict],
+    )

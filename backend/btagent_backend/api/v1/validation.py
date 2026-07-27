@@ -10,27 +10,45 @@
     List the persisted run history newest-first (org-scoped, paginated).
     RBAC ``hunt:view``.
 
-Mock-first: the scenario set is deterministic and synthetic (no live Atomic Red
-Team / Caldera execution yet — deferred). ``run_validation`` stays a pure engine
-call; persistence flows through ``validation_run_service`` (which never commits —
-the ``get_db`` dependency owns the commit on success).
+``POST /api/v1/validation/emulate``
+    SANDBOX-GATED adversary-emulation validation of one ATT&CK technique
+    (#118). The sandbox-enforcement service refuses any non-sandbox
+    ``target_env`` with an AUDITED 403 denial before any emulator runs; an
+    approved sandbox audits the trigger, drives the mock-first
+    ``ValidationOrchestrator`` (trigger -> observe -> score), persists the
+    verdict, and returns it. RBAC ``validation:emulate`` (incident_commander) —
+    triggering an emulation is a containment-class action.
+
+Mock-first: the scenario set is deterministic and synthetic and the emulators
+honour ``BTAGENT_MOCK_CONNECTORS`` (default on) — no real technique fires.
+``run_validation`` stays a pure engine call; persistence flows through
+``validation_run_service`` (which never commits — the ``get_db`` dependency owns
+the commit on success).
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from btagent_shared.types.detection_validation import (
+    EmulationRequest,
+    Emulator,
+    TargetEnv,
+)
+from btagent_shared.types.enums import Severity
+from btagent_shared.utils.ids import generate_id
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models_validation import DetectionValidationRunRow
 from btagent_backend.services import validation_run_service
+from btagent_backend.services.detection_emulation_service import run_emulation_validation
 from btagent_backend.services.validation_scenarios import default_validation_scenarios
-from btagent_backend.services.validation_service import run_validation
+from btagent_backend.services.validation_service import build_emulation_report, run_validation
 
 logger = logging.getLogger("btagent.api.validation")
 
@@ -48,6 +66,9 @@ class ValidationRunSummary(BaseModel):
     total_techniques: int
     detected_pct: float
     gaps: list[str]
+    # Emulation-path fields (#118). False / None for pure in-process replay runs.
+    emulated: bool = False
+    target_env: str | None = None
     generated_at: datetime
     created_at: datetime
 
@@ -56,11 +77,38 @@ class ValidationRunResponse(ValidationRunSummary):
     # The POST response carries the full per-technique payload; the list view
     # omits it to stay light.
     coverage_by_technique: list[dict]
+    verdicts: list[dict] = Field(default_factory=list)
 
 
 class ValidationRunListResponse(BaseModel):
     items: list[ValidationRunSummary]
     total: int
+
+
+class EmulationRunRequest(BaseModel):
+    """Body for a sandbox-gated adversary-emulation validation run."""
+
+    technique_id: str = Field(..., min_length=1, max_length=20)
+    # No default sandbox: the caller must state the target explicitly, and the
+    # sandbox-enforcement layer refuses anything that is not an approved sandbox.
+    target_env: TargetEnv = Field(
+        default=TargetEnv.UNKNOWN,
+        description="Where to emulate. Only 'sandbox' is approved; anything "
+        "else is refused with an audited denial before any emulator runs.",
+    )
+    emulator: Emulator = Field(default=Emulator.ATOMIC_RED_TEAM)
+    expected_severity: Severity = Field(default=Severity.HIGH)
+    latency_sla_seconds: float = Field(default=300.0, gt=0)
+
+
+class EmulationDenied(BaseModel):
+    """403 body returned when a non-sandbox target is refused (audited)."""
+
+    status: str = "denied"
+    technique_id: str
+    target_env: str
+    reason: str
+    audit_id: str
 
 
 def _summary(row: DetectionValidationRunRow) -> ValidationRunSummary:
@@ -72,6 +120,8 @@ def _summary(row: DetectionValidationRunRow) -> ValidationRunSummary:
         total_techniques=row.total_techniques,
         detected_pct=row.detected_pct,
         gaps=list(row.gaps or []),
+        emulated=bool(getattr(row, "emulated", False)),
+        target_env=getattr(row, "target_env", None),
         generated_at=row.generated_at,
         created_at=row.created_at,
     )
@@ -92,6 +142,72 @@ async def create_validation_run(
     return ValidationRunResponse(
         **_summary(row).model_dump(),
         coverage_by_technique=list(row.coverage_by_technique or []),
+        verdicts=list(getattr(row, "verdicts", []) or []),
+    )
+
+
+@router.post(
+    "/emulate",
+    response_model=ValidationRunResponse,
+    status_code=201,
+    responses={403: {"model": EmulationDenied}},
+)
+async def create_emulation_run(
+    body: EmulationRunRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Sandbox-gated adversary-emulation validation of one ATT&CK technique.
+
+    SAFETY: the sandbox-enforcement service is the sole path to an emulator. A
+    non-sandbox ``target_env`` is refused with an AUDITED 403 denial and NO
+    emulator is invoked. An approved sandbox audits the trigger, drives the
+    mock-first orchestrator, persists the verdict, and returns it. Org-scoped.
+    """
+    # containment-class RBAC gate (incident_commander) — triggering an
+    # emulation is as privileged as executing containment.
+    user.require_permission("validation:emulate")
+
+    request = EmulationRequest(
+        technique_id=body.technique_id,
+        target_env=body.target_env,
+        emulator=body.emulator,
+        expected_severity=body.expected_severity,
+        latency_sla_seconds=body.latency_sla_seconds,
+    )
+
+    outcome = await run_emulation_validation(
+        db, actor_id=user.id, org_id=user.org_id, request=request
+    )
+
+    if not outcome.approved:
+        # The audited denial row is already written; surface a 403 whose body
+        # carries the audit id so the refusal is traceable end to end.
+        raise HTTPException(
+            status_code=outcome.http_status,
+            detail={
+                "status": "denied",
+                "technique_id": outcome.technique_id,
+                "target_env": outcome.target_env,
+                "reason": outcome.reason,
+                "audit_id": outcome.audit_id,
+            },
+        )
+
+    assert outcome.verdict is not None  # approved path always carries a verdict
+    report = build_emulation_report(
+        run_id=generate_id("valrun"),
+        request=request,
+        verdict=outcome.verdict,
+        generated_at=datetime.now(UTC),
+    )
+    row = await validation_run_service.persist_validation_report(
+        db, report, org_id=user.org_id, packs=()
+    )
+    return ValidationRunResponse(
+        **_summary(row).model_dump(),
+        coverage_by_technique=list(row.coverage_by_technique or []),
+        verdicts=list(getattr(row, "verdicts", []) or []),
     )
 
 

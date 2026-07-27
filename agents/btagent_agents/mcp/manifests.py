@@ -822,6 +822,89 @@ MANIFESTS: dict[str, ConnectorManifest] = {
             ),
         ],
     ),
+    # ------------------------------------------------------------------ #
+    # Detection-validation adversary emulation (#118)
+    #
+    # These are the only connectors that, in LIVE mode, fire real ATT&CK
+    # techniques — so they are the most tightly gated in the fleet:
+    #   * SANDBOX-ONLY: the sandbox-enforcement layer refuses any non-sandbox
+    #     target before dispatch (enforced above the manifest, in
+    #     detection_emulation_service + the ValidationOrchestrator).
+    #   * tlp_egress RED: sandbox emulation telemetry is the most sensitive
+    #     class — it never leaves the enclave (test pins these as on-prem/RED).
+    #   * The trigger actions (run_atomic / run_operation) keep
+    #     hitl_required=True, exactly like the containment actions.
+    # ------------------------------------------------------------------ #
+    "atomic_red_team": ConnectorManifest(
+        name="atomic_red_team",
+        version="0.1.0",
+        description="Atomic Red Team — per-technique ATT&CK emulation (sandbox-only).",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.BEARER,
+        queries=[
+            _query(
+                "list_atomics",
+                "List available atomic tests (ATT&CK technique emulations).",
+                [],
+                tlp=TLP.RED,
+            ),
+        ],
+        actions=[
+            ActionCapability(
+                id="run_atomic",
+                description="Execute one atomic test (fires an ATT&CK technique in a sandbox).",
+                tlp_egress=TLP.RED,
+                cost_class=CostClass.EXPENSIVE,
+                hitl_required=True,
+                reversible=True,  # cleanup_atomic reverts the run
+                blast_radius=BlastRadius.SINGLE_HOST,
+            ),
+            ActionCapability(
+                id="cleanup_atomic",
+                description="Revert the artifacts an atomic run created (restorative).",
+                tlp_egress=TLP.RED,
+                cost_class=CostClass.MODERATE,
+                # Cleanup is safety-positive (restores the sandbox) — must never
+                # be stranded behind an approval, mirroring collaboration sinks.
+                hitl_required=False,
+                reversible=False,
+                blast_radius=BlastRadius.SINGLE_HOST,
+            ),
+        ],
+    ),
+    "caldera": ConnectorManifest(
+        name="caldera",
+        version="0.1.0",
+        description="MITRE Caldera — autonomous adversary operations (sandbox-only).",
+        transport=TransportKind.MCP_HTTP,
+        auth=CredentialType.BEARER,
+        queries=[
+            _query(
+                "list_abilities",
+                "List Caldera abilities (ATT&CK-mapped operation steps).",
+                [],
+                tlp=TLP.RED,
+            ),
+            _query(
+                "get_operation_results",
+                "Per-ability results of a prior operation.",
+                [],
+                tlp=TLP.RED,
+            ),
+        ],
+        actions=[
+            ActionCapability(
+                id="run_operation",
+                description="Run an adversary operation (a chain of ATT&CK abilities in a sandbox).",
+                tlp_egress=TLP.RED,
+                cost_class=CostClass.EXPENSIVE,
+                hitl_required=True,
+                reversible=False,
+                # An operation can traverse multiple hosts in the range.
+                blast_radius=BlastRadius.SUBNET,
+            ),
+        ],
+    ),
 }
 
 

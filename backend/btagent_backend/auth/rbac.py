@@ -142,6 +142,14 @@ PERMISSIONS: dict[str, UserRole] = {
     # what credentials a connector resolves and so is admin-only.
     "credential:view": UserRole.SENIOR_ANALYST,
     "credential:manage": UserRole.ADMIN,
+    # Detection validation — adversary emulation (#118). Browsing/replaying the
+    # deterministic simulation scenarios is a hunt-class analyst action
+    # (``hunt:run`` / ``hunt:view``). TRIGGERING an adversary emulation (Atomic
+    # Red Team / Caldera) is a containment-class capability: in live mode it
+    # fires real ATT&CK techniques, so it is gated at INCIDENT_COMMANDER exactly
+    # like ``containment:execute``. The sandbox-enforcement layer refuses any
+    # non-sandbox target regardless of role.
+    "validation:emulate": UserRole.INCIDENT_COMMANDER,
     # Reports
     "report:view": UserRole.ANALYST,
     "report:generate": UserRole.ANALYST,

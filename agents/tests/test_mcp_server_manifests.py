@@ -127,8 +127,21 @@ def test_mutating_tools_are_declared_as_actions_not_queries() -> None:
 
 
 def test_tlp_egress_tiers() -> None:
-    """On-prem telemetry stays RED; org-tenant clouds stay AMBER_STRICT."""
-    on_prem = {"splunk", "sentinel", "elastic", "crowdstrike", "zeek"}
+    """On-prem telemetry stays RED; org-tenant clouds stay AMBER_STRICT.
+
+    The sandbox adversary-emulators (atomic_red_team, caldera) also declare
+    TLP.RED: their telemetry is the most sensitive class (it describes real
+    ATT&CK techniques fired in the enclave sandbox) and must never egress.
+    """
+    on_prem = {
+        "splunk",
+        "sentinel",
+        "elastic",
+        "crowdstrike",
+        "zeek",
+        "atomic_red_team",
+        "caldera",
+    }
     for name, manifest in MANIFESTS.items():
         expected = TLP.RED if name in on_prem else TLP.AMBER_STRICT
         for cap in (*manifest.queries, *manifest.actions, *manifest.streams):

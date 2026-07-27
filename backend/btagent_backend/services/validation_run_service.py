@@ -46,6 +46,13 @@ async def persist_validation_report(
         detected_pct=report.summary.detected_pct,
         gaps=list(report.summary.gaps),
         coverage_by_technique=[c.model_dump() for c in report.coverage_by_technique],
+        # Emulation-path fields (#118). Pure replay reports leave these at the
+        # replay defaults (emulated=False, target_env=None, verdicts=[]).
+        emulated=report.emulation_target_env is not None,
+        target_env=(
+            report.emulation_target_env.value if report.emulation_target_env is not None else None
+        ),
+        verdicts=[v.model_dump(mode="json") for v in report.verdicts],
         generated_at=report.generated_at,
     )
     db.add(row)
