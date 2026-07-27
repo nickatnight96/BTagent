@@ -14,6 +14,7 @@ import { Header } from "@/components/layout/Header";
 import { AutonomyPanel } from "./AutonomyPanel";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 import { OrgProfilePanel } from "./OrgProfilePanel";
+import { SafelistPanel } from "./SafelistPanel";
 import { Card, CardContent } from "@/components/ds/card";
 import { Input } from "@/components/ds/input";
 import { Button } from "@/components/ds/button";
@@ -161,6 +162,11 @@ export function ConfigCenterPage() {
             {/* Per-org capability toggles (#418 slice 5) — self-contained
              * panel; hides itself if its fetch fails. */}
             <FeatureFlagsPanel />
+
+            {/* Never-block safelist (#106) — the guard that refuses
+             * containment. Reads need containment:execute, so this hides
+             * itself for everyone below incident commander. */}
+            <SafelistPanel />
 
             <section>
               <div className="flex flex-col md:flex-row md:items-center gap-2 mb-3">
