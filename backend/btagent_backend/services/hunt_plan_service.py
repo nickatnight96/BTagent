@@ -475,6 +475,23 @@ async def execute_plan_and_ingest(
     except Exception:  # noqa: BLE001 — exercise stamping is auxiliary
         logger.warning("technique-exercise stamping failed for plan %s", plan.id, exc_info=True)
 
+    # #120 Phase C hit→pack: a confirmed HIT means this cross-investigation
+    # pattern is worth running on a schedule — file a recurring #112 hunt-pack
+    # suggestion for analyst review. Only for proposal-backed plans that
+    # actually landed findings; best-effort like the loops above.
+    if findings_created and row.proposal_id:
+        try:
+            await _suggest_recurring_hunt_pack(
+                db,
+                org_id=row.org_id,
+                proposal_id=row.proposal_id,
+                plan=plan,
+                findings_created=findings_created,
+                ttp_summary=ttp_summary,
+            )
+        except Exception:  # noqa: BLE001 — pack suggestion is auxiliary
+            logger.warning("hunt-pack suggestion filing failed for plan %s", plan.id, exc_info=True)
+
     return row, findings_created
 
 
@@ -519,6 +536,153 @@ async def _record_technique_exercises(
             existing.exercise_count += 1
     await db.flush()
     logger.info("stamped %d technique exercises for plan %s", len(ttp_summary), plan_id)
+
+
+async def _suggest_recurring_hunt_pack(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    proposal_id: str,
+    plan: HuntPlan,
+    findings_created: int,
+    ttp_summary: dict,
+) -> None:
+    """Turn a confirmed-HIT pattern hunt into a recurring #112 hunt-pack suggestion.
+
+    A cross-investigation proposal whose hunt just landed live findings is a
+    strong candidate for a *scheduled* detection: the shape recurred across old
+    cases AND fired against current telemetry. We don't silently auto-arm a
+    recurring pack — instead we file a :class:`HuntPackSuggestionRow` carrying a
+    ready-to-review :class:`~btagent_shared.types.huntpack.HuntPackManifest`
+    draft (one Sigma rule per technique that hit), which an analyst promotes
+    into a live schedule.
+
+    Keyed unique on ``(org, proposal_id)``: repeated HIT executions refresh the
+    draft in place and bump ``hit_count`` rather than duplicating, and a row an
+    analyst has already accepted/dismissed keeps its decision (only its
+    ``hit_count`` / ``updated_at`` advance).
+    """
+    from btagent_shared.types.huntpack import HuntPackManifest, HuntPackSource, HuntRule
+
+    from btagent_backend.db.models_pattern import HuntPackSuggestionRow
+
+    entries_by_ttp = {e.ttp_id: e for e in plan.ttp_entries}
+    # Prefer the techniques that actually fired; fall back to the whole runbook
+    # if the per-TTP rollup is empty but findings still landed (defensive).
+    hit_ttps = [ttp_id for ttp_id, stats in ttp_summary.items() if stats.get("hits", 0)]
+    if not hit_ttps:
+        hit_ttps = list(entries_by_ttp)
+
+    rules: list[HuntRule] = []
+    technique_ids: list[str] = []
+    for ttp_id in hit_ttps:
+        entry = entries_by_ttp.get(ttp_id)
+        if entry is None:
+            continue
+        # Prefer the runbook's own Sigma query; fall back to a reviewable
+        # skeleton so the suggested pack is always a valid, promotable draft.
+        sigma_query = entry.queries.get("sigma")
+        if sigma_query is not None:
+            sigma_yaml = sigma_query.query
+        else:
+            tag = ttp_id.lower().replace(".", "_")
+            sigma_yaml = (
+                f"title: {entry.ttp_name} ({ttp_id}) — recurring from confirmed hunt\n"
+                "status: experimental\n"
+                "description: >-\n"
+                f"  {entry.behavioral_description or entry.rationale or ttp_id}\n"
+                f"tags:\n  - attack.{tag}\n"
+                "logsource:\n  category: process_creation\n"
+                "detection:\n"
+                "  selection:\n"
+                "    # TODO(detection-engineering): translate the runbook\n"
+                "    # queries into Sigma selections before scheduling.\n"
+                "    CommandLine|contains: PLACEHOLDER\n"
+                "  condition: selection\n"
+                "level: medium\n"
+            )
+        rules.append(
+            HuntRule(
+                id=f"rule-{plan.id}-{ttp_id}"[:64],
+                title=f"{entry.ttp_name} ({ttp_id}) — confirmed cross-investigation hit"[:300],
+                sigma_yaml=sigma_yaml,
+                mitre_techniques=[ttp_id],
+            )
+        )
+        technique_ids.append(ttp_id)
+
+    if not rules:
+        return
+
+    target = ", ".join(plan.input.adversaries + plan.input.ttps) or plan.id
+    manifest = HuntPackManifest(
+        id=f"pack-hit-{proposal_id}"[:200],
+        version="1",
+        source=HuntPackSource.AI_AUTHORED,
+        description=(
+            f"Recurring hunt pack proposed from confirmed cross-investigation hunt "
+            f"{plan.id} (proposal {proposal_id}): {findings_created} finding(s) against "
+            f"{target}. Promote to arm on a schedule."
+        ),
+        mitre_techniques=sorted(set(technique_ids)),
+        enabled_by_default=False,
+        rules=rules,
+    )
+
+    title = f"Recurring hunt pack: {target}"[:300]
+    rationale = (
+        f"Hunt plan {plan.id} launched from a cross-investigation pattern proposal confirmed "
+        f"{findings_created} live finding(s) across techniques {sorted(set(technique_ids))}. "
+        "The shape recurred across closed cases AND fired against current telemetry — a strong "
+        "candidate for a scheduled #112 hunt pack so it is caught continuously, not just on a "
+        "manual cross-investigation scan."
+    )
+
+    now = _utcnow()
+    existing = (
+        await db.execute(
+            select(HuntPackSuggestionRow).where(
+                HuntPackSuggestionRow.org_id == org_id,
+                HuntPackSuggestionRow.proposal_id == proposal_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        db.add(
+            HuntPackSuggestionRow(
+                id=generate_id("hpsug"),
+                org_id=org_id,
+                proposal_id=proposal_id,
+                plan_id=plan.id,
+                title=title,
+                technique_ids=sorted(set(technique_ids)),
+                manifest=manifest.model_dump(mode="json"),
+                rationale=rationale,
+                state="suggested",
+                hit_count=1,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    else:
+        # Refresh the draft only while still awaiting review; an accepted or
+        # dismissed row keeps the analyst's decision. hit_count always advances
+        # so the inbox can surface reinforced (repeatedly-confirmed) patterns.
+        if existing.state == "suggested":
+            existing.plan_id = plan.id
+            existing.title = title
+            existing.technique_ids = sorted(set(technique_ids))
+            existing.manifest = manifest.model_dump(mode="json")
+            existing.rationale = rationale
+        existing.hit_count += 1
+        existing.updated_at = now
+    await db.flush()
+    logger.info(
+        "recurring hunt-pack suggestion filed for proposal %s (plan %s, %d rule(s))",
+        proposal_id,
+        plan.id,
+        len(rules),
+    )
 
 
 async def _file_clean_ttp_proposals(

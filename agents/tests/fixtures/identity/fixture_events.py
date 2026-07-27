@@ -634,3 +634,88 @@ def mfa_fatigue_with_prior_approval_events() -> list[IdentityEvent]:
             timestamp=_dt("2026-06-18T09:10:00"),  # second approval — should NOT re-fire
         ),
     ]
+
+
+# ── Conditional Access bypass (#435 Identity Hunt follow-up) ───────────────
+
+
+def conditional_access_bypass_events() -> list[IdentityEvent]:
+    """A CA-covered sign-in that resolved to notApplied + single-factor — should flag.
+
+    The sign-in was evaluated against one Conditional Access policy
+    (``appliedConditionalAccessPolicies`` non-empty) yet ``conditionalAccessStatus``
+    came back ``notApplied`` and only single-factor auth was satisfied — the MFA
+    control the tenant expects never fired (T1556 / T1078).
+    """
+    return [
+        IdentityEvent(
+            id="evt_ca_bypass_001",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.LOGIN_SUCCESS,
+            principal_id="laura@corp.example.com",
+            app_id="app_ms_graph",
+            ip_address="203.0.113.77",
+            geo=GeoLocation(country="US", city="Ashburn", asn="AS14618"),
+            timestamp=_dt("2026-06-18T04:12:00"),
+            raw={
+                "conditionalAccessStatus": "notApplied",
+                "authenticationRequirement": "singleFactorAuthentication",
+                "appliedConditionalAccessPolicies": [
+                    {
+                        "id": "ca-policy-require-mfa",
+                        "displayName": "Require MFA",
+                        "result": "notApplied",
+                    }
+                ],
+            },
+        )
+    ]
+
+
+def conditional_access_enforced_events() -> list[IdentityEvent]:
+    """CA-covered sign-ins that were fully enforced (or not covered) — should NOT flag.
+
+    Two negatives:
+      1. conditionalAccessStatus=success + multiFactorAuthentication (enforced).
+      2. no applied CA policies at all (sign-in not in scope of any policy) —
+         single-factor here carries no bypass signal.
+    """
+    return [
+        IdentityEvent(
+            id="evt_ca_enforced_001",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.LOGIN_SUCCESS,
+            principal_id="mona@corp.example.com",
+            app_id="app_ms_graph",
+            ip_address="198.51.100.42",
+            timestamp=_dt("2026-06-18T05:00:00"),
+            raw={
+                "conditionalAccessStatus": "success",
+                "authenticationRequirement": "multiFactorAuthentication",
+                "appliedConditionalAccessPolicies": [
+                    {
+                        "id": "ca-policy-require-mfa",
+                        "displayName": "Require MFA",
+                        "result": "success",
+                    }
+                ],
+            },
+        ),
+        IdentityEvent(
+            id="evt_ca_notcovered_001",
+            org_id=_ORG,
+            provider=_PROVIDER,
+            kind=IdentityEventKind.LOGIN_SUCCESS,
+            principal_id="nora@corp.example.com",
+            app_id="app_ms_graph",
+            ip_address="198.51.100.43",
+            timestamp=_dt("2026-06-18T05:05:00"),
+            raw={
+                "conditionalAccessStatus": "notApplied",
+                "authenticationRequirement": "singleFactorAuthentication",
+                "appliedConditionalAccessPolicies": [],  # not in scope of any CA policy
+            },
+        ),
+    ]

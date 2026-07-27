@@ -255,15 +255,24 @@ export interface OAuthGrantListResponse {
 
 /** A node in the principal × app grant graph (consumed by @xyflow/react). */
 export interface GrantGraphNode {
+  /**
+   * Node kind. ``session`` nodes are derived from live identity events and sit
+   * left of the principals, each linked to its principal by an assumed edge.
+   */
+  kind: "principal" | "app" | "session";
   id: string;
-  kind: "principal" | "app";
-  /** Human label (UPN / app display name). */
+  /** Human label (UPN / app display name / session id). */
   label: string;
-  /** Column position — principals left, apps right. */
+  /** Column position — sessions far-left, principals left, apps right. */
   position: { x: number; y: number };
 }
 
-/** An edge: a grant connecting a principal to an app. */
+/**
+ * An edge in the grant graph. ``relation: "grant"`` (the default) connects a
+ * principal to an app it holds a grant on; ``relation: "assumed"`` connects a
+ * session node to the principal that produced it and carries no grant
+ * semantics (consent_type "unknown", scope_count 0, revoked false).
+ */
 export interface GrantGraphEdge {
   id: string;
   source: string;
@@ -273,6 +282,8 @@ export interface GrantGraphEdge {
   scope_count: number;
   /** True when the underlying grant has been revoked. */
   revoked: boolean;
+  /** Edge relation — grant→app or an assumed session→principal linkage. */
+  relation?: "grant" | "assumed";
 }
 
 export interface GrantGraph {

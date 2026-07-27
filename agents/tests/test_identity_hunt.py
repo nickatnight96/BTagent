@@ -49,7 +49,9 @@ from datetime import UTC, datetime
 
 import pytest
 from btagent_shared.hunt.identity import (
+    SESSION_EDGES_KEY,
     build_grant_graph,
+    detect_conditional_access_bypass,
     detect_dormant_app_reactivation,
     detect_federation_trust_modification,
     detect_impossible_travel,
@@ -66,6 +68,8 @@ from btagent_shared.types.identity_hunt import IdentityProvider, OAuthConsentTyp
 from tests.fixtures.identity.fixture_events import (
     active_grant_and_events,
     clean_token_events,
+    conditional_access_bypass_events,
+    conditional_access_enforced_events,
     dormant_grant_and_events,
     federation_trust_modification_events,
     impossible_travel_events,
@@ -311,6 +315,47 @@ def test_mfa_fatigue_denial_run_resets_after_approval() -> None:
     assert r.evidence["denial_count"] == 3
 
 
+# ── Conditional Access bypass (#435) ──────────────────────────────────────
+
+
+def test_conditional_access_bypass_flagged() -> None:
+    """A CA-covered sign-in with notApplied status + single-factor must flag."""
+    results = detect_conditional_access_bypass(conditional_access_bypass_events())
+    assert len(results) == 1
+    r = results[0]
+    assert r.rule_id == "identity.conditional_access_bypass"
+    assert r.severity == "high"
+    assert "T1556" in r.technique_ids
+    assert "T1078" in r.technique_ids
+    assert r.entity_value == "laura@corp.example.com"
+    assert r.evidence["conditional_access_status"] == "notApplied"
+    assert r.evidence["authentication_requirement"] == "singleFactorAuthentication"
+    assert r.evidence["applied_policy_count"] == 1
+
+
+def test_conditional_access_enforced_not_flagged() -> None:
+    """Enforced (success + MFA) and not-CA-covered sign-ins must NOT flag."""
+    results = detect_conditional_access_bypass(conditional_access_enforced_events())
+    assert results == []
+
+
+def test_conditional_access_bypass_finding_contract() -> None:
+    """CA-bypass result must convert to an identity-domain RecordFindingRequest."""
+    results = detect_conditional_access_bypass(conditional_access_bypass_events())
+    assert results
+    req = to_record_finding_request(results[0])
+    assert req.source == HuntSource.IDENTITY
+    assert req.domain == HuntDomain.IDENTITY
+    assert req.technique_ids
+
+
+def test_conditional_access_bypass_in_run_all() -> None:
+    """run_all_detectors must surface the CA-bypass detector's findings."""
+    results = run_all_detectors(conditional_access_bypass_events(), [])
+    rule_ids = {r.rule_id for r in results}
+    assert "identity.conditional_access_bypass" in rule_ids
+
+
 # ── Finding contract (RecordFindingRequest) ────────────────────────────────
 
 
@@ -481,3 +526,46 @@ def test_build_grant_graph_multi_grant_same_app() -> None:
     scope_sets = [set(e["scopes"]) for e in app_entries]
     assert {"Mail.Read"} in scope_sets
     assert {"Files.ReadWrite.All"} in scope_sets
+
+
+def test_build_grant_graph_session_edge() -> None:
+    """Passing events adds one assumed session→principal edge per distinct session_id.
+
+    The token-replay fixture emits two events sharing a single session_id for
+    alice — who also holds the dormant grant — so exactly one session edge is
+    produced and it correlates the live session back to the grant-holding
+    principal. The grant adjacency map is preserved unchanged alongside it.
+    """
+    grants, _ = dormant_grant_and_events()
+    events = token_replay_events()  # 2 events, same session_id, principal=alice
+    graph = build_grant_graph(grants, events)
+
+    # Grant adjacency preserved.
+    assert "alice@corp.example.com" in graph
+    assert "app_FORGOTTEN_SAAS_001" in graph["alice@corp.example.com"]
+
+    # Session edges land under the reserved key, one per distinct session_id.
+    session_edges = graph[SESSION_EDGES_KEY]
+    assert isinstance(session_edges, list)
+    assert len(session_edges) == 1
+    edge = session_edges[0]
+    assert edge["session_id"] == "session_TOKEN_REPLAY_FIXTURE_001"
+    assert edge["principal_id"] == "alice@corp.example.com"
+    assert edge["kind"] == "session"
+    assert edge["relation"] == "assumed"
+    # Both contributing events are recorded for provenance.
+    assert set(edge["event_ids"]) == {"evt_replay_001", "evt_replay_002"}
+
+
+def test_build_grant_graph_no_events_omits_session_key() -> None:
+    """With no events the reserved session key is absent (grant-only shape)."""
+    grants, _ = dormant_grant_and_events()
+    graph = build_grant_graph(grants)
+    assert SESSION_EDGES_KEY not in graph
+
+
+def test_build_grant_graph_session_edge_ignores_empty_session_id() -> None:
+    """Events without a session_id contribute no session edge."""
+    _, events = dormant_grant_and_events()  # reactivation event has no session_id
+    graph = build_grant_graph([], events)
+    assert SESSION_EDGES_KEY not in graph

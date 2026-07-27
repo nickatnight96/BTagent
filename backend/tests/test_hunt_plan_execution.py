@@ -190,3 +190,170 @@ async def test_execute_failed_compile_is_409(
 async def test_execute_requires_auth(client, accepted_proposal):
     resp = await client.post(_execute_url(accepted_proposal.id))
     assert resp.status_code == 401
+
+
+# --------------------------------------------------------------------------- #
+# #120 Task C: a confirmed HIT files a recurring #112 hunt-pack suggestion
+# --------------------------------------------------------------------------- #
+
+
+def _fake_hit_run_plan(ttp_id: str = "T1059.001"):
+    """Build a deterministic ``run_plan`` stub that returns one hit for ``ttp_id``."""
+
+    async def _run(plan, ctx, *, lookback_hours=24, max_hits_per_query=100):
+        from btagent_engine.hunting.plan_runner import (
+            PlanBackendResult,
+            PlanHit,
+            PlanRunResult,
+            TTPRunResult,
+        )
+
+        now = datetime.now(UTC)
+        run_id = generate_id("hrun")
+        return PlanRunResult(
+            run_id=run_id,
+            plan_id=plan.id,
+            org_id=ctx.org_id,
+            started_at=now,
+            completed_at=now,
+            ttp_results=[
+                TTPRunResult(
+                    ttp_id=ttp_id,
+                    ttp_name="PowerShell",
+                    backend_results=[PlanBackendResult(backend="sigma", query="q", hit_count=1)],
+                    hits=[
+                        PlanHit(
+                            source_run_id=run_id,
+                            plan_id=plan.id,
+                            ttp_id=ttp_id,
+                            ttp_name="PowerShell",
+                            backend="sigma",
+                            summary="matched live telemetry",
+                            raw={"host": "alice-pc"},
+                        )
+                    ],
+                )
+            ],
+        )
+
+    return _run
+
+
+async def _seed_ready_plan(db_session: AsyncSession) -> tuple[PatternHuntProposalRow, str]:
+    """A proposal + a ``ready`` HuntPlanRow with one Sigma-backed TTP entry."""
+    from btagent_shared.types.hunt import (
+        Backend,
+        HuntInput,
+        HuntPlan,
+        Query,
+        TTPRunbookEntry,
+    )
+
+    from btagent_backend.db.models_pattern import HuntPlanRow
+
+    proposal = _proposal_row()
+    db_session.add(proposal)
+    await db_session.flush()
+
+    plan = HuntPlan(
+        id=generate_id("hunt"),
+        org_id=DEFAULT_ORG_ID,
+        input=HuntInput(ttps=["T1059.001"], initiated_by="usr_pattern_scan"),
+        ttp_entries=[
+            TTPRunbookEntry(
+                ttp_id="T1059.001",
+                ttp_name="PowerShell",
+                rationale="recurring cross-case signal",
+                behavioral_description="suspicious powershell",
+                queries={
+                    Backend.SIGMA: Query(
+                        backend=Backend.SIGMA,
+                        query="title: PS\ndetection:\n  sel: {}\n  condition: sel\n",
+                    )
+                },
+            )
+        ],
+    )
+    now = datetime.now(UTC)
+    db_session.add(
+        HuntPlanRow(
+            id=plan.id,
+            org_id=DEFAULT_ORG_ID,
+            proposal_id=proposal.id,
+            status="ready",
+            plan=plan.model_dump(mode="json"),
+            error="",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await db_session.flush()
+    return proposal, plan.id
+
+
+async def test_confirmed_hit_files_recurring_hunt_pack_suggestion(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    from btagent_backend.db.models_pattern import HuntPackSuggestionRow
+    from btagent_backend.services import hunt_plan_service
+
+    proposal, plan_id = await _seed_ready_plan(db_session)
+    monkeypatch.setattr(
+        "btagent_engine.hunting.plan_runner.run_plan", _fake_hit_run_plan("T1059.001")
+    )
+
+    _, findings_created = await hunt_plan_service.execute_plan_and_ingest(
+        db_session, plan_row_id=plan_id
+    )
+    assert findings_created >= 1
+
+    # Closed-loop outcome write-back marked the proposal a HIT...
+    await db_session.refresh(proposal)
+    assert proposal.outcome == "hit"
+
+    # ...and a recurring #112 hunt-pack suggestion was filed from that path.
+    suggestion = (
+        await db_session.execute(
+            select(HuntPackSuggestionRow).where(HuntPackSuggestionRow.proposal_id == proposal.id)
+        )
+    ).scalar_one()
+    assert suggestion.state == "suggested"
+    assert suggestion.hit_count == 1
+    assert suggestion.plan_id == plan_id
+    assert "T1059.001" in suggestion.technique_ids
+    # The manifest draft carries one Sigma rule per hitting technique, sourced
+    # from the runbook's own query (not a placeholder skeleton).
+    rules = suggestion.manifest["rules"]
+    assert len(rules) == 1
+    assert rules[0]["mitre_techniques"] == ["T1059.001"]
+    assert "title: PS" in rules[0]["sigma_yaml"]
+
+
+async def test_repeated_hit_upserts_suggestion_without_duplicating(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    from btagent_backend.db.models_pattern import HuntPackSuggestionRow
+    from btagent_backend.services import hunt_plan_service
+
+    proposal, plan_id = await _seed_ready_plan(db_session)
+    monkeypatch.setattr(
+        "btagent_engine.hunting.plan_runner.run_plan", _fake_hit_run_plan("T1059.001")
+    )
+
+    await hunt_plan_service.execute_plan_and_ingest(db_session, plan_row_id=plan_id)
+    await hunt_plan_service.execute_plan_and_ingest(db_session, plan_row_id=plan_id)
+
+    rows = (
+        (
+            await db_session.execute(
+                select(HuntPackSuggestionRow).where(
+                    HuntPackSuggestionRow.proposal_id == proposal.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # One row (unique on org+proposal), reinforced to hit_count == 2.
+    assert len(rows) == 1
+    assert rows[0].hit_count == 2

@@ -208,3 +208,61 @@ class PlanRunRow(Base):
         Index("idx_plan_runs_plan_row", "plan_row_id", "started_at"),
         Index("idx_plan_runs_proposal", "org_id", "proposal_id"),
     )
+
+
+class HuntPackSuggestionRow(Base):
+    """A suggestion to promote a confirmed-HIT pattern hunt into a recurring
+    #112 hunt pack (#120 Phase C hit→pack feedback).
+
+    When a hunt launched from a :class:`PatternHuntProposalRow` confirms real
+    activity (its ``outcome`` flips to ``hit``), the cross-investigation shape
+    it hunted is worth running on a *schedule* — that is exactly what a #112
+    hunt pack is for. Rather than silently auto-arming a recurring detection,
+    ``execute_plan_and_ingest`` files one of these suggestions carrying a
+    ready-to-review :class:`~btagent_shared.types.huntpack.HuntPackManifest`
+    draft; an analyst promotes it into a live scheduled pack.
+
+    Keyed unique on ``(org_id, proposal_id)`` so repeated HIT executions of the
+    same proposal refresh the suggestion in place (bumping ``hit_count``)
+    instead of duplicating, and an analyst-decided row is never overwritten by
+    a later run.
+    """
+
+    __tablename__ = "hunt_pack_suggestions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    proposal_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("pattern_hunt_proposals.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # The compiled HuntPlan id whose execution produced the confirming hit(s).
+    plan_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    # ATT&CK technique ids the suggested pack would hunt.
+    technique_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Serialised HuntPackManifest draft (model_dump mode="json").
+    manifest: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+    # "suggested" | "accepted" | "dismissed" — analyst review lifecycle.
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="suggested")
+    # How many confirmed-HIT executions have reinforced this suggestion.
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_hunt_pack_suggestions_org_created", "org_id", "created_at"),
+        # One suggestion per (org, proposal) — HIT executions upsert on this.
+        Index("idx_hunt_pack_suggestions_proposal", "org_id", "proposal_id", unique=True),
+        Index("idx_hunt_pack_suggestions_state", "org_id", "state"),
+    )

@@ -1,0 +1,44 @@
+title: Entra ID Conditional Access Bypass
+id: 45506978-d033-4fb0-a1a2-a27d25b3c94b
+status: test
+description: >
+  Detects sign-ins to Microsoft Entra ID that were in scope of one or more
+  Conditional Access (CA) policies yet were not fully enforced: the
+  conditionalAccessStatus resolved to "notApplied" or "failure", or the sign-in
+  only satisfied single-factor authentication (authenticationRequirement =
+  singleFactorAuthentication) despite CA coverage. Adversaries abuse CA coverage
+  gaps, policy-evaluation failures, and MFA-claim spoofing to authenticate
+  without the controls the tenant expects (T1556 / T1078) — a common precursor
+  to session-token theft and legacy-authentication abuse.
+references:
+  - https://attack.mitre.org/techniques/T1556/
+  - https://attack.mitre.org/techniques/T1078/
+  - https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-conditional-access-report-only
+author: BTagent
+date: 2026-07-27
+logsource:
+  product: azure
+  service: signinlogs
+detection:
+  # The sign-in was evaluated against at least one CA policy (in scope).
+  ca_covered:
+    appliedConditionalAccessPolicies|exists: true
+  # CA evaluation did not enforce: policy skipped or evaluation errored.
+  ca_not_enforced:
+    conditionalAccessStatus:
+      - "notApplied"
+      - "failure"
+  # Only single-factor satisfied despite CA coverage (MFA never obtained).
+  single_factor:
+    authenticationRequirement: "singleFactorAuthentication"
+  condition: ca_covered and (ca_not_enforced or single_factor)
+falsepositives:
+  - Report-only CA policies (evaluate to notApplied by design — exclude report-only policy IDs)
+  - Trusted named-location / compliant-device exclusions that legitimately drop the MFA claim
+  - Break-glass / emergency-access accounts explicitly excluded from Conditional Access
+level: high
+tags:
+  - attack.defense-evasion
+  - attack.credential-access
+  - attack.t1556
+  - attack.t1078

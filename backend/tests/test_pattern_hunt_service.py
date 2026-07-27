@@ -8,11 +8,17 @@ down-weights the same cluster on a subsequent scan.
 
 from datetime import UTC, datetime, timedelta
 
-from btagent_shared.types.pattern_hunt import ProposalState
+from btagent_shared.types.pattern_hunt import ProposalOutcome, ProposalState
 from btagent_shared.utils.ids import generate_id
 from sqlalchemy import func, select
 
-from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, IOCRow, OrganizationRow
+from btagent_backend.db.models import (
+    DEFAULT_ORG_ID,
+    InvestigationRow,
+    IOCRow,
+    OrganizationRow,
+    TimelineEntryRow,
+)
 from btagent_backend.db.models_pattern import PatternHuntProposalRow, WeakSignalRow
 from btagent_backend.services import pattern_hunt_service as svc
 
@@ -81,6 +87,19 @@ async def _add_ioc(
     db.add(ioc)
     await db.flush()
     return ioc
+
+
+async def _add_timeline_entry(db, *, inv_id: str, technique_id: str | None, description: str = ""):
+    entry = TimelineEntryRow(
+        id=generate_id("evt"),
+        investigation_id=inv_id,
+        timestamp=NOW - timedelta(days=1),
+        description=description or f"activity ({technique_id})",
+        technique_id=technique_id,
+    )
+    db.add(entry)
+    await db.flush()
+    return entry
 
 
 # --------------------------------------------------------------------------- #
@@ -343,6 +362,100 @@ async def test_scan_extracts_asn_and_cmdline_from_enrichment(db_session):
         .all()
     )
     assert any("rundll32" in r.value and r.distinct_investigation_count == 2 for r in cmd_rows)
+
+
+# --------------------------------------------------------------------------- #
+# Technique extraction from timeline entries (#120 Task A — production gap)
+# --------------------------------------------------------------------------- #
+
+
+async def test_scan_extracts_techniques_from_investigations(db_session):
+    """The same ATT&CK technique attributed on the timeline of 3 unrelated
+    closed cases must surface as a TECHNIQUE weak signal + proposal — proving
+    ``load_corpus`` now reads ``timeline_entries.technique_id`` instead of the
+    old hardcoded ``techniques=[]`` that made TECHNIQUE patterns invisible."""
+    org_id = await _fresh_org(db_session, "tech")
+    for i in range(3):
+        await _add_investigation(
+            db_session, inv_id=f"inv_tech_{i}", org_id=org_id, closed_offset_days=i + 1
+        )
+        # T1059.001 recurs across every case (the cross-investigation pattern)...
+        await _add_timeline_entry(db_session, inv_id=f"inv_tech_{i}", technique_id="T1059.001")
+        # ...and appears twice within one case — must still count as ONE case
+        # (diversity is keyed on distinct investigations, not raw occurrences).
+        await _add_timeline_entry(db_session, inv_id=f"inv_tech_{i}", technique_id="T1059.001")
+        # A per-case noise technique that does NOT recur (distinct count 1).
+        await _add_timeline_entry(db_session, inv_id=f"inv_tech_{i}", technique_id=f"T1210.{i}")
+
+    result = await svc.scan_corpus(db_session, org_id=org_id, top_n=10, now=NOW)
+    assert result.investigations_scanned == 3
+
+    tech_rows = (
+        (await db_session.execute(select(WeakSignalRow).where(WeakSignalRow.kind == "technique")))
+        .scalars()
+        .all()
+    )
+    recurring = next(r for r in tech_rows if r.value == "t1059.001")
+    # Three distinct investigations despite two timeline hits in each.
+    assert recurring.distinct_investigation_count == 3
+    # The non-recurring per-case technique never crosses the min-diversity bar,
+    # so it is not proposed (but is still extracted as a single-case signal).
+    assert all(
+        "t1210" not in (r.value or "") or r.distinct_investigation_count == 1 for r in tech_rows
+    )
+
+    # It surfaces as a proposal whose HuntInput carries the canonical TTP id.
+    proposals = (await db_session.execute(select(PatternHuntProposalRow))).scalars().all()
+    tech_props = [p for p in proposals if "T1059.001" in (p.hunt_input.get("ttps") or [])]
+    assert tech_props, [p.cluster_id for p in proposals]
+
+
+# --------------------------------------------------------------------------- #
+# Phase-C outcome -> ranking feedback (#120 Task B)
+# --------------------------------------------------------------------------- #
+
+
+async def test_hit_outcome_boosts_future_ranking(db_session):
+    """A prior HIT outcome boosts its cluster's score on the next scan; a prior
+    CLEAN outcome down-weights it. Proves ``scan_corpus`` now threads each
+    proposal's recorded ``outcome`` into the clusterer's re-rank."""
+    for i in range(3):
+        await _add_investigation(db_session, inv_id=f"inv_hit_{i}", closed_offset_days=i + 1)
+        await _add_ioc(
+            db_session, inv_id=f"inv_hit_{i}", ioc_type="domain", value=f"n{i}.hit-c2.net"
+        )
+    for i in range(3):
+        await _add_investigation(db_session, inv_id=f"inv_cln_{i}", closed_offset_days=i + 1)
+        await _add_ioc(
+            db_session, inv_id=f"inv_cln_{i}", ioc_type="domain", value=f"n{i}.clean-c2.net"
+        )
+
+    # First scan — baseline scores (no outcomes recorded yet).
+    first = await svc.scan_corpus(db_session, top_n=10, now=NOW)
+    baseline = {c.id: c.score for c in first.top_clusters}
+    hit_cid = next(cid for cid in baseline if "hit-c2-net" in cid)
+    clean_cid = next(cid for cid in baseline if "clean-c2-net" in cid)
+
+    # Simulate the closed-loop write-back: one confirmed HIT, one CLEAN.
+    hit_prop = (
+        await db_session.execute(
+            select(PatternHuntProposalRow).where(PatternHuntProposalRow.cluster_id == hit_cid)
+        )
+    ).scalar_one()
+    hit_prop.outcome = ProposalOutcome.HIT.value
+    clean_prop = (
+        await db_session.execute(
+            select(PatternHuntProposalRow).where(PatternHuntProposalRow.cluster_id == clean_cid)
+        )
+    ).scalar_one()
+    clean_prop.outcome = ProposalOutcome.CLEAN.value
+    await db_session.flush()
+
+    # Re-scan — the HIT cluster is boosted, the CLEAN one down-weighted.
+    second = await svc.scan_corpus(db_session, top_n=10, now=NOW)
+    rescored = {c.id: c.score for c in second.top_clusters}
+    assert rescored[hit_cid] > baseline[hit_cid]
+    assert rescored[clean_cid] < baseline[clean_cid]
 
 
 # --------------------------------------------------------------------------- #
