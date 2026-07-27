@@ -33,14 +33,14 @@ test.describe("Configuration Center", () => {
     await gotoConfig(adminPage);
 
     // Runtime surfaces: the org-profile card is always present, with a scope
-    // badge and a deep link into its existing editor.
+    // badge and a deep link into its editor (now embedded in the Config Center).
     await expect(adminPage.getByTestId("config-surface-org_profile")).toBeVisible();
     await expect(adminPage.getByTestId("config-surface-org_profile-scope")).toHaveText(
       "org",
     );
     await expect(
       adminPage.getByTestId("config-surface-org_profile-link"),
-    ).toHaveAttribute("href", "/settings");
+    ).toHaveAttribute("href", "/config");
 
     // Deploy-time knobs: the JWT secret is present as a row but redacted —
     // the value never reaches the browser.

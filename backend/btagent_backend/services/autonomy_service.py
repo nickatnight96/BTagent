@@ -14,9 +14,12 @@ Two hard rules keep the surface honest:
   in a stored override (schema drift, manual edit) is ignored at merge time
   rather than crashing every consumer.
 
-Engine/agents call sites still construct ``IntegrationAutonomy()`` defaults
-today; wiring them through :func:`get_effective_autonomy` is the documented
-next slice on #418.
+Stored overrides take execution effect (PR #430): investigation runs
+(:mod:`~btagent_backend.services.task_manager`) and workflow runs
+(:mod:`~btagent_backend.services.workflow_run_service`) resolve the org's
+effective per-category levels via :func:`get_effective_autonomy` before
+dispatch, so a CISO-tuned posture actually governs which agent actions pause
+for a human — not just what the Settings UI displays.
 """
 
 from __future__ import annotations

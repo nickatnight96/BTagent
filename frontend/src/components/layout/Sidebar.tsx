@@ -211,8 +211,10 @@ const navItems: NavItem[] = [
     adminOnly: true,
   },
   {
+    // The Configuration Center at /config is the real settings surface; there
+    // is no /settings route, so this entry pointed nowhere. Route it to /config.
     label: "Settings",
-    path: "/settings",
+    path: "/config",
     icon: <Settings className="w-5 h-5" />,
     testId: "nav-settings-link",
   },
