@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.services import containment_execute_service, response_safelist_service
+from btagent_backend.services.audit_trail import AuditTrail
 from btagent_backend.services.response_safelist_service import SafelistValidationError
 
 logger = logging.getLogger("btagent.api.containment")
@@ -210,3 +212,54 @@ async def list_safelist_entries(
     user.require_permission("containment:execute")
     rows = await response_safelist_service.list_entries(db, org_id=user.org_id)
     return [_entry_to_response(r) for r in rows]
+
+
+@router.delete("/safelist/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_safelist_entry(
+    entry_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Remove an org-scoped never-block entry (containment:execute / admin).
+
+    The safelist was add-only, which made a mistake permanent: a typo'd
+    domain or an over-broad CIDR shields a genuinely malicious target from
+    containment forever, with no path to correct it short of direct DB
+    access. Removal closes that.
+
+    Audited under ``containment`` — deleting a never-block guard is itself a
+    security-relevant act, because it *re-enables* containment against a
+    target someone deliberately protected. The removed type/value go into
+    the entry so the ledger records what stopped being protected, not merely
+    that some row was deleted.
+
+    Only org rows can be removed; the universal baseline (public resolvers,
+    critical-infra domains, RFC1918/reserved ranges) lives in code and stays
+    in force, so this can never drop an org below the shared floor.
+    """
+    user.require_permission("containment:execute")
+    row = await response_safelist_service.remove_entry(db, org_id=user.org_id, entry_id=entry_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Safelist entry not found"
+        )
+
+    await AuditTrail(db).record(
+        org_id=user.org_id,
+        actor=user.id,
+        category=AuditCategory.CONTAINMENT,
+        action="safelist_entry_removed",
+        resource=f"safelist:{row.entry_type}:{row.value}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "entry_id": entry_id,
+            "entry_type": row.entry_type,
+            "value": row.value,
+            "reason": row.reason or "",
+        },
+    )
+    await db.commit()
+    logger.info(
+        "safelist remove org=%s by=%s %s=%s", user.org_id, user.id, row.entry_type, row.value
+    )
