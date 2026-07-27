@@ -12,24 +12,40 @@ from btagent_shared.types.pattern_hunt import ProposalState
 from btagent_shared.utils.ids import generate_id
 from sqlalchemy import func, select
 
-from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, IOCRow
+from btagent_backend.db.models import DEFAULT_ORG_ID, InvestigationRow, IOCRow, OrganizationRow
 from btagent_backend.db.models_pattern import PatternHuntProposalRow, WeakSignalRow
 from btagent_backend.services import pattern_hunt_service as svc
 
 NOW = datetime(2026, 6, 18, tzinfo=UTC)
 
 
+async def _fresh_org(db, tag: str) -> str:
+    """Create a dedicated org for a test.
+
+    The count-sensitive scan tests assert an exact ``investigations_scanned``
+    over the *shared* in-memory DB, which persists committed rows across the
+    whole session. Seeding + scanning a private org makes those counts immune
+    to closed investigations other test modules leave behind in
+    ``DEFAULT_ORG_ID`` (``load_corpus``/``scan_corpus`` filter by ``org_id``).
+    """
+    org_id = generate_id("org")
+    db.add(OrganizationRow(id=org_id, name=f"Pattern {tag}", created_at=NOW))
+    await db.flush()
+    return org_id
+
+
 async def _add_investigation(
     db,
     *,
     inv_id: str,
+    org_id: str = DEFAULT_ORG_ID,
     status: str = "closed",
     closed_offset_days: int = 1,
     config: dict | None = None,
 ) -> InvestigationRow:
     inv = InvestigationRow(
         id=inv_id,
-        org_id=DEFAULT_ORG_ID,
+        org_id=org_id,
         title=f"Case {inv_id}",
         description="",
         status=status,
@@ -45,10 +61,18 @@ async def _add_investigation(
     return inv
 
 
-async def _add_ioc(db, *, inv_id: str, ioc_type: str, value: str, enrichment: dict | None = None):
+async def _add_ioc(
+    db,
+    *,
+    inv_id: str,
+    ioc_type: str,
+    value: str,
+    org_id: str = DEFAULT_ORG_ID,
+    enrichment: dict | None = None,
+):
     ioc = IOCRow(
         id=generate_id("ioc"),
-        org_id=DEFAULT_ORG_ID,
+        org_id=org_id,
         investigation_id=inv_id,
         type=ioc_type,
         value=value,
@@ -66,14 +90,23 @@ async def _add_ioc(db, *, inv_id: str, ioc_type: str, value: str, enrichment: di
 
 async def test_scan_persists_weak_signals_and_proposals(db_session):
     # A shared C2 domain across 3 closed investigations + per-case noise.
+    org_id = await _fresh_org(db_session, "persist")
     for i in range(3):
-        await _add_investigation(db_session, inv_id=f"inv_ws_{i}", closed_offset_days=i + 1)
-        await _add_ioc(
-            db_session, inv_id=f"inv_ws_{i}", ioc_type="domain", value=f"n{i}.shared-c2.net"
+        await _add_investigation(
+            db_session, inv_id=f"inv_ws_{i}", org_id=org_id, closed_offset_days=i + 1
         )
-        await _add_ioc(db_session, inv_id=f"inv_ws_{i}", ioc_type="ip", value=f"203.0.{i}.9")
+        await _add_ioc(
+            db_session,
+            inv_id=f"inv_ws_{i}",
+            org_id=org_id,
+            ioc_type="domain",
+            value=f"n{i}.shared-c2.net",
+        )
+        await _add_ioc(
+            db_session, inv_id=f"inv_ws_{i}", org_id=org_id, ioc_type="ip", value=f"203.0.{i}.9"
+        )
 
-    result = await svc.scan_corpus(db_session, top_n=10, now=NOW)
+    result = await svc.scan_corpus(db_session, org_id=org_id, top_n=10, now=NOW)
 
     assert result.investigations_scanned == 3
     assert result.weak_signals_upserted > 0
@@ -101,12 +134,17 @@ async def test_scan_persists_weak_signals_and_proposals(db_session):
 
 
 async def test_scan_ignores_open_investigations(db_session):
-    await _add_investigation(db_session, inv_id="inv_open_1", status="investigating")
-    await _add_ioc(db_session, inv_id="inv_open_1", ioc_type="domain", value="x.open-c2.net")
-    await _add_investigation(db_session, inv_id="inv_open_2", status="investigating")
-    await _add_ioc(db_session, inv_id="inv_open_2", ioc_type="domain", value="y.open-c2.net")
+    org_id = await _fresh_org(db_session, "openonly")
+    await _add_investigation(db_session, inv_id="inv_open_1", org_id=org_id, status="investigating")
+    await _add_ioc(
+        db_session, inv_id="inv_open_1", org_id=org_id, ioc_type="domain", value="x.open-c2.net"
+    )
+    await _add_investigation(db_session, inv_id="inv_open_2", org_id=org_id, status="investigating")
+    await _add_ioc(
+        db_session, inv_id="inv_open_2", org_id=org_id, ioc_type="domain", value="y.open-c2.net"
+    )
 
-    result = await svc.scan_corpus(db_session, now=NOW)
+    result = await svc.scan_corpus(db_session, org_id=org_id, now=NOW)
     assert result.investigations_scanned == 0
     assert result.proposals_created == 0
 
