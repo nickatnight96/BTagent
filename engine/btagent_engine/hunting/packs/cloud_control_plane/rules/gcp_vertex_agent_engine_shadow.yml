@@ -1,0 +1,38 @@
+title: Shadow Vertex AI Agent Engine — Reasoning Engine Created
+id: 8ff0e868-8ba8-473c-8256-60a07b11ab71
+status: test
+description: >
+  Detects creation of a Vertex AI Agent Engine (Reasoning Engine) via the
+  aiplatform CreateReasoningEngine control-plane call.  A reasoning engine spun up
+  outside the sanctioned MLOps pipeline is a shadow agentic workload — it can hold
+  broad service-account scope, reach external tools/MCP endpoints, and run without
+  governance oversight.  Correlate the acting principal against the approved
+  agent-deployment pipeline; a human/console or unexpected service account is the
+  shadow-agent signal.
+references:
+  - https://attack.mitre.org/techniques/T1648/
+  - https://attack.mitre.org/techniques/T1580/
+author: BTagent (#117)
+date: 2026-07-27
+logsource:
+  product: gcp
+  service: audit
+detection:
+  selection:
+    protoPayload.methodName|endswith:
+      - ReasoningEngineService.CreateReasoningEngine
+      - ReasoningEngineService.UpdateReasoningEngine
+  filter_pipeline:
+    protoPayload.authenticationInfo.principalEmail|endswith:
+      - agent-deployer@iam.gserviceaccount.com
+      - vertex-mlops@iam.gserviceaccount.com
+  condition: selection and not filter_pipeline
+falsepositives:
+  - Sanctioned MLOps automation deploying an approved agent (add its service account to filter_pipeline)
+level: high
+tags:
+  - attack.persistence
+  - attack.t1648
+  - attack.t1580
+  - cloud.control-plane
+  - agentic.shadow-workload

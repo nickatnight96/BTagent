@@ -13,12 +13,16 @@ route:
   surfaces them.
 """
 
+from datetime import UTC, datetime
+
 from btagent_shared.types.hunt import HuntSource
 from btagent_shared.types.hunt_finding import SuppressionMatch
+from btagent_shared.utils.ids import generate_id
 from conftest import auth_header
 from sqlalchemy import select
 
-from btagent_backend.db.models import DEFAULT_ORG_ID
+from btagent_backend.db.models import DEFAULT_ORG_ID, OrganizationRow
+from btagent_backend.db.models_cti import DetectionProposalRow
 from btagent_backend.db.models_hunt import HuntFindingRow
 from btagent_backend.services import cloud_hunt_run_service as svc
 from btagent_backend.services import hunt_triage_service
@@ -97,3 +101,77 @@ async def test_run_cloud_hunt_route_lands_findings(client, analyst_token):
 async def test_run_cloud_requires_auth(client):
     resp = await client.post("/api/v1/hunt/cloud/run")
     assert resp.status_code in (401, 403)
+
+
+# --- clean-TTP → #113 detection-proposal routing (#117 task D) ---
+
+
+async def test_clean_cloud_ttps_routed_to_detection_proposals(db_session):
+    """Covered cloud TTPs with zero findings this run become #113 draft proposals.
+
+    Mirrors the hunt-plan clean-TTP path. Seeds a dedicated per-test org (the
+    shared in-memory DB persists committed rows across the run, so an exact
+    proposal-count assertion MUST be org-scoped, never on DEFAULT_ORG_ID).
+    """
+    org_id = generate_id("org")
+    db_session.add(OrganizationRow(id=org_id, name="cloud-clean-ttp", created_at=datetime.now(UTC)))
+    await db_session.flush()
+
+    summary = await svc.run_cloud_hunt_and_ingest(db_session, org_id=org_id)
+    # The demo bundle fires cross-account trust + shadow-workload + overprivileged
+    # (T1078.004 / T1550.001 / T1098.001); the remaining covered techniques are
+    # clean and must each yield a proposal.
+    assert summary["clean_ttp_proposals"] >= 4
+
+    rows = (
+        (
+            await db_session.execute(
+                select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    proposed_ttps = {t for r in rows for t in (r.technique_ids or [])}
+    # Clean (hunted, no finding) → proposal filed.
+    assert {"T1098.003", "T1537", "T1562.008", "T1580"}.issubset(proposed_ttps)
+    # Fired techniques (had findings) → NOT filed as clean-coverage gaps.
+    assert "T1078.004" not in proposed_ttps
+    assert "T1098.001" not in proposed_ttps
+    # All are cloud-hunt-sourced drafts in the review queue.
+    for r in rows:
+        assert r.source_stix_id.startswith("cloud-hunt--")
+        assert r.state == "proposed"
+
+
+async def test_clean_cloud_ttp_proposals_upsert_not_duplicate(db_session):
+    """Re-running the cloud hunt upserts the clean-TTP proposals (no duplicates)."""
+    org_id = generate_id("org")
+    db_session.add(
+        OrganizationRow(id=org_id, name="cloud-clean-upsert", created_at=datetime.now(UTC))
+    )
+    await db_session.flush()
+
+    await svc.run_cloud_hunt_and_ingest(db_session, org_id=org_id)
+    first = (
+        (
+            await db_session.execute(
+                select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    await svc.run_cloud_hunt_and_ingest(db_session, org_id=org_id)
+    second = (
+        (
+            await db_session.execute(
+                select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Deterministic source ids → the second run refreshes the same rows.
+    assert len(second) == len(first)
+    assert {r.source_stix_id for r in second} == {r.source_stix_id for r in first}

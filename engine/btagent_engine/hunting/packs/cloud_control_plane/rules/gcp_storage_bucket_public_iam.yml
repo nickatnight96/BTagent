@@ -1,0 +1,34 @@
+title: GCS Bucket Made Public — allUsers IAM Binding
+id: c4fa5ec6-1305-48b3-a336-91401f6795f0
+status: test
+description: >
+  Detects storage.setIamPolicy events on a Google Cloud Storage bucket that add a
+  binding for allUsers or allAuthenticatedUsers, exposing objects anonymously.
+  Adversaries flip a bucket public post-compromise to exfiltrate data over an
+  anonymous HTTPS path that bypasses per-principal data-access auditing.
+references:
+  - https://attack.mitre.org/techniques/T1567/002/
+  - https://attack.mitre.org/techniques/T1530/
+author: BTagent (#117)
+date: 2026-07-27
+logsource:
+  product: gcp
+  service: audit
+detection:
+  selection:
+    protoPayload.methodName: storage.setIamPermissions
+  public_member:
+    protoPayload.serviceData.policyDelta.bindingDeltas.member:
+      - allUsers
+      - allAuthenticatedUsers
+  public_action:
+    protoPayload.serviceData.policyDelta.bindingDeltas.action: ADD
+  condition: selection and public_member and public_action
+falsepositives:
+  - Intentionally public static-content or open-data buckets provisioned by an approved pipeline (exclude the specific bucket and acting service account)
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1567.002
+  - attack.t1530
+  - cloud.control-plane

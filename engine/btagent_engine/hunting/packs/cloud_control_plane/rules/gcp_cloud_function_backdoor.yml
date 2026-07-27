@@ -1,0 +1,42 @@
+title: GCP Cloud Function Backdoor — Public Invoke or Code Deploy
+id: b1b99556-2675-4be3-acc7-8f46d4c2c4a2
+status: test
+description: >
+  Detects Cloud Functions control-plane activity that establishes serverless
+  persistence: a setIamPolicy granting the Invoker role to allUsers, or a
+  CreateFunction / UpdateFunction that deploys attacker-controlled source.  A
+  back-doored, publicly-invocable function is a durable, event-triggered foothold
+  that outlives stolen session credentials.
+references:
+  - https://attack.mitre.org/techniques/T1648/
+  - https://attack.mitre.org/techniques/T1546/
+author: BTagent (#117)
+date: 2026-07-27
+logsource:
+  product: gcp
+  service: audit
+detection:
+  selection_public_invoke:
+    protoPayload.methodName|endswith: CloudFunctionsService.SetIamPolicy
+    protoPayload.request.policy.bindings.members:
+      - allUsers
+      - allAuthenticatedUsers
+  selection_deploy:
+    protoPayload.methodName|endswith:
+      - CloudFunctionsService.CreateFunction
+      - CloudFunctionsService.UpdateFunction
+      - FunctionService.CreateFunction
+      - FunctionService.UpdateFunction
+  filter_pipeline:
+    protoPayload.authenticationInfo.principalEmail|endswith:
+      - terraform@iam.gserviceaccount.com
+      - deployer@iam.gserviceaccount.com
+  condition: (selection_public_invoke or selection_deploy) and not filter_pipeline
+falsepositives:
+  - Approved deploy service accounts publishing new function revisions (add them to filter_pipeline)
+level: high
+tags:
+  - attack.persistence
+  - attack.t1648
+  - attack.t1546
+  - cloud.control-plane

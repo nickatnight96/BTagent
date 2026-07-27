@@ -95,6 +95,72 @@ rules:
     notes: >
       DEFERRED — requires GuardDuty finding stream via #100 connector.
 
+  # ── Phase-A finishers (#117): connector-independent post-compromise TTPs ────
+  - file: s3_public_exposure.yml
+    enabled: true
+    notes: >
+      Public-resource exposure post-compromise: S3 ACL/policy grant to
+      AllUsers/AuthenticatedUsers or Public-Access-Block removal.  Near-zero
+      baseline outside intentionally-public buckets — allowlist those at triage.
+
+  - file: lambda_function_backdoor.yml
+    enabled: true
+    notes: >
+      Serverless persistence: Lambda AddPermission granting wildcard/external
+      invoke, or UpdateFunctionCode swapping attacker code.  Tune filter_pipeline
+      to the org's CI/CD deploy roles.
+
+  - file: secretsmanager_mass_read.yml
+    enabled: true
+    notes: >
+      Secrets-Manager mass read (BatchGetSecretValue / GetSecretValue burst).
+      Pair with a per-principal rate rule in the SIEM for the burst variant.
+
+  # ── GCP Cloud Audit coverage (#117 task C) ─────────────────────────────────
+  - file: gcp_storage_bucket_public_iam.yml
+    enabled: true
+    notes: >
+      GCP public-resource exposure: storage.setIamPermissions binding allUsers /
+      allAuthenticatedUsers on a GCS bucket.
+
+  - file: gcp_cloud_function_backdoor.yml
+    enabled: true
+    notes: >
+      GCP serverless persistence: Cloud Function SetIamPolicy to allUsers or
+      Create/UpdateFunction code deploy.  Tune filter_pipeline per environment.
+
+  - file: gcp_secret_manager_mass_access.yml
+    enabled: true
+    notes: >
+      GCP Secret Manager mass read (AccessSecretVersion).  Pair with a
+      per-principal rate rule in the SIEM for the bulk-read burst.
+
+  - file: gcp_vertex_agent_engine_shadow.yml
+    enabled: true
+    notes: >
+      Shadow Vertex AI Agent Engine discovery: CreateReasoningEngine outside the
+      sanctioned MLOps pipeline.  Complements the code-based shadow-workload
+      detector (D6) on the live GCP-audit path.
+
+  # ── Azure Activity-log coverage (#117 task C) ──────────────────────────────
+  - file: azure_keyvault_mass_secret_read.yml
+    enabled: true
+    notes: >
+      Azure key-vault mass read (SecretGet).  Pair with a per-caller rate rule in
+      the SIEM for the bulk-read burst.
+
+  - file: azure_function_app_backdoor.yml
+    enabled: true
+    notes: >
+      Azure serverless persistence: Function App publish-credential / host-key
+      theft or source-control write.
+
+  - file: azure_storage_public_access.yml
+    enabled: true
+    notes: >
+      Azure public-resource exposure: storage-account write enabling
+      allowBlobPublicAccess.
+
 # ── Code-based detectors (graph/behavioral — NOT Sigma, NOT loaded as rules) ──
 # Documentation only.  These modules live under ``detectors/`` and are invoked
 # by the runner / golden tests directly; they are intentionally absent from the
@@ -119,3 +185,11 @@ detectors:
       Overprivileged agentic identity check — cross-references workload's linked
       IAM identity for broad/wildcard permissions.
       Implemented in btagent_shared.hunt.cloud.detect_overprivileged_workload_identity.
+  - module: detectors/shadow_mcp_inventory.py
+    entrypoint: run
+    notes: >
+      Shadow-MCP discovery (#117 task B) — correlates Cloud Run service inventory
+      with DNS records to surface an MCP-server service fronted by an unsanctioned
+      domain.  Cloud complement to the #121 host-side process+DNS shadow-MCP
+      correlation.  Implemented in
+      btagent_shared.hunt.cloud.detect_shadow_mcp_servers.

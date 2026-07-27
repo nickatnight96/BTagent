@@ -1,0 +1,30 @@
+title: Azure Storage Account Public Access Enabled
+id: e7841b59-ec10-41fd-8ff6-5c89d640a933
+status: test
+description: >
+  Detects a storage-account write that turns on anonymous blob access
+  (allowBlobPublicAccess = true) or a container ACL set to a public access level.
+  Post-compromise, adversaries flip storage public to exfiltrate blobs over an
+  anonymous HTTPS path that bypasses per-principal data-plane auditing.
+references:
+  - https://attack.mitre.org/techniques/T1567/002/
+  - https://attack.mitre.org/techniques/T1530/
+author: BTagent (#117)
+date: 2026-07-27
+logsource:
+  product: azure
+  service: activitylog
+detection:
+  selection:
+    operationName|contains: Microsoft.Storage/storageAccounts/write
+  public_flag:
+    properties.allowBlobPublicAccess: 'true'
+  condition: selection and public_flag
+falsepositives:
+  - Static-website or public-dataset storage accounts provisioned by an approved pipeline (exclude the specific account and acting principal)
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1567.002
+  - attack.t1530
+  - cloud.control-plane

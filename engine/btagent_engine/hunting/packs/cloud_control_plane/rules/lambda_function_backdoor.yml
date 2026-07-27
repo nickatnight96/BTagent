@@ -1,0 +1,42 @@
+title: Lambda Serverless Backdoor — Code Overwrite or Public Invoke Grant
+id: 0e92bbcf-b3bc-4fc3-8192-e974aaf7bf91
+status: test
+description: >
+  Detects Lambda control-plane calls that establish serverless persistence: an
+  AddPermission that grants invoke rights to a wildcard principal or an external
+  AWS account, or an UpdateFunctionCode / UpdateFunctionConfiguration that swaps
+  in attacker-controlled code or a new execution role.  A back-doored function is
+  a durable, event-triggered foothold that survives credential rotation.
+references:
+  - https://attack.mitre.org/techniques/T1648/
+  - https://attack.mitre.org/techniques/T1546/
+author: BTagent (#117)
+date: 2026-07-27
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_public_invoke:
+    eventName: AddPermission
+    requestParameters.principal|contains:
+      - '*'
+      - '.amazonaws.com'
+    requestParameters.action|contains: 'lambda:InvokeFunction'
+  selection_code_swap:
+    eventName:
+      - UpdateFunctionCode
+      - UpdateFunctionConfiguration
+      - CreateFunction20150331
+  filter_pipeline:
+    userIdentity.arn|contains:
+      - ':assumed-role/LambdaDeployRole'
+      - ':assumed-role/CDKToolkit'
+  condition: (selection_public_invoke or selection_code_swap) and not filter_pipeline
+falsepositives:
+  - CI/CD deploy roles publishing new function versions (add the deploy role to filter_pipeline)
+level: high
+tags:
+  - attack.persistence
+  - attack.t1648
+  - attack.t1546
+  - cloud.control-plane

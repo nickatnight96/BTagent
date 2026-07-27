@@ -17,6 +17,9 @@ Detections implemented (connector-independent, fixture-based):
   D5  CloudTrail logging tamper — StopLogging correlated with prior suspicious auth.
   D6  Shadow agentic workload discovery — AI workloads without governance tags.
   D7  Overprivileged agentic identity — workload running as admin/broad-scope role.
+  D8  Shadow-MCP discovery — Cloud Run MCP service inventory correlated with DNS
+      records fronting it on an unsanctioned domain (cloud complement to the #121
+      host-side process+DNS shadow-MCP correlation).
 
 Deferred (blocked on #100 CloudTrail/GuardDuty MCP connectors):
   - Live CloudTrail event ingestion
@@ -29,9 +32,12 @@ Deferred (blocked on #100 CloudTrail/GuardDuty MCP connectors):
 from __future__ import annotations
 
 import logging
+import re
 from collections import defaultdict
 from collections.abc import Iterable
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_shared.types.cloud_hunt import (
     AgenticWorkload,
@@ -66,6 +72,53 @@ _T_SNAPSHOT_SHARE = "T1537"  # Transfer Data to Cloud Account
 _T_CLOUDTRAIL_TAMPER = "T1562.008"  # Impair Defenses: Disable or Modify Cloud Logs
 _T_SHADOW_WORKLOAD = "T1078.004"  # Valid Accounts: Cloud Accounts (shadow-AI context)
 _T_OVERPRIVILEGED = "T1098.001"  # Account Manipulation: Additional Cloud Credentials
+
+# Shadow-MCP (Cloud Run) correlation technique ids — mirror the #121 process+DNS
+# variant (agentic_misuse/detectors/shadow_mcp_correlation.py) so cloud-, host-,
+# and agentic-discovered shadow MCP servers converge on the same taxonomy.
+_T_APP_LAYER_C2 = "T1071.001"  # Application Layer Protocol: Web Protocols (C2 channel)
+_T_EXFIL_WEB = "T1567"  # Exfiltration Over Web Service
+_T_SHADOW_MCP_DISCOVERY = "T1580"  # Cloud Infrastructure Discovery (shadow-IT proxy)
+
+# Default sanctioned MCP-endpoint host suffixes for the Cloud Run variant. A
+# Cloud Run service's *default* URL lives under ``.run.app``; a governed custom
+# domain is an approved internal suffix. A DNS record fronting the service on any
+# other (custom) domain is the shadow signal. Kept in lock-step with the #121
+# rule's allowlist idea; tune per environment.
+_DEFAULT_SANCTIONED_MCP_SUFFIXES: tuple[str, ...] = (
+    ".run.app",
+    ".internal",
+    ".svc.cluster.local",
+    "mcp.internal.company.com",
+)
+
+# MITRE ATT&CK techniques the connector-independent cloud control-plane hunt
+# *exercises* — the coverage universe used to route CLEAN (hunted, zero-finding)
+# TTPs to #113 detection proposals (Phase-C bullet 3). A run that produces no
+# finding for a covered technique is a detection-engineering signal: file a draft
+# Sigma rule so the technique alerts without a hunt next time.
+CLOUD_HUNT_COVERED_TECHNIQUES: dict[str, str] = {
+    _T_STS_CHAINING: "Valid Accounts: Cloud Accounts (STS role chaining / cross-account trust)",
+    _T_ASSUME_ROLE: "Use Alternate Authentication Material: Application Access Token",
+    _T_IAM_PERSISTENCE: "Account Manipulation: Additional Cloud Credentials (IAM persistence)",
+    _T_TRUST_MUTATION: "Account Manipulation: Additional Cloud Roles (trust-policy mutation)",
+    _T_SNAPSHOT_SHARE: "Transfer Data to Cloud Account (snapshot / AMI external share)",
+    _T_CLOUDTRAIL_TAMPER: "Impair Defenses: Disable or Modify Cloud Logs (CloudTrail tamper)",
+    "T1580": "Cloud Infrastructure Discovery (shadow agentic workload / shadow MCP)",
+}
+
+# Markers identifying a Cloud Run service as an MCP server / agent runtime.
+# Matched case-insensitively against ``"<resource_id> <display_name>"`` plus any
+# enrichment image/label hints. Defensive-facing identity markers, not tooling.
+_MCP_SERVICE_RE = re.compile(
+    r"(?:"
+    r"mcp[-_](?:server|runtime|proxy|gateway)"
+    r"|@?modelcontextprotocol\b"
+    r"|agent[-_](?:runtime|engine|server)"
+    r"|\bmcp\b"
+    r")",
+    re.IGNORECASE,
+)
 
 # ---------------------------------------------------------------------------
 # Trust-graph construction
@@ -1036,6 +1089,220 @@ def detect_overprivileged_workload_identity(
 
 
 # ---------------------------------------------------------------------------
+# D8 — Shadow-MCP discovery via Cloud Run inventory + DNS correlation
+# ---------------------------------------------------------------------------
+
+
+class DnsRecord(BaseModel):
+    """One DNS record from the tenant's zone / resolver inventory.
+
+    The cloud complement to the #121 host-side ``DnsResolutionEvent``: where that
+    keys on a per-host outbound *resolution*, this keys on a *zone record* — a
+    name that fronts (CNAMEs to, or resolves to the IPs of) a cloud service.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1, max_length=1024, description="Record hostname.")
+    record_type: str = Field(default="A", max_length=16, description="A / AAAA / CNAME / …")
+    values: list[str] = Field(
+        default_factory=list,
+        description="Record data — CNAME target host(s) or resolved IP address(es).",
+    )
+
+
+def _host_of(value: str) -> str:
+    """Reduce a URL / host to a bare lowercased hostname (no scheme, port, path)."""
+    v = value.strip().lower()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+    v = v.split("/", 1)[0]
+    v = v.split("@")[-1]  # strip any userinfo
+    v = v.split(":", 1)[0]  # strip port
+    return v.rstrip(".")
+
+
+def _looks_like_mcp_service(service: AgenticWorkload) -> bool:
+    """True when a Cloud Run service is (or is named like) an MCP server."""
+    if service.kind == AgenticWorkloadKind.CLOUD_RUN_MCP:
+        return True
+    enr = service.enrichment or {}
+    hint = " ".join(
+        str(enr.get(k, ""))
+        for k in ("image", "container_image", "labels", "service_name", "platform")
+    )
+    return bool(_MCP_SERVICE_RE.search(f"{service.resource_id} {service.display_name} {hint}"))
+
+
+def _service_endpoint_hosts(service: AgenticWorkload) -> set[str]:
+    """Candidate serving hostnames for a Cloud Run service (default URL + domains)."""
+    enr = service.enrichment or {}
+    hosts: set[str] = set()
+    for key in ("service_url", "url", "uri", "endpoint", "endpoint_host", "default_host", "host"):
+        val = enr.get(key)
+        if isinstance(val, str) and val:
+            hosts.add(_host_of(val))
+    for key in ("custom_domains", "domains", "hosts"):
+        vals = enr.get(key)
+        if isinstance(vals, list):
+            hosts.update(_host_of(v) for v in vals if isinstance(v, str) and v)
+    return {h for h in hosts if h}
+
+
+def _service_ips(service: AgenticWorkload) -> set[str]:
+    """Resolved ingress IPs for the service, if the inventory carries them."""
+    enr = service.enrichment or {}
+    ips: set[str] = set()
+    for key in ("resolved_ips", "ips", "ingress_ips"):
+        vals = enr.get(key)
+        if isinstance(vals, list):
+            ips.update(str(v).strip().lower() for v in vals if v)
+    return {ip for ip in ips if ip}
+
+
+def _is_sanctioned_domain(host: str, suffixes: tuple[str, ...]) -> bool:
+    """True when a hostname is on the sanctioned MCP-endpoint allowlist."""
+    qn = host.strip().rstrip(".").lower()
+    return any(qn == s.lstrip(".").lower() or qn.endswith(s.lower()) for s in suffixes)
+
+
+def detect_shadow_mcp_servers(
+    cloud_run_services: list[AgenticWorkload],
+    dns_records: list[DnsRecord],
+    *,
+    sanctioned_endpoint_suffixes: Iterable[str] | None = None,
+) -> list[RecordFindingRequest]:
+    """Correlate Cloud Run service inventory with DNS records to surface shadow MCP servers.
+
+    The **cloud** complement to the #121 host-side shadow-MCP correlation
+    (``agentic_misuse/detectors/shadow_mcp_correlation.py``, which joins process
+    cmdline + DNS resolution telemetry). Where that keys on an MCP *process* on a
+    host, this keys on a Cloud Run **service inventory** record: an MCP-server
+    Cloud Run service that is fronted — via a DNS record CNAMEing to its default
+    ``*.run.app`` host, or an A/AAAA record resolving to its ingress IPs — by a
+    hostname **outside** the sanctioned MCP-endpoint allowlist is emitted as a
+    shadow MCP server. The join requires *both* the Cloud Run inventory and the
+    DNS record (acceptance #3): a service with no correlating DNS record does not
+    fire here (the connector-independent shadow-workload detector D6 still catches
+    it on tag/kind alone).
+
+    Each finding carries ``evidence["shadow_workload"] = True`` — the same
+    governance routing marker the shadow-agent detectors set — so cloud-, host-,
+    and agentic-discovered shadow MCP servers converge in one triage queue.
+
+    Parameters
+    ----------
+    cloud_run_services:
+        Cloud Run (and Cloud-Run-like) service inventory. Non-MCP services and
+        services whose kind/name/image does not identify an MCP server are
+        skipped.
+    dns_records:
+        Zone / resolver DNS records for the tenant footprint.
+    sanctioned_endpoint_suffixes:
+        Allowlist of trusted MCP-endpoint host suffixes. A DNS record whose name
+        matches an entry is ignored. Defaults to
+        :data:`_DEFAULT_SANCTIONED_MCP_SUFFIXES`.
+
+    Returns
+    -------
+    list[RecordFindingRequest]
+        One finding per ``(service, fronting-domain)`` correlation.
+    """
+    suffixes = tuple(sanctioned_endpoint_suffixes or _DEFAULT_SANCTIONED_MCP_SUFFIXES)
+    findings: list[RecordFindingRequest] = []
+    seen: set[tuple[str, str]] = set()
+
+    for service in cloud_run_services:
+        if not _looks_like_mcp_service(service):
+            continue
+
+        svc_hosts = _service_endpoint_hosts(service)
+        svc_ips = _service_ips(service)
+
+        for rec in dns_records:
+            rec_name = _host_of(rec.name)
+            rec_values = {_host_of(v) for v in rec.values}
+            rec_values_raw = {str(v).strip().lower() for v in rec.values}
+
+            # The record references this service if it CNAMEs to a service host,
+            # its own name is a known service host, or (A/AAAA) it resolves to a
+            # service ingress IP.
+            references_service = (
+                bool(rec_values & svc_hosts)
+                or rec_name in svc_hosts
+                or (bool(svc_ips) and bool(rec_values_raw & svc_ips))
+            )
+            if not references_service:
+                continue
+            # A record whose name is itself sanctioned (e.g. the default
+            # *.run.app host or an approved internal domain) is not shadow.
+            if _is_sanctioned_domain(rec_name, suffixes):
+                continue
+
+            key = (service.resource_id, rec_name)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            sanctioned_ok = not service.governance_tagged
+            sev = (
+                Severity.HIGH if (service.internet_reachable or sanctioned_ok) else Severity.MEDIUM
+            )
+            observables: list[HuntObservable] = [
+                HuntObservable(type="domain", value=rec.name),
+                HuntObservable(type="cloud_resource_id", value=service.resource_id),
+            ]
+            observables.extend(
+                HuntObservable(type="ip", value=v) for v in list(rec_values_raw & svc_ips)[:8]
+            )
+            findings.append(
+                RecordFindingRequest(
+                    source=HuntSource.CLOUD,
+                    domain=HuntDomain.CLOUD,
+                    title=(
+                        f"Shadow MCP server: Cloud Run service "
+                        f"{service.display_name or service.resource_id} fronted by "
+                        f"unsanctioned domain {rec.name}"
+                    ),
+                    description=(
+                        f"Cloud Run MCP service {service.resource_id!r} "
+                        f"(identity={service.identity_ref!r}, "
+                        f"governance_tagged={service.governance_tagged}) is fronted by DNS "
+                        f"record {rec.name!r} ({rec.record_type}), which is not in the "
+                        "sanctioned MCP-endpoint allowlist. An unsanctioned (shadow) MCP "
+                        "server can exfiltrate context, leak credentials, or proxy attacker "
+                        "C2. Correlated from Cloud Run service inventory + DNS records — the "
+                        "cloud complement to the host-side shadow-MCP process/DNS detector."
+                    ),
+                    severity=sev,
+                    confidence=0.8,
+                    technique_ids=[_T_APP_LAYER_C2, _T_EXFIL_WEB, _T_SHADOW_MCP_DISCOVERY],
+                    entities=[
+                        HuntEntity(kind="agentic_workload", value=service.resource_id),
+                        HuntEntity(kind="cloud_identity", value=service.identity_ref),
+                        HuntEntity(kind="domain", value=rec.name),
+                    ],
+                    observables=observables,
+                    evidence={
+                        "detection": "shadow_mcp_correlation",
+                        # Same governance routing marker the shadow-agent detectors set.
+                        "shadow_workload": True,
+                        "service_resource_id": service.resource_id,
+                        "provider": service.provider.value,
+                        "identity_ref": service.identity_ref,
+                        "governance_tagged": service.governance_tagged,
+                        "fronting_domain": rec.name,
+                        "dns_record_type": rec.record_type,
+                        "dns_record_values": list(rec.values)[:8],
+                        "sanctioned_endpoint_suffixes": list(suffixes),
+                    },
+                )
+            )
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Convenience: run all detections over a combined fixture bundle
 # ---------------------------------------------------------------------------
 
@@ -1046,6 +1313,7 @@ def run_all_detections(
     workloads: list[AgenticWorkload] | None = None,
     cloudtrail_events: list[dict[str, Any]] | None = None,
     resource_events: list[dict[str, Any]] | None = None,
+    dns_records: list[DnsRecord] | None = None,
     high_value_targets: set[str] | None = None,
     trusted_account_ids: set[str] | None = None,
 ) -> list[RecordFindingRequest]:
@@ -1066,6 +1334,7 @@ def run_all_detections(
     _workloads = workloads or []
     _ct_events = cloudtrail_events or []
     _res_events = resource_events or []
+    _dns_records = dns_records or []
 
     if _identities:
         findings.extend(detect_sts_chaining(_identities, high_value_targets=high_value_targets))
@@ -1085,6 +1354,11 @@ def run_all_detections(
     if _workloads:
         findings.extend(detect_shadow_workloads(_workloads))
         findings.extend(detect_overprivileged_workload_identity(_workloads, _identities))
+
+    # D8 — shadow-MCP correlation needs both the Cloud Run inventory (a subset of
+    # the workloads) and the DNS records; only runs when DNS records are present.
+    if _workloads and _dns_records:
+        findings.extend(detect_shadow_mcp_servers(_workloads, _dns_records))
 
     logger.info("Cloud hunt detections complete: %d findings", len(findings))
     return findings

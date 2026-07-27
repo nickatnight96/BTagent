@@ -81,21 +81,84 @@ def test_builtin_cloud_control_plane_pack_loads():
     assert pack.name == "Cloud Control-Plane Hunt Pack"
     assert pack.version == "1.0.0"
 
-    # 11 Sigma rules; none of them is a .py detector.
-    assert len(pack.rules) == 11
+    # 21 Sigma rules (11 original + 10 Phase-A / GCP / Azure finishers, #117);
+    # none of them is a .py detector.
+    assert len(pack.rules) == 21
     rule_files = {r.file for r in pack.rules}
     assert not any(str(f).endswith(".py") for f in rule_files)
     assert "sts_assumerole_chain.yml" in rule_files
+    # #117 finishers registered enabled.
+    assert "s3_public_exposure.yml" in rule_files
+    assert "gcp_vertex_agent_engine_shadow.yml" in rule_files
+    assert "azure_keyvault_mass_secret_read.yml" in rule_files
 
     by_file = {r.file: r for r in pack.rules}
     # GuardDuty rules are deferred (disabled) pending the #100 connector.
     assert by_file["guardduty_iam_anomaly.yml"].enabled is False
     assert by_file["guardduty_privilege_escalation.yml"].enabled is False
-    assert len(pack.enabled_rules) == 9
+    # 21 total − 2 deferred GuardDuty rules = 19 enabled.
+    assert len(pack.enabled_rules) == 19
 
     # The code-based detector modules ship alongside the pack (documented, not loaded).
     pack_dir = BUILTIN_PACKS_DIR / "cloud_control_plane"
     assert (pack_dir / "detectors" / "sts_trust_graph_closure.py").is_file()
+    # #117 task B — the shadow-MCP Cloud-Run+DNS detector ships alongside too.
+    assert (pack_dir / "detectors" / "shadow_mcp_inventory.py").is_file()
+
+
+# --- #117 cloud finisher rules: transpile + provider coverage ---
+
+# The 10 Phase-A / GCP / Azure finisher rules added in #117.
+_CLOUD_FINISHER_RULES: list[str] = [
+    "s3_public_exposure.yml",
+    "lambda_function_backdoor.yml",
+    "secretsmanager_mass_read.yml",
+    "gcp_storage_bucket_public_iam.yml",
+    "gcp_cloud_function_backdoor.yml",
+    "gcp_secret_manager_mass_access.yml",
+    "gcp_vertex_agent_engine_shadow.yml",
+    "azure_keyvault_mass_secret_read.yml",
+    "azure_function_app_backdoor.yml",
+    "azure_storage_public_access.yml",
+]
+
+
+def test_cloud_finisher_rules_transpile_and_have_techniques():
+    """Every #117 finisher rule transpiles on splunk/elastic/crowdstrike and
+    derives ≥1 ATT&CK technique from its tags (Sentinel/Kusto excluded — the
+    cloud_control_plane precedent, its pipeline maps Windows XDR tables only)."""
+    from btagent_engine.hunting.transpile import SigmaTranspileError, transpile
+
+    pack = load_builtin_pack("cloud_control_plane")
+    by_file = {r.file: r for r in pack.rules}
+    for name in _CLOUD_FINISHER_RULES:
+        rule = by_file[name]
+        assert rule.enabled is True, f"{name} should be enabled"
+        assert rule.mitre_techniques, f"{name} has no MITRE techniques"
+        for tid in rule.mitre_techniques:
+            assert tid.startswith("T") and tid[1:5].isdigit(), f"{name} bad tid {tid}"
+        for backend in ("splunk", "elastic", "crowdstrike"):
+            try:
+                query = transpile(rule.sigma_yaml, backend)
+            except SigmaTranspileError as exc:  # pragma: no cover - failure path
+                pytest.fail(f"{name} failed to transpile on {backend}: {exc}")
+            assert query, f"{name} produced an empty {backend} query"
+
+
+def test_cloud_finishers_add_gcp_and_azure_coverage():
+    """#117 task C — the pack now carries GCP Cloud Audit + Azure Activity rules,
+    not just AWS CloudTrail/GuardDuty."""
+    import yaml
+
+    pack = load_builtin_pack("cloud_control_plane")
+    products: dict[str, int] = {}
+    for rule in pack.rules:
+        parsed = yaml.safe_load(rule.sigma_yaml)
+        product = (parsed.get("logsource") or {}).get("product", "")
+        products[product] = products.get(product, 0) + 1
+    assert products.get("gcp", 0) >= 3, f"expected ≥3 GCP rules, got {products}"
+    assert products.get("azure", 0) >= 3, f"expected ≥3 Azure rules, got {products}"
+    assert products.get("aws", 0) >= 1
 
 
 # --- fixture-dir loading ---

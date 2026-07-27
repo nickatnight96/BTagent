@@ -1,0 +1,39 @@
+title: Azure Function App Backdoor — Publish Credential or Key Theft
+id: 7212212a-5182-4379-b4e9-09a1e949c7bf
+status: test
+description: >
+  Detects Activity-log operations that establish serverless persistence on an
+  Azure Function App: listing the publishing credentials (SCM deploy profile),
+  listing function/host keys, or writing a source-control / function definition.
+  With the publish profile or host key an adversary can deploy attacker code or
+  invoke protected functions — a durable, event-triggered foothold that survives
+  credential rotation on the compromised identity.
+references:
+  - https://attack.mitre.org/techniques/T1648/
+  - https://attack.mitre.org/techniques/T1546/
+author: BTagent (#117)
+date: 2026-07-27
+logsource:
+  product: azure
+  service: activitylog
+detection:
+  selection_secrets:
+    operationName|contains:
+      - Microsoft.Web/sites/publishxml/action
+      - Microsoft.Web/sites/config/list/action
+      - Microsoft.Web/sites/host/listkeys/action
+      - Microsoft.Web/sites/functions/listkeys/action
+  selection_deploy:
+    operationName|contains:
+      - Microsoft.Web/sites/sourcecontrols/write
+      - Microsoft.Web/sites/functions/write
+      - Microsoft.Web/sites/deployments/write
+  condition: selection_secrets or selection_deploy
+falsepositives:
+  - CI/CD pipelines pulling the publish profile on deploy (correlate against the release principal and change ticket)
+level: high
+tags:
+  - attack.persistence
+  - attack.t1648
+  - attack.t1546
+  - cloud.control-plane
