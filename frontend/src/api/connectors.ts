@@ -94,3 +94,29 @@ export async function upsertCredential(
 export async function deleteCredential(connectorName: string): Promise<void> {
   await api.delete(`/v1/credentials/${connectorName}`);
 }
+
+/** Result of resolving a bound reference — never the material it resolves to. */
+export interface CredentialVerification {
+  connector_name: string;
+  bound: boolean;
+  secret_ref: string;
+  /** Which backend the reference targets: vault / aws / keyring / env / none. */
+  provider: string;
+  resolved: boolean;
+  detail: string;
+}
+
+/**
+ * Check that a connector's bound reference actually resolves (#101).
+ *
+ * Verifies the *reference*, not the vendor endpoint. Sends no body by
+ * design — the server resolves only what is already bound for the caller's
+ * org, so there is nothing to pass. Admin-only.
+ */
+export async function verifyCredential(
+  connectorName: string,
+): Promise<CredentialVerification> {
+  return api.post<CredentialVerification>(
+    `/v1/credentials/${connectorName}/verify`,
+  );
+}

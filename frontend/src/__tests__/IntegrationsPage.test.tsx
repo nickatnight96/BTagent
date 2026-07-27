@@ -14,6 +14,7 @@ const getConnector = vi.fn();
 const listCredentials = vi.fn();
 const upsertCredential = vi.fn();
 const deleteCredential = vi.fn();
+const verifyCredential = vi.fn();
 
 vi.mock("@/api/connectors", () => ({
   listConnectors: (...a: unknown[]) => listConnectors(...a),
@@ -21,6 +22,7 @@ vi.mock("@/api/connectors", () => ({
   listCredentials: (...a: unknown[]) => listCredentials(...a),
   upsertCredential: (...a: unknown[]) => upsertCredential(...a),
   deleteCredential: (...a: unknown[]) => deleteCredential(...a),
+  verifyCredential: (...a: unknown[]) => verifyCredential(...a),
 }));
 
 // Settable current role — defaults to admin so credential controls render.
@@ -304,5 +306,133 @@ describe("IntegrationsPage", () => {
     expect(
       screen.queryByTestId("credential-save-crowdstrike"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("IntegrationsPage credential verification (#101)", () => {
+  const BOUND = {
+    connector_name: "crowdstrike",
+    secret_ref: "${env:CS_KEY}",
+    label: "prod",
+    created_by: "usr_a",
+    updated_by: "usr_a",
+    created_at: "2026-07-01T00:00:00Z",
+    updated_at: "2026-07-01T00:00:00Z",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    currentRole = "admin";
+    listConnectors.mockResolvedValue({ items: [CROWDSTRIKE], total: 1 });
+    getConnector.mockResolvedValue(CROWDSTRIKE_MANIFEST);
+    listCredentials.mockResolvedValue({ items: [BOUND], total: 1 });
+  });
+
+  async function openPanel() {
+    renderPage(<IntegrationsPage />);
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("connector-card-crowdstrike"),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("connector-toggle-crowdstrike"));
+    return screen.findByTestId("credential-panel-crowdstrike");
+  }
+
+  it("reports a reference that resolves", async () => {
+    verifyCredential.mockResolvedValue({
+      connector_name: "crowdstrike",
+      bound: true,
+      secret_ref: "${env:CS_KEY}",
+      provider: "env",
+      resolved: true,
+      detail: "Reference resolves to a non-empty value via env.",
+    });
+    await openPanel();
+
+    fireEvent.click(screen.getByTestId("credential-verify-crowdstrike"));
+    await waitFor(() =>
+      expect(verifyCredential).toHaveBeenCalledWith("crowdstrike"),
+    );
+    const result = await screen.findByTestId(
+      "credential-verify-result-crowdstrike",
+    );
+    expect(result.textContent).toContain("Resolves");
+    expect(result.textContent).toContain("via env");
+  });
+
+  it("reports a reference that does not resolve", async () => {
+    verifyCredential.mockResolvedValue({
+      connector_name: "crowdstrike",
+      bound: true,
+      secret_ref: "${env:CS_TYPO}",
+      provider: "env",
+      resolved: false,
+      detail:
+        "The reference resolves to an empty value — check it exists in env.",
+    });
+    await openPanel();
+
+    fireEvent.click(screen.getByTestId("credential-verify-crowdstrike"));
+    const result = await screen.findByTestId(
+      "credential-verify-result-crowdstrike",
+    );
+    expect(result.textContent).toContain("Does not resolve");
+    // The failure must read as a failure, not a muted aside — this is the
+    // case the whole feature exists to surface.
+    expect(result.className).toContain("text-destructive");
+  });
+
+  it("clears a stale verdict when the binding is re-saved", async () => {
+    verifyCredential.mockResolvedValue({
+      connector_name: "crowdstrike",
+      bound: true,
+      secret_ref: "${env:CS_KEY}",
+      provider: "env",
+      resolved: true,
+      detail: "Reference resolves to a non-empty value via env.",
+    });
+    upsertCredential.mockResolvedValue(BOUND);
+    await openPanel();
+
+    fireEvent.click(screen.getByTestId("credential-verify-crowdstrike"));
+    await screen.findByTestId("credential-verify-result-crowdstrike");
+
+    // Re-point the binding elsewhere: the old "resolves" verdict describes a
+    // reference that is no longer bound, so keeping it on screen would be a
+    // lie about the new one.
+    fireEvent.change(screen.getByTestId("credential-ref-input-crowdstrike"), {
+      target: { value: "${env:CS_OTHER}" },
+    });
+    fireEvent.click(screen.getByTestId("credential-save-crowdstrike"));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("credential-verify-result-crowdstrike"),
+      ).toBeNull(),
+    );
+  });
+
+  it("surfaces a verify failure as an error", async () => {
+    verifyCredential.mockRejectedValue(new Error("secret backend unreachable"));
+    await openPanel();
+
+    fireEvent.click(screen.getByTestId("credential-verify-crowdstrike"));
+    const err = await screen.findByTestId("credential-error-crowdstrike");
+    expect(err.textContent).toContain("secret backend unreachable");
+  });
+
+  it("offers no Verify affordance when nothing is bound", async () => {
+    listCredentials.mockResolvedValue({ items: [], total: 0 });
+    await openPanel();
+
+    expect(screen.queryByTestId("credential-verify-crowdstrike")).toBeNull();
+  });
+
+  it("hides Verify from non-admins", async () => {
+    currentRole = "senior_analyst";
+    await openPanel();
+
+    expect(screen.queryByTestId("credential-verify-crowdstrike")).toBeNull();
   });
 });
