@@ -47,6 +47,7 @@ from btagent_shared.types.hunt_finding import (
 from btagent_shared.types.identity_hunt import (
     GeoLocation,
     IdentityDetectionResult,
+    IdentityEntityKind,
     IdentityEvent,
     IdentityEventKind,
     IdentityProvider,
@@ -80,6 +81,7 @@ _TECHNIQUES: dict[str, list[str]] = {
     "service_principal_credential_addition": ["T1098.001", "T1098"],
     "federation_trust_modification": ["T1484.002", "T1556"],
     "mfa_fatigue": ["T1621", "T1078"],
+    "conditional_access_bypass": ["T1556", "T1078"],
 }
 
 
@@ -660,6 +662,105 @@ def detect_mfa_fatigue(
 
 
 # ---------------------------------------------------------------------------
+# Detector 7 — Conditional Access bypass / under-enforcement
+# ---------------------------------------------------------------------------
+
+
+def _ca_covered(raw: dict[str, Any]) -> bool:
+    """Return True when the sign-in was in scope of at least one CA policy.
+
+    Entra sign-in logs carry ``appliedConditionalAccessPolicies`` — a list of
+    the policies evaluated for the sign-in. A non-empty list means the sign-in
+    was CA-covered, so a ``notApplied`` / ``failure`` status or a single-factor
+    result is a genuine bypass rather than a tenant with no CA at all.
+    """
+    applied = raw.get("appliedConditionalAccessPolicies")
+    return isinstance(applied, list) and len(applied) > 0
+
+
+def detect_conditional_access_bypass(
+    events: list[IdentityEvent],
+) -> list[IdentityDetectionResult]:
+    """Flag CA-covered sign-ins that were not fully enforced.
+
+    A sign-in that one or more Conditional Access (CA) policies were evaluated
+    against, yet whose ``conditionalAccessStatus`` resolved to ``notApplied`` or
+    ``failure``, or whose ``authenticationRequirement`` was
+    ``singleFactorAuthentication``, did not receive the controls the tenant
+    expects. Adversaries abuse CA coverage gaps, policy-evaluation failures, and
+    MFA-claim spoofing to authenticate without MFA (T1556 / T1078) — a common
+    precursor to session-token theft and legacy-auth abuse.
+
+    The CA fields live in the provider ``raw`` payload (Entra sign-in logs):
+    ``conditionalAccessStatus``, ``authenticationRequirement`` and
+    ``appliedConditionalAccessPolicies``. Sign-ins with no CA coverage (empty /
+    missing applied-policy list) are ignored — they carry no bypass signal.
+    """
+    results: list[IdentityDetectionResult] = []
+
+    for evt in events:
+        if evt.kind not in {IdentityEventKind.LOGIN_SUCCESS, IdentityEventKind.TOKEN_ISSUED}:
+            continue
+        raw = evt.raw or {}
+        if not _ca_covered(raw):
+            continue
+
+        ca_status = str(raw.get("conditionalAccessStatus", "")).lower()
+        auth_req = str(raw.get("authenticationRequirement", "")).lower()
+        not_enforced = ca_status in {"notapplied", "failure"}
+        single_factor = auth_req == "singlefactorauthentication"
+        if not (not_enforced or single_factor):
+            continue
+
+        reasons: list[str] = []
+        if ca_status == "notapplied":
+            reasons.append("Conditional Access resolved to 'notApplied' despite policy coverage")
+        elif ca_status == "failure":
+            reasons.append("Conditional Access evaluation returned 'failure'")
+        if single_factor:
+            reasons.append("only single-factor authentication was satisfied")
+        reason_text = "; ".join(reasons)
+
+        applied = raw.get("appliedConditionalAccessPolicies")
+        applied_count = len(applied) if isinstance(applied, list) else 0
+
+        results.append(
+            IdentityDetectionResult(
+                detection_id=f"idr-cabypass-{evt.principal_id[:32]}-{evt.id[:12]}",
+                rule_id="identity.conditional_access_bypass",
+                title=f"Conditional Access bypass: {evt.principal_id}",
+                description=(
+                    f"A CA-covered sign-in for principal '{evt.principal_id}' at "
+                    f"{evt.timestamp.isoformat()} (provider: {evt.provider}) was not fully "
+                    f"enforced: {reason_text}. {applied_count} Conditional Access "
+                    "policy/policies were in scope. Under-enforced sign-ins let an adversary "
+                    "authenticate without the MFA / device controls the tenant expects "
+                    "(T1556 / T1078)."
+                ),
+                severity="high",
+                confidence=0.8 if not_enforced else 0.7,
+                technique_ids=_TECHNIQUES["conditional_access_bypass"],
+                entity_kind="user",
+                entity_value=evt.principal_id,
+                observable_type="ip",
+                observable_value=evt.ip_address or "unknown",
+                evidence={
+                    "event_id": evt.id,
+                    "principal_id": evt.principal_id,
+                    "provider": evt.provider,
+                    "ip_address": evt.ip_address,
+                    "conditional_access_status": raw.get("conditionalAccessStatus"),
+                    "authentication_requirement": raw.get("authenticationRequirement"),
+                    "applied_policy_count": applied_count,
+                    "ts": evt.timestamp.isoformat(),
+                },
+            )
+        )
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Convenience: run all detectors on a unified event set
 # ---------------------------------------------------------------------------
 
@@ -726,6 +827,7 @@ def run_all_detectors(
             window_minutes=mfa_fatigue_window_minutes,
         )
     )
+    _extend(detect_conditional_access_bypass(events))
 
     return all_results
 
@@ -781,8 +883,15 @@ def results_to_findings(
 # ---------------------------------------------------------------------------
 
 
+# Reserved top-level key under which session→principal edges are attached.
+# Namespaced with dunders so it can never collide with a real principal_id
+# (a UPN / object_id) key in the principal↔app adjacency map.
+SESSION_EDGES_KEY = "__sessions__"
+
+
 def build_grant_graph(
     grants: list[OAuthGrant],
+    events: list[IdentityEvent] | None = None,
 ) -> dict[str, Any]:
     """Build an in-memory principal↔app↔scope grant graph from a grant list.
 
@@ -796,7 +905,16 @@ def build_grant_graph(
     grants and loses scope coverage for over-privilege analysis. The graph
     therefore retains a *list* of grant entries so no grant is discarded.
 
-    Used by the hunt-pack runner to enumerate over-privileged grants.
+    When ``events`` are supplied, one *assumed* session→principal edge is added
+    per distinct :attr:`IdentityEvent.session_id` (an event's session is assumed
+    to belong to the principal that produced it). These edges land under the
+    reserved :data:`SESSION_EDGES_KEY` top-level key (namespaced so it never
+    collides with a principal id) as a list of edge dicts of kind
+    :attr:`IdentityEntityKind.SESSION`. With no events the return shape is
+    unchanged, so existing grant-only callers are unaffected.
+
+    Used by the hunt-pack runner to enumerate over-privileged grants and to
+    correlate live sessions back to the principals holding the grants.
     """
     graph: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
     for grant in grants:
@@ -814,7 +932,42 @@ def build_grant_graph(
             }
         )
     # Convert inner defaultdicts to plain dicts for a clean return type
-    return {pid: dict(apps) for pid, apps in graph.items()}
+    result: dict[str, Any] = {pid: dict(apps) for pid, apps in graph.items()}
+
+    session_edges = _build_session_edges(events or [])
+    if session_edges:
+        result[SESSION_EDGES_KEY] = session_edges
+    return result
+
+
+def _build_session_edges(events: list[IdentityEvent]) -> list[dict[str, Any]]:
+    """Collapse events into one assumed session→principal edge per session_id.
+
+    Events are processed in a deterministic (timestamp, id) order so the
+    principal bound to each session is the earliest observed for that session
+    and the event-id / timestamp provenance is stable across runs.
+    """
+    ordered = sorted(events, key=lambda e: (e.timestamp, e.id))
+    edges: dict[str, dict[str, Any]] = {}
+    for evt in ordered:
+        if not evt.session_id:
+            continue
+        edge = edges.get(evt.session_id)
+        if edge is None:
+            edges[evt.session_id] = {
+                "session_id": evt.session_id,
+                "principal_id": evt.principal_id,
+                "kind": IdentityEntityKind.SESSION.value,
+                "relation": "assumed",
+                "provider": evt.provider,
+                "first_seen": evt.timestamp.isoformat(),
+                "last_seen": evt.timestamp.isoformat(),
+                "event_ids": [evt.id],
+            }
+        else:
+            edge["last_seen"] = evt.timestamp.isoformat()
+            edge["event_ids"].append(evt.id)
+    return [edges[sid] for sid in edges]
 
 
 # ---------------------------------------------------------------------------

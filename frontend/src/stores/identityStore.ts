@@ -31,12 +31,14 @@ import type {
   GrantTableRow,
   OAuthGrant,
   GrantGraph,
+  IdentityEvent,
   RevocationProposal,
 } from "@/types/identity_hunt";
 
 // Vertical spacing between rows in each column of the grant graph layout.
 const GRAPH_ROW_GAP = 90;
-const GRAPH_COL_X = { principal: 0, app: 360 } as const;
+// Three columns: sessions far-left, principals in the middle-left, apps right.
+const GRAPH_COL_X = { session: -360, principal: 0, app: 360 } as const;
 
 // --------------------------------------------------------------------------- //
 // Consent / credential technique IDs (anomalous-consent panel filter)
@@ -199,18 +201,24 @@ export function buildGrantTableRows(findings: HuntFinding[]): GrantTableRow[] {
 
 /**
  * Build the principal × app node-link graph from a list of OAuthGrants
- * (the live ``/api/v1/identity/grants`` payload).
+ * (the live ``/api/v1/identity/grants`` payload), optionally augmented with
+ * live identity ``events`` to surface sessions.
  *
  * Pure + deterministic so it unit-tests without a DOM:
- * - Distinct principals become one node each in the LEFT column; distinct
+ * - Distinct principals become one node each in the MIDDLE column; distinct
  *   apps one node each in the RIGHT column. Within a column nodes are ordered
  *   by first appearance and stacked ``GRAPH_ROW_GAP`` apart.
  * - Each grant becomes one principal→app edge carrying its consent_type,
  *   scope count, and revoked flag (the component colours/styles from these).
- * - Node ids are namespaced (``p:``/``a:``) so a principal and an app that
- *   happen to share a raw id can't collide.
+ * - When ``events`` are supplied, each distinct ``session_id`` becomes one
+ *   session node in the far-LEFT column plus an *assumed* session→principal
+ *   edge (``relation: "assumed"``). A session's principal is the one that
+ *   produced its first event; a principal seen only via a session (no grant)
+ *   still gets a principal node so the edge has a valid target.
+ * - Node ids are namespaced (``s:``/``p:``/``a:``) so a session, a principal,
+ *   and an app that happen to share a raw id can't collide.
  */
-export function buildGrantGraph(grants: OAuthGrant[]): GrantGraph {
+export function buildGrantGraph(grants: OAuthGrant[], events: IdentityEvent[] = []): GrantGraph {
   const principalIds: string[] = [];
   const appIds: string[] = [];
   const principalSeen = new Set<string>();
@@ -232,7 +240,29 @@ export function buildGrantGraph(grants: OAuthGrant[]): GrantGraph {
     }
   }
 
+  // Collapse events into one assumed session→principal edge per distinct
+  // session_id. The principal bound to a session is the first one observed for
+  // it (events are consumed in arrival order). Principals seen only through a
+  // session get a node appended so the edge has a valid target.
+  const sessionIds: string[] = [];
+  const sessionToPrincipal = new Map<string, string>();
+  for (const ev of events) {
+    if (!ev.session_id || sessionToPrincipal.has(ev.session_id)) continue;
+    sessionToPrincipal.set(ev.session_id, ev.principal_id);
+    sessionIds.push(ev.session_id);
+    if (!principalSeen.has(ev.principal_id)) {
+      principalSeen.add(ev.principal_id);
+      principalIds.push(ev.principal_id);
+    }
+  }
+
   const nodes: GrantGraph["nodes"] = [
+    ...sessionIds.map((sid, i) => ({
+      id: `s:${sid}`,
+      kind: "session" as const,
+      label: sid,
+      position: { x: GRAPH_COL_X.session, y: i * GRAPH_ROW_GAP },
+    })),
     ...principalIds.map((pid, i) => ({
       id: `p:${pid}`,
       kind: "principal" as const,
@@ -250,16 +280,28 @@ export function buildGrantGraph(grants: OAuthGrant[]): GrantGraph {
   // One edge per grant. A dedup'd grant list yields at most one edge per
   // (principal, app, provider); we still key on grant id so distinct
   // providers between the same pair render as parallel edges.
-  const edges: GrantGraph["edges"] = grants.map((g) => ({
+  const grantEdges: GrantGraph["edges"] = grants.map((g) => ({
     id: `e:${g.id}`,
     source: `p:${g.principal_id}`,
     target: `a:${g.app_id}`,
     consent_type: g.consent_type,
     scope_count: g.scopes.length,
     revoked: g.revoked_at !== null,
+    relation: "grant" as const,
   }));
 
-  return { nodes, edges };
+  // One assumed edge per distinct session, linking the session to its principal.
+  const sessionEdges: GrantGraph["edges"] = sessionIds.map((sid) => ({
+    id: `se:${sid}`,
+    source: `s:${sid}`,
+    target: `p:${sessionToPrincipal.get(sid)!}`,
+    consent_type: "unknown" as const,
+    scope_count: 0,
+    revoked: false,
+    relation: "assumed" as const,
+  }));
+
+  return { nodes, edges: [...grantEdges, ...sessionEdges] };
 }
 
 // --------------------------------------------------------------------------- //

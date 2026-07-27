@@ -38,7 +38,11 @@ const CONSENT_EDGE_COLOR: Record<OAuthConsentType, string> = {
   unknown: "#64748b", // slate-500
 };
 
-function nodeStyle(kind: "principal" | "app"): React.CSSProperties {
+// Assumed session→principal edges use a distinct amber, dashed, non-animated
+// style so they read as "inferred linkage", not a consented grant.
+const ASSUMED_EDGE_COLOR = "#fbbf24"; // amber-400
+
+function nodeStyle(kind: "principal" | "app" | "session"): React.CSSProperties {
   const base: React.CSSProperties = {
     fontSize: 11,
     padding: "6px 10px",
@@ -47,9 +51,19 @@ function nodeStyle(kind: "principal" | "app"): React.CSSProperties {
     color: "#e2e8f0",
     maxWidth: 220,
   };
-  return kind === "principal"
-    ? { ...base, background: "rgba(8,145,178,0.15)", borderColor: "rgba(34,211,238,0.4)" }
-    : { ...base, background: "rgba(30,41,59,0.6)", borderColor: "rgba(100,116,139,0.4)" };
+  if (kind === "principal") {
+    return { ...base, background: "rgba(8,145,178,0.15)", borderColor: "rgba(34,211,238,0.4)" };
+  }
+  if (kind === "session") {
+    // Sessions get an amber, dashed border to distinguish the inferred layer.
+    return {
+      ...base,
+      background: "rgba(120,53,15,0.18)",
+      borderColor: "rgba(251,191,36,0.45)",
+      borderStyle: "dashed",
+    };
+  }
+  return { ...base, background: "rgba(30,41,59,0.6)", borderColor: "rgba(100,116,139,0.4)" };
 }
 
 export function IdentityGrantsGraph({
@@ -71,20 +85,30 @@ export function IdentityGrantsGraph({
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
     }));
-    const rfEdges: Edge[] = graph.edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      label: e.scope_count > 0 ? `${e.scope_count} scope${e.scope_count === 1 ? "" : "s"}` : undefined,
-      animated: !e.revoked,
-      style: {
-        stroke: CONSENT_EDGE_COLOR[e.consent_type] ?? CONSENT_EDGE_COLOR.unknown,
-        strokeWidth: 1.5,
-        strokeDasharray: e.revoked ? "4 3" : undefined,
-        opacity: e.revoked ? 0.5 : 1,
-      },
-      labelStyle: { fontSize: 9, fill: "#94a3b8" },
-    }));
+    const rfEdges: Edge[] = graph.edges.map((e) => {
+      const assumed = e.relation === "assumed";
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        // Assumed session edges carry no scope semantics — label them instead.
+        label: assumed
+          ? "session"
+          : e.scope_count > 0
+            ? `${e.scope_count} scope${e.scope_count === 1 ? "" : "s"}`
+            : undefined,
+        animated: !assumed && !e.revoked,
+        style: {
+          stroke: assumed
+            ? ASSUMED_EDGE_COLOR
+            : (CONSENT_EDGE_COLOR[e.consent_type] ?? CONSENT_EDGE_COLOR.unknown),
+          strokeWidth: 1.5,
+          strokeDasharray: assumed || e.revoked ? "4 3" : undefined,
+          opacity: e.revoked ? 0.5 : 1,
+        },
+        labelStyle: { fontSize: 9, fill: assumed ? "#fbbf24" : "#94a3b8" },
+      };
+    });
     return { nodes: rfNodes, edges: rfEdges };
   }, [grants]);
 

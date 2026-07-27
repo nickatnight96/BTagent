@@ -26,6 +26,14 @@ rules:
       should be on a CAB record; unexpected changes are Golden SAML
       precursors.
 
+  - file: entra_conditional_access_bypass.yml
+    enabled: true
+    notes: >
+      CA-covered sign-ins that resolve to conditionalAccessStatus notApplied /
+      failure, or satisfy only single-factor authentication, evaded the
+      controls the tenant expects (T1556 / T1078). Tune out report-only
+      policies and documented break-glass / trusted-location exclusions.
+
   - file: entra_service_principal_credential_addition.yml
     enabled: true
     notes: >
