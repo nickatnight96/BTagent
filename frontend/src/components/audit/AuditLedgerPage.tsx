@@ -10,16 +10,21 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ds/card";
+import { Input } from "@/components/ds/input";
 import {
   listAuditEntries,
   verifyAuditChain,
   getAuditLineage,
+  auditExportUrl,
   type AuditEntry,
   type ChainVerify,
   type LineageGraph,
 } from "@/api/audit";
 
-const CATEGORY_VARIANT: Record<string, "secondary" | "info" | "medium" | "destructive"> = {
+const CATEGORY_VARIANT: Record<
+  string,
+  "secondary" | "info" | "medium" | "destructive"
+> = {
   authentication: "info",
   authorization: "info",
   investigation: "secondary",
@@ -36,37 +41,54 @@ export function AuditLedgerPage() {
   const [replayCutoff, setReplayCutoff] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // UC-7.1 evidence package: the id currently narrowing the ledger. Held
+  // separately from the input box so typing doesn't refetch on every
+  // keystroke — the filter applies on submit.
+  const [incidentFilter, setIncidentFilter] = useState("");
+  const [incidentInput, setIncidentInput] = useState("");
 
-  const load = useCallback(async (upToHash?: string | null) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [list, chain, graph] = await Promise.all([
-        listAuditEntries({ limit: 100 }),
-        verifyAuditChain(),
-        getAuditLineage(upToHash ?? undefined),
-      ]);
-      setEntries(list.items);
-      setVerify(chain);
-      setLineage(graph);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load audit ledger");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (upToHash?: string | null, incidentId?: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [list, chain, graph] = await Promise.all([
+          listAuditEntries({ limit: 100, incidentId: incidentId || undefined }),
+          verifyAuditChain(),
+          getAuditLineage(upToHash ?? undefined),
+        ]);
+        setEntries(list.items);
+        setVerify(chain);
+        setLineage(graph);
+      } catch (e) {
+        setError(
+          e instanceof Error ? e.message : "Failed to load audit ledger",
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    void load(replayCutoff);
-  }, [load, replayCutoff]);
+    void load(replayCutoff, incidentFilter);
+  }, [load, replayCutoff, incidentFilter]);
 
   return (
     <>
       <Header title="Audit Ledger" />
-      <div className="flex-1 overflow-y-auto p-6 space-y-6" data-testid="audit-ledger">
+      <div
+        className="flex-1 overflow-y-auto p-6 space-y-6"
+        data-testid="audit-ledger"
+      >
         {/* Chain integrity banner */}
         {verify && (
-          <Card className={verify.valid ? "border-severity-low/40" : "border-destructive/40"}>
+          <Card
+            className={
+              verify.valid ? "border-severity-low/40" : "border-destructive/40"
+            }
+          >
             <CardContent className="flex items-center justify-between py-4">
               <div className="flex items-center gap-3">
                 {verify.valid ? (
@@ -89,7 +111,7 @@ export function AuditLedgerPage() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => void load(replayCutoff)}
+                  onClick={() => void load(replayCutoff, incidentFilter)}
                   disabled={loading}
                 >
                   {loading ? (
@@ -98,9 +120,15 @@ export function AuditLedgerPage() {
                     <RefreshCw className="w-4 h-4" />
                   )}
                 </Button>
-                <a href="/api/v1/audit/export" download>
+                {/* UC-7.1: the CSV follows the active filter, so an auditor
+                 * downloads exactly the incident they're looking at. */}
+                <a
+                  href={auditExportUrl(incidentFilter || undefined)}
+                  download
+                  data-testid="audit-export-link"
+                >
                   <Button variant="outline" size="sm">
-                    Export CSV
+                    {incidentFilter ? "Export this incident" : "Export CSV"}
                   </Button>
                 </a>
               </div>
@@ -122,9 +150,54 @@ export function AuditLedgerPage() {
           <CardHeader>
             <CardTitle className="text-base">Lineage entries</CardTitle>
             <CardDescription>
-              Newest first. Every prompt, action, and decision is appended to the
-              chain with its predecessor's hash.
+              Newest first. Every prompt, action, and decision is appended to
+              the chain with its predecessor's hash.
             </CardDescription>
+            {/* UC-7.1 evidence package: narrow the ledger to one audited
+             * object. Submit-driven rather than live so an auditor pasting an
+             * id doesn't fire a request per keystroke. */}
+            <form
+              className="flex items-center gap-2 pt-3"
+              data-testid="audit-incident-filter"
+              onSubmit={(ev) => {
+                ev.preventDefault();
+                setIncidentFilter(incidentInput.trim());
+              }}
+            >
+              <Input
+                value={incidentInput}
+                onChange={(ev) => setIncidentInput(ev.target.value)}
+                placeholder="Filter by incident / resource id (e.g. inv_01H…)"
+                aria-label="Incident or resource id"
+                className="h-8 max-w-sm text-xs"
+                data-testid="audit-incident-filter-input"
+              />
+              <Button type="submit" variant="outline" size="sm">
+                Filter
+              </Button>
+              {incidentFilter && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setIncidentInput("");
+                    setIncidentFilter("");
+                  }}
+                  data-testid="audit-incident-filter-clear"
+                >
+                  Clear
+                </Button>
+              )}
+              {incidentFilter && (
+                <span
+                  className="text-xs text-muted-foreground font-mono"
+                  data-testid="audit-incident-filter-active"
+                >
+                  scoped to {incidentFilter}
+                </span>
+              )}
+            </form>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto rounded-md border border-border">
@@ -151,14 +224,18 @@ export function AuditLedgerPage() {
                       </td>
                       <td className="px-2 py-1.5 font-mono">{e.actor}</td>
                       <td className="px-2 py-1.5">
-                        <Badge variant={CATEGORY_VARIANT[e.category] ?? "secondary"}>
+                        <Badge
+                          variant={CATEGORY_VARIANT[e.category] ?? "secondary"}
+                        >
                           {e.category}
                         </Badge>
                       </td>
                       <td className="px-2 py-1.5">{e.action}</td>
                       <td className="px-2 py-1.5">
                         <Badge
-                          variant={e.outcome === "success" ? "low" : "destructive"}
+                          variant={
+                            e.outcome === "success" ? "low" : "destructive"
+                          }
                         >
                           {e.outcome}
                         </Badge>
@@ -170,8 +247,16 @@ export function AuditLedgerPage() {
                   ))}
                   {entries.length === 0 && !loading && (
                     <tr>
-                      <td colSpan={7} className="px-2 py-8 text-center text-muted-foreground">
-                        No audit entries.
+                      <td
+                        colSpan={7}
+                        className="px-2 py-8 text-center text-muted-foreground"
+                      >
+                        {/* Distinguish "nothing matched your filter" from
+                         * "the ledger is empty" — they mean very different
+                         * things to an auditor. */}
+                        {incidentFilter
+                          ? `No audit entries for ${incidentFilter}.`
+                          : "No audit entries."}
                       </td>
                     </tr>
                   )}
@@ -189,7 +274,8 @@ export function AuditLedgerPage() {
                 <span>
                   Lineage graph — {lineage.nodes.length} node
                   {lineage.nodes.length === 1 ? "" : "s"} ·{" "}
-                  {lineage.edges.length} edge{lineage.edges.length === 1 ? "" : "s"}
+                  {lineage.edges.length} edge
+                  {lineage.edges.length === 1 ? "" : "s"}
                 </span>
                 {replayCutoff && (
                   <Button
@@ -203,19 +289,24 @@ export function AuditLedgerPage() {
                 )}
               </CardTitle>
               <CardDescription>
-                Each row is one chain link; click <em>Replay to here</em> to view
-                the chain prefix as it stood when that entry was appended.
+                Each row is one chain link; click <em>Replay to here</em> to
+                view the chain prefix as it stood when that entry was appended.
                 {!lineage.intact && (
                   <span className="block mt-1 text-destructive">
                     Chain integrity break detected at{" "}
-                    <span className="font-mono">{lineage.broken_at?.slice(0, 12)}…</span>
+                    <span className="font-mono">
+                      {lineage.broken_at?.slice(0, 12)}…
+                    </span>
                   </span>
                 )}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto rounded-md border border-border">
-                <table className="w-full text-xs" data-testid="audit-lineage-table">
+                <table
+                  className="w-full text-xs"
+                  data-testid="audit-lineage-table"
+                >
                   <thead className="bg-card sticky top-0">
                     <tr className="text-left text-muted-foreground">
                       <th className="px-2 py-2 font-medium">#</th>
@@ -247,7 +338,8 @@ export function AuditLedgerPage() {
                               <span>genesis → {n.id.slice(0, 12)}…</span>
                             ) : (
                               <span>
-                                {n.prev_hash.slice(0, 8)}… → {n.id.slice(0, 12)}…
+                                {n.prev_hash.slice(0, 8)}… → {n.id.slice(0, 12)}
+                                …
                               </span>
                             )}
                           </td>
@@ -259,7 +351,9 @@ export function AuditLedgerPage() {
                               disabled={replayCutoff === n.id}
                               data-testid={`lineage-replay-${n.sequence}`}
                             >
-                              {replayCutoff === n.id ? "Replaying" : "Replay to here"}
+                              {replayCutoff === n.id
+                                ? "Replaying"
+                                : "Replay to here"}
                             </Button>
                           </td>
                         </tr>
