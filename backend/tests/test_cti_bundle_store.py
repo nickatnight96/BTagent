@@ -115,3 +115,23 @@ async def test_propose_requires_auth(client):
         json={"stix_bundle_id": "bundle--x", "active_tlp": "green"},
     )
     assert resp.status_code in (401, 403)
+
+
+def test_service_exposes_no_bundle_by_id_stub():
+    """The service must not offer a bundle-by-id entry point (#113).
+
+    It used to carry a ``propose_from_bundle_id`` that unconditionally
+    raised NotImplementedError, with a docstring asserting the capability
+    was deferred — long after the route had shipped it. A caller reaching
+    for the obvious-looking method got a runtime failure for something that
+    demonstrably works via ``POST /cti/propose-detections``.
+
+    Resolution lives in the route (stix_bundle_store.get_bundle -> 404 on a
+    miss -> propose_from_bundle), which is what keeps this service free of a
+    DB session on the pure-proposal path. This pins that split so the stub
+    cannot quietly reappear.
+    """
+    from btagent_backend.services.cti_detection_service import CTIDetectionService
+
+    assert not hasattr(CTIDetectionService, "propose_from_bundle_id")
+    assert hasattr(CTIDetectionService, "propose_from_bundle")

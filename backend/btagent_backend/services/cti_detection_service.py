@@ -7,21 +7,31 @@ This service layer exists so the API route (and any future background
 task or event consumer) share a single call site, and so the pure-logic
 core can stay in ``shared/`` without importing FastAPI or DB models.
 
-Scope for this slice
---------------------
-- Accepts a raw STIX bundle dict (the ``stix_bundle_id`` resolution path
-  is left as a TODO for the follow-up PR that adds proposal persistence
-  and bundle-by-id lookup).
-- Applies TLP gating via the shared gate (TLP:RED bundles raise
-  :class:`btagent_shared.security.TLPViolation`).
-- Returns :class:`CTIToDetectionResponse` — proposals are *not* persisted
-  in this slice.
+What this module does
+---------------------
+- :meth:`CTIDetectionService.propose_from_bundle` takes a raw STIX bundle
+  dict, applies TLP gating via the shared gate (TLP:RED bundles raise
+  :class:`btagent_shared.security.TLPViolation`), and returns a
+  :class:`CTIToDetectionResponse`.
+- The module-level async helpers below persist and drive the review
+  lifecycle: :func:`persist_proposals`, :func:`list_proposals`,
+  :func:`set_proposal_state`, :func:`validate_proposal`.
+
+Resolving a bundle by id
+------------------------
+There is deliberately no ``propose_from_bundle_id`` here. The route owns
+that step: ``POST /cti/propose-detections`` loads the stored bundle via
+:mod:`btagent_backend.services.stix_bundle_store` (404 on a miss) and then
+calls :meth:`propose_from_bundle` with the resolved dict. Keeping the
+lookup in the route is what lets this service stay free of a DB session on
+the pure-proposal path.
 
 Telemetry hook
 --------------
-The ``# TELEMETRY_HOOK`` comment below marks the insertion point for
-validation telemetry once issue #118 (rule-quality telemetry) lands.
-Replace the pass statement with your telemetry emit call.
+``# TELEMETRY_HOOK`` below marks where proposal telemetry would be emitted.
+It is still an intentional no-op: detection *validation* shipped (#118's
+replay + ``detection_validation_runs``), but per-proposal rule-quality
+telemetry has not been wired.
 """
 
 from __future__ import annotations
@@ -92,9 +102,10 @@ class CTIDetectionService:
 
         response = process_stix_bundle(bundle, active_tlp=active_tlp)
 
-        # TELEMETRY_HOOK: emit proposal telemetry for #118 here.
+        # TELEMETRY_HOOK: emit per-proposal rule-quality telemetry here.
         # e.g. emit_cti_detection_telemetry(response, bundle_id=bundle.get("id"))
-        # (no-op until #118 lands)
+        # Intentionally a no-op: #118's replay/validation shipped, but
+        # rule-quality telemetry itself was never wired.
 
         logger.info(
             "CTI detection pipeline complete: %d proposals, %d skipped",
@@ -102,28 +113,6 @@ class CTIDetectionService:
             len(response.skipped),
         )
         return response
-
-    def propose_from_bundle_id(
-        self,
-        *,
-        bundle_id: str,
-        active_tlp: TLP = TLP.GREEN,
-    ) -> CTIToDetectionResponse:
-        """Resolve a previously-imported bundle by ID and produce proposals.
-
-        NOT IMPLEMENTED in this slice.  The bundle-by-id resolution path
-        requires proposal persistence (deferred to the follow-up PR).
-
-        Raises
-        ------
-        NotImplementedError
-            Always — this path is a stub for the next slice.
-        """
-        raise NotImplementedError(
-            f"Bundle-by-id resolution (bundle_id={bundle_id!r}) is deferred to the "
-            "proposal-persistence follow-up PR.  Pass the raw bundle dict via "
-            "propose_from_bundle() instead."
-        )
 
 
 __all__ = ["CTIDetectionService"]
