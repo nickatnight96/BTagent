@@ -27,6 +27,7 @@ import re
 from collections.abc import Callable
 from typing import ClassVar, NamedTuple
 
+from btagent_shared.security.safelist import BASELINE_SAFELIST, SafelistPolicy
 from btagent_shared.types.enums import IOCType
 from btagent_shared.types.mitigation import (
     MitigationAction,
@@ -49,43 +50,17 @@ def _mock_mode_enabled() -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Never-block allowlist (self-inflicted-outage guard)
+# Never-block safelist (self-inflicted-outage guard)
 # --------------------------------------------------------------------------- #
-
-# Well-known public resolvers — blocking these breaks name resolution org-wide.
-_ALLOWLIST_IPS: frozenset[str] = frozenset(
-    {"8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9", "208.67.222.222", "208.67.220.220"}
-)
-# Critical infrastructure domains — blocking these is almost always a misfire.
-_ALLOWLIST_DOMAIN_SUFFIXES: tuple[str, ...] = (
-    "microsoft.com",
-    "windowsupdate.com",
-    "office.com",
-    "office365.com",
-    "google.com",
-    "googleapis.com",
-    "apple.com",
-    "amazonaws.com",
-    "cloudflare.com",
-    "akamai.net",
-    "icloud.com",
-)
-
-
-def _ip_is_allowlisted(value: str) -> bool:
-    try:
-        ip = ipaddress.ip_address(value)
-    except ValueError:
-        return False
-    # Never block non-public IPs or the known resolvers.
-    if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_multicast:
-        return True
-    return value in _ALLOWLIST_IPS
-
-
-def _domain_is_allowlisted(value: str) -> bool:
-    host = value.lower().strip().rstrip(".")
-    return any(host == s or host.endswith("." + s) for s in _ALLOWLIST_DOMAIN_SUFFIXES)
+#
+# #106: the never-block set is no longer a pair of hard-coded frozensets local
+# to this node. It is a composable :class:`SafelistPolicy` from
+# ``btagent_shared.security.safelist`` — a universal baseline (public resolvers,
+# critical-infrastructure domain suffixes, RFC1918/loopback/reserved IPs) that
+# an org-scoped ``response_safelist`` table extends. Callers thread their org's
+# entries in via ``BulkMitigationInput.safelist_ips`` /
+# ``safelist_domain_suffixes``; the same policy is re-checked (authoritatively)
+# at execution time in the backend, so a safelisted target can never be blocked.
 
 
 # --------------------------------------------------------------------------- #
@@ -115,11 +90,6 @@ def _valid_domain(v: str) -> bool:
 def _valid_url(v: str) -> bool:
     s = v.strip()
     return s.startswith(("http://", "https://")) and len(s) > 10
-
-
-def _domain_from_url(v: str) -> str:
-    s = re.sub(r"^https?://", "", v.strip(), flags=re.I)
-    return s.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -178,6 +148,14 @@ class BulkMitigationInput(BaseModel):
     extra_allowlist: list[str] = Field(
         default_factory=list, description="Caller-supplied exact values to never block."
     )
+    safelist_ips: list[str] = Field(
+        default_factory=list,
+        description="Org-scoped exact IPs to never block (merged onto the baseline).",
+    )
+    safelist_domain_suffixes: list[str] = Field(
+        default_factory=list,
+        description="Org-scoped domain suffixes to never block (merged onto the baseline).",
+    )
 
 
 class BulkMitigationOutput(BaseModel):
@@ -192,20 +170,30 @@ class BulkMitigationOutput(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
-def _allowlisted(ioc: IOCRef, extra: frozenset[str]) -> bool:
+def _allowlisted(ioc: IOCRef, extra: frozenset[str], policy: SafelistPolicy) -> bool:
     if ioc.value.strip() in extra:
         return True
     if ioc.type == IOCType.IP:
-        return _ip_is_allowlisted(ioc.value.strip())
+        return policy.ip_safelisted(ioc.value)
     if ioc.type == IOCType.DOMAIN:
-        return _domain_is_allowlisted(ioc.value)
+        return policy.domain_safelisted(ioc.value)
     if ioc.type == IOCType.URL:
-        return _domain_is_allowlisted(_domain_from_url(ioc.value))
+        return policy.url_safelisted(ioc.value)
     return False
 
 
-def _build_plan(iocs: list[IOCRef], extra_allowlist: list[str]) -> MitigationPlan:
+def _build_plan(
+    iocs: list[IOCRef],
+    extra_allowlist: list[str],
+    safelist_ips: list[str] | None = None,
+    safelist_domain_suffixes: list[str] | None = None,
+) -> MitigationPlan:
     extra = frozenset(v.strip() for v in extra_allowlist if v.strip())
+    # Baseline never-block set + this org's response_safelist entries.
+    policy = BASELINE_SAFELIST.merge(
+        extra_ips=safelist_ips or (),
+        extra_domain_suffixes=safelist_domain_suffixes or (),
+    )
     actions: list[MitigationAction] = []
     seen: set[tuple[IOCType, str]] = set()
     block_count = 0
@@ -230,7 +218,7 @@ def _build_plan(iocs: list[IOCRef], extra_allowlist: list[str]) -> MitigationPla
             continue
         seen.add(key)
 
-        if _allowlisted(ioc, extra):
+        if _allowlisted(ioc, extra, policy):
             skip_count += 1
             actions.append(
                 _skip(
@@ -351,7 +339,12 @@ class BulkMitigationNode(Node[BulkMitigationInput, BulkMitigationOutput]):
     async def run(self, input: BulkMitigationInput, ctx: NodeContext) -> BulkMitigationOutput:
         # Decisions are ALWAYS deterministic (safety). The LLM, when registered
         # + mock off, only refines the human-readable plan summary.
-        plan = _build_plan(input.iocs, input.extra_allowlist)
+        plan = _build_plan(
+            input.iocs,
+            input.extra_allowlist,
+            input.safelist_ips,
+            input.safelist_domain_suffixes,
+        )
 
         from btagent_engine.llm import get_llm_client
 

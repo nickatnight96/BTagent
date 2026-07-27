@@ -139,6 +139,37 @@ async def test_extra_allowlist_respected(monkeypatch):
     assert _by_value(out, "45.83.12.7").decision == MitigationDecision.SKIP_ALLOWLISTED
 
 
+async def test_org_safelist_ip_threaded_into_plan(monkeypatch):
+    # #106: an org-scoped response_safelist IP is threaded into planning and must
+    # skip (on top of the universal baseline) — the plan mirrors the execute guard.
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "true")
+    out = await BulkMitigationNode().run(
+        BulkMitigationInput(
+            iocs=[IOCRef(type=IOCType.IP, value="45.83.12.7")],
+            safelist_ips=["45.83.12.7"],
+        ),
+        _ctx(),
+    )
+    assert _by_value(out, "45.83.12.7").decision == MitigationDecision.SKIP_ALLOWLISTED
+    assert out.plan.block_count == 0
+
+
+async def test_org_safelist_domain_suffix_threaded_into_plan(monkeypatch):
+    monkeypatch.setenv("BTAGENT_MOCK_LLM", "true")
+    out = await BulkMitigationNode().run(
+        BulkMitigationInput(
+            iocs=[
+                IOCRef(type=IOCType.DOMAIN, value="vpn.corp.example"),
+                IOCRef(type=IOCType.DOMAIN, value="evil.example"),
+            ],
+            safelist_domain_suffixes=["corp.example"],
+        ),
+        _ctx(),
+    )
+    assert _by_value(out, "vpn.corp.example").decision == MitigationDecision.SKIP_ALLOWLISTED
+    assert _by_value(out, "evil.example").decision == MitigationDecision.BLOCK
+
+
 async def test_tools_and_counts_aggregate(monkeypatch):
     out = await _plan(
         monkeypatch,
