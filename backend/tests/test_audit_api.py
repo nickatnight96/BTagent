@@ -183,3 +183,78 @@ async def test_lineage_unknown_up_to_hash_returns_404(
         headers=auth_header(admin_token),
     )
     assert resp.status_code == 404
+
+
+# --- per-incident evidence packages (UC-7.1) ------------------------------- #
+
+
+async def test_entries_filtered_by_incident_id(client: AsyncClient, admin_token: str, db_session):
+    """An auditor can pull one object's ledger slice, not the whole org."""
+    await _seed(db_session, 3)
+
+    resp = await client.get(
+        "/api/v1/audit/entries?incident_id=res_1", headers=auth_header(admin_token)
+    )
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    assert [i["resource"] for i in items] == ["res_1"]
+
+    # Unfiltered still returns the whole tenant ledger.
+    all_resp = await client.get("/api/v1/audit/entries", headers=auth_header(admin_token))
+    assert len(all_resp.json()["items"]) == 3
+
+
+async def test_entries_unknown_incident_id_is_empty_not_everything(
+    client: AsyncClient, admin_token: str, db_session
+):
+    """A non-matching filter must narrow to nothing, never fall back to all."""
+    await _seed(db_session, 3)
+
+    resp = await client.get(
+        "/api/v1/audit/entries?incident_id=res_nope", headers=auth_header(admin_token)
+    )
+    assert resp.status_code == 200
+    assert resp.json()["items"] == []
+
+
+async def test_export_scoped_to_incident_with_named_attachment(
+    client: AsyncClient, admin_token: str, db_session
+):
+    await _seed(db_session, 3)
+
+    resp = await client.get(
+        "/api/v1/audit/export?incident_id=res_2", headers=auth_header(admin_token)
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.text
+    assert "res_2" in body
+    assert "res_0" not in body and "res_1" not in body
+    # Filename carries the id so downloaded packages stay distinguishable.
+    assert resp.headers["content-disposition"] == "attachment; filename=audit_export_res_2.csv"
+
+
+async def test_export_without_incident_keeps_default_filename(
+    client: AsyncClient, admin_token: str, db_session
+):
+    await _seed(db_session, 2)
+
+    resp = await client.get("/api/v1/audit/export", headers=auth_header(admin_token))
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == "attachment; filename=audit_export.csv"
+
+
+def test_export_filename_is_header_injection_safe():
+    """``incident_id`` reaches a response header, so it must be sanitized."""
+    from btagent_backend.api.v1.audit import _export_filename
+
+    # CR/LF (header injection) and quote-breaking characters are stripped.
+    nasty = _export_filename('res\r\nSet-Cookie: a=b"; x="')
+    assert "\r" not in nasty and "\n" not in nasty and '"' not in nasty
+    assert nasty == "audit_export_resSet-Cookieabx.csv"
+
+    # An id made entirely of stripped characters falls back to the default
+    # rather than producing "audit_export_.csv".
+    assert _export_filename("///") == "audit_export.csv"
+    assert _export_filename(None) == "audit_export.csv"
+    # Long ids are truncated so the header can't be inflated.
+    assert len(_export_filename("a" * 500)) < 100

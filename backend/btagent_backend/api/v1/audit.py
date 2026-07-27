@@ -19,6 +19,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import re
 
 from btagent_shared.types.enums import AuditCategory
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -77,21 +78,49 @@ def _to_response(row) -> AuditEntryResponse:
     )
 
 
+# ``incident_id`` reaches a response header, so it is never interpolated raw:
+# anything outside the id alphabet (prefixed ULIDs are [A-Za-z0-9_-]) is
+# dropped, which forecloses CR/LF header injection and quote-breaking on the
+# Content-Disposition value.
+_FILENAME_SAFE = re.compile(r"[^A-Za-z0-9_-]")
+_MAX_FILENAME_ID = 64
+
+
+def _export_filename(incident_id: str | None) -> str:
+    """Attachment filename for the CSV export, safe for a header value."""
+    if not incident_id:
+        return "audit_export.csv"
+    safe = _FILENAME_SAFE.sub("", incident_id)[:_MAX_FILENAME_ID]
+    return f"audit_export_{safe}.csv" if safe else "audit_export.csv"
+
+
 @router.get("/entries", response_model=AuditEntryListResponse)
 async def list_audit_entries(
     actor: str | None = Query(None),
     category: AuditCategory | None = Query(None),
+    incident_id: str | None = Query(
+        None,
+        description=(
+            "Narrow to one audited object (UC-7.1 evidence package): matched "
+            "against the entry's ``resource``, e.g. an investigation id."
+        ),
+    ),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> AuditEntryListResponse:
-    """List audit-ledger entries (newest first), filterable by actor/category."""
+    """List audit-ledger entries (newest first), filterable by actor/category/incident."""
     user.require_permission("audit:view")
     # GH #385: scope to the caller's tenant so the ledger never leaks another
     # org's actor/action/resource.
     rows = await AuditTrail(db).get_entries(
-        org_id=user.org_id, actor=actor, category=category, limit=limit, offset=offset
+        org_id=user.org_id,
+        actor=actor,
+        category=category,
+        resource=incident_id,
+        limit=limit,
+        offset=offset,
     )
     return AuditEntryListResponse(items=[_to_response(r) for r in rows], limit=limit, offset=offset)
 
@@ -134,15 +163,33 @@ async def get_audit_lineage(
 async def export_audit_csv(
     actor: str | None = Query(None),
     category: AuditCategory | None = Query(None),
+    incident_id: str | None = Query(
+        None,
+        description=(
+            "Export one incident's evidence package (UC-7.1): matched against "
+            "the entry's ``resource``. Omit for the full tenant ledger."
+        ),
+    ),
     limit: int = Query(10000, ge=1, le=100000),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> StreamingResponse:
-    """Export audit entries as CSV for external auditors (admin only)."""
+    """Export audit entries as CSV for external auditors (admin only).
+
+    With ``incident_id`` the CSV is scoped to that object's ledger slice —
+    the "evidence package for any incident on demand" in EPIC-7 UC-7.1 — and
+    the attachment filename carries the id so downloaded packages stay
+    distinguishable.
+    """
     user.require_permission("audit:export")
     # GH #385: export only the caller's tenant ledger.
     rows = await AuditTrail(db).get_entries(
-        org_id=user.org_id, actor=actor, category=category, limit=limit, offset=0
+        org_id=user.org_id,
+        actor=actor,
+        category=category,
+        resource=incident_id,
+        limit=limit,
+        offset=0,
     )
 
     buf = io.StringIO()
@@ -167,5 +214,5 @@ async def export_audit_csv(
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=audit_export.csv"},
+        headers={"Content-Disposition": f"attachment; filename={_export_filename(incident_id)}"},
     )

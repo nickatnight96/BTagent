@@ -225,6 +225,7 @@ class AuditTrail:
         org_id: str = DEFAULT_ORG_ID,
         actor: str | None = None,
         category: AuditCategory | None = None,
+        resource: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AuditLogRow]:
@@ -233,6 +234,11 @@ class AuditTrail:
         GH #385: always tenant-scoped — only entries for ``org_id`` are
         returned, so the /audit/entries and /audit/export surfaces never leak
         another org's ledger.
+
+        ``resource`` narrows to a single audited object (EPIC-7 UC-7.1): it is
+        how an auditor pulls one incident's evidence package rather than the
+        whole org ledger. Matched exactly, not as a prefix — resource ids are
+        prefixed ULIDs, so a substring match could pull unrelated objects.
         """
         query = (
             select(AuditLogRow).where(AuditLogRow.org_id == org_id).order_by(AuditLogRow.seq.desc())
@@ -242,6 +248,8 @@ class AuditTrail:
             query = query.where(AuditLogRow.actor == actor)
         if category is not None:
             query = query.where(AuditLogRow.category == category.value)
+        if resource is not None:
+            query = query.where(AuditLogRow.resource == resource)
 
         query = query.offset(offset).limit(limit)
         result = await self._db.execute(query)
