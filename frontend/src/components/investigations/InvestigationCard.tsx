@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Clock, User } from "lucide-react";
 import type { Investigation } from "@/types/investigation";
 import { Card } from "@/components/ds/card";

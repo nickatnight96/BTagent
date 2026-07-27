@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router";
 import { Loader2, Workflow as WorkflowIcon, Plus, Clock } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";

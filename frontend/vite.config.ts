@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 
 // #146 perf: vendor-chunk grouping for manualChunks (below).
-const REACT_VENDOR = /[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/;
+const REACT_VENDOR = /[\\/]node_modules[\\/](react|react-dom|react-router|scheduler)[\\/]/;
 const UI_VENDOR = /[\\/]node_modules[\\/](@radix-ui|cmdk)[\\/]/;
 
 export default defineConfig({
