@@ -35,12 +35,14 @@ from datetime import UTC, datetime
 
 import pytest
 from btagent_shared.hunt.cloud import (
+    DnsRecord,
     build_trust_graph,
     classify_workload,
     detect_cloudtrail_tamper,
     detect_cross_account_trust_abuse,
     detect_iam_persistence,
     detect_overprivileged_workload_identity,
+    detect_shadow_mcp_servers,
     detect_shadow_workloads,
     detect_snapshot_external_share,
     detect_sts_chaining,
@@ -63,13 +65,18 @@ from btagent_shared.types.hunt_finding import RecordFindingRequest
 from tests.fixtures.cloud.iam_fixtures import (
     AGENTIC_IDENTITY_INVENTORY,
     AGENTIC_WORKLOAD_INVENTORY,
+    CLOUD_RUN_MCP_SERVICES,
     CLOUDTRAIL_TAMPER_EVENTS,
     CROSS_ACCOUNT_IDENTITIES,
     CROSS_ACCOUNT_TRUSTED_IDS,
     EXTERNAL_ACCOUNT,
     IAM_PERSISTENCE_EVENTS,
+    MCP_DNS_RECORDS,
+    MCP_SANCTIONED_SUFFIXES,
     ORG_ID,
     SECOND_ACCOUNT,
+    SHADOW_BEDROCK_IDENTITIES,
+    SHADOW_BEDROCK_WORKLOADS,
     SNAPSHOT_SHARE_EVENTS,
     STS_CHAIN_IDENTITIES,
     STS_HIGH_VALUE_TARGETS,
@@ -508,11 +515,16 @@ def test_T22_cloud_pack_loads_via_builtin_loader():
     assert pack.name == "Cloud Control-Plane Hunt Pack"
     assert pack.version == "1.0.0"
 
-    # All 11 Sigma rules load; the 3 code detectors are NOT among them.
-    assert len(pack.rules) == 11
+    # All 21 Sigma rules load (11 original + 10 #117 finishers); the 3 code
+    # detectors are NOT among them.
+    assert len(pack.rules) == 21
     rule_files = {r.file for r in pack.rules}
     assert "sts_assumerole_chain.yml" in rule_files
     assert "snapshot_external_share.yml" in rule_files
+    # #117 Phase-A / GCP / Azure finishers.
+    assert "lambda_function_backdoor.yml" in rule_files
+    assert "gcp_secret_manager_mass_access.yml" in rule_files
+    assert "azure_storage_public_access.yml" in rule_files
     assert not any(f.endswith(".py") for f in rule_files)
 
     # GuardDuty rules ship disabled (deferred on #100); the rest are enabled.
@@ -729,3 +741,130 @@ def test_T28b_no_mfa_login_does_corroborate_tamper():
     assert len(findings) == 1
     assert findings[0].severity == Severity.CRITICAL
     assert len(findings[0].evidence["correlated_suspicious_auths"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# T29–T32: Shadow-MCP discovery via Cloud Run inventory + DNS correlation (#117 B)
+# ---------------------------------------------------------------------------
+
+
+def test_T29_shadow_mcp_flags_unsanctioned_fronting_domain():
+    """A Cloud Run MCP service fronted by an unsanctioned custom domain fires."""
+    findings = detect_shadow_mcp_servers(
+        CLOUD_RUN_MCP_SERVICES,
+        MCP_DNS_RECORDS,
+        sanctioned_endpoint_suffixes=MCP_SANCTIONED_SUFFIXES,
+    )
+    # Only the shadow MCP service (fronted by mcp.evilcorp-shadow.io) fires.
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.source == HuntSource.CLOUD
+    assert f.domain == HuntDomain.CLOUD
+    assert f.evidence["detection"] == "shadow_mcp_correlation"
+    # Same governance routing marker the shadow-agent detectors set.
+    assert f.evidence["shadow_workload"] is True
+    assert f.evidence["fronting_domain"] == "mcp.evilcorp-shadow.io"
+    assert "mcp-shadow" in f.evidence["service_resource_id"]
+    assert "T1580" in f.technique_ids
+
+
+def test_T30_shadow_mcp_ignores_governed_and_sanctioned():
+    """The governed MCP service (sanctioned internal domain) does NOT fire."""
+    findings = detect_shadow_mcp_servers(
+        CLOUD_RUN_MCP_SERVICES,
+        MCP_DNS_RECORDS,
+        sanctioned_endpoint_suffixes=MCP_SANCTIONED_SUFFIXES,
+    )
+    fronting = {f.evidence["fronting_domain"] for f in findings}
+    # The governed service's internal domain is sanctioned → absent.
+    assert "mcp.internal.company.com" not in fronting
+    # The default *.run.app host is sanctioned → absent.
+    assert not any(d.endswith(".run.app") for d in fronting)
+
+
+def test_T31_shadow_mcp_requires_mcp_service_not_plain_web():
+    """A non-MCP Cloud Run service fronted by an external domain does NOT fire.
+
+    Keys on Cloud Run *MCP* inventory: the web frontend (kind UNMANAGED, no MCP
+    marker) is skipped even though app.evilcorp-shadow.io fronts it externally.
+    """
+    findings = detect_shadow_mcp_servers(
+        CLOUD_RUN_MCP_SERVICES,
+        MCP_DNS_RECORDS,
+        sanctioned_endpoint_suffixes=MCP_SANCTIONED_SUFFIXES,
+    )
+    services_flagged = {f.evidence["service_resource_id"] for f in findings}
+    assert not any("web-frontend" in s for s in services_flagged)
+
+
+def test_T32_shadow_mcp_requires_dns_correlation():
+    """No DNS records → no shadow-MCP finding (the join needs both inputs)."""
+    # Inventory alone (no DNS records) yields nothing here — D6 still catches the
+    # untagged service on kind/tag alone, but the DNS-correlation detector needs
+    # the record to confirm an unsanctioned fronting endpoint.
+    assert (
+        detect_shadow_mcp_servers(
+            CLOUD_RUN_MCP_SERVICES, [], sanctioned_endpoint_suffixes=MCP_SANCTIONED_SUFFIXES
+        )
+        == []
+    )
+    # Symmetrically, DNS records with no MCP inventory yield nothing.
+    assert (
+        detect_shadow_mcp_servers(
+            [], MCP_DNS_RECORDS, sanctioned_endpoint_suffixes=MCP_SANCTIONED_SUFFIXES
+        )
+        == []
+    )
+
+
+def test_T33_shadow_mcp_a_record_ip_correlation():
+    """An A record resolving to the service's ingress IP also correlates."""
+    findings = detect_shadow_mcp_servers(
+        CLOUD_RUN_MCP_SERVICES,
+        [
+            DnsRecord(
+                name="mcp.rogue-endpoint.net",
+                record_type="A",
+                values=["34.120.0.10"],  # shadow service's ingress IP
+            )
+        ],
+        sanctioned_endpoint_suffixes=MCP_SANCTIONED_SUFFIXES,
+    )
+    assert len(findings) == 1
+    assert findings[0].evidence["fronting_domain"] == "mcp.rogue-endpoint.net"
+
+
+def test_T34_run_all_detections_includes_shadow_mcp_when_dns_present():
+    """run_all_detections wires D8 when both workloads + dns_records are supplied."""
+    findings = run_all_detections(
+        workloads=CLOUD_RUN_MCP_SERVICES,
+        dns_records=MCP_DNS_RECORDS,
+    )
+    detections = {f.evidence.get("detection") for f in findings}
+    assert "shadow_mcp_correlation" in detections
+
+
+# ---------------------------------------------------------------------------
+# T35–T36: ≥5 shadow / unmanaged Bedrock agent identities (#117 task E)
+# ---------------------------------------------------------------------------
+
+
+def test_T35_shadow_bedrock_identity_fixture_has_at_least_five():
+    """The expanded fixture carries ≥5 shadow/unmanaged Bedrock agent identities."""
+    assert len(SHADOW_BEDROCK_IDENTITIES) >= 5
+    # Every one is untagged (shadow) — none governance-tagged.
+    assert all(i.governance_tagged is False for i in SHADOW_BEDROCK_IDENTITIES)
+    # Distinct ARNs.
+    assert len({i.arn_or_id for i in SHADOW_BEDROCK_IDENTITIES}) == len(SHADOW_BEDROCK_IDENTITIES)
+
+
+def test_T36_shadow_bedrock_workloads_all_flagged_shadow():
+    """detect_shadow_workloads emits ≥5 findings over the shadow-Bedrock fixture."""
+    findings = detect_shadow_workloads(SHADOW_BEDROCK_WORKLOADS)
+    assert len(findings) >= 5
+    assert all(f.evidence.get("shadow_workload") for f in findings)
+    # The overprivileged ones are also surfaced by the identity detector.
+    over = detect_overprivileged_workload_identity(
+        SHADOW_BEDROCK_WORKLOADS, SHADOW_BEDROCK_IDENTITIES
+    )
+    assert len(over) >= 2

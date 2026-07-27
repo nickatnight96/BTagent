@@ -1,0 +1,39 @@
+title: S3 Bucket Made Public — Post-Compromise Data Exposure
+id: 4ad29306-2d75-4512-a104-27d8aa9be8df
+status: test
+description: >
+  Detects S3 control-plane calls that expose a bucket to the public: an ACL or
+  bucket policy granting the AllUsers / AuthenticatedUsers group, or removal of
+  the account/bucket Public Access Block.  After achieving access, adversaries
+  flip a bucket public to stage exfiltration over an anonymous HTTPS path that
+  bypasses IAM data-plane auditing.
+references:
+  - https://attack.mitre.org/techniques/T1567/002/
+  - https://attack.mitre.org/techniques/T1530/
+author: BTagent (#117)
+date: 2026-07-27
+logsource:
+  product: aws
+  service: cloudtrail
+detection:
+  selection_acl_public:
+    eventName: PutBucketAcl
+    requestParameters.AccessControlPolicy.AccessControlList.Grant.Grantee.URI|contains:
+      - 'http://acs.amazonaws.com/groups/global/AllUsers'
+      - 'http://acs.amazonaws.com/groups/global/AuthenticatedUsers'
+  selection_policy_public:
+    eventName: PutBucketPolicy
+    requestParameters.bucketPolicy.Statement.Principal|contains: '*'
+  selection_pab_removed:
+    eventName:
+      - DeletePublicAccessBlock
+      - DeleteBucketPublicAccessBlock
+  condition: selection_acl_public or selection_policy_public or selection_pab_removed
+falsepositives:
+  - Static-website or public-dataset buckets provisioned by an approved IaC pipeline (correlate against the change ticket and the acting principal)
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1567.002
+  - attack.t1530
+  - cloud.control-plane

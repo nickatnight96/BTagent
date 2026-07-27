@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timezone
 
+from btagent_shared.hunt.cloud import DnsRecord
 from btagent_shared.types.cloud_hunt import (
     AgenticWorkload,
     AgenticWorkloadKind,
@@ -436,6 +437,221 @@ AGENTIC_WORKLOAD_INVENTORY: list[AgenticWorkload] = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# Shadow / unmanaged Bedrock agent identities (#117 task E)
+#
+# ≥5 IAM execution roles behind shadow or unmanaged Bedrock agents — untagged
+# (governance_tagged=False) agent-runtime roles that a Bedrock AgentCore or an
+# unmanaged Lambda/ECS "agent" runs as.  These feed the shadow-workload +
+# overprivileged-identity detectors and the shadow-Bedrock discovery tests.
+# All synthetic; no real ARNs.
+# ---------------------------------------------------------------------------
+
+SHADOW_BEDROCK_IDENTITIES: list[CloudIdentity] = [
+    # 1) Untagged Bedrock agent-runtime role, wildcard permissions.
+    CloudIdentity(
+        id="id_shadow_bedrock_001",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=IdentityKind.ROLE,
+        arn_or_id=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue1",
+        display_name="Shadow Bedrock agent runtime (untagged, admin)",
+        trust_policy={
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"Service": "bedrock.amazonaws.com"},
+                    "Action": "sts:AssumeRole",
+                }
+            ]
+        },
+        can_be_assumed_by=["bedrock.amazonaws.com"],
+        has_cross_account_trust=False,
+        governance_tagged=False,
+        last_activity=None,
+        enrichment={"shadow": True, "kind": "bedrock_agentcore", "overprivileged": True},
+    ),
+    # 2) Untagged Bedrock agent-runtime role, cross-account trust to attacker.
+    CloudIdentity(
+        id="id_shadow_bedrock_002",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=IdentityKind.ROLE,
+        arn_or_id=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue2",
+        display_name="Shadow Bedrock agent runtime (external trust)",
+        trust_policy={
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"AWS": f"arn:aws:iam::{EXTERNAL_ACCOUNT}:root"},
+                    "Action": "sts:AssumeRole",
+                }
+            ]
+        },
+        can_be_assumed_by=[f"arn:aws:iam::{EXTERNAL_ACCOUNT}:root"],
+        has_cross_account_trust=True,
+        governance_tagged=False,
+        last_activity=_NOW,
+        enrichment={"shadow": True, "kind": "bedrock_agentcore"},
+    ),
+    # 3) Unmanaged Lambda "agent" role calling Bedrock without AgentCore.
+    CloudIdentity(
+        id="id_shadow_bedrock_003",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=IdentityKind.ROLE,
+        arn_or_id=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/UnmanagedBedrockLambda-3",
+        display_name="Unmanaged Lambda agent (Bedrock SDK, untagged)",
+        trust_policy=None,
+        can_be_assumed_by=["lambda.amazonaws.com"],
+        has_cross_account_trust=False,
+        governance_tagged=False,
+        last_activity=_NOW,
+        enrichment={"shadow": True, "kind": "unmanaged", "overprivileged": True},
+    ),
+    # 4) Unmanaged ECS task role invoking Bedrock, untagged.
+    CloudIdentity(
+        id="id_shadow_bedrock_004",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=IdentityKind.ROLE,
+        arn_or_id=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/UnmanagedBedrockEcsTask-4",
+        display_name="Unmanaged ECS task agent (Bedrock, untagged)",
+        trust_policy=None,
+        can_be_assumed_by=["ecs-tasks.amazonaws.com"],
+        has_cross_account_trust=False,
+        governance_tagged=False,
+        last_activity=None,
+        enrichment={"shadow": True, "kind": "unmanaged"},
+    ),
+    # 5) Untagged Bedrock agent-runtime role, machine service account style.
+    CloudIdentity(
+        id="id_shadow_bedrock_005",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=IdentityKind.SERVICE_ACCOUNT,
+        arn_or_id=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue5",
+        display_name="Shadow Bedrock agent runtime (svc-account style, untagged)",
+        trust_policy=None,
+        can_be_assumed_by=["bedrock.amazonaws.com"],
+        has_cross_account_trust=False,
+        governance_tagged=False,
+        last_activity=_NOW,
+        enrichment={"shadow": True, "kind": "bedrock_agentcore"},
+    ),
+    # 6) Untagged Bedrock agent-runtime role, overprivileged + dormant.
+    CloudIdentity(
+        id="id_shadow_bedrock_006",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=IdentityKind.ROLE,
+        arn_or_id=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue6",
+        display_name="Shadow Bedrock agent runtime (dormant, admin)",
+        trust_policy=None,
+        can_be_assumed_by=["bedrock.amazonaws.com"],
+        has_cross_account_trust=False,
+        governance_tagged=False,
+        last_activity=None,
+        enrichment={"shadow": True, "kind": "bedrock_agentcore", "overprivileged": True},
+    ),
+]
+
+# Shadow / unmanaged Bedrock agent *workloads* running as the identities above —
+# every one untagged (governance_tagged=False), so detect_shadow_workloads()
+# emits ≥5 shadow findings.  Two carry an overprivileged identity flag.
+SHADOW_BEDROCK_WORKLOADS: list[AgenticWorkload] = [
+    AgenticWorkload(
+        id="wl_shadow_bedrock_001",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=AgenticWorkloadKind.BEDROCK_AGENTCORE,
+        resource_id=f"arn:aws:bedrock:us-east-1:{TRUSTED_ACCOUNT}:agent/ROGUE001",
+        display_name="Shadow Bedrock agent 1",
+        identity_ref=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue1",
+        governance_tagged=False,
+        is_shadow=True,
+        has_overprivileged_identity=True,
+        internet_reachable=False,
+        last_activity=None,
+        risk_score=0.7,
+    ),
+    AgenticWorkload(
+        id="wl_shadow_bedrock_002",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=AgenticWorkloadKind.BEDROCK_AGENTCORE,
+        resource_id=f"arn:aws:bedrock:us-east-1:{TRUSTED_ACCOUNT}:agent/ROGUE002",
+        display_name="Shadow Bedrock agent 2",
+        identity_ref=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue2",
+        governance_tagged=False,
+        is_shadow=True,
+        has_overprivileged_identity=False,
+        internet_reachable=True,
+        last_activity=_NOW,
+        risk_score=0.6,
+    ),
+    AgenticWorkload(
+        id="wl_shadow_bedrock_003",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=AgenticWorkloadKind.UNMANAGED,
+        resource_id=f"arn:aws:lambda:us-east-1:{TRUSTED_ACCOUNT}:function:unmanaged-bedrock-3",
+        display_name="Unmanaged Bedrock Lambda 3",
+        identity_ref=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/UnmanagedBedrockLambda-3",
+        governance_tagged=False,
+        is_shadow=True,
+        has_overprivileged_identity=True,
+        internet_reachable=True,
+        last_activity=_NOW,
+        risk_score=0.9,
+    ),
+    AgenticWorkload(
+        id="wl_shadow_bedrock_004",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=AgenticWorkloadKind.UNMANAGED,
+        resource_id=f"arn:aws:ecs:us-east-1:{TRUSTED_ACCOUNT}:task-definition/unmanaged-bedrock-4",
+        display_name="Unmanaged Bedrock ECS task 4",
+        identity_ref=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/UnmanagedBedrockEcsTask-4",
+        governance_tagged=False,
+        is_shadow=True,
+        has_overprivileged_identity=False,
+        internet_reachable=False,
+        last_activity=None,
+        risk_score=0.5,
+    ),
+    AgenticWorkload(
+        id="wl_shadow_bedrock_005",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=AgenticWorkloadKind.BEDROCK_AGENTCORE,
+        resource_id=f"arn:aws:bedrock:us-east-1:{TRUSTED_ACCOUNT}:agent/ROGUE005",
+        display_name="Shadow Bedrock agent 5",
+        identity_ref=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue5",
+        governance_tagged=False,
+        is_shadow=True,
+        has_overprivileged_identity=False,
+        internet_reachable=False,
+        last_activity=_NOW,
+        risk_score=0.4,
+    ),
+    AgenticWorkload(
+        id="wl_shadow_bedrock_006",
+        org_id=ORG_ID,
+        provider=CloudProvider.AWS,
+        kind=AgenticWorkloadKind.BEDROCK_AGENTCORE,
+        resource_id=f"arn:aws:bedrock:us-east-1:{TRUSTED_ACCOUNT}:agent/ROGUE006",
+        display_name="Shadow Bedrock agent 6 (dormant)",
+        identity_ref=f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BedrockAgentRuntime-Rogue6",
+        governance_tagged=False,
+        is_shadow=True,
+        has_overprivileged_identity=True,
+        internet_reachable=False,
+        last_activity=None,
+        risk_score=0.7,
+    ),
+]
+
 # Identities corresponding to the workload inventory (for privilege cross-ref).
 AGENTIC_IDENTITY_INVENTORY: list[CloudIdentity] = [
     CloudIdentity(
@@ -463,5 +679,117 @@ AGENTIC_IDENTITY_INVENTORY: list[CloudIdentity] = [
         has_cross_account_trust=False,
         governance_tagged=False,
         last_activity=None,
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Shadow-MCP correlation fixture (#117 task B)
+#
+# Cloud Run service inventory + DNS records.  The correlation surfaces a Cloud
+# Run MCP service fronted by an *unsanctioned* custom domain:
+#   - mcp-shadow (kind CLOUD_RUN_MCP): default host mcp-shadow-xyz.a.run.app,
+#     CNAMEd from mcp.evilcorp-shadow.io (NOT sanctioned)  → shadow-MCP finding
+#   - mcp-governed (kind CLOUD_RUN_MCP): default host mcp-ok-abc.a.run.app,
+#     fronted only by mcp.internal.company.com (sanctioned) → NO finding
+#   - web-frontend (not an MCP server): CNAMEd from app.evilcorp-shadow.io →
+#     NOT an MCP service, so NO finding (keys on Cloud Run MCP inventory)
+# ---------------------------------------------------------------------------
+
+MCP_SANCTIONED_SUFFIXES: list[str] = [
+    ".run.app",
+    ".internal",
+    ".svc.cluster.local",
+    "mcp.internal.company.com",
+]
+
+CLOUD_RUN_MCP_SERVICES: list[AgenticWorkload] = [
+    # Shadow: untagged Cloud Run MCP server fronted by an external custom domain.
+    AgenticWorkload(
+        id="wl_run_mcp_shadow",
+        org_id=ORG_ID,
+        provider=CloudProvider.GCP,
+        kind=AgenticWorkloadKind.CLOUD_RUN_MCP,
+        resource_id="projects/my-project/locations/us-central1/services/mcp-shadow",
+        display_name="Shadow Cloud Run MCP server",
+        identity_ref="mcp-shadow-sa@my-project.iam.gserviceaccount.com",
+        governance_tagged=False,
+        is_shadow=True,
+        has_overprivileged_identity=False,
+        internet_reachable=True,
+        last_activity=_NOW,
+        risk_score=0.6,
+        enrichment={
+            "platform": "cloud_run",
+            "service_url": "https://mcp-shadow-xyz.a.run.app",
+            "resolved_ips": ["34.120.0.10"],
+        },
+    ),
+    # Governed: tagged Cloud Run MCP server on an approved internal domain only.
+    AgenticWorkload(
+        id="wl_run_mcp_governed",
+        org_id=ORG_ID,
+        provider=CloudProvider.GCP,
+        kind=AgenticWorkloadKind.CLOUD_RUN_MCP,
+        resource_id="projects/my-project/locations/us-central1/services/mcp-governed",
+        display_name="Governed Cloud Run MCP server",
+        identity_ref="mcp-ok-sa@my-project.iam.gserviceaccount.com",
+        governance_tagged=True,
+        is_shadow=False,
+        has_overprivileged_identity=False,
+        internet_reachable=False,
+        last_activity=_NOW,
+        risk_score=0.0,
+        enrichment={
+            "platform": "cloud_run",
+            "service_url": "https://mcp-ok-abc.a.run.app",
+            "custom_domains": ["mcp.internal.company.com"],
+        },
+    ),
+    # Not an MCP server — a plain web frontend Cloud Run service.
+    AgenticWorkload(
+        id="wl_run_web",
+        org_id=ORG_ID,
+        provider=CloudProvider.GCP,
+        kind=AgenticWorkloadKind.UNMANAGED,
+        resource_id="projects/my-project/locations/us-central1/services/web-frontend",
+        display_name="Marketing web frontend",
+        identity_ref="web-sa@my-project.iam.gserviceaccount.com",
+        governance_tagged=True,
+        is_shadow=False,
+        has_overprivileged_identity=False,
+        internet_reachable=True,
+        last_activity=_NOW,
+        risk_score=0.0,
+        enrichment={
+            "platform": "cloud_run",
+            "service_url": "https://web-frontend-def.a.run.app",
+        },
+    ),
+]
+
+MCP_DNS_RECORDS: list[DnsRecord] = [
+    # Unsanctioned custom domain CNAMEd to the shadow MCP service's default host.
+    DnsRecord(
+        name="mcp.evilcorp-shadow.io",
+        record_type="CNAME",
+        values=["mcp-shadow-xyz.a.run.app"],
+    ),
+    # Sanctioned internal domain fronting the governed MCP service (ignored).
+    DnsRecord(
+        name="mcp.internal.company.com",
+        record_type="CNAME",
+        values=["mcp-ok-abc.a.run.app"],
+    ),
+    # The shadow service's own default *.run.app host (sanctioned suffix → ignored).
+    DnsRecord(
+        name="mcp-shadow-xyz.a.run.app",
+        record_type="A",
+        values=["34.120.0.10"],
+    ),
+    # An unsanctioned domain fronting the *web frontend* (not an MCP service → no finding).
+    DnsRecord(
+        name="app.evilcorp-shadow.io",
+        record_type="CNAME",
+        values=["web-frontend-def.a.run.app"],
     ),
 ]
