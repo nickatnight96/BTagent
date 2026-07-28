@@ -164,3 +164,31 @@ export async function listExerciseGaps(params?: {
     `/v1/mitre/exercises/gaps${buildQuery(params ?? {})}`,
   );
 }
+
+/** `POST /mitre/tag` response — the created tag row. */
+export interface CreatedTechniqueTag {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  technique_id: string;
+  confidence: number;
+  tagged_by: string;
+  created_at: string | null;
+}
+
+/**
+ * Tag a MITRE technique onto an entity (senior analyst+, `mitre:tag`).
+ *
+ * Tags are what the coverage map counts — an untagged technique reads as a
+ * coverage gap even when every analyst "knows" the IOC was T1566. The server
+ * resolves the entity to its owning investigation and refuses cross-org
+ * writes with a 404.
+ */
+export async function tagTechnique(body: {
+  entity_type: "ioc" | "timeline" | "alert";
+  entity_id: string;
+  technique_id: string;
+  confidence?: number;
+}): Promise<CreatedTechniqueTag> {
+  return api.post<CreatedTechniqueTag>("/v1/mitre/tag", body);
+}
