@@ -87,3 +87,37 @@ export async function composeDetectionPR(
     ...(title ? { title } : {}),
   });
 }
+
+/** Summary of what the merge closed loop did (best-effort, may be empty). */
+export interface ClosedLoop {
+  hunt_pack?: Record<string, unknown>;
+  validation_run?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+export interface PROutcomeResponse {
+  proposal: DetectionProposal;
+  closed_loop: ClosedLoop;
+}
+
+/**
+ * Record what happened to a composed proposal's detection-repo PR.
+ *
+ * Only recordable once a PR is open, and only once — the server 409s on a
+ * proposal that never shipped or is already terminal. Requires
+ * `hunt:promote` (senior_analyst+): recording a merge *arms a live recurring
+ * detection*, so it carries the same authority as composing the PR.
+ *
+ * On `merged` the closed loop fires server-side — the rule is auto-installed
+ * as a hunt-pack entry and a sandbox detection-validation run is triggered.
+ * Both are best-effort there, so the response reports what actually happened
+ * rather than what was intended.
+ */
+export async function recordPROutcome(
+  rowId: string,
+  outcome: "merged" | "rejected",
+): Promise<PROutcomeResponse> {
+  return api.post<PROutcomeResponse>(`${BASE}/proposals/${rowId}/pr-outcome`, {
+    outcome,
+  });
+}

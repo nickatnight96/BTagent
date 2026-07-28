@@ -9,6 +9,7 @@ const rejectProposal = vi.fn();
 const validateProposal = vi.fn();
 const editProposal = vi.fn();
 const composeDetectionPR = vi.fn();
+const recordPROutcome = vi.fn();
 
 vi.mock("@/api/detection", () => ({
   listProposals: (...a: unknown[]) => listProposals(...a),
@@ -17,6 +18,7 @@ vi.mock("@/api/detection", () => ({
   validateProposal: (...a: unknown[]) => validateProposal(...a),
   editProposal: (...a: unknown[]) => editProposal(...a),
   composeDetectionPR: (...a: unknown[]) => composeDetectionPR(...a),
+  recordPROutcome: (...a: unknown[]) => recordPROutcome(...a),
 }));
 
 import { DetectionProposalsPage } from "@/components/detection/DetectionProposalsPage";
@@ -247,5 +249,107 @@ describe("DetectionProposalsPage", () => {
       fireEvent.click(screen.getByTestId("compose-pr-button"));
     });
     await waitFor(() => expect(screen.getByTestId("proposals-error")).toBeTruthy());
+  });
+
+  // -------------------------------------------------------------------------
+  // PR outcome (#113 Phase C)
+  //
+  // `POST /cti/proposals/{id}/pr-outcome` shipped with no consumer, so a rule
+  // could be composed into a detection-repo PR and then nothing could ever
+  // tell BTagent what happened to it. Recording a merge is what fires the
+  // closed loop — the rule is installed as a hunt pack and a validation run is
+  // triggered — so the whole chain sat behind an unreachable endpoint.
+  // -------------------------------------------------------------------------
+
+  const SHIPPED = {
+    ...PROPOSED,
+    id: "prop_PR",
+    state: "accepted",
+    pr_url: "https://git.example.com/detections/pull/11",
+    pr_outcome: "pr_opened",
+  };
+
+  it("offers the outcome control only while the PR is open", async () => {
+    // Outside pr_opened the server 409s, so showing the control would only
+    // produce an error the operator can do nothing about.
+    listProposals.mockResolvedValue({
+      items: [
+        SHIPPED,
+        { ...SHIPPED, id: "prop_MERGED", pr_outcome: "merged" },
+        { ...PROPOSED, id: "prop_UNSHIPPED" },
+      ],
+      total: 3,
+    });
+    renderPage(<DetectionProposalsPage />);
+    await screen.findByTestId("proposal-pr-outcome-prop_PR");
+    expect(screen.queryByTestId("proposal-pr-outcome-prop_MERGED")).toBeNull();
+    expect(screen.queryByTestId("proposal-pr-outcome-prop_UNSHIPPED")).toBeNull();
+  });
+
+  it("records a merge and reports what the closed loop actually did", async () => {
+    listProposals.mockResolvedValue({ items: [SHIPPED], total: 1 });
+    recordPROutcome.mockResolvedValue({
+      proposal: { ...SHIPPED, pr_outcome: "merged" },
+      closed_loop: { hunt_pack: { id: "pack_1" }, validation_run: { id: "run_1" } },
+    });
+    renderPage(<DetectionProposalsPage />);
+    const btn = await screen.findByTestId("proposal-pr-merged-btn-prop_PR");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    await waitFor(() => expect(recordPROutcome).toHaveBeenCalledWith("prop_PR", "merged"));
+    const loop = await screen.findByTestId("proposal-closed-loop-prop_PR");
+    expect(loop.textContent).toContain("installed as a hunt-pack rule");
+    expect(loop.textContent).toContain("validation run triggered");
+  });
+
+  it("does not claim a rule is live when the loop's hooks did not fire", async () => {
+    // Both hooks are best-effort server-side. A merge with no pack and no
+    // validation run must not read as a fully closed loop.
+    listProposals.mockResolvedValue({ items: [SHIPPED], total: 1 });
+    recordPROutcome.mockResolvedValue({
+      proposal: { ...SHIPPED, pr_outcome: "merged" },
+      closed_loop: {},
+    });
+    renderPage(<DetectionProposalsPage />);
+    const btn = await screen.findByTestId("proposal-pr-merged-btn-prop_PR");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const loop = await screen.findByTestId("proposal-closed-loop-prop_PR");
+    expect(loop.textContent).toContain("no hunt-pack entry was created");
+    expect(loop.textContent).toContain("no validation run was triggered");
+  });
+
+  it("records a rejection without claiming any loop ran", async () => {
+    listProposals.mockResolvedValue({ items: [SHIPPED], total: 1 });
+    recordPROutcome.mockResolvedValue({
+      proposal: { ...SHIPPED, pr_outcome: "rejected" },
+      closed_loop: {},
+    });
+    renderPage(<DetectionProposalsPage />);
+    const btn = await screen.findByTestId("proposal-pr-rejected-btn-prop_PR");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    await waitFor(() => expect(recordPROutcome).toHaveBeenCalledWith("prop_PR", "rejected"));
+    expect(await screen.findByTestId("proposal-pr-rejected-prop_PR")).toBeTruthy();
+    expect(screen.queryByTestId("proposal-closed-loop-prop_PR")).toBeNull();
+  });
+
+  it("says the rule was not installed when recording a merge fails", async () => {
+    // Ambiguity here would leave the operator unsure whether a live detection
+    // is now running.
+    listProposals.mockResolvedValue({ items: [SHIPPED], total: 1 });
+    recordPROutcome.mockRejectedValue(new Error("409"));
+    renderPage(<DetectionProposalsPage />);
+    const btn = await screen.findByTestId("proposal-pr-merged-btn-prop_PR");
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    const err = await screen.findByTestId("proposals-error");
+    expect(err.textContent).toContain("not installed");
+    // The control stays, so the outcome can be recorded once the cause is fixed.
+    expect(screen.getByTestId("proposal-pr-outcome-prop_PR")).toBeTruthy();
   });
 });
