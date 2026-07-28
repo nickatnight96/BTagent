@@ -70,7 +70,6 @@ KNOWN_GAPS: dict[str, str] = {
     ),
     "POST /auth/register": "self-registration has no UI; accounts are provisioned by admins",
     "POST /auth/refresh": "no SPA caller — sessions ride the cookie lifetime instead",
-    "POST /auth/revoke/{}": "token revocation has no admin UI",
 }
 
 

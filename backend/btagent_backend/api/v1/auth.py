@@ -400,6 +400,63 @@ async def register(
     return {"id": user.id, "username": user.username, "role": user.role}
 
 
+class OrgUserOut(BaseModel):
+    """A user of the caller's org, as the revocation console needs them.
+
+    Deliberately narrow: no email domain games, no password hash, no MFA
+    secrets. ``sso_only`` is the one derived field, and it earns its place —
+    for an SSO-provisioned user there is no local password to rotate, so
+    revocation is the *only* lever this product has against a compromised
+    session. An admin picking a response needs to know that before they pick.
+    """
+
+    id: str
+    username: str
+    email: str
+    role: str
+    created_at: datetime
+    last_login: datetime | None
+    sso_only: bool
+
+
+@router.get("/users", response_model=list[OrgUserOut])
+async def list_org_users(
+    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """The caller's org roster — the roll-call behind session revocation.
+
+    RBAC: ``user:edit`` (admin), *not* the more permissive ``user:view``.
+    That looks inconsistent for a read until you ask what this list is for:
+    it exists to be the target picker for ``POST /auth/revoke/{user_id}``,
+    which is admin-only. Gating the roster at senior-analyst would show a
+    roster to people whose every revoke click 403s, and would widen who can
+    enumerate an org's accounts for no gain. If a genuine directory read is
+    ever needed for a non-admin surface, that is a different endpoint with a
+    different shape — not this one loosened.
+
+    AUTH-B1: scoped to the caller's ``org_id``. There is no parameter to
+    widen it; cross-tenant enumeration is not expressible here.
+    """
+    current_user.require_permission("user:edit")
+
+    rows = await db.execute(
+        select(UserRow).where(UserRow.org_id == current_user.org_id).order_by(UserRow.username)
+    )
+    return [
+        OrgUserOut(
+            id=u.id,
+            username=u.username,
+            email=u.email,
+            role=u.role,
+            created_at=u.created_at,
+            last_login=u.last_login,
+            sso_only=u.password_hash is None,
+        )
+        for u in rows.scalars().all()
+    ]
+
+
 @router.post("/revoke/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_user_sessions(
     user_id: str,

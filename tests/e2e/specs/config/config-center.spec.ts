@@ -145,6 +145,34 @@ test.describe("Configuration Center", () => {
     await expect(seniorPage.getByTestId("safelist-panel")).toHaveCount(0);
   });
 
+  test("a senior analyst cannot see the org roster", async ({ seniorPage }) => {
+    // GET /auth/users is gated on user:edit rather than the more permissive
+    // user:view, precisely so the roster can't become account enumeration for
+    // a role that cannot revoke anything. This is the UI half of that gate.
+    await gotoConfig(seniorPage);
+    await expect(seniorPage.getByTestId("feature-flags-panel")).toBeVisible();
+    await expect(seniorPage.getByTestId("session-revocation-panel")).toHaveCount(0);
+  });
+
+  test("admin sees the roster and revocation is two-step", async ({ adminPage }) => {
+    // Deliberately arms the confirmation and then cancels. Actually revoking
+    // would invalidate the shared admin storageState this whole suite
+    // authenticates with and cascade failures into every later spec — the
+    // destructive half is covered by unit tests instead.
+    await gotoConfig(adminPage);
+    await adminPage.getByTestId("session-revocation-panel").waitFor({ state: "visible" });
+
+    const row = adminPage.locator('[data-testid^="session-user-"]').first();
+    await expect(row).toBeVisible({ timeout: 10_000 });
+
+    await row.locator('[data-testid^="session-revoke-"]').first().click();
+    const confirm = row.locator('[data-testid^="session-revoke-confirm-"]');
+    await expect(confirm).toBeVisible();
+
+    await row.locator('[data-testid^="session-revoke-cancel-"]').click();
+    await expect(confirm).toHaveCount(0);
+  });
+
   test("analyst sees the inventory read-only", async ({ analystPage }) => {
     await gotoConfig(analystPage);
 

@@ -15,6 +15,7 @@ import { AutonomyPanel } from "./AutonomyPanel";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 import { OrgProfilePanel } from "./OrgProfilePanel";
 import { SafelistPanel } from "./SafelistPanel";
+import { SessionRevocationPanel } from "./SessionRevocationPanel";
 import { RetentionPanel } from "./RetentionPanel";
 import { Card, CardContent } from "@/components/ds/card";
 import { Input } from "@/components/ds/input";
@@ -168,6 +169,11 @@ export function ConfigCenterPage() {
              * containment. Reads need containment:execute, so this hides
              * itself for everyone below incident commander. */}
             <SafelistPanel />
+
+            {/* Users & sessions (#142) — the org roster and admin session
+             * revocation. Both need user:edit, so this hides itself for
+             * everyone below admin. */}
+            <SessionRevocationPanel />
 
             {/* Data retention (#418) — posture plus the destructive manual
              * cleanup (admin). Hides itself if its fetch fails. */}
