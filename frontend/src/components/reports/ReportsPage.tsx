@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FileText, Landmark, Loader2, Play, Wrench } from "lucide-react";
+import { DistributionHistoryPanel } from "./DistributionHistoryPanel";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import {
@@ -543,6 +544,10 @@ export function ReportsPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Distribution ledger — the audit trail behind every release above.
+         * Hides itself if its fetch fails. */}
+        <DistributionHistoryPanel />
       </div>
     </div>
   );

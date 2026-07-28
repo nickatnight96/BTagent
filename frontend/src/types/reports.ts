@@ -98,3 +98,24 @@ export interface RemediationGuidance {
   generated_at: string;
   status: string;
 }
+
+/**
+ * One row of the distribution ledger (`GET /reports/distributions`): who
+ * received which report, when, under which TLP marking, and who approved
+ * the release. `approver_id` is null for unattended distributions.
+ */
+export interface ReportDistribution {
+  id: string;
+  report_id: string;
+  audience: string;
+  recipient: string;
+  sent_at: string;
+  tlp_applied: string;
+  approver_id: string | null;
+}
+
+export interface ListDistributionsResponse {
+  distributions: ReportDistribution[];
+  count: number;
+  status: string;
+}

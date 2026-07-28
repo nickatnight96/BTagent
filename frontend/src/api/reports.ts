@@ -11,6 +11,7 @@ import api from "./client";
 import type {
   DetectionContentResponse,
   GeneratedReport,
+  ListDistributionsResponse,
   RemediationGuidance,
   ReportTemplateListResponse,
   SummarizeResponse,
@@ -122,4 +123,16 @@ export async function exportReportPdf(
     throw new Error(`Export failed (${response.status})`);
   }
   return response.blob();
+}
+
+/**
+ * The distribution ledger — who received which report, when, under which TLP
+ * marking, and who approved the release. Newest first, org-scoped
+ * server-side. Pass `reportId` to narrow to a single report.
+ */
+export async function listReportDistributions(
+  reportId?: string,
+): Promise<ListDistributionsResponse> {
+  const q = reportId ? `?report_id=${encodeURIComponent(reportId)}` : "";
+  return api.get<ListDistributionsResponse>(`${BASE}/distributions${q}`);
 }
