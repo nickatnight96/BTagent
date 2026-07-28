@@ -14,6 +14,7 @@ import { Button } from "@/components/ds/button";
 import { Badge } from "@/components/ds/badge";
 import { TechniqueDetail } from "./TechniqueDetail";
 import { ExercisePanel } from "./ExercisePanel";
+import { CoverageGapsPanel } from "./CoverageGapsPanel";
 
 /** The 14 Enterprise ATT&CK tactic columns in kill-chain order */
 const TACTIC_ORDER = [
@@ -194,6 +195,9 @@ export function MitreMatrix() {
         {/* Hunt exercise coverage (#99 Phase C) */}
         <div className="mb-4">
           <ExercisePanel />
+          {/* Sibling to the exercise panel, not merged into it: "never
+           * exercised" and "no detection at all" are different gaps. */}
+          <CoverageGapsPanel />
         </div>
 
         {/* Toolbar */}
