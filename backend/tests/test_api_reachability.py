@@ -83,10 +83,10 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
-KNOWN_GAPS: dict[str, str] = {
-    "POST /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
-    "GET /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
-}
+# Empty as of the Agent Memory UI (#482) — every route is either wired or
+# declared correct-by-design above. New unreached routes still fail; this
+# stays as the place to name the next honest gap when one lands.
+KNOWN_GAPS: dict[str, str] = {}
 
 
 # --------------------------------------------------------------------------- #

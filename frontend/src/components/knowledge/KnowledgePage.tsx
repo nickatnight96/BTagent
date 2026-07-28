@@ -3,6 +3,7 @@ import { BookOpen, Plus } from "lucide-react";
 import { KnowledgeSearch } from "./KnowledgeSearch";
 import { KnowledgeDocumentList } from "./KnowledgeDocumentList";
 import { KnowledgeIngestModal } from "./KnowledgeIngestModal";
+import { AgentMemoryPanel } from "./AgentMemoryPanel";
 
 export function KnowledgePage() {
   const [showIngestModal, setShowIngestModal] = useState(false);
@@ -44,6 +45,10 @@ export function KnowledgePage() {
           <section>
             <KnowledgeDocumentList />
           </section>
+
+          {/* Agent memory (#482) — the structured-fact sibling of the RAG
+           * corpus above. Hides itself if its fetch fails. */}
+          <AgentMemoryPanel />
         </div>
       </div>
 
