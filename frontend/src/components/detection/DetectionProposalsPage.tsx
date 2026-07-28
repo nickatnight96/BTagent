@@ -43,6 +43,8 @@ import {
   validateProposal,
   editProposal,
   composeDetectionPR,
+  recordPROutcome,
+  type ClosedLoop,
 } from "@/api/detection";
 import type {
   ComposePRResponse,
@@ -90,6 +92,16 @@ function isShippable(p: DetectionProposal): boolean {
   return (p.state === "accepted" || p.state === "modified") && !p.pr_url;
 }
 
+/**
+ * A shipped proposal still awaiting its detection-repo verdict.
+ *
+ * The PR outcome is recordable only between "composed" and terminal — the
+ * server 409s outside that window, so the control only appears inside it.
+ */
+function awaitingPROutcome(p: DetectionProposal): boolean {
+  return Boolean(p.pr_url) && p.pr_outcome === "pr_opened";
+}
+
 /** Editable via the Engineer UI: not yet shipped and not a closed (rejected) row. */
 function isEditable(p: DetectionProposal): boolean {
   return (
@@ -116,6 +128,10 @@ export function DetectionProposalsPage() {
   const editingId = searchParams.get("edit");
   const [editDraft, setEditDraft] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [outcomeId, setOutcomeId] = useState<string | null>(null);
+  const [closedLoop, setClosedLoop] = useState<{ id: string; loop: ClosedLoop } | null>(
+    null,
+  );
 
   const fetchProposals = useCallback(async () => {
     setIsLoading(true);
@@ -173,6 +189,31 @@ export function DetectionProposalsPage() {
       setValidatingId(null);
     }
   }, []);
+
+  const handlePROutcome = useCallback(
+    async (rowId: string, outcome: "merged" | "rejected") => {
+      setOutcomeId(rowId);
+      setError(null);
+      try {
+        const resp = await recordPROutcome(rowId, outcome);
+        setProposals((prev) =>
+          prev.map((p) => (p.id === resp.proposal.id ? resp.proposal : p)),
+        );
+        // The closed loop is best-effort server-side, so report what it
+        // actually did rather than asserting the rule is now live.
+        if (outcome === "merged") setClosedLoop({ id: rowId, loop: resp.closed_loop });
+      } catch {
+        setError(
+          outcome === "merged"
+            ? "Failed to record the merge — the rule was not installed."
+            : "Failed to record the PR rejection.",
+        );
+      } finally {
+        setOutcomeId(null);
+      }
+    },
+    [],
+  );
 
   const handleComposePR = useCallback(async () => {
     if (selected.size === 0) return;
@@ -418,6 +459,68 @@ export function DetectionProposalsPage() {
                               <GitPullRequest className="w-3 h-3" />
                               shipped — view PR
                             </a>
+                          )}
+                          {p.pr_outcome === "merged" && (
+                            <p
+                              className="mt-1 text-xs text-emerald-400"
+                              data-testid={`proposal-pr-merged-${p.id}`}
+                            >
+                              PR merged — rule installed and queued for validation
+                            </p>
+                          )}
+                          {p.pr_outcome === "rejected" && (
+                            <p
+                              className="mt-1 text-xs text-muted-foreground"
+                              data-testid={`proposal-pr-rejected-${p.id}`}
+                            >
+                              PR closed without merging
+                            </p>
+                          )}
+                          {awaitingPROutcome(p) && (
+                            <div
+                              className="mt-2 flex flex-wrap items-center gap-2 text-xs"
+                              data-testid={`proposal-pr-outcome-${p.id}`}
+                            >
+                              <span className="text-muted-foreground">
+                                Did this PR merge?
+                              </span>
+                              <Button
+                                size="sm"
+                                disabled={outcomeId === p.id}
+                                onClick={() => void handlePROutcome(p.id, "merged")}
+                                data-testid={`proposal-pr-merged-btn-${p.id}`}
+                                title="Records the merge and arms the rule as a recurring detection"
+                              >
+                                Merged
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={outcomeId === p.id}
+                                onClick={() => void handlePROutcome(p.id, "rejected")}
+                                data-testid={`proposal-pr-rejected-btn-${p.id}`}
+                              >
+                                Closed unmerged
+                              </Button>
+                            </div>
+                          )}
+                          {closedLoop?.id === p.id && (
+                            // What the loop *did*, not what it intended: both
+                            // hooks are best-effort server-side, so a merge
+                            // with no pack or no validation run must not read
+                            // as a fully closed loop.
+                            <p
+                              className="mt-1 text-xs text-muted-foreground"
+                              data-testid={`proposal-closed-loop-${p.id}`}
+                            >
+                              {closedLoop.loop.hunt_pack
+                                ? "installed as a hunt-pack rule"
+                                : "no hunt-pack entry was created"}
+                              {" · "}
+                              {closedLoop.loop.validation_run
+                                ? "validation run triggered"
+                                : "no validation run was triggered"}
+                            </p>
                           )}
                         </div>
                       </div>
