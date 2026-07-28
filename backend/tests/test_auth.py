@@ -233,7 +233,13 @@ async def test_admin_can_register_user(client: AsyncClient, admin_token: str):
 
 @pytest.mark.asyncio
 async def test_analyst_cannot_register_user(client: AsyncClient, analyst_token: str):
-    """An analyst should be forbidden from registering users (403)."""
+    """An analyst should be forbidden from registering users (403).
+
+    The password must satisfy the policy even though this request is expected
+    to be refused: FastAPI validates the body *before* the handler runs, so a
+    non-compliant one returns 422 and the RBAC gate this test is named for
+    never gets exercised.
+    """
     n = next(_reg_counter)
     resp = await client.post(
         "/api/v1/auth/register",
@@ -241,7 +247,7 @@ async def test_analyst_cannot_register_user(client: AsyncClient, analyst_token: 
         json={
             "username": f"sneaky_{n}",
             "email": f"sneaky_{n}@btagent.test",
-            "password": "Sneak-123!",
+            "password": "Sneaky-P@ss-789!",
             "role": "analyst",
         },
     )

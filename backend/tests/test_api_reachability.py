@@ -68,7 +68,6 @@ KNOWN_GAPS: dict[str, str] = {
     "GET /pattern/proposals/{}/plan/runs": (
         "pattern plan run-history; the hunt-plan equivalent is wired, this one isn't"
     ),
-    "POST /auth/register": "self-registration has no UI; accounts are provisioned by admins",
     "POST /auth/refresh": "no SPA caller — sessions ride the cookie lifetime instead",
 }
 

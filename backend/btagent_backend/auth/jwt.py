@@ -40,11 +40,66 @@ class TokenPair(BaseModel):
     expires_in: int  # seconds
 
 
+# bcrypt hashes at most 72 *bytes* of input. This is a property of the
+# algorithm, not a policy choice, and it is measured in bytes rather than
+# characters — a 30-character passphrase of non-ASCII text can exceed it.
+#
+# bcrypt >= 4.1 raises ValueError rather than silently truncating (older
+# versions truncated, which is the classic vulnerability: a 100-character
+# password and its 72-character prefix both authenticate). Raising is the
+# safer behaviour, but an unhandled ValueError out of an *unauthenticated*
+# login endpoint is a 500 that any anonymous caller can trigger at will, so
+# both primitives below handle the over-length case explicitly.
+MAX_PASSWORD_BYTES = 72
+
+# Length is the control that matters; composition rules are deliberately
+# absent (NIST SP 800-63B deprecates them — they push users toward
+# predictable substitutions without adding real entropy).
+MIN_PASSWORD_LENGTH = 12
+
+
+def password_length_error(password: str) -> str | None:
+    """Return why ``password`` is unacceptable, or ``None`` if it is fine.
+
+    Shared by the API schema so the rule lives in one place rather than being
+    restated — and drifting — at each call site.
+    """
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters."
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return (
+            f"Password must be at most {MAX_PASSWORD_BYTES} bytes "
+            "(bcrypt's limit; non-ASCII characters count as more than one)."
+        )
+    return None
+
+
 def hash_password(password: str) -> str:
+    """Hash a password for storage.
+
+    Raises ``ValueError`` for input bcrypt cannot hash. Callers that accept
+    untrusted input must validate first — see ``password_length_error`` — so
+    the user gets a 422 rather than this surfacing as a 500.
+    """
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise ValueError(f"Password exceeds bcrypt's {MAX_PASSWORD_BYTES}-byte limit")
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
+    """Check a candidate password against a stored hash.
+
+    An over-length candidate returns ``False`` rather than raising. It cannot
+    be a false negative: registration refuses to *set* a password bcrypt can't
+    hash, so no stored hash can correspond to one. It must not be truncated to
+    72 bytes and compared either — that would let a long password authenticate
+    by its prefix, which is the exact bug the byte limit causes elsewhere.
+
+    This matters because ``verify_password`` sits on the unauthenticated login
+    path: letting the ValueError escape hands any anonymous caller a 500.
+    """
+    if len(plain.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return False
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 

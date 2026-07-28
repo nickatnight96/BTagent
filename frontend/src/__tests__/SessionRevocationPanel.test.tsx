@@ -16,10 +16,14 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const listOrgUsers = vi.fn();
 const revokeUserSessions = vi.fn();
+const provisionUser = vi.fn();
 
 vi.mock("@/api/users", () => ({
   listOrgUsers: (...a: unknown[]) => listOrgUsers(...a),
   revokeUserSessions: (...a: unknown[]) => revokeUserSessions(...a),
+  provisionUser: (...a: unknown[]) => provisionUser(...a),
+  ASSIGNABLE_ROLES: ["analyst", "senior_analyst", "incident_commander", "admin"],
+  MIN_PASSWORD_LENGTH: 12,
 }));
 
 const toastSuccess = vi.fn();
@@ -32,6 +36,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { SessionRevocationPanel } from "@/components/settings/SessionRevocationPanel";
+import { ApiError } from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
 import { UserRole } from "@/types/config";
 
@@ -60,6 +65,7 @@ describe("SessionRevocationPanel", () => {
     vi.clearAllMocks();
     listOrgUsers.mockResolvedValue([ADMIN, SSO_ANALYST]);
     revokeUserSessions.mockResolvedValue(undefined);
+    provisionUser.mockResolvedValue({ id: "usr_new", username: "sam", role: "analyst" });
     useAuthStore.setState({
       user: { id: ADMIN.id, username: ADMIN.username, role: UserRole.ADMIN },
     });
@@ -160,5 +166,152 @@ describe("SessionRevocationPanel", () => {
     listOrgUsers.mockResolvedValue([]);
     render(<SessionRevocationPanel />);
     expect(await screen.findByTestId("session-revocation-empty")).toBeTruthy();
+  });
+
+  describe("provisioning", () => {
+    async function fill(fields: { username?: string; email?: string; password?: string }) {
+      await screen.findByTestId("provision-user-form");
+      if (fields.username !== undefined) {
+        fireEvent.change(screen.getByTestId("provision-username"), {
+          target: { value: fields.username },
+        });
+      }
+      if (fields.email !== undefined) {
+        fireEvent.change(screen.getByTestId("provision-email"), {
+          target: { value: fields.email },
+        });
+      }
+      if (fields.password !== undefined) {
+        fireEvent.change(screen.getByTestId("provision-password"), {
+          target: { value: fields.password },
+        });
+      }
+    }
+
+    it("sends the whole form including the chosen role", async () => {
+      render(<SessionRevocationPanel />);
+      await fill({ username: "sam", email: "sam@corp.test", password: "a-long-enough-pw" });
+      fireEvent.change(screen.getByTestId("provision-role"), {
+        target: { value: "incident_commander" },
+      });
+      fireEvent.click(screen.getByTestId("provision-submit"));
+
+      await waitFor(() =>
+        expect(provisionUser).toHaveBeenCalledWith({
+          username: "sam",
+          email: "sam@corp.test",
+          password: "a-long-enough-pw",
+          role: "incident_commander",
+        }),
+      );
+    });
+
+    it("refuses a short password without calling the server", async () => {
+      // Local pre-check only — the server owns the rule. But a round trip to
+      // be told "too short" is a worse form than a disabled submit.
+      render(<SessionRevocationPanel />);
+      await fill({ username: "sam", email: "sam@corp.test", password: "short" });
+      fireEvent.click(screen.getByTestId("provision-submit"));
+
+      expect((await screen.findByTestId("provision-error")).textContent).toContain(
+        "at least 12",
+      );
+      expect(provisionUser).not.toHaveBeenCalled();
+    });
+
+    it("requires a username and an email", async () => {
+      render(<SessionRevocationPanel />);
+      await fill({ password: "a-long-enough-pw" });
+      fireEvent.click(screen.getByTestId("provision-submit"));
+
+      expect(await screen.findByTestId("provision-error")).toBeTruthy();
+      expect(provisionUser).not.toHaveBeenCalled();
+    });
+
+    it("generates a password long enough to satisfy the policy", async () => {
+      render(<SessionRevocationPanel />);
+      await screen.findByTestId("provision-user-form");
+      fireEvent.click(screen.getByTestId("provision-generate"));
+
+      const field = screen.getByTestId("provision-password") as HTMLInputElement;
+      expect(field.value.length).toBeGreaterThanOrEqual(12);
+    });
+
+    it("generates a different password each time", async () => {
+      // Guards the one mistake that would make the button actively harmful:
+      // a constant, or a seeded PRNG shared across admins.
+      render(<SessionRevocationPanel />);
+      await screen.findByTestId("provision-user-form");
+      const field = screen.getByTestId("provision-password") as HTMLInputElement;
+
+      fireEvent.click(screen.getByTestId("provision-generate"));
+      const first = field.value;
+      fireEvent.click(screen.getByTestId("provision-generate"));
+      expect(field.value).not.toBe(first);
+    });
+
+    it("adds the new account to the roster without a refetch", async () => {
+      render(<SessionRevocationPanel />);
+      await fill({ username: "sam", email: "sam@corp.test", password: "a-long-enough-pw" });
+      fireEvent.click(screen.getByTestId("provision-submit"));
+
+      expect(await screen.findByTestId("session-user-usr_new")).toBeTruthy();
+      expect(listOrgUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it("surfaces the server's rejection verbatim", async () => {
+      // 409 duplicate and 422 policy both carry a reason that tells the admin
+      // what to change; "could not create user" does not.
+      provisionUser.mockRejectedValue(
+        new ApiError(409, "Conflict", { detail: "Username or email already exists" }),
+      );
+      render(<SessionRevocationPanel />);
+      await fill({ username: "sam", email: "sam@corp.test", password: "a-long-enough-pw" });
+      fireEvent.click(screen.getByTestId("provision-submit"));
+
+      expect((await screen.findByTestId("provision-error")).textContent).toContain(
+        "already exists",
+      );
+    });
+
+    it("keeps the form filled when the server refuses", async () => {
+      // Retyping an email because the username collided is pure punishment.
+      provisionUser.mockRejectedValue(new Error("boom"));
+      render(<SessionRevocationPanel />);
+      await fill({ username: "sam", email: "sam@corp.test", password: "a-long-enough-pw" });
+      fireEvent.click(screen.getByTestId("provision-submit"));
+
+      await screen.findByTestId("provision-error");
+      expect((screen.getByTestId("provision-email") as HTMLInputElement).value).toBe(
+        "sam@corp.test",
+      );
+    });
+
+    it("clears the form after a successful create", async () => {
+      // The opposite case: leaving it filled invites a double-submit that
+      // then 409s on the username.
+      render(<SessionRevocationPanel />);
+      await fill({ username: "sam", email: "sam@corp.test", password: "a-long-enough-pw" });
+      fireEvent.click(screen.getByTestId("provision-submit"));
+
+      await screen.findByTestId("session-user-usr_new");
+      expect((screen.getByTestId("provision-username") as HTMLInputElement).value).toBe("");
+      expect((screen.getByTestId("provision-password") as HTMLInputElement).value).toBe("");
+    });
+
+    it("does not mask the initial password", async () => {
+      // The admin is setting a credential for someone else and has to read it
+      // back to hand it over. Masking would just move it to a screenshot.
+      render(<SessionRevocationPanel />);
+      const field = (await screen.findByTestId("provision-password")) as HTMLInputElement;
+      expect(field.type).not.toBe("password");
+    });
+
+    it("says the initial password is not rotated on first sign-in", async () => {
+      render(<SessionRevocationPanel />);
+      const form = await screen.findByTestId("provision-user-form");
+      expect(form.textContent).toContain("not");
+      expect(form.textContent).toContain("until the user changes it");
+    });
   });
 });
