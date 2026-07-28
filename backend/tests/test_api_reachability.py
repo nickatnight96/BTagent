@@ -69,6 +69,8 @@ KNOWN_GAPS: dict[str, str] = {
         "pattern plan run-history; the hunt-plan equivalent is wired, this one isn't"
     ),
     "POST /auth/refresh": "no SPA caller — sessions ride the cookie lifetime instead",
+    "POST /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
+    "GET /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
 }
 
 

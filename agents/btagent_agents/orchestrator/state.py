@@ -57,6 +57,11 @@ class InvestigationState(TypedDict):
     knowledge_context : str
         Retrieved knowledge base context injected by the knowledge injector.
         Populated after enrichment when the knowledge base has relevant content.
+    agent_memory : str
+        Recalled long-term agent memory (#482), rendered as a fenced
+        ``<agent-memory>`` block at investigation start and carried alongside
+        ``org_profile`` so entity/decision memories surface as org context.
+        Empty when nothing has been recorded (or recall was skipped).
     """
 
     investigation_id: str
@@ -77,3 +82,4 @@ class InvestigationState(TypedDict):
     token_usage: dict
     cost_usd: float
     knowledge_context: str
+    agent_memory: str

@@ -18,6 +18,7 @@ from btagent_backend.api.v1.identity import router as identity_router
 from btagent_backend.api.v1.investigations import router as investigations_router
 from btagent_backend.api.v1.iocs import router as iocs_router
 from btagent_backend.api.v1.knowledge import router as knowledge_router
+from btagent_backend.api.v1.memory import router as memory_router
 from btagent_backend.api.v1.mfa import router as mfa_router
 from btagent_backend.api.v1.mitigation import router as mitigation_router
 from btagent_backend.api.v1.mitre import router as mitre_router
@@ -43,6 +44,7 @@ api_v1_router.include_router(hunts_router)
 api_v1_router.include_router(investigations_router)
 api_v1_router.include_router(iocs_router)
 api_v1_router.include_router(knowledge_router)
+api_v1_router.include_router(memory_router)
 api_v1_router.include_router(mfa_router)
 api_v1_router.include_router(mitigation_router)
 api_v1_router.include_router(mitre_router)

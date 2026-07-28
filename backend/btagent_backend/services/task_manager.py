@@ -144,6 +144,32 @@ def _command_channel(investigation_id: str) -> str:
     return f"{COMMAND_CHANNEL_PREFIX}:{investigation_id}"
 
 
+async def _default_record_close_memories(
+    investigation_id: str, final_state: dict[str, Any]
+) -> None:
+    """Default investigation-close memory recorder (#482).
+
+    Opens its own session, loads the investigation row, and hands off to the
+    pure recording logic in ``memory_service``. Kept module-level (not a method)
+    so it is a clean injection default; the best-effort try/except that ensures
+    a failure never sinks the close lives in ``TaskManager._record_close_memories``.
+    """
+    from btagent_backend.services.memory_service import (
+        record_investigation_close_memories,
+    )
+
+    async with async_session_factory() as session:
+        inv = await session.get(InvestigationRow, investigation_id)
+        if inv is None:
+            logger.debug(
+                "Skipping close-memory recording; investigation %s not found",
+                investigation_id,
+            )
+            return
+        await record_investigation_close_memories(session, inv, final_state)
+        await session.commit()
+
+
 # ---------------------------------------------------------------------------
 # TaskManager
 # ---------------------------------------------------------------------------
@@ -167,6 +193,11 @@ class TaskManager:
         self._database_url = database_url
         self._total_started: int = 0
         self._started_at = time.monotonic()
+        # Injectable auto-write hook (#482): records salient long-term memories
+        # at investigation close. ``None`` means "use the default recorder";
+        # tests override this. A hook failure never sinks the close — see
+        # ``_record_close_memories``.
+        self._close_memory_recorder: Any | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -551,6 +582,10 @@ class TaskManager:
             # 8. Auto-index investigation into knowledge base.
             await self._on_investigation_complete(investigation_id)
 
+            # 9. Record salient long-term memories (#482) — best-effort; a
+            # hook failure here must never sink an otherwise-clean close.
+            await self._record_close_memories(investigation_id, final_state)
+
         except asyncio.CancelledError:
             # Task was cancelled (pause / stop / shutdown).  LangGraph
             # checkpoints automatically, so nothing to do here.
@@ -694,6 +729,28 @@ class TaskManager:
         except Exception:
             logger.exception(
                 "Failed to auto-index investigation %s into knowledge base",
+                investigation_id,
+            )
+
+    async def _record_close_memories(
+        self, investigation_id: str, final_state: dict[str, Any]
+    ) -> None:
+        """Best-effort auto-write of long-term memories at close (#482).
+
+        Delegates to the injectable ``self._close_memory_recorder`` (defaulting
+        to :func:`_default_record_close_memories`), which records an
+        ``entity_note`` per key entity plus a ``decision`` memory for the
+        disposition. Never raises: a memory-hook failure must not sink an
+        otherwise-successful investigation close. Kept as thin delegation so the
+        injectable can be asserted (and its exception swallowed) in tests
+        without the shared-DB cross-session fragility.
+        """
+        try:
+            recorder = self._close_memory_recorder or _default_record_close_memories
+            await recorder(investigation_id, final_state)
+        except Exception:
+            logger.exception(
+                "Failed to record close memories for investigation %s (best-effort)",
                 investigation_id,
             )
 
@@ -841,6 +898,11 @@ class TaskManager:
             "token_usage": {},
             "cost_usd": 0.0,
             "knowledge_context": "",
+            # #482: recalled long-term memory, rendered to a fenced
+            # <agent-memory> block at investigation start (see
+            # investigations.create_investigation) and surfaced alongside the
+            # org profile as external context.
+            "agent_memory": config.get("agent_memory", ""),
         }
 
     # ------------------------------------------------------------------
