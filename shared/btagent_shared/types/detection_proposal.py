@@ -40,6 +40,22 @@ class ProposalState(StrEnum):
     MODIFIED = "modified"
 
 
+class PROutcome(StrEnum):
+    """Where a proposal's rule sits in the detection-repo PR lifecycle (#113 Phase C).
+
+    * ``PROPOSED`` — no PR composed yet (the default for every fresh row).
+    * ``PR_OPENED`` — the composer shipped the rule in a (mock) detection-repo PR.
+    * ``MERGED`` — the PR merged; the closed loop auto-installs the rule as a
+      #112 hunt-pack entry and triggers a #118 sandbox detection-validation run.
+    * ``REJECTED`` — the PR was closed without merging.
+    """
+
+    PROPOSED = "proposed"
+    PR_OPENED = "pr_opened"
+    MERGED = "merged"
+    REJECTED = "rejected"
+
+
 # ---------------------------------------------------------------------------
 # Core models
 # ---------------------------------------------------------------------------
@@ -165,6 +181,7 @@ __all__ = [
     "CTIToDetectionRequest",
     "CTIToDetectionResponse",
     "DetectionProposal",
+    "PROutcome",
     "PersistedCounts",
     "ProposalState",
     "SkippedIndicator",

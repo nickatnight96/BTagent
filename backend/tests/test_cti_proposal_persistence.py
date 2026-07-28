@@ -420,7 +420,9 @@ async def test_compose_pr_refuses_unaccepted_rows(
         headers=auth_header(senior_token),
     )
     assert resp.status_code == 409
-    assert "not accepted" in resp.json()["detail"]
+    # Composer eligibility broadened in #113 Phase C: accepted OR edited
+    # (modified) rows ship; a still-``proposed`` row is refused as ineligible.
+    assert "not eligible" in resp.json()["detail"]
 
 
 async def test_compose_pr_refuses_already_shipped(
