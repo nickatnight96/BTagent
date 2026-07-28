@@ -28,6 +28,19 @@ import {
   type MitigationAction,
   type MitigationOutput,
 } from "@/api/mitigation";
+import {
+  executeBulkBlock,
+  executionDenial,
+  type ExecutionDenied,
+  type ExecutionResult,
+} from "@/api/containment";
+import { useAuthStore } from "@/stores/authStore";
+import { UserRole } from "@/types/config";
+
+/** Per-IOC execution outcome: it ran, or it was refused with an audit trail. */
+type BlockOutcome =
+  | { kind: "executed"; result: ExecutionResult }
+  | { kind: "denied"; denial: ExecutionDenied };
 
 const DECISION_VARIANT: Record<string, "destructive" | "medium" | "secondary" | "low"> = {
   block: "destructive",
@@ -75,6 +88,13 @@ export function BulkMitigationPage() {
   const [staged, setStaged] = useState<MitigationAction[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [executing, setExecuting] = useState(false);
+  const [outcomes, setOutcomes] = useState<Record<string, BlockOutcome> | null>(null);
+
+  // Only incident_commander+ hold `containment:execute`. The server enforces
+  // it regardless — this decides whether to show a button that could only 403.
+  const role = useAuthStore((s) => s.user?.role);
+  const canExecute = role === UserRole.INCIDENT_COMMANDER || role === UserRole.ADMIN;
 
   const parsedIocs = useMemo(
     () => text.split("\n").map(classifyLine).filter((x): x is IOCRef => x !== null),
@@ -113,7 +133,33 @@ export function BulkMitigationPage() {
 
   const handleStage = useCallback(() => {
     setStaged(blocks.filter((a) => approvals[a.id]));
+    setOutcomes(null);
   }, [blocks, approvals]);
+
+  const handleExecute = useCallback(async () => {
+    if (!staged || !canExecute) return;
+    setExecuting(true);
+    setError(null);
+    const collected: Record<string, BlockOutcome> = {};
+    // Sequential, and each IOC's outcome is recorded independently: one
+    // safelist refusal must not abandon the blocks after it, and the partial
+    // set has to survive so the operator can see exactly how far it got.
+    for (const action of staged) {
+      try {
+        collected[action.id] = { kind: "executed", result: await executeBulkBlock(action) };
+      } catch (e) {
+        const denial = executionDenial(e);
+        if (denial) {
+          collected[action.id] = { kind: "denied", denial };
+        } else {
+          setError(e instanceof Error ? e.message : "Execution failed");
+          break;
+        }
+      }
+    }
+    setOutcomes(collected);
+    setExecuting(false);
+  }, [staged, canExecute]);
 
   return (
     <>
@@ -298,10 +344,116 @@ export function BulkMitigationPage() {
                       <CheckCircle2 className="w-4 h-4 text-primary" />
                       Staged {staged.length} block(s) for execution.
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      Execution requires incident-commander sign-off — nothing has run.
-                    </p>
+                    {canExecute ? (
+                      <div className="flex flex-wrap items-center gap-3 pt-1">
+                        <Button
+                          variant="destructive"
+                          onClick={() => void handleExecute()}
+                          disabled={executing || outcomes !== null}
+                          data-testid="bulk-mitigation-execute"
+                        >
+                          {executing ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Blocking…
+                            </>
+                          ) : (
+                            "Execute approved blocks"
+                          )}
+                        </Button>
+                        <span className="text-xs text-muted-foreground">
+                          Pushes each block through the connector layer. The org
+                          never-block safelist is checked first — a protected IOC is
+                          refused, audited, and never dispatched.
+                        </span>
+                      </div>
+                    ) : (
+                      <p
+                        className="text-xs text-muted-foreground"
+                        data-testid="bulk-mitigation-execute-denied"
+                      >
+                        Execution needs incident-commander sign-off
+                        (containment:execute) — nothing has run.
+                      </p>
+                    )}
                   </div>
+                )}
+
+                {outcomes && (
+                  <ul className="space-y-1.5" data-testid="bulk-mitigation-outcomes">
+                    {(staged ?? []).map((a) => {
+                      const o = outcomes[a.id];
+                      if (!o) {
+                        // Reached only when a transport error broke the loop
+                        // early. Saying so beats leaving the row blank, which
+                        // would read as "nothing needed doing".
+                        return (
+                          <li
+                            key={a.id}
+                            className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground"
+                            data-testid={`bulk-mitigation-outcome-${a.id}`}
+                          >
+                            <span className="font-mono">{a.ioc_value}</span> — not
+                            attempted
+                          </li>
+                        );
+                      }
+                      const denied = o.kind === "denied";
+                      return (
+                        <li
+                          key={a.id}
+                          className={`rounded-md border px-3 py-2 text-xs ${
+                            denied
+                              ? "border-destructive/30 bg-destructive/10"
+                              : "border-border bg-card/50"
+                          }`}
+                          data-testid={`bulk-mitigation-outcome-${a.id}`}
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            {denied ? (
+                              <Ban className="w-3.5 h-3.5 text-destructive" />
+                            ) : (
+                              <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                            )}
+                            <span className="font-mono">{a.ioc_value}</span>
+                            <span className={denied ? "text-destructive" : "text-foreground"}>
+                              {denied ? "refused — not blocked" : o.result.outcome}
+                            </span>
+                            <span className="text-muted-foreground">via {a.tool}</span>
+                          </div>
+                          {denied ? (
+                            <>
+                              <p className="mt-1 text-destructive/90">
+                                {o.denial.message}
+                              </p>
+                              <p className="mt-1 text-muted-foreground">
+                                Audit entry{" "}
+                                <span
+                                  className="font-mono"
+                                  data-testid={`bulk-mitigation-audit-${a.id}`}
+                                >
+                                  {o.denial.audit_id}
+                                </span>
+                                {" · "}the never-block safelist is editable in
+                                Settings → Configuration Center.
+                              </p>
+                            </>
+                          ) : (
+                            <p className="mt-1 text-muted-foreground">
+                              Audit entry{" "}
+                              <span
+                                className="font-mono"
+                                data-testid={`bulk-mitigation-audit-${a.id}`}
+                              >
+                                {o.result.audit_id}
+                              </span>
+                              {o.result.change_ref ? ` · change ${o.result.change_ref}` : ""}
+                            </p>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
               </CardContent>
             </Card>
