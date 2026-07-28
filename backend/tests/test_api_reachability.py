@@ -64,7 +64,6 @@ KNOWN_GAPS: dict[str, str] = {
     "POST /hunts/package/upload": "hunt-package upload has no UI affordance",
     "POST /mitre/seed": "matrix seeding is admin-only and run out of band, never from the UI",
     "POST /mitre/tag": "technique tagging has no UI affordance",
-    "GET /reports/distributions": "distribution history has no panel on the Reports page",
     "POST /auth/refresh": "no SPA caller — sessions ride the cookie lifetime instead",
 }
 

@@ -10,13 +10,23 @@ const listInvestigations = vi.fn();
 
 const summarizeInvestigations = vi.fn();
 const generateRemediation = vi.fn();
+const listReportDistributions = vi.fn();
 
-vi.mock("@/api/reports", () => ({
+// Spread the real module and override only what these tests drive. A
+// wholesale factory silently replaces every export with `undefined`, so each
+// NEW function the page imports crashes here until someone adds it to the
+// mock — that bit three PRs in a row (#477, #478, and the detection mock)
+// before this fourth one made the pattern undeniable.
+vi.mock("@/api/reports", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/reports")>()),
   listReportTemplates: (...a: unknown[]) => listReportTemplates(...a),
   generateReport: (...a: unknown[]) => generateReport(...a),
   exportReportPdf: (...a: unknown[]) => exportReportPdf(...a),
   summarizeInvestigations: (...a: unknown[]) => summarizeInvestigations(...a),
   generateRemediation: (...a: unknown[]) => generateRemediation(...a),
+  // Overridden (not left real) so the DistributionHistoryPanel the page now
+  // mounts never reaches for the network inside a unit test.
+  listReportDistributions: (...a: unknown[]) => listReportDistributions(...a),
 }));
 
 vi.mock("@/api/investigations", () => ({
@@ -102,6 +112,13 @@ describe("ReportsPage", () => {
     listReportTemplates.mockResolvedValue(TEMPLATES);
     generateReport.mockResolvedValue(REPORT);
     listInvestigations.mockResolvedValue(INVESTIGATIONS);
+    // Empty ledger by default: the distribution panel renders its explicit
+    // empty state without adding rows these page-level cases don't assert on.
+    listReportDistributions.mockResolvedValue({
+      distributions: [],
+      count: 0,
+      status: "success",
+    });
   });
 
   it("loads templates into the picker and shows the empty state", async () => {
