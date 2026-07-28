@@ -11,9 +11,14 @@
  * The load-bearing case here is the partial one: the two fetches are
  * independent, and losing the softer suggestion must not take the harder gap
  * list down with it.
+ *
+ * The panel is collapsed by default — it sits above a fixed-height
+ * `overflow-hidden` matrix and anything it renders eats the grid's room — so
+ * every assertion about detail has to open it first. Only the roll-up count
+ * lives in the always-visible summary row.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const getDetectionGaps = vi.fn();
 const suggestTTPsForEnvironment = vi.fn();
@@ -49,15 +54,33 @@ describe("CoverageGapsPanel", () => {
     suggestTTPsForEnvironment.mockResolvedValue(TTPS);
   });
 
-  it("totals uncovered techniques across tactics", async () => {
+  /** Wait for the fetches to land, then expand the panel. */
+  async function expand() {
+    fireEvent.click(await screen.findByTestId("coverage-gaps-toggle"));
+  }
+
+  it("stays collapsed until asked", async () => {
+    // The regression this guards: the panel sits above a fixed-height
+    // `overflow-hidden` matrix, so rendering the detail unbidden steals the
+    // grid's room — and the technique-detail modal's with it.
+    render(<CoverageGapsPanel />);
+    const toggle = await screen.findByTestId("coverage-gaps-toggle");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByTestId("coverage-gaps-list")).toBeNull();
+    expect(screen.queryByTestId("env-ttps")).toBeNull();
+  });
+
+  it("totals uncovered techniques across tactics without expanding", async () => {
     render(<CoverageGapsPanel />);
     const panel = await screen.findByTestId("coverage-gaps-panel");
-    // 2 + 1 across 2 tactics — the roll-up is the headline number.
+    // 2 + 1 across 2 tactics — the roll-up is the headline number, and it has
+    // to survive in one collapsed line or the panel is worthless closed.
     expect(panel.textContent).toContain("3 techniques with no detection across 2 tactics");
   });
 
   it("names the technique ids and the data sources that would close the gap", async () => {
     render(<CoverageGapsPanel />);
+    await expand();
     const row = await screen.findByTestId("coverage-gap-initial-access");
     expect(row.textContent).toContain("T1566");
     // The missing sources are the actionable half — what to onboard.
@@ -68,6 +91,7 @@ describe("CoverageGapsPanel", () => {
 
   it("omits the data-source line for a tactic with none missing", async () => {
     render(<CoverageGapsPanel />);
+    await expand();
     await screen.findByTestId("coverage-gap-persistence");
     expect(screen.queryByTestId("coverage-gap-sources-persistence")).toBeNull();
   });
@@ -77,6 +101,7 @@ describe("CoverageGapsPanel", () => {
     // harder finding down with it.
     suggestTTPsForEnvironment.mockRejectedValue(new Error("boom"));
     render(<CoverageGapsPanel />);
+    await expand();
     expect(await screen.findByTestId("coverage-gaps-list")).toBeTruthy();
     expect(screen.queryByTestId("env-ttps")).toBeNull();
   });
@@ -84,6 +109,7 @@ describe("CoverageGapsPanel", () => {
   it("keeps the TTP suggestion when the gap fetch fails", async () => {
     getDetectionGaps.mockRejectedValue(new Error("boom"));
     render(<CoverageGapsPanel />);
+    await expand();
     expect(await screen.findByTestId("env-ttps-list")).toBeTruthy();
     expect(screen.queryByTestId("coverage-gaps-list")).toBeNull();
   });
@@ -92,12 +118,15 @@ describe("CoverageGapsPanel", () => {
     getDetectionGaps.mockRejectedValue(new Error("boom"));
     suggestTTPsForEnvironment.mockRejectedValue(new Error("boom"));
     render(<CoverageGapsPanel />);
+    // The error replaces the panel outright — nothing to expand.
     expect(await screen.findByTestId("coverage-gaps-error")).toBeTruthy();
+    expect(screen.queryByTestId("coverage-gaps-toggle")).toBeNull();
   });
 
   it("says a clean gap list means every tactic has detection data", async () => {
     getDetectionGaps.mockResolvedValue([]);
     render(<CoverageGapsPanel />);
+    await expand();
     expect((await screen.findByTestId("coverage-gaps-none")).textContent).toContain(
       "Every tactic has detection data",
     );
@@ -108,6 +137,7 @@ describe("CoverageGapsPanel", () => {
     // the stack faces no techniques.
     suggestTTPsForEnvironment.mockResolvedValue([]);
     render(<CoverageGapsPanel />);
+    await expand();
     expect((await screen.findByTestId("env-ttps-empty")).textContent).toContain(
       "no tech stack recorded",
     );
@@ -115,9 +145,18 @@ describe("CoverageGapsPanel", () => {
 
   it("renders each suggested technique with its id and name", async () => {
     render(<CoverageGapsPanel />);
+    await expand();
     const ttp = await screen.findByTestId("env-ttp-T1059.001");
     expect(ttp.textContent).toContain("T1059.001");
     expect(ttp.textContent).toContain("PowerShell");
+  });
+
+  it("collapses again on a second click", async () => {
+    render(<CoverageGapsPanel />);
+    await expand();
+    await screen.findByTestId("coverage-gaps-list");
+    fireEvent.click(screen.getByTestId("coverage-gaps-toggle"));
+    expect(screen.queryByTestId("coverage-gaps-list")).toBeNull();
   });
 
   it("asks the environment endpoint for nothing — the server derives it", async () => {

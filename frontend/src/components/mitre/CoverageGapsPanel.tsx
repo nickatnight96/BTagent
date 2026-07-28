@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Radar, ShieldOff } from "lucide-react";
+import { ChevronDown, ChevronRight, Radar, ShieldOff } from "lucide-react";
 import { Badge } from "@/components/ds/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ds/card";
 import { getDetectionGaps, suggestTTPsForEnvironment } from "@/api/mitre";
 import type { DetectionGap, MitreTechnique } from "@/types/mitre";
 
@@ -31,6 +30,12 @@ export function CoverageGapsPanel() {
   const [gaps, setGaps] = useState<DetectionGap[] | null>(null);
   const [ttps, setTtps] = useState<MitreTechnique[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Collapsed by default. The matrix page is a fixed-height
+  // `overflow-hidden` flex column, so anything added above the grid steals
+  // space from it — and from the technique-detail modal that renders inside
+  // it. A summary row costs one line; an expanded card cost the modal its
+  // room and broke seven E2E specs.
+  const [open, setOpen] = useState(false);
 
   const load = useCallback(async () => {
     // Fetched independently: the org-profile suggestion is the softer of the
@@ -66,20 +71,29 @@ export function CoverageGapsPanel() {
   );
 
   return (
-    <Card data-testid="coverage-gaps-panel">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <ShieldOff className="h-4 w-4 text-primary" aria-hidden="true" />
-          Detection gaps
-          {gaps !== null && (
-            <span className="text-xs font-normal text-muted-foreground">
-              {totalUncovered} technique{totalUncovered === 1 ? "" : "s"} with no detection
-              across {gaps.length} tactic{gaps.length === 1 ? "" : "s"}
-            </span>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div className="mt-2" data-testid="coverage-gaps-panel">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 text-left text-sm"
+        aria-expanded={open}
+        data-testid="coverage-gaps-toggle"
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+        )}
+        <ShieldOff className="h-4 w-4 text-primary" aria-hidden="true" />
+        <span className="font-medium">Detection gaps</span>
+        {gaps !== null && (
+          <span className="text-xs font-normal text-muted-foreground">
+            {totalUncovered} technique{totalUncovered === 1 ? "" : "s"} with no detection
+            across {gaps.length} tactic{gaps.length === 1 ? "" : "s"}
+          </span>
+        )}
+      </button>
+      {open && (
+      <div className="mt-2 max-h-64 space-y-4 overflow-auto">
         {gaps !== null &&
           (gaps.length === 0 ? (
             <p className="text-xs text-emerald-400" data-testid="coverage-gaps-none">
@@ -151,7 +165,8 @@ export function CoverageGapsPanel() {
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+      )}
+    </div>
   );
 }
