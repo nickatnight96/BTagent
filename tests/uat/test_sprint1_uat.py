@@ -113,7 +113,7 @@ class TestRBAC:
             json={
                 "username": username,
                 "email": f"{username}@btagent.local",
-                "password": "test123",
+                "password": "Uat-Test-Pass-123",
                 "role": "analyst",
             },
             headers=auth_headers,
@@ -129,7 +129,7 @@ class TestRBAC:
             json={
                 "username": "should_fail",
                 "email": "fail@btagent.local",
-                "password": "test123",
+                "password": "Uat-Test-Pass-123",
                 "role": "analyst",
             },
             headers=analyst_headers,
@@ -142,7 +142,7 @@ class TestRBAC:
             json={
                 "username": "admin",
                 "email": "admin@btagent.local",
-                "password": "test123",
+                "password": "Uat-Test-Pass-123",
                 "role": "analyst",
             },
             headers=auth_headers,

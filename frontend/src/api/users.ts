@@ -26,6 +26,49 @@ export async function listOrgUsers(): Promise<OrgUser[]> {
   return api.get<OrgUser[]>("/v1/auth/users");
 }
 
+/** Roles an admin can assign when provisioning an account. */
+export const ASSIGNABLE_ROLES = [
+  "analyst",
+  "senior_analyst",
+  "incident_commander",
+  "admin",
+] as const;
+export type AssignableRole = (typeof ASSIGNABLE_ROLES)[number];
+
+export interface ProvisionUserRequest {
+  username: string;
+  email: string;
+  password: string;
+  role: AssignableRole;
+}
+
+export interface ProvisionedUser {
+  id: string;
+  username: string;
+  role: string;
+}
+
+/**
+ * Minimum password length the server enforces.
+ *
+ * Mirrored here only so the form can disable its own submit button before a
+ * round trip. The server owns the rule (`password_length_error`) and its 422
+ * detail is what gets shown — this constant is a convenience, never the
+ * authority.
+ */
+export const MIN_PASSWORD_LENGTH = 12;
+
+/**
+ * Provision a new account in the caller's org. Admin-only (`user:create`).
+ *
+ * Despite the endpoint being named `register`, this is not self-registration —
+ * it has always required an authenticated admin, and the new user inherits the
+ * creating admin's `org_id` rather than taking one from the request body.
+ */
+export async function provisionUser(body: ProvisionUserRequest): Promise<ProvisionedUser> {
+  return api.post<ProvisionedUser>("/v1/auth/register", body);
+}
+
 /**
  * Revoke every outstanding session for a user (#142).
  *

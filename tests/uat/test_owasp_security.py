@@ -97,14 +97,20 @@ class TestA01BrokenAccessControl:
     def test_register_endpoint_requires_admin(
         self, client: httpx.Client, analyst_token: str
     ):
-        """A01-01: /auth/register must reject analyst-role tokens with 403."""
+        """A01-01: /auth/register must reject analyst-role tokens with 403.
+
+        The password has to satisfy the registration policy even though this
+        request is supposed to be refused. FastAPI validates the body before
+        the handler's permission check runs, so a non-compliant one returns
+        422 and this test silently stops proving anything about RBAC.
+        """
         resp = client.post(
             "/api/v1/auth/register",
             headers=_analyst_headers(analyst_token),
             json={
                 "username": "hacker",
                 "email": "h@h.com",
-                "password": "pass123",
+                "password": "Owasp-Test-Pass-1",
                 "role": "analyst",
             },
         )
@@ -180,7 +186,7 @@ class TestA01BrokenAccessControl:
             json={
                 "username": "evil",
                 "email": "evil@evil.com",
-                "password": "pass123",
+                "password": "Owasp-Test-Pass-1",
                 "role": "analyst",
             },
         )
@@ -401,7 +407,7 @@ class TestA05SecurityMisconfiguration:
             json={
                 "username": "roletest_owasp",
                 "email": "roletest_owasp@test.com",
-                "password": "pass",
+                "password": "Owasp-Test-Pass-1",
                 "role": "superadmin",
             },
         )

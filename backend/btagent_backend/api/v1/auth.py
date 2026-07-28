@@ -29,6 +29,7 @@ from btagent_backend.auth.jwt import (
     create_token_pair,
     decode_token,
     hash_password,
+    password_length_error,
     verify_password,
 )
 from btagent_backend.auth.revocation import (
@@ -72,6 +73,21 @@ class RegisterRequest(BaseModel):
     password: str
     # SEC-008 FIX: Validate role against the UserRole enum to prevent arbitrary values
     role: str = "analyst"
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        """Reject passwords that are too weak, or that bcrypt cannot hash.
+
+        Until this landed there was no policy at all: a one-character password
+        was accepted with a 201. The upper bound is not a policy preference —
+        bcrypt hashes at most 72 bytes and raises above that, so without this
+        check an over-length password surfaced as a 500 from ``hash_password``.
+        """
+        error = password_length_error(v)
+        if error:
+            raise ValueError(error)
+        return v
 
     @field_validator("role")
     @classmethod

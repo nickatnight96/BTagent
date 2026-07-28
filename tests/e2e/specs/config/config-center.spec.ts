@@ -173,6 +173,51 @@ test.describe("Configuration Center", () => {
     await expect(confirm).toHaveCount(0);
   });
 
+  test("admin can provision an account that can then sign in", async ({ adminPage }) => {
+    // Timestamped so a re-run against a dirty database doesn't 409 on the
+    // username. There is no delete-user endpoint, so unlike the safelist spec
+    // this one cannot clean up after itself — it leaves a row behind by
+    // design, which is why the name is unique per run.
+    const username = `e2e-prov-${Date.now()}`;
+    const password = "E2E-Provisioned-Pass-1";
+
+    await gotoConfig(adminPage);
+    await adminPage.getByTestId("provision-user-form").waitFor({ state: "visible" });
+    await adminPage.getByTestId("provision-username").fill(username);
+    await adminPage.getByTestId("provision-email").fill(`${username}@btagent.local`);
+    await adminPage.getByTestId("provision-password").fill(password);
+    await adminPage.getByTestId("provision-submit").click();
+
+    // The new account appears in the roster without a refetch.
+    const row = adminPage.locator('[data-testid^="session-user-"]', { hasText: username });
+    await expect(row).toBeVisible({ timeout: 10_000 });
+
+    // The real assertion: what the form produced is a working credential, not
+    // just a row. Done over the API so it doesn't disturb the admin session
+    // this suite shares.
+    const login = await adminPage.request.post("/api/v1/auth/login", {
+      data: { username, password },
+    });
+    expect(login.status()).toBe(200);
+  });
+
+  test("the provision form refuses a password the server would reject", async ({
+    adminPage,
+  }) => {
+    await gotoConfig(adminPage);
+    await adminPage.getByTestId("provision-user-form").waitFor({ state: "visible" });
+    await adminPage.getByTestId("provision-username").fill("e2e-tooshort");
+    await adminPage.getByTestId("provision-email").fill("e2e-tooshort@btagent.local");
+    await adminPage.getByTestId("provision-password").fill("short");
+    await adminPage.getByTestId("provision-submit").click();
+
+    await expect(adminPage.getByTestId("provision-error")).toBeVisible();
+    // No account was created, so the roster gained nothing.
+    await expect(
+      adminPage.locator('[data-testid^="session-user-"]', { hasText: "e2e-tooshort" }),
+    ).toHaveCount(0);
+  });
+
   test("analyst sees the inventory read-only", async ({ analystPage }) => {
     await gotoConfig(analystPage);
 
