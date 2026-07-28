@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import {
   FlaskConical,
   Loader2,
@@ -28,6 +29,8 @@ import {
   Gauge,
   GitPullRequest,
   ExternalLink,
+  Pencil,
+  Save,
 } from "lucide-react";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
@@ -38,6 +41,7 @@ import {
   acceptProposal,
   rejectProposal,
   validateProposal,
+  editProposal,
   composeDetectionPR,
 } from "@/api/detection";
 import type {
@@ -81,9 +85,17 @@ function verdictBadgeClass(verdict: string): string {
   }
 }
 
-/** Accepted but not yet shipped — the only rows the PR composer takes. */
+/** Accepted or edited (modified) but not yet shipped — the PR composer's inputs. */
 function isShippable(p: DetectionProposal): boolean {
-  return p.state === "accepted" && !p.pr_url;
+  return (p.state === "accepted" || p.state === "modified") && !p.pr_url;
+}
+
+/** Editable via the Engineer UI: not yet shipped and not a closed (rejected) row. */
+function isEditable(p: DetectionProposal): boolean {
+  return (
+    !p.pr_url &&
+    (p.state === "proposed" || p.state === "accepted" || p.state === "modified")
+  );
 }
 
 export function DetectionProposalsPage() {
@@ -98,6 +110,12 @@ export function DetectionProposalsPage() {
   const [isComposing, setIsComposing] = useState(false);
   const [composeResult, setComposeResult] = useState<ComposePRResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The row being edited is tracked in the URL (?edit=<id>) so an in-flight
+  // edit survives a refresh / deep link — the react-router-owned bit of state.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const editingId = searchParams.get("edit");
+  const [editDraft, setEditDraft] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   const fetchProposals = useCallback(async () => {
     setIsLoading(true);
@@ -172,6 +190,49 @@ export function DetectionProposalsPage() {
       setIsComposing(false);
     }
   }, [selected, fetchProposals]);
+
+  const startEdit = useCallback(
+    (p: DetectionProposal) => {
+      setEditDraft(p.final_sigma_yaml ?? p.sigma_yaml);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("edit", p.id);
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const cancelEdit = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("edit");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
+
+  const handleSaveEdit = useCallback(
+    async (rowId: string) => {
+      setSavingId(rowId);
+      setError(null);
+      try {
+        await editProposal(rowId, editDraft);
+        cancelEdit();
+        await fetchProposals();
+      } catch {
+        setError("Failed to save the edited rule (does it parse as Sigma?).");
+      } finally {
+        setSavingId(null);
+      }
+    },
+    [editDraft, cancelEdit, fetchProposals],
+  );
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -361,6 +422,17 @@ export function DetectionProposalsPage() {
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
+                        {isEditable(p) && editingId !== p.id && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => startEdit(p)}
+                            data-testid={`proposal-edit-${p.id}`}
+                            title="Edit this rule's Sigma before it ships"
+                          >
+                            <Pencil className="w-4 h-4 text-violet-400" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -424,8 +496,50 @@ export function DetectionProposalsPage() {
                         className="mt-2 max-h-72 overflow-auto rounded-md bg-muted/40 p-3 text-xs text-foreground"
                         data-testid={`proposal-sigma-${p.id}`}
                       >
-                        {p.sigma_yaml}
+                        {p.final_sigma_yaml ?? p.sigma_yaml}
                       </pre>
+                    )}
+
+                    {editingId === p.id && (
+                      <div className="mt-3" data-testid={`proposal-editor-${p.id}`}>
+                        <label className="text-xs text-muted-foreground">
+                          Edit Sigma rule — saving flips this proposal to{" "}
+                          <span className="text-amber-300">modified</span> and ships the
+                          edited body.
+                        </label>
+                        <textarea
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          spellCheck={false}
+                          className="mt-1 h-64 w-full resize-y rounded-md border border-border bg-muted/40 p-3 font-mono text-xs text-foreground focus:border-violet-500/50 focus:outline-none"
+                          data-testid={`proposal-editor-textarea-${p.id}`}
+                        />
+                        <div className="mt-2 flex items-center gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => void handleSaveEdit(p.id)}
+                            disabled={savingId === p.id || !editDraft.trim()}
+                            data-testid={`proposal-editor-save-${p.id}`}
+                          >
+                            {savingId === p.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Save className="w-4 h-4" />
+                            )}
+                            <span className="ml-1">Save edit</span>
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={cancelEdit}
+                            disabled={savingId === p.id}
+                            data-testid={`proposal-editor-cancel-${p.id}`}
+                          >
+                            <X className="w-4 h-4" />
+                            <span className="ml-1">Cancel</span>
+                          </Button>
+                        </div>
+                      </div>
                     )}
                   </CardContent>
                 </Card>

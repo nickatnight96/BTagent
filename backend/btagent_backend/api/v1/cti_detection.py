@@ -26,6 +26,7 @@ from btagent_shared.types.detection_proposal import (
     CTIToDetectionResponse,
     PersistedCounts,
     ProposalState,
+    PROutcome,
 )
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -153,6 +154,8 @@ class DetectionProposalRecord(BaseModel):
     bundle_id: str | None
     title: str
     sigma_yaml: str
+    # Analyst-edited "final" rule body (#113 Phase C). None until edited.
+    final_sigma_yaml: str | None
     technique_ids: list[str]
     confidence: float
     rationale: str
@@ -160,6 +163,8 @@ class DetectionProposalRecord(BaseModel):
     validation: dict | None
     validated_at: datetime | None
     pr_url: str | None
+    # Detection-repo PR lifecycle: proposed / pr_opened / merged / rejected.
+    pr_outcome: str
     review_rationale: str
     reviewed_by: str | None
     reviewed_at: datetime | None
@@ -267,6 +272,67 @@ async def reject_detection_proposal(
     return await _review(
         db, user=user, row_id=row_id, state=ProposalState.REJECTED, rationale=body.rationale
     )
+
+
+class ProposalEditRequest(BaseModel):
+    """An analyst-edited Sigma rule body for a proposal (Engineer UI edit path)."""
+
+    sigma_yaml: str = Field(min_length=1, max_length=64 * 1024)
+    rationale: str = Field(default="", max_length=8192)
+
+
+@router.post("/proposals/{row_id}/edit", response_model=DetectionProposalRecord)
+async def edit_detection_proposal(
+    row_id: str,
+    body: ProposalEditRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> DetectionProposalRecord:
+    """Edit a proposal's Sigma rule via the Engineer UI (#113 Phase C draft-edit).
+
+    The edited body must parse as a Sigma rule (a YAML mapping with ``title`` and
+    ``detection``) — a body that does not parse is rejected 422. On success the
+    row flips to ``modified``, the edited body lands on ``final_sigma_yaml``, and
+    the composer ships it (cited as *edited from draft*). Editing is refused 409
+    for a rejected row or one already shipped in a PR. 404 masks unknown /
+    cross-org rows.
+
+    RBAC: ``hunt:triage`` — same review authority as accept / reject.
+    """
+    user.require_permission("hunt:triage")
+    try:
+        row = await svc.set_proposal_sigma(
+            db,
+            org_id=user.org_id,
+            row_id=row_id,
+            sigma_yaml=body.sigma_yaml,
+            edited_by=user.id,
+            review_rationale=body.rationale,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        # A parse failure is a bad edit payload (422); a state / shipped guard is
+        # a lifecycle conflict (409).
+        message = str(exc)
+        status = 422 if "does not parse" in message else 409
+        raise HTTPException(status_code=status, detail=message) from exc
+
+    await AuditTrail(db).record(
+        org_id=user.org_id,
+        actor=user.id,
+        category=AuditCategory.HUNT,
+        action="detection_proposal_edited",
+        resource=f"detection_proposal:{row.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "source_stix_id": row.source_stix_id,
+            "title": row.title,
+            "rationale": body.rationale,
+        },
+    )
+    return DetectionProposalRecord.model_validate(row)
 
 
 class ProposalValidateRequest(BaseModel):
@@ -405,3 +471,70 @@ async def compose_detection_pr(
         },
     )
     return ComposePRResponse(**result)
+
+
+class PROutcomeRequest(BaseModel):
+    """Record the detection-repo PR outcome for a composed proposal."""
+
+    outcome: PROutcome = Field(
+        description="Recordable PR outcome: 'merged' or 'rejected'.",
+    )
+
+
+class PROutcomeResponse(BaseModel):
+    """The updated proposal plus a summary of the merge closed loop (if any)."""
+
+    proposal: DetectionProposalRecord
+    closed_loop: dict
+
+
+@router.post("/proposals/{row_id}/pr-outcome", response_model=PROutcomeResponse)
+async def record_proposal_pr_outcome(
+    row_id: str,
+    body: PROutcomeRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> PROutcomeResponse:
+    """Record a composed proposal's detection-repo PR outcome (#113 Phase C).
+
+    ``merged`` / ``rejected`` are recordable, and only once a PR is open — a
+    409 otherwise (not shipped, or already terminal). On ``merged`` the closed
+    loop fires: the rule is auto-installed as a #112 hunt-pack entry AND a #118
+    sandbox-gated detection-validation run is triggered for its technique — both
+    best-effort, so a hook failure never sinks the merge write. 404 masks
+    unknown / cross-org rows.
+
+    RBAC: ``hunt:promote`` (senior_analyst+) — recording a merge arms a live
+    recurring detection, the same authority as composing the PR.
+    """
+    user.require_permission("hunt:promote")
+    try:
+        row, closed_loop = await svc.record_pr_outcome(
+            db,
+            org_id=user.org_id,
+            row_id=row_id,
+            outcome=body.outcome,
+            actor_id=user.id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    await AuditTrail(db).record(
+        org_id=user.org_id,
+        actor=user.id,
+        category=AuditCategory.HUNT,
+        action=f"detection_pr_{body.outcome.value}",
+        resource=f"detection_proposal:{row.id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "title": row.title,
+            "technique_ids": list(row.technique_ids or []),
+            "closed_loop": closed_loop,
+        },
+    )
+    return PROutcomeResponse(
+        proposal=DetectionProposalRecord.model_validate(row), closed_loop=closed_loop
+    )

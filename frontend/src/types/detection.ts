@@ -5,6 +5,9 @@
 
 export type ProposalState = "proposed" | "accepted" | "rejected" | "modified";
 
+/** Detection-repo PR lifecycle for a composed proposal (#113 Phase C). */
+export type PROutcome = "proposed" | "pr_opened" | "merged" | "rejected";
+
 /** A persisted STIX → Sigma detection proposal. */
 export interface DetectionProposal {
   id: string;
@@ -14,6 +17,8 @@ export interface DetectionProposal {
   bundle_id: string | null;
   title: string;
   sigma_yaml: string;
+  /** Analyst-edited "final" rule body (#113 Phase C). Null until edited. */
+  final_sigma_yaml: string | null;
   technique_ids: string[];
   confidence: number;
   rationale: string;
@@ -21,6 +26,7 @@ export interface DetectionProposal {
   validation: Record<string, unknown> | null;
   validated_at: string | null;
   pr_url: string | null;
+  pr_outcome: PROutcome;
   review_rationale: string;
   reviewed_by: string | null;
   reviewed_at: string | null;

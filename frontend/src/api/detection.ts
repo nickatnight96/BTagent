@@ -61,6 +61,22 @@ export async function validateProposal(
   });
 }
 
+/**
+ * Edit a proposal's Sigma rule (Engineer UI draft-edit path, #113 Phase C).
+ * The edited body must parse as a Sigma rule; the row flips to `modified` and
+ * the edited body ships instead of the generated draft. Returns the updated row.
+ */
+export async function editProposal(
+  rowId: string,
+  sigmaYaml: string,
+  rationale = "",
+): Promise<DetectionProposal> {
+  return api.post<DetectionProposal>(`${BASE}/proposals/${rowId}/edit`, {
+    sigma_yaml: sigmaYaml,
+    rationale,
+  });
+}
+
 /** Ship accepted proposals as one detection-repo pull request (HITL-gated). */
 export async function composeDetectionPR(
   rowIds: string[],

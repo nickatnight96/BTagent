@@ -7,6 +7,7 @@ const listProposals = vi.fn();
 const acceptProposal = vi.fn();
 const rejectProposal = vi.fn();
 const validateProposal = vi.fn();
+const editProposal = vi.fn();
 const composeDetectionPR = vi.fn();
 
 vi.mock("@/api/detection", () => ({
@@ -14,6 +15,7 @@ vi.mock("@/api/detection", () => ({
   acceptProposal: (...a: unknown[]) => acceptProposal(...a),
   rejectProposal: (...a: unknown[]) => rejectProposal(...a),
   validateProposal: (...a: unknown[]) => validateProposal(...a),
+  editProposal: (...a: unknown[]) => editProposal(...a),
   composeDetectionPR: (...a: unknown[]) => composeDetectionPR(...a),
 }));
 
@@ -31,6 +33,7 @@ const PROPOSED = {
   bundle_id: null,
   title: "Encoded PowerShell",
   sigma_yaml: "title: Encoded PowerShell\ndetection:\n  sel:\n    CommandLine|contains: -enc",
+  final_sigma_yaml: null,
   technique_ids: ["T1059.001"],
   confidence: 0.9,
   rationale: "from CTI",
@@ -38,6 +41,7 @@ const PROPOSED = {
   validation: null,
   validated_at: null,
   pr_url: null,
+  pr_outcome: "proposed",
   review_rationale: "",
   reviewed_by: null,
   reviewed_at: null,
@@ -79,6 +83,56 @@ describe("DetectionProposalsPage", () => {
     await waitFor(() =>
       expect(listProposals.mock.calls.length).toBeGreaterThan(before),
     );
+  });
+
+  it("edits a proposal's Sigma and refreshes", async () => {
+    editProposal.mockResolvedValue({
+      ...PROPOSED,
+      state: "modified",
+      final_sigma_yaml: "title: Encoded PowerShell (edited)\ndetection:\n  sel:\n    x: y\n  condition: sel",
+    });
+    renderPage(<DetectionProposalsPage />);
+    const editBtn = await screen.findByTestId("proposal-edit-prop_ONE");
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+    const textarea = await screen.findByTestId("proposal-editor-textarea-prop_ONE");
+    await act(async () => {
+      fireEvent.change(textarea, {
+        target: { value: "title: Edited\ndetection:\n  sel:\n    x: y\n  condition: sel" },
+      });
+    });
+    const before = listProposals.mock.calls.length;
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("proposal-editor-save-prop_ONE"));
+    });
+    await waitFor(() =>
+      expect(editProposal).toHaveBeenCalledWith(
+        "prop_ONE",
+        "title: Edited\ndetection:\n  sel:\n    x: y\n  condition: sel",
+      ),
+    );
+    await waitFor(() =>
+      expect(listProposals.mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("offers no edit control for shipped rows", async () => {
+    listProposals.mockResolvedValue({
+      items: [
+        {
+          ...PROPOSED,
+          id: "prop_SHIP",
+          state: "accepted",
+          pr_url: "https://git.example.com/detections/pull/9",
+          pr_outcome: "pr_opened",
+        },
+      ],
+      total: 1,
+    });
+    renderPage(<DetectionProposalsPage />);
+    await screen.findByTestId("proposal-prop_SHIP");
+    expect(screen.queryByTestId("proposal-edit-prop_SHIP")).toBeNull();
   });
 
   it("hides accept/reject for non-proposed states", async () => {

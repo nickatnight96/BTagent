@@ -130,6 +130,7 @@ from datetime import UTC, datetime  # noqa: E402
 from btagent_shared.types.detection_proposal import (  # noqa: E402
     DetectionProposal,
     ProposalState,
+    PROutcome,
 )
 from btagent_shared.utils.ids import generate_id  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
@@ -332,6 +333,78 @@ async def set_proposal_state(
     return row
 
 
+# States from which a proposal may still be edited by the Engineer UI. A
+# rejected row is a closed decision; a row that already shipped (``pr_url``) is
+# immutable — you cannot rewrite a rule that is already in a PR.
+_EDITABLE_STATES = frozenset(
+    {ProposalState.PROPOSED.value, ProposalState.ACCEPTED.value, ProposalState.MODIFIED.value}
+)
+
+
+async def set_proposal_sigma(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    row_id: str,
+    sigma_yaml: str,
+    edited_by: str | None = None,
+    review_rationale: str = "",
+) -> DetectionProposalRow:
+    """Record an analyst edit of a proposal's Sigma rule (#113 Phase C draft-edit).
+
+    The "selected and edited via the Engineer UI" acceptance path: the edited
+    body must parse as a Sigma rule (a YAML mapping carrying at least ``title``
+    and ``detection`` — the minimum a downstream transpiler needs) or a
+    :class:`ValueError` is raised (route → 422). On success the cleaned body
+    lands on :attr:`DetectionProposalRow.final_sigma_yaml`, the row flips to
+    ``modified``, and the composer will ship the edited body (cited as *edited
+    from draft*) instead of the generated draft.
+
+    Editing is refused (``ValueError`` → 409) for a rejected row or one that has
+    already shipped (``pr_url`` set) — a rule in a PR is immutable. A missing /
+    cross-org row raises :class:`LookupError` (route → 404, masking tenancy).
+    """
+    row = (
+        await db.execute(
+            select(DetectionProposalRow).where(
+                DetectionProposalRow.id == row_id,
+                DetectionProposalRow.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise LookupError(f"Detection proposal not found: {row_id}")
+    if row.pr_url:
+        raise ValueError("Detection proposal already shipped in a PR; its rule is immutable")
+    if row.state not in _EDITABLE_STATES:
+        raise ValueError(f"Detection proposal in state {row.state!r} cannot be edited")
+
+    # Lazy import — the drafter lives in shared/ and pulls only pydantic/yaml.
+    from btagent_shared.hunt.detection_engineer import RuleDrafter
+
+    cleaned = RuleDrafter.parse_drafted_yaml(sigma_yaml)
+    if cleaned is None:
+        raise ValueError(
+            "Edited Sigma does not parse as a rule (need a YAML mapping with "
+            "'title' and 'detection' keys)"
+        )
+
+    row.final_sigma_yaml = cleaned
+    row.state = ProposalState.MODIFIED.value
+    row.review_rationale = review_rationale
+    row.reviewed_by = edited_by
+    row.reviewed_at = _utcnow()
+    row.updated_at = row.reviewed_at
+    await db.flush()
+    logger.info(
+        "detection proposal edited: row=%s org=%s by=%s (state->modified)",
+        row.id,
+        org_id,
+        edited_by or "<none>",
+    )
+    return row
+
+
 async def validate_proposal(
     db: AsyncSession,
     *,
@@ -421,10 +494,15 @@ def _rule_slug(title: str) -> str:
 
 
 def _shipped_yaml(row: DetectionProposalRow, final_yaml_by_row: dict[str, str] | None) -> str:
-    """The YAML that actually ships for ``row`` — an in-memory final override
-    (draft-vs-final, no schema change) or the stored draft when none is given."""
+    """The YAML that actually ships for ``row``.
+
+    Precedence: an explicit in-memory override (``final_yaml_by_row``, e.g. a
+    request-time edit), then the persisted analyst edit (``final_sigma_yaml``,
+    the #113 Phase-C draft-edit path), then the generated draft (``sigma_yaml``)."""
     if final_yaml_by_row and row.id in final_yaml_by_row:
         return final_yaml_by_row[row.id]
+    if row.final_sigma_yaml:
+        return row.final_sigma_yaml
     return row.sigma_yaml
 
 
@@ -559,10 +637,15 @@ async def compose_detection_pr(
     if missing:
         raise LookupError(f"Detection proposal(s) not found: {', '.join(missing)}")
 
-    not_accepted = [r.id for r in rows if r.state != ProposalState.ACCEPTED.value]
-    if not_accepted:
+    # Eligible = an accepted rule, or one an analyst edited via the Engineer UI
+    # (``modified``, shipping its ``final_sigma_yaml``). Both are one-shot human
+    # decisions; ``proposed`` / ``rejected`` rows are not shippable.
+    _shippable = {ProposalState.ACCEPTED.value, ProposalState.MODIFIED.value}
+    ineligible = [r.id for r in rows if r.state not in _shippable]
+    if ineligible:
         raise ValueError(
-            f"Only accepted proposals can ship; not accepted: {', '.join(not_accepted)}"
+            "Only accepted or edited (modified) proposals can ship; "
+            f"not eligible: {', '.join(ineligible)}"
         )
     shipped = [r.id for r in rows if r.pr_url]
     if shipped:
@@ -585,6 +668,10 @@ async def compose_detection_pr(
     pr_url = envelope["pr_url"]
     for row in ordered:
         row.pr_url = pr_url
+        # Advance the PR lifecycle: the rule is now open in a detection-repo PR
+        # (#113 Phase C). A later merge outcome flips this to ``merged`` and
+        # drives the closed loop (record_pr_outcome).
+        row.pr_outcome = PROutcome.PR_OPENED.value
         row.updated_at = now
     await db.flush()
     logger.info("detection PR composed: %s (%d rules, org=%s)", pr_url, len(ordered), org_id)
@@ -596,3 +683,240 @@ async def compose_detection_pr(
         "row_ids": [r.id for r in ordered],
         "is_mock": envelope.get("is_mock", False),
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase-C closed loop (#113): a MERGED rule installs + validates itself
+#
+# When a composed detection-repo PR merges, the rule is real: it should start
+# hunting on a schedule (#112) AND its technique should be re-validated by a
+# sandbox-gated emulation (#118). ``record_pr_outcome`` records the merge and
+# fires both, each BEST-EFFORT under its own savepoint so a hook failure can
+# never roll back (sink) the merge-outcome write itself.
+# ---------------------------------------------------------------------------
+
+from collections.abc import Awaitable, Callable  # noqa: E402
+
+# Injectable closed-loop hooks (default impls call the real services). Injecting
+# a spy lets a test assert the wiring without driving the pysigma / orchestrator
+# stack — the same pattern as ``run_emulation_validation``'s ``orchestrator_run``.
+HuntPackInstaller = Callable[[AsyncSession, DetectionProposalRow], Awaitable[Any]]
+ValidationTrigger = Callable[[AsyncSession, str, DetectionProposalRow], Awaitable[Any]]
+
+# Recordable PR outcomes and the one-way transitions allowed. A merge/reject may
+# only be recorded once a PR is open (``pr_opened``); both are terminal.
+_RECORDABLE_PR_OUTCOMES = frozenset({PROutcome.MERGED.value, PROutcome.REJECTED.value})
+
+
+def _primary_technique(row: DetectionProposalRow) -> str | None:
+    """The rule's primary ATT&CK technique — what the validation run emulates."""
+    techniques = row.technique_ids or []
+    return techniques[0] if techniques else None
+
+
+async def _default_install_hunt_pack(db: AsyncSession, row: DetectionProposalRow) -> dict[str, Any]:
+    """Default installer: run the merged rule as a one-off #112 hunt pack.
+
+    Delegates to :func:`hunt_pack_run_service.run_adhoc_rule_pack` (mock-first,
+    no commit) so the merged rule immediately hunts current telemetry and lands
+    a :class:`HuntPackRunRow`. Returns a small descriptor for the audit detail.
+    """
+    from btagent_backend.services import hunt_pack_run_service
+
+    run_row = await hunt_pack_run_service.run_adhoc_rule_pack(
+        db,
+        org_id=row.org_id,
+        rule_id=f"cti-{row.id}",
+        title=row.title,
+        sigma_yaml=_shipped_yaml(row, None),
+        technique_ids=list(row.technique_ids or []),
+        checkpoint=False,
+        emit_events=False,
+    )
+    return {
+        "hunt_pack_run_id": run_row.run_id,
+        "pack_id": run_row.pack_id,
+        "findings_created": run_row.findings_created,
+    }
+
+
+async def _default_trigger_validation(
+    db: AsyncSession, actor_id: str, row: DetectionProposalRow
+) -> dict[str, Any]:
+    """Default validation trigger: a SANDBOX-gated #118 emulation run.
+
+    Calls :func:`detection_emulation_service.run_emulation_validation` with
+    ``target_env=SANDBOX`` (respecting its sandbox gate + audit; mock-first),
+    then persists the resulting report to ``detection_validation_runs`` — so a
+    merged rule's technique is re-validated end to end. Returns a descriptor.
+    """
+    technique_id = _primary_technique(row)
+    if technique_id is None:
+        return {"validation_triggered": False, "reason": "no technique on rule"}
+
+    from datetime import datetime as _dt
+
+    from btagent_shared.types.detection_validation import (
+        EmulationRequest,
+        Emulator,
+        TargetEnv,
+    )
+
+    from btagent_backend.services import validation_run_service
+    from btagent_backend.services.detection_emulation_service import run_emulation_validation
+    from btagent_backend.services.validation_service import build_emulation_report
+
+    request = EmulationRequest(
+        technique_id=technique_id,
+        target_env=TargetEnv.SANDBOX,
+        emulator=Emulator.ATOMIC_RED_TEAM,
+    )
+    outcome = await run_emulation_validation(
+        db, actor_id=actor_id, org_id=row.org_id, request=request
+    )
+    descriptor: dict[str, Any] = {
+        "validation_triggered": outcome.approved,
+        "technique_id": technique_id,
+        "target_env": outcome.target_env,
+        "audit_id": outcome.audit_id,
+    }
+    if outcome.approved and outcome.verdict is not None:
+        report = build_emulation_report(
+            run_id=generate_id("valrun"),
+            request=request,
+            verdict=outcome.verdict,
+            generated_at=_dt.now(UTC),
+        )
+        run = await validation_run_service.persist_validation_report(
+            db, report, org_id=row.org_id, packs=()
+        )
+        descriptor["validation_run_id"] = run.id
+        descriptor["verdict"] = outcome.verdict.verdict.value
+    return descriptor
+
+
+async def _run_merge_closed_loop(
+    db: AsyncSession,
+    *,
+    row: DetectionProposalRow,
+    actor_id: str,
+    install_hunt_pack: HuntPackInstaller | None,
+    trigger_validation: ValidationTrigger | None,
+) -> dict[str, Any]:
+    """Fire the two merge hooks, each best-effort under its own savepoint.
+
+    A hook failure is caught, logged, and reported in the returned summary — it
+    NEVER propagates, so the already-flushed merge-outcome write survives. Each
+    hook runs inside ``db.begin_nested()`` so a hook that writes then raises
+    rolls back only its own savepoint, leaving the merge write (and the other
+    hook's writes) intact.
+    """
+    installer = install_hunt_pack or _default_install_hunt_pack
+    trigger = trigger_validation or _default_trigger_validation
+    summary: dict[str, Any] = {
+        "hunt_pack_installed": False,
+        "validation_triggered": False,
+    }
+
+    try:
+        async with db.begin_nested():
+            install_detail = await installer(db, row)
+        summary["hunt_pack_installed"] = True
+        summary["hunt_pack"] = install_detail
+    except Exception as exc:  # noqa: BLE001 — closed loop is best-effort
+        logger.warning(
+            "closed-loop hunt-pack install failed for merged proposal %s (non-fatal)",
+            row.id,
+            exc_info=True,
+        )
+        summary["hunt_pack_error"] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        async with db.begin_nested():
+            validation_detail = await trigger(db, actor_id, row)
+        summary["validation_triggered"] = bool(
+            validation_detail.get("validation_triggered", True)
+            if isinstance(validation_detail, dict)
+            else True
+        )
+        summary["validation"] = validation_detail
+    except Exception as exc:  # noqa: BLE001 — closed loop is best-effort
+        logger.warning(
+            "closed-loop detection-validation trigger failed for merged proposal %s (non-fatal)",
+            row.id,
+            exc_info=True,
+        )
+        summary["validation_error"] = f"{type(exc).__name__}: {exc}"
+
+    return summary
+
+
+async def record_pr_outcome(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    row_id: str,
+    outcome: PROutcome,
+    actor_id: str = "system",
+    install_hunt_pack: HuntPackInstaller | None = None,
+    trigger_validation: ValidationTrigger | None = None,
+) -> tuple[DetectionProposalRow, dict[str, Any]]:
+    """Record a detection-repo PR outcome for a proposal (#113 Phase C closed loop).
+
+    Only ``merged`` / ``rejected`` are recordable, and only while a PR is open
+    (``pr_outcome == 'pr_opened'``) — a rule must ship before its PR can merge,
+    and the terminal outcomes are one-shot (recording twice raises). Both guards
+    surface as :class:`ValueError` (route → 409); a missing / cross-org row
+    raises :class:`LookupError` (route → 404).
+
+    On ``merged`` the closed loop fires: the rule is auto-installed as a #112
+    hunt-pack entry AND a #118 sandbox-gated detection-validation run is
+    triggered for its technique — both BEST-EFFORT (a hook failure never sinks
+    the merge write). Returns ``(row, closed_loop_summary)``; the summary is
+    ``{}`` for a non-merge outcome.
+
+    ``install_hunt_pack`` / ``trigger_validation`` are injectable (default impls
+    call the real services) so a test can assert the wiring with a spy.
+    """
+    if outcome.value not in _RECORDABLE_PR_OUTCOMES:
+        raise ValueError(
+            f"Only {sorted(_RECORDABLE_PR_OUTCOMES)} outcomes are recordable; got {outcome.value!r}"
+        )
+
+    row = (
+        await db.execute(
+            select(DetectionProposalRow).where(
+                DetectionProposalRow.id == row_id,
+                DetectionProposalRow.org_id == org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise LookupError(f"Detection proposal not found: {row_id}")
+    if row.pr_outcome != PROutcome.PR_OPENED.value:
+        raise ValueError(
+            f"Cannot record {outcome.value!r}: proposal PR is not open "
+            f"(pr_outcome={row.pr_outcome!r})"
+        )
+
+    row.pr_outcome = outcome.value
+    row.updated_at = _utcnow()
+    await db.flush()
+
+    closed_loop: dict[str, Any] = {}
+    if outcome == PROutcome.MERGED:
+        closed_loop = await _run_merge_closed_loop(
+            db,
+            row=row,
+            actor_id=actor_id,
+            install_hunt_pack=install_hunt_pack,
+            trigger_validation=trigger_validation,
+        )
+    logger.info(
+        "detection proposal PR outcome recorded: row=%s outcome=%s org=%s closed_loop=%s",
+        row.id,
+        outcome.value,
+        org_id,
+        closed_loop or "<none>",
+    )
+    return row, closed_loop

@@ -408,6 +408,91 @@ async def list_pack_runs(
 
 
 # --------------------------------------------------------------------------- #
+# Ad-hoc single-rule install (#113 Phase C closed loop)
+# --------------------------------------------------------------------------- #
+
+
+async def run_adhoc_rule_pack(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    rule_id: str,
+    title: str,
+    sigma_yaml: str,
+    technique_ids: Sequence[str] | None = None,
+    backends: Sequence[str] | None = None,
+    lookback_hours: int = 24,
+    checkpoint: bool = False,
+    emit_events: bool = False,
+) -> HuntPackRunRow:
+    """Install + run a single ad-hoc Sigma rule as a one-off #112 hunt pack.
+
+    The "auto-install as a #112 hunt-pack entry" step of the CTI → Detection
+    closed loop (#113 Phase C): a merged detection rule is wrapped in a
+    one-rule :class:`~btagent_engine.hunting.pack.HuntPack` and run through the
+    exact same transpile → execute → convert → ingest pipeline the scheduled
+    packs use, so the merged rule immediately hunts current telemetry and lands
+    its hits in the #119 triage inbox. A :class:`HuntPackRunRow` records the
+    install as a first-class pack-run history fact.
+
+    Mock-first (``BTAGENT_MOCK_CONNECTORS`` default on). Defaults to
+    ``checkpoint=False`` / ``emit_events=False`` so it composes cleanly inside a
+    caller's transaction or savepoint (the closed loop runs it under a nested
+    savepoint) — the caller owns the commit.
+    """
+    import yaml as _yaml
+
+    # Lazy: the engine pulls pysigma, only present in the worker/engine image.
+    from btagent_engine.hunting.pack import HuntPack, HuntPackRule, extract_techniques
+    from btagent_engine.hunting.runner import run_pack
+    from btagent_engine.node import NodeContext
+
+    settings = get_settings()
+    backend_list = list(backends or settings.hunt_scheduler_backends)
+
+    parsed = _yaml.safe_load(sigma_yaml) if sigma_yaml else None
+    if not isinstance(parsed, dict):
+        parsed = {}
+    logsource = {
+        str(k): str(v) for k, v in (parsed.get("logsource") or {}).items() if v is not None
+    }
+    techniques = list(technique_ids or []) or extract_techniques(parsed.get("tags", []) or [])
+
+    rule = HuntPackRule(
+        id=(rule_id or generate_id("hrule"))[:200],
+        title=(title or "CTI-derived detection")[:300],
+        sigma_yaml=sigma_yaml,
+        logsource=logsource,
+        mitre_techniques=techniques,
+    )
+    pack = HuntPack(
+        id=f"cti-merged-{rule_id}"[:200],
+        name=f"CTI merged: {title}"[:200] or "CTI merged rule",
+        version="1",
+        description="Auto-installed from a merged CTI → Detection rule (#113 Phase C).",
+        rules=[rule],
+    )
+
+    run_id = generate_id("hrun")
+    ctx = NodeContext(run_id=run_id, org_id=org_id)
+    result = await run_pack(pack, backend_list, ctx, lookback_hours=lookback_hours, run_id=run_id)
+    run_row, created = await persist_pack_run(
+        db, org_id=org_id, result=result, checkpoint=checkpoint
+    )
+    logger.info(
+        "ad-hoc CTI rule installed as hunt pack: run=%s rule=%s hits=%d findings=%d (org=%s)",
+        run_row.run_id,
+        rule.id,
+        run_row.hit_count,
+        created,
+        org_id,
+    )
+    if emit_events:
+        await _emit_run_events(org_id=org_id, run_row=run_row, redis_url=settings.redis_url)
+    return run_row
+
+
+# --------------------------------------------------------------------------- #
 # Orchestration — load builtin packs, run, convert, persist, emit
 # --------------------------------------------------------------------------- #
 

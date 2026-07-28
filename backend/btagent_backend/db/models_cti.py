@@ -44,6 +44,11 @@ class DetectionProposalRow(Base):
     bundle_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     sigma_yaml: Mapped[str] = mapped_column(Text, nullable=False)
+    # Analyst-edited "final" rule body (#113 Phase C draft-edit path). None
+    # until a proposal is selected + edited via the Engineer UI; when set the
+    # row's ``state`` is ``modified`` and the composer ships this body (cited as
+    # *edited from draft*) instead of ``sigma_yaml``.
+    final_sigma_yaml: Mapped[str | None] = mapped_column(Text, nullable=True)
     # JSONB list[str] of ATT&CK technique ids.
     technique_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
@@ -58,6 +63,11 @@ class DetectionProposalRow(Base):
     # Detection-repo PR back-link (#113 slice 3): set by the composer; a
     # non-null value means the rule already shipped and blocks re-composition.
     pr_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Detection-repo PR lifecycle (#113 Phase C closed loop): ``PROutcome``
+    # value (proposed / pr_opened / merged / rejected). Advances to ``pr_opened``
+    # when the composer ships the rule; a recorded merge outcome flips it to
+    # ``merged`` and drives the auto-install + validation closed loop.
+    pr_outcome: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
     # Review provenance — set when an analyst decides.
     review_rationale: Mapped[str] = mapped_column(Text, default="")
     reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
