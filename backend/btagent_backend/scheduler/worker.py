@@ -22,6 +22,7 @@ from btagent_backend.scheduler.jobs import (
     compile_proposal_plan,
     execute_hunt_plan,
     execute_workflow_run,
+    memory_consolidation_sweep,
     noise_digest_sweep,
     run_hunt_pack,
     scheduled_deception_hunt_scan,
@@ -149,6 +150,7 @@ class WorkerSettings:
         scheduled_ndr_hunt_scan,
         weekly_pattern_scan,
         behavioral_baseline_sweep,
+        memory_consolidation_sweep,
         # #120 Phase C: enqueue-on-demand from the proposal accept / execute
         # routes (live paths; mock mode runs inline in the route).
         compile_proposal_plan,
@@ -233,6 +235,16 @@ class WorkerSettings:
         # every org's handover headline to analysts' bells (quiet windows stay
         # silent inside the producer). ``unique=True`` — one tick per boundary
         # across worker replicas.
+        # #482: nightly agent-memory consolidation. Not connector-blocked —
+        # it runs over the already-stored memory rows. Fires at 03:20 UTC, in
+        # the quiet window between the overnight hunt crons and the 06:30
+        # noise digest. ``unique=True`` — one tick across worker replicas.
+        cron(
+            memory_consolidation_sweep,
+            hour=3,
+            minute=20,
+            unique=True,
+        ),
         cron(
             shift_handover_digest,
             hour={6, 14, 22},

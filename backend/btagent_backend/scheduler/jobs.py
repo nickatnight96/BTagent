@@ -42,6 +42,36 @@ async def stale_suppression_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     return result
 
 
+async def memory_consolidation_sweep(ctx: dict[str, Any]) -> dict[str, int]:
+    """Collapse near-duplicate long-term agent memories, org by org (#482).
+
+    The nightly cron for the unified memory store's consolidation pass. For
+    every org that has memories, groups the live rows by ``(subject,
+    tlp_level)``, collapses each cluster of near-duplicate content onto its
+    highest-confidence/most-recent survivor, and stamps the losers
+    ``superseded_at`` so they drop out of every recall path (the rows are kept
+    for audit, not deleted).
+
+    Multi-tenant and best-effort, mirroring :func:`weekly_pattern_scan`: the
+    service walks **every** org (a single hard-coded ``DEFAULT_ORG_ID`` sweep
+    would permanently exclude every other tenant), and a failure on one org is
+    logged and skipped rather than aborting the tick. Consolidation never
+    merges across TLP levels — see ``memory_service.consolidate_memories``.
+
+    Thin shell: the single commit lives here; all decisions are in
+    :mod:`btagent_backend.services.memory_service`.
+    """
+    from btagent_backend.services import memory_service
+
+    async with async_session_factory() as session:
+        result = await memory_service.consolidate_all_orgs(session)
+        await session.commit()
+
+    counts = result.as_counts()
+    logger.info("memory_consolidation_sweep: %s", counts)
+    return counts
+
+
 async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
     """Run the enabled builtin hunt packs and land hits in the inbox (#112).
 

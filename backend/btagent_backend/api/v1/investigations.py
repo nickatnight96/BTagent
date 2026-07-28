@@ -140,13 +140,27 @@ async def create_investigation(
     # <agent-memory> block and carried into the agent state via config (see
     # TaskManager._build_initial_state). Best-effort + org/TLP-scoped: a recall
     # failure must never block investigation creation.
+    #
+    # Slice 2: recall is SEMANTIC — the new case's title/description is the
+    # query, so the block surfaces associatively relevant memories (the host
+    # that was a false positive last month, the technique already ruled out)
+    # rather than only rows whose subject matches exactly. ``recall_semantic``
+    # itself falls back to the recency/subject ranking whenever the vector path
+    # is unavailable (non-PostgreSQL dialect, no embedding provider), and the
+    # explicit fallback below covers a semantic pass that returns nothing.
     try:
         from btagent_backend.services.memory_service import (
             MemoryService,
             render_for_prompt,
         )
 
-        memories = await MemoryService().recall_memories(db, user.org_id, caller_tlp=body.tlp_level)
+        service = MemoryService()
+        recall_query = " ".join(part for part in (body.title, body.description) if part).strip()
+        memories = await service.recall_semantic(
+            db, user.org_id, recall_query, caller_tlp=body.tlp_level
+        )
+        if not memories:
+            memories = await service.recall_memories(db, user.org_id, caller_tlp=body.tlp_level)
         config["agent_memory"] = render_for_prompt(memories)
     except Exception:
         logger.exception("Failed to recall agent memory for investigation %s", inv.id)
