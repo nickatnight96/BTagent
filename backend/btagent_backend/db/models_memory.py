@@ -21,12 +21,24 @@ subject)`` uniqueness constraint is the upsert key: recording a fact about an
 entity that already has one of that kind overwrites the content and bumps
 ``updated_at`` rather than appending a duplicate.
 
-Deferred (see #482): pgvector semantic recall, consolidation/summarization, a
-frontend surface, and migrating the scattered stores behind this interface.
+Slice 2 (#482) adds two columns to this row:
+
+* ``embedding`` — a nullable pgvector ``Vector(1536)`` (same dimension and HNSW
+  cosine index as ``knowledge_chunks``) so recall can be *associative* rather
+  than exact-subject-only. Best-effort: a memory whose embedding could not be
+  generated (no provider configured, provider outage) still records and is
+  still recallable by the recency/subject path.
+* ``superseded_at`` — set by consolidation when a near-duplicate row is
+  collapsed into a surviving one. Superseded rows are excluded from every
+  recall path but are retained for audit rather than deleted.
+
+Deferred (see #482): a frontend surface, migrating the scattered stores behind
+this interface, and cross-org/global memory.
 """
 
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     DateTime,
     Float,
@@ -84,6 +96,15 @@ class AgentMemoryRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+    # Semantic recall vector (#482 slice 2). Mirrors ``KnowledgeChunkRow.
+    # embedding`` exactly — same 1536 dimension, same HNSW cosine index — so the
+    # memory store reuses the RAG stack's embedding provider and index shape.
+    # Nullable and best-effort: embedding generation never blocks a write.
+    embedding = mapped_column(Vector(1536), nullable=True)
+    # Set when consolidation collapses this row into a surviving near-duplicate.
+    # NULL == live. Superseded rows are excluded from recall (all paths) but
+    # kept on the table so the collapse stays auditable/reversible.
+    superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         # Upsert key: one row per (org, kind, subject).
@@ -92,4 +113,18 @@ class AgentMemoryRow(Base):
         Index("idx_agent_memory_org_subject", "org_id", "subject"),
         # Covers the org-scoped recency ranking / kind filter.
         Index("idx_agent_memory_org_updated", "org_id", "updated_at"),
+        # Covers the live-rows filter every recall path applies, and the
+        # consolidation sweep's per-org scan of live rows.
+        Index("idx_agent_memory_org_superseded", "org_id", "superseded_at"),
+        # ANN index for semantic recall — cosine distance, matching
+        # ``idx_knowledge_chunks_embedding_hnsw``. PostgreSQL only; the
+        # conftest strips postgresql-specific indexes before ``create_all``
+        # builds the SQLite unit-test schema.
+        Index(
+            "idx_agent_memory_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )

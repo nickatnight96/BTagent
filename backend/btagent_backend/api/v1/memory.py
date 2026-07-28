@@ -6,7 +6,10 @@ Two org-scoped, RBAC-gated endpoints over the compact-fact memory store:
   (senior_analyst+): authoring a fact shapes what every future investigation in
   the org recalls.
 * ``GET /memory`` — recall memories by subject / kind. Gated ``memory:read``
-  (analyst+), recency-ranked and TLP-aware.
+  (analyst+), recency-ranked and TLP-aware. Passing ``?query=`` switches to
+  SEMANTIC recall (embedding cosine similarity) with the identical org + TLP
+  filtering; on a non-PostgreSQL dialect, or with no embedding provider
+  available, it degrades to the recency ranking rather than failing.
 
 Both are strictly scoped to the caller's ``org_id`` (taken from the token, never
 the request body) so one tenant can never read or write another tenant's memory.
@@ -68,6 +71,11 @@ class MemoryResponse(BaseModel):
 class MemoryListResponse(BaseModel):
     items: list[MemoryResponse]
     total: int
+    # Which ranking produced ``items``: "semantic" when a ``query`` was given
+    # (and the vector path was usable), "recency" otherwise. Semantic recall
+    # falls back to recency ranking transparently, so this reports the mode the
+    # caller ASKED for, not the internal path taken.
+    mode: str = "recency"
 
 
 def _to_response(row: AgentMemoryRow) -> MemoryResponse:
@@ -122,19 +130,47 @@ async def record_memory(
 async def recall_memories(
     subject: str | None = Query(None, max_length=512),
     kind: str | None = Query(None, max_length=32),
+    query: str | None = Query(
+        None,
+        max_length=2000,
+        description=(
+            "Free-text query. When set, memories are ranked by semantic "
+            "similarity instead of recency (same org + TLP filtering)."
+        ),
+    ),
     limit: int = Query(DEFAULT_RECALL_LIMIT, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ) -> MemoryListResponse:
-    """Recall recency-ranked, TLP-filtered memories for the caller's org."""
+    """Recall TLP-filtered memories for the caller's org.
+
+    Default ranking is recency. Supplying ``query`` switches to semantic
+    (embedding-similarity) ranking — the org scope and TLP clearance filters
+    are byte-for-byte the same on both paths, and the semantic path degrades to
+    recency ranking when pgvector is unavailable.
+    """
     user.require_permission("memory:read")
 
-    rows = await MemoryService().recall_memories(
-        db,
-        user.org_id,
-        subject=subject,
-        kind=kind,
-        limit=limit,
-        caller_tlp=_API_RECALL_CLEARANCE,
-    )
-    return MemoryListResponse(items=[_to_response(r) for r in rows], total=len(rows))
+    service = MemoryService()
+    if query:
+        rows = await service.recall_semantic(
+            db,
+            user.org_id,
+            query,
+            subject=subject,
+            kind=kind,
+            limit=limit,
+            caller_tlp=_API_RECALL_CLEARANCE,
+        )
+        mode = "semantic"
+    else:
+        rows = await service.recall_memories(
+            db,
+            user.org_id,
+            subject=subject,
+            kind=kind,
+            limit=limit,
+            caller_tlp=_API_RECALL_CLEARANCE,
+        )
+        mode = "recency"
+    return MemoryListResponse(items=[_to_response(r) for r in rows], total=len(rows), mode=mode)
