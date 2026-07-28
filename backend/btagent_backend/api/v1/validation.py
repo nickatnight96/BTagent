@@ -45,7 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models_validation import DetectionValidationRunRow
-from btagent_backend.services import validation_run_service
+from btagent_backend.services import validation_coverage_service, validation_run_service
 from btagent_backend.services.detection_emulation_service import run_emulation_validation
 from btagent_backend.services.validation_scenarios import default_validation_scenarios
 from btagent_backend.services.validation_service import build_emulation_report, run_validation
@@ -83,6 +83,26 @@ class ValidationRunResponse(ValidationRunSummary):
 class ValidationRunListResponse(BaseModel):
     items: list[ValidationRunSummary]
     total: int
+
+
+class CoverageMapEntryResponse(BaseModel):
+    """One technique's coverage/staleness row (#118 Phase C coverage map)."""
+
+    technique_id: str
+    name: str | None = None
+    last_validated: datetime | None = None
+    last_verdict: str | None = None
+    days_since_validated: int | None = None
+    stale: bool
+    has_detection: bool
+
+
+class CoverageMapResponse(BaseModel):
+    items: list[CoverageMapEntryResponse]
+    total: int
+    stale_count: int
+    stale_days: int
+    only_stale: bool
 
 
 class EmulationRunRequest(BaseModel):
@@ -243,3 +263,47 @@ async def list_validation_runs(
         .all()
     )
     return ValidationRunListResponse(items=[_summary(r) for r in rows], total=int(total))
+
+
+@router.get("/coverage-map", response_model=CoverageMapResponse)
+async def get_coverage_map(
+    stale_days: int = Query(90, ge=1, le=3650),
+    only_stale: bool = Query(
+        False,
+        description="Return only techniques validated >stale_days ago or never validated.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Per-technique detection coverage map derived from validation history (#118).
+
+    For each ATT&CK technique the org has a detection for (or has validated),
+    reports its ``last_validated`` timestamp (max over ``detection_validation_runs``,
+    non-errored) and a ``stale`` flag for techniques validated >``stale_days`` days
+    ago OR never validated. ``only_stale=true`` is the ">90d untested /
+    never-validated" filter. Read-only, org-scoped. RBAC ``hunt:view``.
+    """
+    user.require_permission("hunt:view")
+
+    entries = await validation_coverage_service.build_coverage_map(
+        db, org_id=user.org_id, stale_days=stale_days, only_stale=only_stale
+    )
+    items = [
+        CoverageMapEntryResponse(
+            technique_id=e.technique_id,
+            name=e.name,
+            last_validated=e.last_validated,
+            last_verdict=e.last_verdict,
+            days_since_validated=e.days_since_validated,
+            stale=e.stale,
+            has_detection=e.has_detection,
+        )
+        for e in entries
+    ]
+    return CoverageMapResponse(
+        items=items,
+        total=len(items),
+        stale_count=sum(1 for e in items if e.stale),
+        stale_days=stale_days,
+        only_stale=only_stale,
+    )
