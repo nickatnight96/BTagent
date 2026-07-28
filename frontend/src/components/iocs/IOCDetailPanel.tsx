@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   X,
   ExternalLink,
@@ -13,10 +13,16 @@ import {
   Loader2,
   XCircle,
   Link2,
+  Tag,
 } from "lucide-react";
 import { useIOCStore } from "@/stores/iocStore";
+import { useAuthStore } from "@/stores/authStore";
+import { UserRole } from "@/types/config";
+import { tagTechnique } from "@/api/mitre";
+import { ApiError } from "@/api/client";
 import { Button } from "@/components/ds/button";
 import { Badge } from "@/components/ds/badge";
+import { Input } from "@/components/ds/input";
 import { AnnotationSection } from "./AnnotationSection";
 import type { EnrichmentStatus, MitreTag } from "@/types/ioc";
 
@@ -111,8 +117,24 @@ function MitreTagBadge({ tag }: { tag: MitreTag }) {
   );
 }
 
+// mitre:tag is senior_analyst+ (rbac.py). The form hides below that so a
+// plain analyst isn't offered a button whose every click 403s.
+const TAGGING_ROLES = new Set<string>([
+  UserRole.SENIOR_ANALYST,
+  UserRole.INCIDENT_COMMANDER,
+  UserRole.ADMIN,
+]);
+
+/** Technique ids look like T1059 or T1059.001 — reject typos before a 404. */
+const TECHNIQUE_ID_RE = /^T\d{4}(\.\d{3})?$/;
+
 export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
-  const { selectedIOC, isEnriching, enrichIOC } = useIOCStore();
+  const { selectedIOC, isEnriching, enrichIOC, fetchIOC } = useIOCStore();
+  const role = useAuthStore((s) => s.user?.role ?? null);
+
+  const [techniqueId, setTechniqueId] = useState("");
+  const [tagging, setTagging] = useState(false);
+  const [tagError, setTagError] = useState<string | null>(null);
 
   const handleEnrich = useCallback(() => {
     if (selectedIOC) {
@@ -120,7 +142,33 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
     }
   }, [selectedIOC, enrichIOC]);
 
+  const handleTag = useCallback(async () => {
+    if (!selectedIOC) return;
+    const id = techniqueId.trim().toUpperCase();
+    if (!TECHNIQUE_ID_RE.test(id)) {
+      setTagError("Technique ids look like T1059 or T1059.001.");
+      return;
+    }
+    setTagError(null);
+    setTagging(true);
+    try {
+      await tagTechnique({ entity_type: "ioc", entity_id: selectedIOC.id, technique_id: id });
+      setTechniqueId("");
+      // Re-fetch rather than splice locally: the server resolves the
+      // technique's name and tactic, which the form never knew.
+      await fetchIOC(selectedIOC.id);
+    } catch (e) {
+      const detail =
+        e instanceof ApiError ? (e.body as { detail?: string } | null)?.detail : null;
+      setTagError(detail || "Could not tag the technique.");
+    } finally {
+      setTagging(false);
+    }
+  }, [selectedIOC, techniqueId, fetchIOC]);
+
   if (!selectedIOC) return null;
+
+  const canTag = role !== null && TAGGING_ROLES.has(role);
 
   const { enrichment_data } = selectedIOC;
 
@@ -248,15 +296,64 @@ export function IOCDetailPanel({ onClose }: IOCDetailPanelProps) {
             </div>
           </div>
 
-          {/* MITRE Technique Tags */}
-          {(selectedIOC.mitre_tags ?? []).length > 0 && (
-            <div>
+          {/* MITRE Technique Tags. Rendered whenever there are tags OR the
+           * viewer can create one — a senior analyst needs the section to
+           * exist before the first tag does. */}
+          {((selectedIOC.mitre_tags ?? []).length > 0 || canTag) && (
+            <div data-testid="ioc-detail-mitre-section">
               <SectionHeader>MITRE ATT&CK Techniques</SectionHeader>
-              <div className="flex flex-wrap gap-2">
-                {(selectedIOC.mitre_tags ?? []).map((tag) => (
-                  <MitreTagBadge key={tag.technique_id} tag={tag} />
-                ))}
-              </div>
+              {(selectedIOC.mitre_tags ?? []).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {(selectedIOC.mitre_tags ?? []).map((tag) => (
+                    <MitreTagBadge key={tag.technique_id} tag={tag} />
+                  ))}
+                </div>
+              )}
+              {canTag && (
+                <form
+                  className="mt-2 flex items-center gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleTag();
+                  }}
+                  data-testid="ioc-detail-tag-form"
+                >
+                  <Input
+                    value={techniqueId}
+                    onChange={(e) => {
+                      setTechniqueId(e.target.value);
+                      setTagError(null);
+                    }}
+                    placeholder="T1059.001"
+                    aria-label="MITRE technique id"
+                    data-testid="ioc-detail-tag-input"
+                    className="h-8 w-32 font-mono text-xs"
+                  />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="outline"
+                    disabled={tagging}
+                    data-testid="ioc-detail-tag-submit"
+                  >
+                    {tagging ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Tag className="w-3.5 h-3.5" aria-hidden="true" />
+                    )}
+                    <span className="ml-1.5">Tag technique</span>
+                  </Button>
+                </form>
+              )}
+              {tagError && (
+                <p
+                  className="mt-1 text-xs text-severity-medium"
+                  role="alert"
+                  data-testid="ioc-detail-tag-error"
+                >
+                  {tagError}
+                </p>
+              )}
             </div>
           )}
 

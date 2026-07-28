@@ -81,6 +81,22 @@ class UpdateIOCRequest(BaseModel):
     enrichment: dict[str, Any] | None = None
 
 
+class MitreTagOut(BaseModel):
+    """A MITRE technique tag on this IOC, with the technique named inline.
+
+    The frontend's ``MitreTag`` type has carried exactly this shape since the
+    IOC detail panel first rendered a "MITRE ATT&CK Techniques" section — but
+    nothing on the backend ever populated it, so that section had never once
+    rendered. Wiring the tag write path (``POST /mitre/tag``) exposed the
+    fiction on the read side.
+    """
+
+    technique_id: str
+    technique_name: str
+    tactic: str
+    confidence: float
+
+
 class IOCResponse(BaseModel):
     id: str
     investigation_id: str
@@ -98,6 +114,9 @@ class IOCResponse(BaseModel):
     tags: list[str]
     analyst_note: str
     disposition: str
+    # Populated on the detail endpoint only — the list endpoint stays a
+    # single query and the notebook table doesn't render tags anyway.
+    mitre_tags: list[MitreTagOut] = []
 
 
 class IOCListResponse(BaseModel):
@@ -178,7 +197,7 @@ def _reject_if_over_bulk_cap(count: int) -> None:
         )
 
 
-def _to_response(row: IOCRow) -> IOCResponse:
+def _to_response(row: IOCRow, mitre_tags: list[MitreTagOut] | None = None) -> IOCResponse:
     return IOCResponse(
         id=row.id,
         investigation_id=row.investigation_id,
@@ -195,7 +214,41 @@ def _to_response(row: IOCRow) -> IOCResponse:
         tags=list(row.tags or []),
         analyst_note=row.analyst_note or "",
         disposition=row.disposition or "",
+        mitre_tags=mitre_tags or [],
     )
+
+
+async def _mitre_tags_for(db: AsyncSession, ioc_id: str) -> list[MitreTagOut]:
+    """The IOC's technique tags with names resolved, newest first.
+
+    Joined against ``mitre_techniques`` so the panel can show a name rather
+    than a bare Txxxx id. A tag whose technique isn't in the loaded matrix
+    (matrix not seeded, or a stale id) still returns — with the id standing
+    in for the name — because hiding an existing tag is worse than showing
+    it unnamed.
+    """
+    from btagent_backend.db.models_mitre import MitreTechniqueRow, MitreTechniqueTagRow
+
+    rows = (
+        await db.execute(
+            select(MitreTechniqueTagRow, MitreTechniqueRow)
+            .outerjoin(MitreTechniqueRow, MitreTechniqueTagRow.technique_id == MitreTechniqueRow.id)
+            .where(
+                MitreTechniqueTagRow.entity_type == "ioc",
+                MitreTechniqueTagRow.entity_id == ioc_id,
+            )
+            .order_by(MitreTechniqueTagRow.created_at.desc())
+        )
+    ).all()
+    return [
+        MitreTagOut(
+            technique_id=tag.technique_id,
+            technique_name=tech.name if tech is not None else tag.technique_id,
+            tactic=tech.tactic if tech is not None else "",
+            confidence=tag.confidence,
+        )
+        for tag, tech in rows
+    ]
 
 
 # --------------------------------------------------------------------------- #
@@ -436,7 +489,7 @@ async def get_ioc(
     inv = await _load_investigation_or_404(db, row.investigation_id)
     assert_can_access_ioc(user, row, investigation=inv)
 
-    return _to_response(row)
+    return _to_response(row, mitre_tags=await _mitre_tags_for(db, ioc_id))
 
 
 @router.post("", response_model=IOCResponse | list[IOCResponse], status_code=201)
