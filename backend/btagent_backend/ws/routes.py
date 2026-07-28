@@ -69,7 +69,7 @@ async def ws_investigation(websocket: WebSocket, investigation_id: str) -> None:
         # ``get_session`` is an async generator — use ``__anext__`` so we
         # take exactly one session and let it close when this function
         # returns / on garbage collection.
-        gen = get_session()
+        gen = get_session(websocket)
         db = await gen.__anext__()
         try:
             inv = await assert_can_subscribe(db, user, investigation_id)
@@ -194,7 +194,7 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
             # could connect to /ws/events and then subscribe to any
             # investigation channel.
             try:
-                gen = get_session()
+                gen = get_session(client.ws)
                 db = await gen.__anext__()
                 try:
                     await assert_can_subscribe(db, client.user, msg.investigation_id)
@@ -286,7 +286,7 @@ async def _authorize_investigation(client: ConnectedClient, investigation_id: st
     subscribe path so it never leaks whether the investigation exists.
     """
     try:
-        gen = get_session()
+        gen = get_session(client.ws)
         db = await gen.__anext__()
         try:
             await assert_can_subscribe(db, client.user, investigation_id)

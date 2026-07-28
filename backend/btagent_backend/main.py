@@ -137,6 +137,22 @@ def create_app() -> FastAPI:
             "cookie-based auth requires allow_credentials=True."
         )
 
+    # Commit the request's DB session before the response leaves the server.
+    # Without this, every write endpoint told its client "201" while the
+    # transaction was still uncommitted (dependency teardown runs after the
+    # response is sent), which let clients race their own writes and made a
+    # failed commit unreportable. Added FIRST so it sits INNERMOST: the
+    # BaseHTTPMiddleware layers above run the inner app in a separate task
+    # and forward messages through a queue, and an outermost commit would
+    # race dependency teardown (observed as "rollback() can't be called
+    # here; commit() is already in progress"). Innermost, the commit runs
+    # synchronously in the app's own send path, strictly before teardown.
+    from btagent_backend.middleware.commit_before_response import (
+        CommitBeforeResponseMiddleware,
+    )
+
+    app.add_middleware(CommitBeforeResponseMiddleware)
+
     # CORS
     app.add_middleware(
         CORSMiddleware,
