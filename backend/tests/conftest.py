@@ -17,6 +17,9 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import JSON, event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from starlette.requests import HTTPConnection
+
+from btagent_backend.middleware.commit_before_response import DB_SESSION_STATE_KEY
 
 # ============================================================================
 # Phase 1 — Environment + engine interception (must run before ANY backend
@@ -43,9 +46,17 @@ _test_session_factory = async_sessionmaker(
 )
 
 
-async def _test_get_session():
-    """Replacement for ``btagent_backend.db.engine.get_session``."""
+async def _test_get_session(request: HTTPConnection):
+    """Replacement for ``btagent_backend.db.engine.get_session``.
+
+    Mirrors the real dependency, including stashing the session on
+    ``request.state`` so ``CommitBeforeResponseMiddleware`` commits before
+    the response is sent in tests exactly as it does in production —
+    otherwise the unit suite would silently exercise a different
+    transaction lifecycle than every deployed request.
+    """
     async with _test_session_factory() as session:
+        setattr(request.state, DB_SESSION_STATE_KEY, session)
         try:
             yield session
             await session.commit()
