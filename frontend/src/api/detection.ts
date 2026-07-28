@@ -121,3 +121,48 @@ export async function recordPROutcome(
     outcome,
   });
 }
+
+/** A STIX indicator that could not be converted, with the reason. */
+export interface SkippedIndicator {
+  stix_id: string;
+  pattern: string;
+  reason: string;
+}
+
+/**
+ * Upsert counts from a propose call.
+ *
+ * `unchanged` is the important one: re-importing a bundle never clobbers a
+ * decision an analyst already made, so those rows are counted, not rewritten.
+ */
+export interface PersistedCounts {
+  created: number;
+  updated: number;
+  unchanged: number;
+}
+
+export interface ProposeDetectionsResponse {
+  proposals: DetectionProposal[];
+  skipped: SkippedIndicator[];
+  persisted: PersistedCounts | null;
+}
+
+/**
+ * Turn a STIX 2.1 bundle into Sigma rule proposals, persisted for review.
+ *
+ * Requires `hunt:create` (analyst+). The server refuses TLP:RED bundles with
+ * a 403 and rejects non-STIX input with a 422 — both are contentful answers
+ * worth surfacing verbatim rather than collapsing into "import failed".
+ *
+ * Re-submitting the same bundle upserts rows that are still `proposed`;
+ * anything an analyst has already decided keeps its decision.
+ */
+export async function proposeDetections(
+  bundle: Record<string, unknown>,
+  activeTlp = "green",
+): Promise<ProposeDetectionsResponse> {
+  return api.post<ProposeDetectionsResponse>(`${BASE}/propose-detections`, {
+    stix_bundle: bundle,
+    active_tlp: activeTlp,
+  });
+}

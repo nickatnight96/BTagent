@@ -46,6 +46,7 @@ import {
   recordPROutcome,
   type ClosedLoop,
 } from "@/api/detection";
+import { ImportBundlePanel } from "./ImportBundlePanel";
 import type {
   ComposePRResponse,
   DetectionProposal,
@@ -358,6 +359,10 @@ export function DetectionProposalsPage() {
 
       {/* ---- Body ---- */}
       <div className="flex-1 overflow-auto p-6">
+        {/* Front of the funnel (#113) — every proposal below originates here.
+         * Refetches the queue on a successful import. */}
+        <ImportBundlePanel onImported={() => void fetchProposals()} />
+
         {error && (
           <div
             className="mb-4 rounded-md border border-rose-500/30 bg-rose-600/10 px-4 py-2 text-sm text-rose-300"

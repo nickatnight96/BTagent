@@ -10,6 +10,7 @@ const validateProposal = vi.fn();
 const editProposal = vi.fn();
 const composeDetectionPR = vi.fn();
 const recordPROutcome = vi.fn();
+const proposeDetections = vi.fn();
 
 vi.mock("@/api/detection", () => ({
   listProposals: (...a: unknown[]) => listProposals(...a),
@@ -19,6 +20,9 @@ vi.mock("@/api/detection", () => ({
   editProposal: (...a: unknown[]) => editProposal(...a),
   composeDetectionPR: (...a: unknown[]) => composeDetectionPR(...a),
   recordPROutcome: (...a: unknown[]) => recordPROutcome(...a),
+  // The page renders ImportBundlePanel, which imports from this module.
+  // A wholesale module mock has to carry every export the tree touches.
+  proposeDetections: (...a: unknown[]) => proposeDetections(...a),
 }));
 
 import { DetectionProposalsPage } from "@/components/detection/DetectionProposalsPage";
