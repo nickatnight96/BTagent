@@ -60,12 +60,30 @@ export async function getCoverageScore(
   return api.get<{ score: number; tagged: number; total: number }>(endpoint);
 }
 
+/**
+ * Techniques with no detection data, grouped by tactic.
+ *
+ * The path was `/v1/mitre/detection-gaps`, which the backend has never
+ * served — the route is `/mitre/gaps`. Nothing called this function, so the
+ * 404 was never observed; it was a landmine for whoever wired it up next.
+ */
 export async function getDetectionGaps(
   investigationId?: string,
 ): Promise<DetectionGap[]> {
   const params = investigationId ? { investigation_id: investigationId } : {};
-  const endpoint = `/v1/mitre/detection-gaps${buildQuery(params)}`;
+  const endpoint = `/v1/mitre/gaps${buildQuery(params)}`;
   return api.get<DetectionGap[]>(endpoint);
+}
+
+/**
+ * TTPs the backend judges relevant to this org's tech stack.
+ *
+ * Distinct from :func:`searchTTPs`, which despite the name is a free-text
+ * search over `/mitre/techniques`. This one takes no query — the server
+ * derives the suggestion from the stored org profile.
+ */
+export async function suggestTTPsForEnvironment(): Promise<MitreTechnique[]> {
+  return api.get<MitreTechnique[]>("/v1/mitre/search-ttps");
 }
 
 export async function listGroups(params?: {

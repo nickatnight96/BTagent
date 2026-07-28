@@ -50,14 +50,22 @@ export interface CoverageData {
   total_techniques: number;
 }
 
-/** A gap in detection coverage */
+/**
+ * A tactic's detection-coverage gap, as `GET /mitre/gaps` actually returns it.
+ *
+ * This previously described a per-technique shape with `severity`, `reason`
+ * and `recommendation` — fields the backend has never returned. Nothing
+ * consumed it, and the only client function pointed at a path that 404s, so
+ * the fiction was never observed. Corrected against
+ * `btagent_shared.types.mitre.DetectionGap`.
+ */
 export interface DetectionGap {
-  technique_id: string;
-  technique_name: string;
+  /** Tactic shortname, e.g. "initial-access". */
   tactic: string;
-  severity: "critical" | "high" | "medium" | "low";
-  reason: string;
-  recommendation: string;
+  /** Technique IDs in this tactic with no detection data. */
+  techniques_without_detection: string[];
+  /** Data sources that would close the gap if onboarded. */
+  data_sources_missing: string[];
 }
 
 /** Tag linking a technique to an investigation */

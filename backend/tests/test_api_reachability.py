@@ -62,8 +62,6 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # after the fact fails this test on purpose.
 KNOWN_GAPS: dict[str, str] = {
     "POST /hunts/package/upload": "hunt-package upload has no UI affordance",
-    "GET /mitre/search-ttps": "TTP search endpoint unused by the matrix page",
-    "GET /mitre/gaps": "coverage-gap list has no consumer (distinct from exercises/gaps)",
     "POST /mitre/seed": "matrix seeding is admin-only and run out of band, never from the UI",
     "POST /mitre/tag": "technique tagging has no UI affordance",
     "GET /reports/distributions": "distribution history has no panel on the Reports page",
