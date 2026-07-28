@@ -63,9 +63,6 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 KNOWN_GAPS: dict[str, str] = {
     "GET /config/retention": "retention policy has no Configuration Center panel",
     "POST /config/retention/run": "manual retention sweep cannot be triggered from the UI",
-    "POST /containment/execute/bulk-block": (
-        "the bulk IOC-block execute path; only execute/response-action is wired"
-    ),
     "POST /cti/propose-detections": "CTI→detection proposal is only reachable via curl",
     "POST /cti/proposals/{}/pr-outcome": "PR-outcome write-back has no consumer",
     "POST /hunts/package/upload": "hunt-package upload has no UI affordance",
