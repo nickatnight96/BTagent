@@ -45,10 +45,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Textarea } from "@/components/ds/textarea";
 import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
 import { HUNT_FINDING_EVENTS } from "@/components/hunt/HuntTriagePage";
+import { listProposalPlanRuns } from "@/api/pattern";
 import type {
   PatternHuntProposal,
   ProposalFilter,
   ProposalHuntPlan,
+  ProposalPlanRun,
   ProposalState,
 } from "@/types/pattern_hunt";
 
@@ -364,9 +366,14 @@ const PLAN_STATUS_STYLES: Record<string, string> = {
  * Compile status + runbook summary + execute control for an accepted
  * proposal's HuntPlan. ``pending`` shows a refresh affordance (live-LLM
  * compile runs on the worker); ``ready`` exposes Execute; after a run the
- * ``last_run`` summary (findings landed in the hunt triage inbox) renders.
+ * ``last_run`` summary (findings landed in the hunt triage inbox) renders,
+ * with the full per-run history beneath it once there is more than one.
+ *
+ * Exported for its component test — the page-level render needs the whole
+ * store scaffold, and the run-history behaviour is entirely local to this
+ * panel.
  */
-function HuntPlanPanel({
+export function HuntPlanPanel({
   plan,
   busy,
   canTriage,
@@ -380,6 +387,29 @@ function HuntPlanPanel({
   onExecute: () => void;
 }) {
   const lastRun = plan.plan?.last_run;
+  // Full per-run history behind the quick-glance last_run blob. last_run only
+  // ever shows the latest execution, so re-running silently overwrote the
+  // only visible evidence of the previous run — an analyst comparing "did the
+  // re-hunt find fewer hits than last week" had nothing to compare against.
+  const [runs, setRuns] = useState<ProposalPlanRun[]>([]);
+  // Keyed on the latest run id, not just the proposal: a fresh execution
+  // must pull the new row into the list without a page reload.
+  const lastRunId = lastRun?.run_id ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    listProposalPlanRuns(plan.proposal_id, { page_size: 5 })
+      .then((resp) => {
+        if (!cancelled) setRuns(resp.items);
+      })
+      .catch(() => {
+        // Run history is auxiliary — never block the plan panel on it.
+        if (!cancelled) setRuns([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [plan.proposal_id, lastRunId]);
+
   return (
     <div
       className="rounded-md border border-slate-700/50 bg-slate-900/40 px-3 py-2 space-y-2"
@@ -449,6 +479,42 @@ function HuntPlanPanel({
               {lastRun.completed_at &&
                 ` · ${new Date(lastRun.completed_at).toLocaleString()}`}
             </p>
+          )}
+
+          {/* Only worth space once there is something to compare — a single
+           * run is already fully told by the last-run line above. */}
+          {runs.length > 1 && (
+            <div className="space-y-1" data-testid="pattern-plan-run-history">
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                Run history
+              </p>
+              {runs.map((r) => (
+                <div
+                  key={r.id}
+                  className="flex items-center gap-2 text-xs text-slate-400"
+                  data-testid={`pattern-plan-run-${r.id}`}
+                >
+                  <span
+                    className={
+                      r.status === "completed" ? "text-emerald-400" : "text-amber-300"
+                    }
+                  >
+                    {r.status}
+                  </span>
+                  <span>
+                    {r.findings_created} finding{r.findings_created === 1 ? "" : "s"}
+                    {" · "}
+                    {r.hit_count} hit{r.hit_count === 1 ? "" : "s"}
+                  </span>
+                  {r.error_count > 0 && (
+                    <span className="text-rose-300">{r.error_count} error(s)</span>
+                  )}
+                  <span className="ml-auto shrink-0 text-slate-500">
+                    {new Date(r.started_at).toLocaleString()}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
 
           {canTriage && (
