@@ -61,7 +61,6 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
 KNOWN_GAPS: dict[str, str] = {
-    "POST /hunts/package/upload": "hunt-package upload has no UI affordance",
     "POST /mitre/seed": "matrix seeding is admin-only and run out of band, never from the UI",
     "POST /auth/refresh": "no SPA caller — sessions ride the cookie lifetime instead",
     "POST /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",

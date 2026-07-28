@@ -1,4 +1,4 @@
-import api from "./client";
+import api, { ApiError } from "./client";
 import type { IOCType } from "@/types/ioc";
 
 // Mirrors btagent_shared.types.hunt_package.HuntPackage (UC-2.2).
@@ -66,6 +66,36 @@ export async function generateHuntPackage(
   req: HuntPackageRequest,
 ): Promise<HuntPackage> {
   return api.post<HuntPackage>("/v1/hunts/package", req);
+}
+
+/**
+ * Generate a hunt package from an uploaded advisory file (PDF or CSV).
+ *
+ * A raw fetch rather than `api.post`, which unconditionally JSON-stringifies
+ * its body — multipart needs the browser to set the boundary itself (same
+ * precedent as `exportHuntPlan`). Non-OK responses are rethrown as
+ * `ApiError` so the server's contentful refusals — 422 "file is empty" /
+ * "no text extracted", 400 "undecodable PDF" — reach the analyst verbatim
+ * instead of flattening to "upload failed".
+ */
+export async function uploadHuntPackage(
+  file: File,
+  opts: { source_label?: string; backends?: string[] } = {},
+): Promise<HuntPackage> {
+  const form = new FormData();
+  form.append("file", file);
+  if (opts.source_label) form.append("source_label", opts.source_label);
+  for (const b of opts.backends ?? []) form.append("backends", b);
+
+  const response = await fetch(
+    `${import.meta.env.VITE_API_BASE_URL ?? "/api"}/v1/hunts/package/upload`,
+    { method: "POST", body: form, credentials: "include" },
+  );
+  const body: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(response.status, response.statusText, body);
+  }
+  return body as HuntPackage;
 }
 
 // --- Package history (#99) — mirrors HuntPackageSummary in api/v1/hunts.py --- //

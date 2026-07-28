@@ -15,12 +15,19 @@ const mockGenerate = vi.fn();
 const mockList = vi.fn();
 const mockGet = vi.fn();
 const mockPromote = vi.fn();
+const mockUpload = vi.fn();
 
-vi.mock("@/api/hunts", () => ({
+// Spread the real module and override only what these tests drive — a
+// wholesale factory turns every export it doesn't name into `undefined`,
+// which has now crashed a page test in five consecutive PRs when the page
+// grew a new import (#477, #478, #485, #486, and this one).
+vi.mock("@/api/hunts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/hunts")>()),
   generateHuntPackage: (...a: unknown[]) => mockGenerate(...a),
   listHuntPackages: (...a: unknown[]) => mockList(...a),
   getHuntPackage: (...a: unknown[]) => mockGet(...a),
   promoteHuntPackage: (...a: unknown[]) => mockPromote(...a),
+  uploadHuntPackage: (...a: unknown[]) => mockUpload(...a),
 }));
 
 // Header pulls in auth/UI stores + the notification bell — irrelevant here.
@@ -36,6 +43,7 @@ vi.mock("react-router", async (importOriginal) => {
 });
 
 import { HuntPackagePage } from "@/components/hunts/HuntPackagePage";
+import { ApiError } from "@/api/client";
 
 // --------------------------------------------------------------------------- //
 // Fixtures
@@ -241,5 +249,79 @@ describe("HuntPackagePage promote to investigation", () => {
     await screen.findByTestId("hunt-package-result");
     expect(screen.queryByTestId("open-investigation")).not.toBeInTheDocument();
     expect(screen.queryByTestId("view-investigation")).not.toBeInTheDocument();
+  });
+});
+
+describe("HuntPackagePage advisory file upload", () => {
+  // The upload sibling of the paste path (#473 ratchet: POST
+  // /hunts/package/upload had no UI). The server decodes PDF/CSV itself, so
+  // a scanned advisory doesn't take a lossy trip through the clipboard.
+
+  function pickFile(file: File) {
+    fireEvent.change(screen.getByTestId("hunt-package-upload-input"), {
+      target: { files: [file] },
+    });
+  }
+
+  it("uploads the chosen file and renders the package like the paste path", async () => {
+    mockUpload.mockResolvedValue(PACKAGE_A);
+    renderPage();
+
+    const file = new File(["advisory body"], "aa26-001.pdf", { type: "application/pdf" });
+    pickFile(file);
+
+    await waitFor(() =>
+      expect(mockUpload).toHaveBeenCalledWith(file, {
+        backends: ["splunk", "sentinel", "sigma"],
+      }),
+    );
+    // Same result surface as the paste path — one rendering, two entrances.
+    await screen.findByTestId("hunt-package-result");
+    // A stored artifact refreshes history just like a pasted one.
+    expect(mockList.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("passes the server's contentful refusal through verbatim", async () => {
+    // 422 "no text could be extracted" tells the analyst the PDF is a scan
+    // with no text layer; "upload failed" would not.
+    mockUpload.mockRejectedValue(
+      new ApiError(422, "Unprocessable Entity", {
+        detail: "No text could be extracted from the uploaded file.",
+      }),
+    );
+    renderPage();
+    pickFile(new File([""], "scan.pdf", { type: "application/pdf" }));
+
+    expect(
+      (await screen.findByText(/No text could be extracted/)).textContent,
+    ).toBeTruthy();
+    expect(screen.queryByTestId("hunt-package-result")).not.toBeInTheDocument();
+  });
+
+  it("allows re-selecting the same file after a failure", async () => {
+    // The input clears its value after each pick; without that, choosing the
+    // same file again after a 422 never fires onChange and the retry is
+    // silently ignored.
+    mockUpload.mockRejectedValueOnce(new ApiError(422, "Unprocessable Entity", {
+      detail: "Uploaded file is empty.",
+    }));
+    mockUpload.mockResolvedValueOnce(PACKAGE_A);
+    renderPage();
+
+    const file = new File(["x"], "advisory.csv", { type: "text/csv" });
+    pickFile(file);
+    await screen.findByText(/Uploaded file is empty/);
+
+    pickFile(file);
+    await screen.findByTestId("hunt-package-result");
+    expect(mockUpload).toHaveBeenCalledTimes(2);
+  });
+
+  it("does nothing when the picker is dismissed with no file", () => {
+    renderPage();
+    fireEvent.change(screen.getByTestId("hunt-package-upload-input"), {
+      target: { files: [] },
+    });
+    expect(mockUpload).not.toHaveBeenCalled();
   });
 });

@@ -29,9 +29,11 @@ import {
   listHuntPackages,
   getHuntPackage,
   promoteHuntPackage,
+  uploadHuntPackage,
   type HuntPackage,
   type HuntPackageSummary,
 } from "@/api/hunts";
+import { ApiError } from "@/api/client";
 
 const SAMPLE = `CISA advisory AA26-001: threat actor infrastructure includes 10.1.42.17 and evil-c2.example, distributing payloads via hxxps://evil-c2[.]example/payload.bin. Observed SHA256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855. Exploited CVE-2026-12345.`;
 
@@ -96,6 +98,34 @@ export function HuntPackagePage() {
       setLoading(false);
     }
   }, [text, fetchHistory]);
+
+  const handleUpload = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setLoading(true);
+      setError(null);
+      setPkg(null);
+      try {
+        const result = await uploadHuntPackage(file, {
+          backends: ["splunk", "sentinel", "sigma"],
+        });
+        setPkg(result);
+        void fetchHistory();
+      } catch (e) {
+        // The server's refusals are contentful — "file is empty", "no text
+        // could be extracted", "undecodable PDF" — and each tells the analyst
+        // what to fix. Flattening them to "upload failed" would not.
+        const detail =
+          e instanceof ApiError ? (e.body as { detail?: string } | null)?.detail : null;
+        setError(
+          detail || (e instanceof Error ? e.message : "Failed to generate hunt package"),
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [fetchHistory],
+  );
 
   const handleReopen = useCallback(async (id: string) => {
     setReopeningId(id);
@@ -170,6 +200,31 @@ export function HuntPackagePage() {
               >
                 Use sample advisory
               </Button>
+              {/* Upload path (UC-2.2): the server decodes PDF/CSV itself, so
+                * a scanned vendor advisory doesn't have to make a lossy trip
+                * through the analyst's clipboard first. Label-wrapped input:
+                * a styled <label> is the accessible file-button idiom. */}
+              <label
+                className={`inline-flex h-9 cursor-pointer items-center rounded-md border border-border px-3 text-sm hover:bg-accent ${
+                  loading ? "pointer-events-none opacity-50" : ""
+                }`}
+                data-testid="hunt-package-upload-label"
+              >
+                <input
+                  type="file"
+                  accept=".pdf,.csv,application/pdf,text/csv"
+                  className="sr-only"
+                  disabled={loading}
+                  data-testid="hunt-package-upload-input"
+                  onChange={(e) => {
+                    void handleUpload(e.target.files?.[0]);
+                    // Same file re-selected later must fire onChange again —
+                    // e.g. retrying after a 422 on an empty first attempt.
+                    e.target.value = "";
+                  }}
+                />
+                Upload PDF / CSV
+              </label>
             </div>
             {error && (
               <div
