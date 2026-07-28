@@ -35,6 +35,8 @@ def _ensure_servers_loaded() -> None:
     if _SERVER_CLASSES:
         return
 
+    from btagent_agents.mcp.servers.atomic_red_team_mcp import AtomicRedTeamMCPServer
+    from btagent_agents.mcp.servers.caldera_mcp import CalderaMCPServer
     from btagent_agents.mcp.servers.canary_mcp import CanaryMCPServer
     from btagent_agents.mcp.servers.cloudtrail_mcp import CloudTrailMCPServer
     from btagent_agents.mcp.servers.cortex_mcp import CortexXDRMCPServer
@@ -86,6 +88,11 @@ def _ensure_servers_loaded() -> None:
     _SERVER_CLASSES["vectra"] = VectraMCPServer
     _SERVER_CLASSES["canary"] = CanaryMCPServer
     _SERVER_CLASSES["git"] = GitMCPServer
+    # Detection-validation adversary-emulation triggers (#118). Sandbox-only,
+    # HITL-gated, mock-first — the sandbox-enforcement layer refuses any
+    # non-sandbox target before these are dispatched.
+    _SERVER_CLASSES["atomic_red_team"] = AtomicRedTeamMCPServer
+    _SERVER_CLASSES["caldera"] = CalderaMCPServer
 
 
 def _get_server_instance(server_id: str) -> Any:

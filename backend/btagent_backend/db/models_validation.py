@@ -15,7 +15,7 @@ history/trend queries never parse JSONB. Mirrors the ``plan_runs`` /
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,6 +46,16 @@ class DetectionValidationRunRow(Base):
     gaps: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # Full per-technique CoverageResult payload (serialised list[dict]).
     coverage_by_technique: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # ---- Emulation-path columns (#118 foundation, migration 0057) --------
+    # True when this run went through a sandbox-gated adversary-emulation
+    # trigger (ART/Caldera) rather than pure in-process pySigma replay.
+    emulated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The approved SANDBOX the emulation ran in (None for pure replay runs) —
+    # the sandbox-enforcement layer guarantees this is only ever an approved
+    # sandbox when emulated is True.
+    target_env: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Per-technique scored verdicts (serialised list[TechniqueVerdict]).
+    verdicts: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # When the report was generated (report.generated_at) vs. when it landed.
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
