@@ -61,8 +61,6 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
 KNOWN_GAPS: dict[str, str] = {
-    "GET /config/retention": "retention policy has no Configuration Center panel",
-    "POST /config/retention/run": "manual retention sweep cannot be triggered from the UI",
     "POST /cti/propose-detections": "CTI→detection proposal is only reachable via curl",
     "POST /cti/proposals/{}/pr-outcome": "PR-outcome write-back has no consumer",
     "POST /hunts/package/upload": "hunt-package upload has no UI affordance",

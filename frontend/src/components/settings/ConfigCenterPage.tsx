@@ -15,6 +15,7 @@ import { AutonomyPanel } from "./AutonomyPanel";
 import { FeatureFlagsPanel } from "./FeatureFlagsPanel";
 import { OrgProfilePanel } from "./OrgProfilePanel";
 import { SafelistPanel } from "./SafelistPanel";
+import { RetentionPanel } from "./RetentionPanel";
 import { Card, CardContent } from "@/components/ds/card";
 import { Input } from "@/components/ds/input";
 import { Button } from "@/components/ds/button";
@@ -167,6 +168,10 @@ export function ConfigCenterPage() {
              * containment. Reads need containment:execute, so this hides
              * itself for everyone below incident commander. */}
             <SafelistPanel />
+
+            {/* Data retention (#418) — posture plus the destructive manual
+             * cleanup (admin). Hides itself if its fetch fails. */}
+            <RetentionPanel />
 
             <section>
               <div className="flex flex-col md:flex-row md:items-center gap-2 mb-3">
