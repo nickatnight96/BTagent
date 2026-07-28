@@ -65,6 +65,8 @@ KNOWN_GAPS: dict[str, str] = {
     "POST /mitre/seed": "matrix seeding is admin-only and run out of band, never from the UI",
     "POST /mitre/tag": "technique tagging has no UI affordance",
     "POST /auth/refresh": "no SPA caller — sessions ride the cookie lifetime instead",
+    "POST /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
+    "GET /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
 }
 
 

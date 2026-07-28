@@ -157,6 +157,13 @@ PERMISSIONS: dict[str, UserRole] = {
     "report:summarize": UserRole.SENIOR_ANALYST,
     # Remediation
     "remediation:generate": UserRole.ANALYST,
+    # Unified long-term Agent Memory (#482). Analysts read recalled memory
+    # (entity notes, decisions, learnings) to contextualise their work; writing
+    # a fact into the shared org store shapes what every future investigation
+    # recalls, so authoring is gated at senior_analyst — mirroring
+    # ``knowledge:ingest``.
+    "memory:read": UserRole.ANALYST,
+    "memory:write": UserRole.SENIOR_ANALYST,
 }
 
 

@@ -135,6 +135,22 @@ async def create_investigation(
     db.add(inv)
     await db.flush()
 
+    # #482: surface the org's recalled long-term memory alongside org context so
+    # the agent starts with what it has already learned. Rendered to a fenced
+    # <agent-memory> block and carried into the agent state via config (see
+    # TaskManager._build_initial_state). Best-effort + org/TLP-scoped: a recall
+    # failure must never block investigation creation.
+    try:
+        from btagent_backend.services.memory_service import (
+            MemoryService,
+            render_for_prompt,
+        )
+
+        memories = await MemoryService().recall_memories(db, user.org_id, caller_tlp=body.tlp_level)
+        config["agent_memory"] = render_for_prompt(memories)
+    except Exception:
+        logger.exception("Failed to recall agent memory for investigation %s", inv.id)
+
     # Start the agent via TaskManager (fire-and-forget; the task runs in the
     # background and updates the DB status as it progresses).
     await task_manager.start_investigation(inv.id, config)
