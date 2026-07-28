@@ -17,6 +17,7 @@ import { ShieldCheck, Loader2, RefreshCw, Play } from "lucide-react";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { listValidationRuns, runValidation } from "@/api/validation";
+import { EmulationPanel } from "./EmulationPanel";
 import type { ValidationRunSummary } from "@/types/validation";
 
 function formatPct(pct: number): string {
@@ -122,6 +123,10 @@ export function DetectionValidationPage() {
           </div>
         )}
 
+        {/* Sandbox-gated emulation trigger (#118) — hides itself below
+         * incident commander; the server enforces the same gate regardless. */}
+        <EmulationPanel onComplete={() => void fetchRuns()} />
+
         {runs.length === 0 && !isLoading ? (
           <Card>
             <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -149,6 +154,17 @@ export function DetectionValidationPage() {
                   >
                     <td className="py-2 pr-4 font-mono text-xs text-muted-foreground">
                       {run.run_id}
+                      {run.emulated && (
+                        // Replay and emulation land in the same table; a run
+                        // that actually fired a technique should not be
+                        // indistinguishable from a synthetic replay.
+                        <span
+                          className="ml-2 rounded border border-primary/40 px-1 py-0.5 text-[10px] uppercase tracking-wide text-primary"
+                          data-testid={`validation-run-emulated-${run.id}`}
+                        >
+                          emulated{run.target_env ? ` · ${run.target_env}` : ""}
+                        </span>
+                      )}
                     </td>
                     <td className={`py-2 pr-4 font-semibold ${coverageColor(run.detected_pct)}`}>
                       {formatPct(run.detected_pct)}
