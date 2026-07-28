@@ -66,8 +66,6 @@ KNOWN_GAPS: dict[str, str] = {
     "POST /cti/propose-detections": "CTI→detection proposal is only reachable via curl",
     "POST /cti/proposals/{}/pr-outcome": "PR-outcome write-back has no consumer",
     "POST /hunts/package/upload": "hunt-package upload has no UI affordance",
-    "GET /hunts/pack-suggestions": "read side of the suggestions API shipped without a view",
-    "POST /hunts/pack-suggestions/{}/decide": "accept/dismiss has no UI; decisions are curl-only",
     "GET /mitre/search-ttps": "TTP search endpoint unused by the matrix page",
     "GET /mitre/gaps": "coverage-gap list has no consumer (distinct from exercises/gaps)",
     "POST /mitre/seed": "matrix seeding is admin-only and run out of band, never from the UI",
