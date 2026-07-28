@@ -55,14 +55,35 @@ NOT_BROWSER_CALLED: dict[str, str] = {
     "GET /auth/sso/{}/callback": "OIDC redirect target; the browser navigates, never fetches",
     "GET /health": "liveness probe for the orchestrator/load balancer",
     "GET /health/ready": "readiness probe for the orchestrator/load balancer",
+    # Reclassified from KNOWN_GAPS after the buildable gaps were all wired
+    # (#478-#487). These two are design statements, not unfinished work —
+    # the distinction this file's docstring insists on, argued here so the
+    # move is reviewable rather than a silencing:
+    #
+    # /mitre/seed reloads the ATT&CK matrix from the vendored STIX bundle. It
+    # is a deployment bootstrap in the same family as alembic migrations and
+    # infra/scripts/seed-data.py: run once per deployment/refresh by an
+    # operator, idempotent-by-reload, minutes-long, and org-independent
+    # (the matrix is global). A button for it would put a long-running
+    # global-state reload one misclick away from an admin console that
+    # otherwise edits per-org state. If a genuine in-product "update the
+    # matrix" workflow is ever wanted, that is a job + progress surface —
+    # designed as such — not this endpoint behind a button.
+    "POST /mitre/seed": "deployment-time matrix bootstrap, run by operators like a migration",
+    # /auth/refresh serves non-SPA clients (CLI/mobile carrying body tokens)
+    # and the cookie-rotation path with its theft-detection family logic.
+    # The SPA deliberately rides the httpOnly access-cookie lifetime
+    # (Phase C2) and re-authenticates at expiry; silent renewal was a
+    # considered non-goal, since bounded session length is part of the
+    # security posture for an IR console. UAT exercises the endpoint
+    # directly, so it is tested — it is just not *browser* capability.
+    "POST /auth/refresh": "CLI/mobile token rotation; the SPA rides the cookie lifetime by design",
 }
 
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
 KNOWN_GAPS: dict[str, str] = {
-    "POST /mitre/seed": "matrix seeding is admin-only and run out of band, never from the UI",
-    "POST /auth/refresh": "no SPA caller — sessions ride the cookie lifetime instead",
     "POST /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
     "GET /memory": "agent-memory foundation (#482); frontend/UI explicitly deferred",
 }
