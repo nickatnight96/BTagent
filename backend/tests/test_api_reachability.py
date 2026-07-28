@@ -61,7 +61,6 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
 KNOWN_GAPS: dict[str, str] = {
-    "POST /cti/propose-detections": "CTI→detection proposal is only reachable via curl",
     "POST /hunts/package/upload": "hunt-package upload has no UI affordance",
     "GET /mitre/search-ttps": "TTP search endpoint unused by the matrix page",
     "GET /mitre/gaps": "coverage-gap list has no consumer (distinct from exercises/gaps)",
