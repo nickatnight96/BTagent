@@ -13,6 +13,7 @@ import type {
   PatternHuntProposalListResponse,
   ProposalFilter,
   ProposalHuntPlan,
+  ProposalPlanRunListResponse,
 } from "@/types/pattern_hunt";
 
 const BASE = "/v1/pattern";
@@ -95,4 +96,26 @@ export async function getProposalPlan(proposalId: string): Promise<ProposalHuntP
  */
 export async function executeProposalPlan(proposalId: string): Promise<ExecutePlanResponse> {
   return api.post<ExecutePlanResponse>(`${BASE}/proposals/${proposalId}/plan/execute`, {});
+}
+
+/**
+ * Per-run execution history for a proposal's plan, newest first.
+ *
+ * The full record behind the plan JSON's quick-glance ``last_run`` blob —
+ * ``last_run`` only ever shows the most recent execution, so without this a
+ * re-run silently overwrote the only visible evidence of the previous one.
+ * 404s until the proposal has been accepted; an accepted-but-never-executed
+ * plan returns an empty list.
+ */
+export async function listProposalPlanRuns(
+  proposalId: string,
+  params: { page?: number; page_size?: number } = {},
+): Promise<ProposalPlanRunListResponse> {
+  const sp = new URLSearchParams();
+  if (params.page) sp.set("page", String(params.page));
+  if (params.page_size) sp.set("page_size", String(params.page_size));
+  const q = sp.toString();
+  return api.get<ProposalPlanRunListResponse>(
+    `${BASE}/proposals/${proposalId}/plan/runs${q ? `?${q}` : ""}`,
+  );
 }

@@ -170,3 +170,29 @@ export interface ExecutePlanResponse {
   queued: boolean;
   findings_created: number | null;
 }
+
+/**
+ * One row of ``GET /pattern/proposals/{id}/plan/runs`` — the full per-run
+ * history behind the plan JSON's quick-glance ``last_run`` blob.
+ */
+export interface ProposalPlanRun {
+  id: string;
+  org_id: string;
+  plan_row_id: string;
+  proposal_id: string;
+  plan_id: string;
+  run_id: string;
+  ttp_stats: Record<string, unknown>;
+  hit_count: number;
+  error_count: number;
+  findings_created: number;
+  status: string;
+  error: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export interface ProposalPlanRunListResponse {
+  items: ProposalPlanRun[];
+  total: number;
+}
