@@ -15,8 +15,10 @@
  *   (``GET /hunt/noise-baseline``).
  * - Rule detail: the selected rule's per-backend transpiled queries.
  *
- * Read-only + advisory: nothing here mutates server state. Polls every 30s
- * (same cadence as the other Phase-B hunt screens).
+ * The installed-pack list and rule grid are read-only + advisory and poll
+ * every 30s (same cadence as the other Phase-B hunt screens). The suggestion
+ * inbox at the top is the one exception: accepting or dismissing a suggested
+ * pack writes, and is gated on ``hunt:promote``.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -31,6 +33,7 @@ import {
   ToggleRight,
   X,
 } from "lucide-react";
+import { PackSuggestionsPanel } from "./PackSuggestionsPanel";
 import {
   useHuntPacksStore,
   buildInstalledPacks,
@@ -406,6 +409,11 @@ export function HuntPacksPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Suggestion inbox (#120/#112) — accepted suggestions become the
+       * installed packs listed below, so the queue belongs above them.
+       * Hides itself if its fetch fails; it's advisory, not a dependency. */}
+      <PackSuggestionsPanel />
 
       {selectedRule && (
         <RuleDetail rule={selectedRule} onClose={() => selectRule(null)} />

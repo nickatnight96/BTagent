@@ -339,3 +339,63 @@ export async function listHuntPlanRuns(
     `/v1/hunts/plans/${id}/runs${q ? `?${q}` : ""}`,
   );
 }
+
+// --------------------------------------------------------------------------
+// Hunt-pack suggestions (#120/#112)
+//
+// A pattern-hunt proposal that keeps hitting is written out as a *suggested*
+// recurring pack. The write side landed first; these are the read + decide
+// halves, so a suggestion can be reviewed and armed from the product rather
+// than only from the database.
+// --------------------------------------------------------------------------
+
+export type PackSuggestionState = "suggested" | "accepted" | "dismissed";
+
+export interface HuntPackSuggestion {
+  id: string;
+  proposal_id: string;
+  plan_id: string;
+  title: string;
+  technique_ids: string[];
+  rationale: string;
+  state: PackSuggestionState;
+  hit_count: number;
+  created_at: string;
+  updated_at: string;
+  /** The promotable HuntPackManifest draft — the actual Sigma, for review. */
+  manifest: Record<string, unknown>;
+}
+
+export interface HuntPackSuggestionListResponse {
+  items: HuntPackSuggestion[];
+  total: number;
+}
+
+/** Suggested recurring packs, newest/most-hit first. Requires `hunt:view`. */
+export async function listPackSuggestions(
+  params: { state?: PackSuggestionState; page?: number; page_size?: number } = {},
+): Promise<HuntPackSuggestionListResponse> {
+  const sp = new URLSearchParams();
+  if (params.state) sp.set("state", params.state);
+  if (params.page) sp.set("page", String(params.page));
+  if (params.page_size) sp.set("page_size", String(params.page_size));
+  const q = sp.toString();
+  return api.get<HuntPackSuggestionListResponse>(
+    `/v1/hunts/pack-suggestions${q ? `?${q}` : ""}`,
+  );
+}
+
+/**
+ * Accept or dismiss a suggestion. Requires `hunt:promote` (senior_analyst+) —
+ * accepting arms a recurring pack, which is a durable commitment rather than
+ * a triage call, so it sits above plain `hunt:view`.
+ */
+export async function decidePackSuggestion(
+  id: string,
+  state: "accepted" | "dismissed",
+): Promise<HuntPackSuggestion> {
+  return api.post<HuntPackSuggestion>(
+    `/v1/hunts/pack-suggestions/${encodeURIComponent(id)}/decide`,
+    { state },
+  );
+}
