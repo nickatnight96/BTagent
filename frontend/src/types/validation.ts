@@ -41,6 +41,26 @@ export type ValidationVerdictKind =
   | "silent_gap"
   | "errored";
 
+/** One technique's coverage/staleness row. Mirrors CoverageMapEntryResponse. */
+export interface CoverageMapEntry {
+  technique_id: string;
+  name?: string | null;
+  last_validated?: string | null;
+  last_verdict?: string | null;
+  days_since_validated?: number | null;
+  stale: boolean;
+  has_detection: boolean;
+}
+
+/** Response from GET /validation/coverage-map. */
+export interface CoverageMapResponse {
+  items: CoverageMapEntry[];
+  total: number;
+  stale_count: number;
+  stale_days: number;
+  only_stale: boolean;
+}
+
 /** Body for POST /validation/emulate. */
 export interface EmulationRunRequest {
   technique_id: string;

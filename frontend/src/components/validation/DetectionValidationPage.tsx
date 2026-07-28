@@ -18,6 +18,7 @@ import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { listValidationRuns, runValidation } from "@/api/validation";
 import { EmulationPanel } from "./EmulationPanel";
+import { CoverageMapPanel } from "./CoverageMapPanel";
 import type { ValidationRunSummary } from "@/types/validation";
 
 function formatPct(pct: number): string {
@@ -36,6 +37,8 @@ export function DetectionValidationPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Technique handed from a coverage-map row to the emulation trigger.
+  const [prefillTechnique, setPrefillTechnique] = useState<string | null>(null);
 
   const fetchRuns = useCallback(async () => {
     setIsLoading(true);
@@ -125,7 +128,15 @@ export function DetectionValidationPage() {
 
         {/* Sandbox-gated emulation trigger (#118) — hides itself below
          * incident commander; the server enforces the same gate regardless. */}
-        <EmulationPanel onComplete={() => void fetchRuns()} />
+        <EmulationPanel
+          onComplete={() => void fetchRuns()}
+          prefillTechnique={prefillTechnique}
+        />
+
+        {/* Coverage map (#118 Phase C) — which detections haven't been proven
+         * to work lately. "Validate" loads a stale technique into the trigger
+         * above rather than firing it, so the operator still confirms. */}
+        <CoverageMapPanel onValidateTechnique={setPrefillTechnique} />
 
         {runs.length === 0 && !isLoading ? (
           <Card>

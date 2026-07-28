@@ -148,6 +148,20 @@ describe("EmulationPanel", () => {
     expect(runEmulation).not.toHaveBeenCalled();
   });
 
+  it("loads a prefilled technique into the form without firing it", async () => {
+    // The coverage map hands a stale technique over here. It must land in the
+    // field and stop — auto-submitting would turn a click on a *report* into
+    // firing a technique.
+    const { rerender } = render(<EmulationPanel prefillTechnique={null} />);
+    expect((screen.getByTestId("emulation-technique") as HTMLInputElement).value).toBe("");
+
+    rerender(<EmulationPanel prefillTechnique="T1078" />);
+    await waitFor(() =>
+      expect((screen.getByTestId("emulation-technique") as HTMLInputElement).value).toBe("T1078"),
+    );
+    expect(runEmulation).not.toHaveBeenCalled();
+  });
+
   it("clears a previous refusal when a new run succeeds", async () => {
     runEmulation.mockRejectedValueOnce(deniedError());
     render(<EmulationPanel />);

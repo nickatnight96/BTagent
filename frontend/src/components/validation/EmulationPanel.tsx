@@ -44,7 +44,18 @@ const VERDICT_STYLE: Record<string, string> = {
  *    gated at the same tier as `containment:execute`, and the server enforces
  *    it regardless — this just avoids showing a control that can only 403.
  */
-export function EmulationPanel({ onComplete }: { onComplete?: () => void }) {
+export function EmulationPanel({
+  onComplete,
+  prefillTechnique,
+}: {
+  onComplete?: () => void;
+  /**
+   * Technique to load into the form, e.g. from a stale row in the coverage
+   * map. Deliberately fills the field WITHOUT submitting — this control fires
+   * a technique, so the operator still has to press the button.
+   */
+  prefillTechnique?: string | null;
+}) {
   const role = useAuthStore((s) => s.user?.role);
   const mayEmulate = role === UserRole.INCIDENT_COMMANDER || role === UserRole.ADMIN;
 
@@ -55,6 +66,17 @@ export function EmulationPanel({ onComplete }: { onComplete?: () => void }) {
   const [denial, setDenial] = useState<EmulationDenied | null>(null);
   const [verdicts, setVerdicts] = useState<TechniqueVerdict[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  // Adjusting state when a prop changes, done during render rather than in an
+  // effect (https://react.dev/learn/you-might-not-need-an-effect). An effect
+  // here would cost a second render pass on every hand-off from the coverage
+  // map, and trips react-hooks/set-state-in-effect.
+  const [lastPrefill, setLastPrefill] = useState<string | null>(null);
+  if (prefillTechnique && prefillTechnique !== lastPrefill) {
+    setLastPrefill(prefillTechnique);
+    setTechniqueId(prefillTechnique);
+    setError(null);
+  }
 
   if (!mayEmulate) return null;
 

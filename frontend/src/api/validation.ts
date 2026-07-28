@@ -3,6 +3,7 @@
 import api from "./client";
 import { ApiError } from "./client";
 import type {
+  CoverageMapResponse,
   EmulationDenied,
   EmulationRunRequest,
   ValidationRunListResponse,
@@ -26,6 +27,23 @@ export async function listValidationRuns(params?: {
   if (params?.offset) search.set("offset", String(params.offset));
   const qs = search.toString();
   return api.get<ValidationRunListResponse>(`${BASE}/runs${qs ? `?${qs}` : ""}`);
+}
+
+/**
+ * Per-technique coverage map derived from validation history.
+ *
+ * `onlyStale` is the ">stale_days untested or never validated" filter — the
+ * question the whole validation arc exists to answer.
+ */
+export async function getCoverageMap(params?: {
+  staleDays?: number;
+  onlyStale?: boolean;
+}): Promise<CoverageMapResponse> {
+  const search = new URLSearchParams();
+  if (params?.staleDays) search.set("stale_days", String(params.staleDays));
+  if (params?.onlyStale) search.set("only_stale", "true");
+  const qs = search.toString();
+  return api.get<CoverageMapResponse>(`${BASE}/coverage-map${qs ? `?${qs}` : ""}`);
 }
 
 /**
