@@ -18,8 +18,8 @@ nor be polled into another's feeds; ``(org_id, name)`` is unique.
 
 No backfill, fully reversible.
 
-Revision ID: 0061_taxii_feeds
-Revises: 0060_memory_embedding
+Revision ID: 0065_taxii_feeds
+Revises: 0064_org_hunt_packs
 Create Date: 2026-07-29
 """
 
@@ -28,8 +28,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0061_taxii_feeds"
-down_revision: str | None = "0060_memory_embedding"
+revision: str = "0065_taxii_feeds"
+down_revision: str | None = "0064_org_hunt_packs"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

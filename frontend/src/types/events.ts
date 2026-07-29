@@ -38,6 +38,10 @@ export enum EventType {
   HUNT_FINDING_SUPPRESSED = "hunt_finding_suppressed",
   HUNT_FINDING_PROMOTED = "hunt_finding_promoted",
 
+  // Behavioral Hunter (#114) — a baseline deviation was detected. Payload is
+  // entity/score metadata only; the page refetches through the RBAC-scoped API.
+  BEHAVIORAL_OUTLIER_DETECTED = "behavioral_outlier_detected",
+
   // Governance / classification (EPIC-7 UC-7.2) — real-time egress-block alert
   TLP_VIOLATION_ATTEMPT = "tlp.violation_attempt",
 }

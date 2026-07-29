@@ -506,3 +506,201 @@ class TestMergeClosedLoop:
             )
         ).scalar_one()
         assert count == 0
+
+
+# --------------------------------------------------------------------------- #
+# (D) Post-merge AUTO-VALIDATION (#118 hook) — every technique, sandbox-gated
+# --------------------------------------------------------------------------- #
+
+
+class TestMergeAutoValidation:
+    """A newly merged rule is auto-validated through the sandbox-gated path."""
+
+    async def test_all_techniques_validated_in_one_run(
+        self, db_session, dedicated_org, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+        row = await _new_row(
+            db_session,
+            dedicated_org,
+            pr_outcome=PROutcome.PR_OPENED.value,
+            techniques=["T1059.001", "T1027"],
+        )
+        _, summary = await svc.record_pr_outcome(
+            db_session,
+            org_id=dedicated_org,
+            row_id=row.id,
+            outcome=PROutcome.MERGED,
+            actor_id="usr_senior",
+            install_hunt_pack=_InstallSpy(),
+        )
+        await db_session.commit()
+
+        detail = summary["validation"]
+        assert detail["validation_triggered"] is True
+        assert detail["technique_ids"] == ["T1059.001", "T1027"]
+        assert set(detail["verdicts"]) == {"T1059.001", "T1027"}
+
+        runs = (
+            (
+                await db_session.execute(
+                    select(DetectionValidationRunRow).where(
+                        DetectionValidationRunRow.org_id == dedicated_org
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(runs) == 1
+        run = runs[0]
+        assert run.emulated is True
+        assert run.target_env == "sandbox"
+        assert run.total_techniques == 2
+        assert {c["technique_id"] for c in run.coverage_by_technique} == {"T1059.001", "T1027"}
+        # The run is labelled with the merged rule's pack id → install and
+        # validation are correlatable from the run history (no new column).
+        assert run.packs == [svc.merged_rule_pack_id(row)]
+
+    async def test_technique_fan_out_is_capped(
+        self, db_session, dedicated_org, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+        many = [f"T10{i:02d}" for i in range(1, 9)]
+        row = await _new_row(
+            db_session, dedicated_org, pr_outcome=PROutcome.PR_OPENED.value, techniques=many
+        )
+        _, summary = await svc.record_pr_outcome(
+            db_session,
+            org_id=dedicated_org,
+            row_id=row.id,
+            outcome=PROutcome.MERGED,
+            install_hunt_pack=_InstallSpy(),
+        )
+        await db_session.commit()
+        assert len(summary["validation"]["technique_ids"]) == svc.MAX_AUTO_VALIDATED_TECHNIQUES
+
+    async def test_every_emulation_is_sandbox_targeted_and_audited(
+        self, db_session, dedicated_org, monkeypatch
+    ) -> None:
+        """The gate holds: each technique's trigger is audited as sandbox."""
+        monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+        row = await _new_row(
+            db_session,
+            dedicated_org,
+            pr_outcome=PROutcome.PR_OPENED.value,
+            techniques=["T1059.001", "T1027"],
+        )
+        await svc.record_pr_outcome(
+            db_session,
+            org_id=dedicated_org,
+            row_id=row.id,
+            outcome=PROutcome.MERGED,
+            actor_id="usr_senior",
+            install_hunt_pack=_InstallSpy(),
+        )
+        await db_session.commit()
+
+        audit_rows = await AuditTrail(db_session).get_entries(
+            org_id=dedicated_org, category=AuditCategory.DETECTION_VALIDATION, limit=50
+        )
+        triggers = [r for r in audit_rows if r.action == "emulation_trigger"]
+        assert len(triggers) == 2
+        assert {t.details["target_env"] for t in triggers} == {"sandbox"}
+        assert {t.details["technique_id"] for t in triggers} == {"T1059.001", "T1027"}
+        assert {t.actor for t in triggers} == {"usr_senior"}
+
+    async def test_sandbox_denial_blocks_the_validation_run(
+        self, db_session, dedicated_org, monkeypatch
+    ) -> None:
+        """If the sandbox gate ever denies, NO run is persisted (and no emulator ran)."""
+        from btagent_shared.security.sandbox import SandboxDecision
+
+        import btagent_backend.services.detection_emulation_service as emulation_svc
+
+        monkeypatch.setattr(
+            emulation_svc,
+            "evaluate_sandbox_target",
+            lambda target_env: SandboxDecision(
+                approved=False, target_env=str(target_env), reason="denied by test"
+            ),
+        )
+        row = await _new_row(
+            db_session,
+            dedicated_org,
+            pr_outcome=PROutcome.PR_OPENED.value,
+            techniques=["T1059.001"],
+        )
+        updated, summary = await svc.record_pr_outcome(
+            db_session,
+            org_id=dedicated_org,
+            row_id=row.id,
+            outcome=PROutcome.MERGED,
+            install_hunt_pack=_InstallSpy(),
+        )
+        await db_session.commit()
+
+        assert updated.pr_outcome == PROutcome.MERGED.value  # merge still lands
+        assert summary["validation"]["validation_triggered"] is False
+        assert summary["validation"]["denied_techniques"] == ["T1059.001"]
+        count = (
+            await db_session.execute(
+                select(func.count())
+                .select_from(DetectionValidationRunRow)
+                .where(DetectionValidationRunRow.org_id == dedicated_org)
+            )
+        ).scalar_one()
+        assert count == 0
+
+    async def test_validation_run_is_org_scoped(
+        self, db_session, dedicated_org, monkeypatch
+    ) -> None:
+        """The run lands under the proposal's org and nowhere else."""
+        monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
+        other_org = generate_id("org")
+        db_session.add(
+            OrganizationRow(id=other_org, name=f"cl-{other_org}", created_at=datetime.now(UTC))
+        )
+        await db_session.flush()
+
+        row = await _new_row(
+            db_session,
+            dedicated_org,
+            pr_outcome=PROutcome.PR_OPENED.value,
+            techniques=["T1059.001"],
+        )
+        await svc.record_pr_outcome(
+            db_session,
+            org_id=dedicated_org,
+            row_id=row.id,
+            outcome=PROutcome.MERGED,
+            install_hunt_pack=_InstallSpy(),
+        )
+        await db_session.commit()
+
+        mine = (
+            await db_session.execute(
+                select(func.count())
+                .select_from(DetectionValidationRunRow)
+                .where(DetectionValidationRunRow.org_id == dedicated_org)
+            )
+        ).scalar_one()
+        theirs = (
+            await db_session.execute(
+                select(func.count())
+                .select_from(DetectionValidationRunRow)
+                .where(DetectionValidationRunRow.org_id == other_org)
+            )
+        ).scalar_one()
+        assert mine == 1
+        assert theirs == 0
+
+        # And a cross-org merge attempt never resolves the row at all.
+        with pytest.raises(LookupError):
+            await svc.record_pr_outcome(
+                db_session,
+                org_id=other_org,
+                row_id=row.id,
+                outcome=PROutcome.MERGED,
+                install_hunt_pack=_InstallSpy(),
+            )

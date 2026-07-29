@@ -20,11 +20,13 @@
  * - hunt:triage → intent buttons + feedback-benign; gated on senior_analyst+.
  * - hunt:promote → promote button; gated on senior_analyst+.
  *
- * Polling: 30-second interval (same model as HuntTriagePage) — WS upgrade
- * deferred to Phase C.
+ * Live updates: `useLiveEventRefresh` — the page refetches within ~1 s of a
+ * `behavioral_outlier_detected` WebSocket event (debounced, so a burst of
+ * detections is one API call), and keeps the 30-second poll as the safety net
+ * when the socket is unavailable.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Activity,
@@ -39,6 +41,8 @@ import {
 } from "lucide-react";
 import { useBehavioralStore, buildEntityDriftSummaries } from "@/stores/behavioralStore";
 import { useAuthStore } from "@/stores/authStore";
+import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
+import { EventType } from "@/types/events";
 import { UserRole } from "@/types/config";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
@@ -85,6 +89,13 @@ function useCanPromote(): boolean {
 // --------------------------------------------------------------------------- //
 
 const POLL_INTERVAL_MS = 30_000;
+
+/**
+ * The behavioral events this page refreshes on. Emitted by
+ * `behavioral_service.detect_outlier` and broadcast on the hub's global
+ * channel, so a detection lands here without waiting for the next poll.
+ */
+export const BEHAVIORAL_EVENTS = [EventType.BEHAVIORAL_OUTLIER_DETECTED] as const;
 
 type IntentFilterTab = "all" | IntentLabel;
 
@@ -697,18 +708,15 @@ export function BehavioralHuntsPage() {
     void fetchOutliers();
   }, [fetchOutliers]);
 
-  // 30-second polling fallback (no WS for Phase B).
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const scheduleRefetch = useCallback(() => {
+  // Live WS refresh on outlier detection, with the 30-second poll retained as
+  // the safety net (the hook keeps polling regardless of WS connectivity).
+  const refetch = useCallback(() => {
     void fetchOutliers();
   }, [fetchOutliers]);
 
-  useEffect(() => {
-    pollTimerRef.current = setInterval(scheduleRefetch, POLL_INTERVAL_MS);
-    return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-  }, [scheduleRefetch]);
+  useLiveEventRefresh(refetch, BEHAVIORAL_EVENTS, {
+    pollIntervalMs: POLL_INTERVAL_MS,
+  });
 
   // Re-fetch when filter tab changes.
   useEffect(() => {

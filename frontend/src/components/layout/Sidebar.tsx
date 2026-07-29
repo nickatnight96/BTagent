@@ -30,6 +30,7 @@ import {
   Plug,
   Map,
   Bot,
+  Brain,
   FileText,
   SlidersHorizontal,
   Package,
@@ -78,6 +79,14 @@ const navItems: NavItem[] = [
     path: "/knowledge",
     icon: <BookOpen className="w-5 h-5" />,
     testId: "nav-knowledge-link",
+  },
+  {
+    // Agent Memory is not a corner of the knowledge base: it is what gets
+    // recalled into every new investigation, so it needs its own way in.
+    label: "Agent Memory",
+    path: "/memory",
+    icon: <Brain className="w-5 h-5" />,
+    testId: "nav-memory-link",
   },
   {
     label: "Hunt Triage",

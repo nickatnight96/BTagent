@@ -39,6 +39,17 @@ def _get_hub() -> WebSocketHub:
     return _hub
 
 
+def get_hub_optional() -> WebSocketHub | None:
+    """The bound hub, or ``None`` when one was never initialised.
+
+    For best-effort broadcasters (background services, arq jobs, unit tests)
+    that must degrade silently rather than assert when there is no app
+    lifespan — unlike :func:`_get_hub`, which serves the WS routes and is only
+    reachable once startup has run.
+    """
+    return _hub
+
+
 # ---------------------------------------------------------------------------
 # Per-investigation WebSocket
 # ---------------------------------------------------------------------------

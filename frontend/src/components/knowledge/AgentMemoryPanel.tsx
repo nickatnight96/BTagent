@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import { Brain, Loader2, Plus, Search } from "lucide-react";
+import { Brain, Loader2, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import {
   MEMORY_KINDS,
+  forgetMemory,
   recallMemories,
   recordMemory,
   type AgentMemory,
   type MemoryKind,
+  type MemoryRecallMode,
 } from "@/api/memory";
 import { ApiError } from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
@@ -16,7 +18,8 @@ import { NativeSelect } from "@/components/ds/native-select";
 import { Textarea } from "@/components/ds/textarea";
 
 /** memory:write is senior_analyst+ (#484 rbac): authoring a fact shapes what
- * every future investigation in the org recalls. */
+ * every future investigation in the org recalls — and so does removing one,
+ * which is why Forget sits behind the same gate as Record. */
 const WRITE_ROLES = new Set<string>([
   UserRole.SENIOR_ANALYST,
   UserRole.INCIDENT_COMMANDER,
@@ -30,6 +33,24 @@ const KIND_STYLES: Record<string, string> = {
   observation: "border-amber-500/40 text-amber-300",
 };
 
+/** An investigation id, bare (`inv_…`, what the close hook writes) or
+ * prefixed (`investigation:inv_…`). Consolidation merges sources with commas,
+ * so a row can carry several. */
+const INVESTIGATION_SOURCE_RE = /^(?:investigation:)?(inv_[A-Za-z0-9_-]+)$/;
+
+interface SourceRef {
+  raw: string;
+  investigationId: string | null;
+}
+
+function parseSources(source: string): SourceRef[] {
+  return source
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((raw) => ({ raw, investigationId: INVESTIGATION_SOURCE_RE.exec(raw)?.[1] ?? null }));
+}
+
 function errMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) {
     const detail = (e.body as { detail?: string } | null)?.detail;
@@ -39,29 +60,45 @@ function errMessage(e: unknown, fallback: string): string {
 }
 
 /**
- * Agent Memory (#482/#484) — what the agent has learned about this org.
+ * Agent Memory (#482) — what the agent has learned about this org.
  *
  * The store's write side runs itself: investigation close records entity
  * notes and decisions automatically, and recall is injected into every new
- * investigation's prompt. Until now none of it was visible, which cuts both
- * ways: analysts couldn't see what the agent "believes" about their
- * environment, and a wrong remembered fact — recalled into every future
- * investigation — could only be corrected over curl. The record form is that
- * correction path: recording the same kind+subject overwrites (upsert), so
- * fixing a bad memory is writing the right one over it.
+ * investigation's prompt. That makes three things load-bearing here:
  *
- * Recall here is TLP-bounded server-side (≤ AMBER_STRICT); a RED memory
- * never reaches this panel regardless of role. An empty store renders
- * explicitly — "the agent has recorded nothing yet" is a real answer about a
- * young deployment, not a blank.
+ * 1. **Forget.** A wrong remembered fact is recalled into EVERY future
+ *    investigation, so an overwrite is not a correction — removal is. The
+ *    server soft-deletes (the row survives, stamped superseded) and writes an
+ *    audit-ledger entry, so the confirmation step in this UI guards a real,
+ *    reviewable governance act rather than a destructive one.
+ * 2. **Semantic search.** Recall is subject-exact by default; the search box
+ *    sends `query=` so an analyst can find "what do we know about lateral
+ *    movement on finance hosts" without knowing the subject handle. The panel
+ *    states which mode answered, because an empty semantic result ("nothing
+ *    similar") is a different fact than an empty listing ("nothing recorded").
+ * 3. **Provenance.** A fact the agent captured at investigation close and one
+ *    an analyst typed carry very different weight, so every row shows its
+ *    kind, source (linked back to the investigation when the source IS one),
+ *    confidence, TLP and last-updated.
+ *
+ * Recall is TLP-bounded server-side (≤ AMBER_STRICT); a RED memory never
+ * reaches this panel regardless of role. An empty store renders explicitly —
+ * "the agent has recorded nothing yet" is a real answer about a young
+ * deployment, not a blank.
  */
 export function AgentMemoryPanel() {
   const role = useAuthStore((s) => s.user?.role ?? null);
   const canWrite = role !== null && WRITE_ROLES.has(role);
 
   const [memories, setMemories] = useState<AgentMemory[] | null>(null);
+  const [mode, setMode] = useState<MemoryRecallMode>("recency");
   const [subjectFilter, setSubjectFilter] = useState("");
   const [kindFilter, setKindFilter] = useState<"" | MemoryKind>("");
+
+  // Semantic search. Held separately from the input so each keystroke does
+  // not fire an embedding round-trip — the query is submitted deliberately.
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState("");
 
   // Record form (senior+).
   const [formOpen, setFormOpen] = useState(false);
@@ -71,20 +108,27 @@ export function AgentMemoryPanel() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Forget: two-step, because recall shapes every future investigation.
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [forgetting, setForgetting] = useState(false);
+  const [forgetError, setForgetError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     try {
       const resp = await recallMemories({
         subject: subjectFilter.trim() || undefined,
         kind: kindFilter || undefined,
+        query: query.trim() || undefined,
         limit: 50,
       });
       setMemories(resp.items);
+      setMode(resp.mode ?? (query.trim() ? "semantic" : "recency"));
     } catch {
       // Self-effacing on failure, same as every panel: memory:read is
       // analyst+, so a 403 means the whole page is out of reach anyway.
       setMemories(null);
     }
-  }, [subjectFilter, kindFilter]);
+  }, [subjectFilter, kindFilter, query]);
 
   useEffect(() => {
     void load();
@@ -111,6 +155,23 @@ export function AgentMemoryPanel() {
       setBusy(false);
     }
   };
+
+  const handleForget = async (id: string) => {
+    setForgetError(null);
+    setForgetting(true);
+    try {
+      await forgetMemory(id);
+      setConfirmId(null);
+      // Reload rather than splice: the server decides what is still live.
+      await load();
+    } catch (e) {
+      setForgetError(errMessage(e, "Could not forget the memory."));
+    } finally {
+      setForgetting(false);
+    }
+  };
+
+  const filtered = Boolean(subjectFilter.trim() || kindFilter || query.trim());
 
   return (
     <section data-testid="agent-memory-panel">
@@ -213,6 +274,61 @@ export function AgentMemoryPanel() {
         </form>
       )}
 
+      {/* Semantic search — the server ranks by embedding similarity when a
+       * query is sent, and falls back to recency if pgvector is unavailable. */}
+      <form
+        className="mb-2 flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setQuery(searchInput);
+        }}
+        data-testid="agent-memory-search-form"
+      >
+        <div className="relative flex-1 min-w-64">
+          <Sparkles
+            className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-purple-400"
+            aria-hidden="true"
+          />
+          <Input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Search meaning, not just the subject — e.g. “lateral movement on finance hosts”"
+            aria-label="Search memories"
+            data-testid="agent-memory-search"
+            className="h-9 w-full pl-7"
+          />
+        </div>
+        <Button type="submit" size="sm" variant="outline" data-testid="agent-memory-search-submit">
+          Search
+        </Button>
+        {query && (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setSearchInput("");
+              setQuery("");
+            }}
+            data-testid="agent-memory-search-clear"
+          >
+            <X className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+            Clear
+          </Button>
+        )}
+        <span
+          className="text-xs text-slate-500"
+          data-testid="agent-memory-mode"
+          title={
+            mode === "semantic"
+              ? "Ranked by embedding similarity to your query (falls back to recency if the vector index is unavailable)."
+              : "Ranked most-recently-updated first; subject and kind match exactly."
+          }
+        >
+          {mode === "semantic" ? "ranked by semantic similarity" : "ranked by recency / exact match"}
+        </span>
+      </form>
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative">
           <Search
@@ -244,47 +360,147 @@ export function AgentMemoryPanel() {
         </NativeSelect>
       </div>
 
+      {forgetError && (
+        <p
+          className="mb-2 text-xs text-severity-medium"
+          role="alert"
+          data-testid="agent-memory-forget-error"
+        >
+          {forgetError}
+        </p>
+      )}
+
       {memories.length === 0 ? (
         <p className="text-sm text-slate-400" data-testid="agent-memory-empty">
-          {subjectFilter.trim() || kindFilter
-            ? "No memories match the filter."
-            : "The agent has recorded nothing about this organisation yet — memories accrue as investigations close."}
+          {query.trim()
+            ? "No memory is semantically close to that query."
+            : filtered
+              ? "No memories match the filter."
+              : "The agent has recorded nothing about this organisation yet — memories accrue as investigations close."}
         </p>
       ) : (
         <ul className="space-y-2" data-testid="agent-memory-list">
-          {memories.map((m) => (
-            <li
-              key={m.id}
-              className="rounded-md border border-border bg-card/50 px-3 py-2"
-              data-testid={`agent-memory-${m.id}`}
-            >
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <span
-                  className={`rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
-                    KIND_STYLES[m.kind] ?? "border-border text-muted-foreground"
-                  }`}
-                >
-                  {m.kind.replace("_", " ")}
-                </span>
-                <span className="font-medium text-slate-200">{m.subject}</span>
-                {m.confidence !== null && (
-                  <span className="text-slate-500">
-                    {Math.round(m.confidence * 100)}% confidence
+          {memories.map((m) => {
+            const sources = parseSources(m.source);
+            const autoCaptured = sources.some((s) => s.investigationId !== null);
+            return (
+              <li
+                key={m.id}
+                className="rounded-md border border-border bg-card/50 px-3 py-2"
+                data-testid={`agent-memory-${m.id}`}
+              >
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span
+                    className={`rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                      KIND_STYLES[m.kind] ?? "border-border text-muted-foreground"
+                    }`}
+                  >
+                    {m.kind.replace("_", " ")}
                   </span>
+                  <span className="font-medium text-slate-200">{m.subject}</span>
+                  {/* Provenance: an auto-captured fact and a hand-entered one
+                   * carry different weight — say which this is. */}
+                  <span
+                    className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                    data-testid={`agent-memory-origin-${m.id}`}
+                    title={
+                      autoCaptured
+                        ? "Captured automatically when an investigation closed."
+                        : "Entered by an analyst (or another non-investigation source)."
+                    }
+                  >
+                    {autoCaptured ? "auto-captured" : "analyst-entered"}
+                  </span>
+                  {m.confidence !== null && (
+                    <span className="text-slate-500">
+                      {Math.round(m.confidence * 100)}% confidence
+                    </span>
+                  )}
+                  <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                    TLP:{m.tlp_level}
+                  </span>
+                  <span
+                    className="ml-auto shrink-0 text-slate-500"
+                    title={m.created_at ? `first recorded ${new Date(m.created_at).toLocaleString()}` : undefined}
+                  >
+                    {m.updated_at ? `updated ${new Date(m.updated_at).toLocaleString()}` : ""}
+                  </span>
+                  {canWrite && confirmId !== m.id && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 shrink-0 px-2 text-slate-400 hover:text-severity-high"
+                      onClick={() => {
+                        setForgetError(null);
+                        setConfirmId(m.id);
+                      }}
+                      data-testid={`agent-memory-forget-${m.id}`}
+                      aria-label={`Forget memory about ${m.subject}`}
+                    >
+                      <Trash2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                      Forget
+                    </Button>
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-slate-300">{m.content}</p>
+                {sources.length > 0 && (
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    source:{" "}
+                    {sources.map((s, i) => (
+                      <span key={`${m.id}-src-${s.raw}`}>
+                        {i > 0 && ", "}
+                        {s.investigationId ? (
+                          <a
+                            className="text-blue-400 hover:underline"
+                            href={`/investigations/${s.investigationId}`}
+                            data-testid={`agent-memory-source-link-${m.id}`}
+                          >
+                            {s.raw}
+                          </a>
+                        ) : (
+                          s.raw
+                        )}
+                      </span>
+                    ))}
+                  </p>
                 )}
-                <span className="rounded border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  TLP:{m.tlp_level}
-                </span>
-                <span className="ml-auto shrink-0 text-slate-500">
-                  {m.updated_at ? new Date(m.updated_at).toLocaleString() : ""}
-                </span>
-              </div>
-              <p className="mt-1 text-sm text-slate-300">{m.content}</p>
-              {m.source && (
-                <p className="mt-0.5 text-xs text-slate-500">source: {m.source}</p>
-              )}
-            </li>
-          ))}
+                {canWrite && confirmId === m.id && (
+                  <div
+                    className="mt-2 flex flex-wrap items-center gap-2 rounded border border-severity-high/40 bg-severity-high/5 px-2 py-1.5"
+                    data-testid={`agent-memory-forget-confirm-panel-${m.id}`}
+                  >
+                    <span className="text-xs text-slate-300">
+                      Forget this fact? It stops being recalled into new investigations. The
+                      removal is logged to the audit ledger.
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="h-7"
+                      disabled={forgetting}
+                      onClick={() => void handleForget(m.id)}
+                      data-testid={`agent-memory-forget-confirm-${m.id}`}
+                    >
+                      {forgetting && (
+                        <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                      )}
+                      Forget it
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7"
+                      disabled={forgetting}
+                      onClick={() => setConfirmId(null)}
+                      data-testid={`agent-memory-forget-cancel-${m.id}`}
+                    >
+                      Keep
+                    </Button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

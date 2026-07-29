@@ -51,7 +51,11 @@ docker-compose.override.yml
 .coverage
 htmlcov/
 .pytest_cache/
-coverage/
+# Anchored: a bare ``coverage/`` matches at ANY depth, which silently
+# untracked source directories like frontend/src/components/coverage/.
+# Only the actual coverage-report output dirs are ignored.
+/coverage/
+/frontend/coverage/
 test-results/
 playwright-report/
 

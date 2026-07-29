@@ -21,6 +21,12 @@ Detections implemented (connector-independent, fixture-based):
       records fronting it on an unsanctioned domain (cloud complement to the #121
       host-side process+DNS shadow-MCP correlation).
 
+Containment bridge (Phase C bullet 2):
+  :func:`build_cloud_containment_proposal` turns promoted IAM/STS findings into
+  INERT containment proposals (revoke role / freeze access key / detach policy).
+  It is pure data — acceptance runs through the #106 containment execute path,
+  which owns every gate.
+
 Deferred (blocked on #100 CloudTrail/GuardDuty MCP connectors):
   - Live CloudTrail event ingestion
   - Real-time GuardDuty finding correlation
@@ -42,12 +48,20 @@ from pydantic import BaseModel, ConfigDict, Field
 from btagent_shared.types.cloud_hunt import (
     AgenticWorkload,
     AgenticWorkloadKind,
+    CloudContainmentAction,
+    CloudContainmentActionType,
+    CloudContainmentProposal,
     CloudIdentity,
     CloudProvider,
 )
 from btagent_shared.types.enums import Severity
 from btagent_shared.types.hunt import HuntDomain, HuntSource
-from btagent_shared.types.hunt_finding import HuntEntity, HuntObservable, RecordFindingRequest
+from btagent_shared.types.hunt_finding import (
+    HuntEntity,
+    HuntFinding,
+    HuntObservable,
+    RecordFindingRequest,
+)
 
 logger = logging.getLogger("btagent.hunt.cloud")
 
@@ -1362,3 +1376,254 @@ def run_all_detections(
 
     logger.info("Cloud hunt detections complete: %d findings", len(findings))
     return findings
+
+
+# ---------------------------------------------------------------------------
+# Phase C bullet 2 (#117) — IAM/STS finding → inert containment proposals
+# ---------------------------------------------------------------------------
+#
+# Mirrors the identity-hunt ``build_revocation_proposal`` pattern
+# (``btagent_shared.hunt.identity``): promotion of a confirmed hit attaches
+# *proposal-shaped data* to the investigation and nothing else. Nothing here
+# dispatches, opens a connection, or grants an authority — the only way one of
+# these actions runs is a human accepting it through the #106 containment
+# execute path, which re-checks the RBAC scope, the explicit approved flag, the
+# org never-touch safelist, and writes an audit row either way.
+
+# Evidence ``detection`` values that describe an IAM / STS control-plane
+# compromise, i.e. the findings this bridge acts on. Deliberately narrow: data
+# findings (snapshot share), logging tamper, and shadow-workload governance
+# findings are NOT IAM containment material and are left to their own lanes.
+_IAM_CONTAINMENT_DETECTIONS: frozenset[str] = frozenset(
+    {"sts_chaining", "iam_persistence", "cross_account_trust_abuse"}
+)
+
+# provider → the connector that would enforce the action. Live cloud
+# control-plane connectors are deferred (#100), so in practice these dispatch
+# mock-first and the live path fails closed.
+_CONTAINMENT_CONNECTORS: dict[str, str] = {
+    CloudProvider.AWS.value: "aws_iam",
+    CloudProvider.GCP.value: "gcp_iam",
+    CloudProvider.AZURE.value: "azure_iam",
+}
+
+# CloudTrail IAM-persistence events → the containment verb that undoes them.
+# ``CreateVirtualMFADevice`` / ``DeactivateMFADevice`` are intentionally absent:
+# neither is undone by revoke-role / freeze-key / detach-policy, and proposing a
+# verb that does not actually contain the event would be theatre.
+_PERSISTENCE_EVENT_ACTIONS: dict[str, str] = {
+    "CreateAccessKey": CloudContainmentActionType.FREEZE_ACCESS_KEY.value,
+    "PutUserPolicy": CloudContainmentActionType.DETACH_POLICY.value,
+    "PutRolePolicy": CloudContainmentActionType.DETACH_POLICY.value,
+    "UpdateAssumeRolePolicy": CloudContainmentActionType.REVOKE_ROLE.value,
+}
+
+_ARN_ACCOUNT_RE = re.compile(r"^arn:[^:]*:[^:]*:[^:]*:(\d{4,}):")
+
+
+def _account_of(arn: str) -> str:
+    """Best-effort AWS account id out of an ARN ('' when not an ARN / no account)."""
+    match = _ARN_ACCOUNT_RE.match(arn.strip())
+    return match.group(1) if match else ""
+
+
+def _iam_arn(actor_arn: str, resource_type: str, name: str) -> str:
+    """Rebuild a canonical ``arn:aws:iam::<acct>:<type>/<name>`` for a CloudTrail target.
+
+    CloudTrail request parameters carry a bare ``userName`` / ``roleName``; the
+    account only appears on the *actor's* ARN. Reconstructing the full ARN keeps
+    the containment target unambiguous (and safelist-matchable). Falls back to
+    the bare name when the actor ARN carries no account — better an
+    under-qualified target a human reviews than a fabricated one.
+    """
+    account = _account_of(actor_arn)
+    if not account or not name or name == "unknown":
+        return name
+    return f"arn:aws:iam::{account}:{resource_type}/{name}"
+
+
+def _containment_provider_of(finding: HuntFinding) -> str:
+    raw = (finding.evidence or {}).get("provider")
+    if isinstance(raw, str) and raw in _CONTAINMENT_CONNECTORS:
+        return raw
+    return CloudProvider.AWS.value
+
+
+class _ProposedAction(BaseModel):
+    """Internal, pre-dedup action record (mirrors CloudContainmentAction fields)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action_type: str
+    provider: str
+    target: str
+    description: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+def _sts_chaining_actions(finding: HuntFinding, provider: str) -> list[_ProposedAction]:
+    ev = finding.evidence or {}
+    path = [p for p in (ev.get("path") or []) if isinstance(p, str) and p]
+    target_arn = ev.get("high_value_target")
+    # Propose revocation for every hop the attacker traverses EXCEPT the
+    # high-value destination itself. Revoking the admin/billing role at the end
+    # of the chain is the outage, not the fix — the containment is to break the
+    # pivot; a human can always escalate further.
+    return [
+        _ProposedAction(
+            action_type=CloudContainmentActionType.REVOKE_ROLE.value,
+            provider=provider,
+            target=hop,
+            description=(
+                f"Revoke active sessions for {hop} — a hop on the assume-role chain "
+                f"reaching {target_arn or 'a high-value role'}."
+            ),
+            parameters={
+                "reason": "sts_chaining",
+                "high_value_target": target_arn or "",
+                "hop_count": ev.get("hop_count"),
+            },
+        )
+        for hop in path
+        if hop != target_arn
+    ]
+
+
+def _cross_account_actions(finding: HuntFinding, provider: str) -> list[_ProposedAction]:
+    ev = finding.evidence or {}
+    identity_arn = ev.get("identity_arn")
+    if not isinstance(identity_arn, str) or not identity_arn:
+        return []
+    trustees = [t for t in (ev.get("external_trustees") or []) if isinstance(t, str)]
+    return [
+        _ProposedAction(
+            action_type=CloudContainmentActionType.REVOKE_ROLE.value,
+            provider=provider,
+            target=identity_arn,
+            description=(
+                f"Revoke {identity_arn} and strip the trust entries for "
+                f"{len(trustees)} unapproved external principal(s)."
+            ),
+            parameters={
+                "reason": "cross_account_trust_abuse",
+                "external_trustees": trustees[:20],
+            },
+        )
+    ]
+
+
+def _iam_persistence_actions(finding: HuntFinding, provider: str) -> list[_ProposedAction]:
+    ev = finding.evidence or {}
+    event_name = str(ev.get("event_name") or "")
+    action_type = _PERSISTENCE_EVENT_ACTIONS.get(event_name)
+    if action_type is None:
+        return []
+    params = ev.get("request_parameters") or {}
+    if not isinstance(params, dict):
+        params = {}
+    actor_arn = next((e.value for e in finding.entities if e.kind == "cloud_identity"), "")
+    user_name = params.get("userName")
+    role_name = params.get("roleName")
+    if isinstance(role_name, str) and role_name:
+        target = _iam_arn(actor_arn, "role", role_name)
+    elif isinstance(user_name, str) and user_name:
+        target = _iam_arn(actor_arn, "user", user_name)
+    else:
+        # Nothing nameable to contain — the finding still stands on its own in
+        # the triage queue; we just have no honest target to propose.
+        return []
+
+    detail: dict[str, Any] = {"reason": "iam_persistence", "event_name": event_name}
+    if action_type == CloudContainmentActionType.DETACH_POLICY.value:
+        detail["policy_name"] = params.get("policyName") or ""
+        description = (
+            f"Detach inline policy {detail['policy_name'] or '(unnamed)'!r} added to "
+            f"{target} by {event_name}."
+        )
+    elif action_type == CloudContainmentActionType.FREEZE_ACCESS_KEY.value:
+        detail["user_name"] = user_name or ""
+        description = (
+            f"Freeze the access key minted for {target} by {event_name} "
+            "(long-lived credential persistence)."
+        )
+    else:
+        description = f"Revoke {target} — its assume-role trust policy was mutated by {event_name}."
+
+    return [
+        _ProposedAction(
+            action_type=action_type,
+            provider=provider,
+            target=target,
+            description=description,
+            parameters=detail,
+        )
+    ]
+
+
+def _actions_for_finding(finding: HuntFinding) -> list[_ProposedAction]:
+    """Derive the containment verbs implied by one IAM/STS finding."""
+    detection = (finding.evidence or {}).get("detection")
+    provider = _containment_provider_of(finding)
+    if detection == "sts_chaining":
+        return _sts_chaining_actions(finding, provider)
+    if detection == "cross_account_trust_abuse":
+        return _cross_account_actions(finding, provider)
+    if detection == "iam_persistence":
+        return _iam_persistence_actions(finding, provider)
+    return []
+
+
+def build_cloud_containment_proposal(
+    findings: list[HuntFinding],
+) -> CloudContainmentProposal | None:
+    """Build inert containment proposals from promoted cloud IAM/STS findings.
+
+    Returns ``None`` when nothing in the batch is an IAM/STS control-plane
+    finding with a nameable principal — the caller then attaches nothing. Pure
+    logic: no DB, no network, no connector import. Actions are deduped by
+    ``(action_type, provider, target)`` and carry every source finding id.
+    """
+    merged: dict[tuple[str, str, str], CloudContainmentAction] = {}
+    titles: list[str] = []
+
+    for finding in findings:
+        if finding.domain is not HuntDomain.CLOUD:
+            continue
+        if (finding.evidence or {}).get("detection") not in _IAM_CONTAINMENT_DETECTIONS:
+            continue
+        matched = False
+        for proposed in _actions_for_finding(finding):
+            matched = True
+            key = (proposed.action_type, proposed.provider, proposed.target)
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = CloudContainmentAction(
+                    id="cca_0",  # re-assigned below, once the ordering is known
+                    action_type=CloudContainmentActionType(proposed.action_type),
+                    provider=CloudProvider(proposed.provider),
+                    target=proposed.target,
+                    connector=_CONTAINMENT_CONNECTORS[proposed.provider],
+                    description=proposed.description,
+                    parameters=dict(proposed.parameters),
+                    source_finding_ids=[finding.id],
+                )
+            elif finding.id not in existing.source_finding_ids:
+                existing.source_finding_ids.append(finding.id)
+        if matched:
+            titles.append(finding.title)
+
+    if not merged:
+        return None
+
+    actions: list[CloudContainmentAction] = []
+    for index, key in enumerate(sorted(merged), start=1):
+        action = merged[key]
+        action.id = f"cca_{index}"
+        actions.append(action)
+
+    unique_titles = sorted(set(titles))
+    rationale = (
+        f"{len(actions)} cloud IAM containment action(s) proposed from "
+        f"{len(unique_titles)} promoted control-plane finding(s): " + "; ".join(unique_titles[:10])
+    )
+    return CloudContainmentProposal(actions=actions, rationale=rationale)
