@@ -160,7 +160,8 @@ function timelineIcon(severity: string) {
 // Evidence detail (expandable)
 // --------------------------------------------------------------------------- //
 
-function EvidenceDetail({ evidence }: { evidence: IdentityFindingEvidence }) {
+// Exported for direct unit testing (pivot-question rendering, #435).
+export function EvidenceDetail({ evidence }: { evidence: IdentityFindingEvidence }) {
   const ev = evidence as Record<string, unknown>;
   const keyFields: Array<{ key: keyof IdentityFindingEvidence; label: string }> = [
     { key: "principal_id", label: "Principal" },
@@ -182,21 +183,43 @@ function EvidenceDetail({ evidence }: { evidence: IdentityFindingEvidence }) {
 
   const rows = keyFields.filter(({ key }) => ev[key] !== undefined && ev[key] !== "");
 
-  if (rows.length === 0) return null;
+  // Curated per-rule next-step questions (#435) — a sentence list, so it
+  // renders as its own block rather than a key/value row.
+  const pivots = Array.isArray(evidence.pivot_questions)
+    ? evidence.pivot_questions.filter((q): q is string => typeof q === "string" && q !== "")
+    : [];
+
+  if (rows.length === 0 && pivots.length === 0) return null;
 
   return (
-    <dl className="mt-2 space-y-1" data-testid="identity-evidence-detail">
-      {rows.map(({ key, label }) => (
-        <div key={key} className="flex gap-2 text-[11px]">
-          <dt className="text-slate-500 shrink-0 w-28">{label}</dt>
-          <dd className="text-slate-300 font-mono break-all">
-            {Array.isArray(ev[key])
-              ? (ev[key] as unknown[]).join(", ")
-              : String(ev[key])}
-          </dd>
+    <div className="mt-2" data-testid="identity-evidence-detail">
+      {rows.length > 0 && (
+        <dl className="space-y-1">
+          {rows.map(({ key, label }) => (
+            <div key={key} className="flex gap-2 text-[11px]">
+              <dt className="text-slate-500 shrink-0 w-28">{label}</dt>
+              <dd className="text-slate-300 font-mono break-all">
+                {Array.isArray(ev[key])
+                  ? (ev[key] as unknown[]).join(", ")
+                  : String(ev[key])}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {pivots.length > 0 && (
+        <div className="mt-2" data-testid="identity-pivot-questions">
+          <p className="text-[11px] font-medium text-slate-400">Suggested pivots</p>
+          <ul className="mt-1 space-y-0.5 list-disc list-inside">
+            {pivots.map((q) => (
+              <li key={q} className="text-[11px] text-slate-300">
+                {q}
+              </li>
+            ))}
+          </ul>
         </div>
-      ))}
-    </dl>
+      )}
+    </div>
   );
 }
 

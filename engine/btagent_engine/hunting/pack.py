@@ -88,6 +88,11 @@ class HuntPackRule(BaseModel):
     )
     enabled: bool = True
     notes: str = Field(default="", description="Analyst noise / tuning notes for this rule.")
+    pivot_questions: list[str] = Field(
+        default_factory=list,
+        description="Curated 'what should I look at next?' questions for a hit on this "
+        "rule (#435). Authored per-rule in pack.yaml; surfaced alongside findings.",
+    )
 
 
 class HuntPack(BaseModel):
@@ -183,6 +188,7 @@ def _rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPa
         severity=_LEVEL_TO_SEVERITY.get(level, Severity.MEDIUM),
         enabled=bool(meta.get("enabled", True)),
         notes=str(meta.get("notes") or ""),
+        pivot_questions=[str(q) for q in (meta.get("pivot_questions") or [])],
     )
 
 

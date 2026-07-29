@@ -317,3 +317,18 @@ def test_load_pack_deterministic_id_varies_by_version(tmp_path: Path) -> None:
     p1 = load_pack(_make("1.0.0"))
     p2 = load_pack(_make("2.0.0"))
     assert p1.id != p2.id
+
+
+def test_identity_pack_rules_carry_pivot_questions():
+    """#435: every identity pack rule loads with curated pivot questions."""
+    pack = load_builtin_pack("identity")
+    assert pack.rules, "identity pack must have rules"
+    for rule in pack.rules:
+        assert rule.pivot_questions, f"{rule.file}: no pivot_questions in pack.yaml"
+        assert all(q.strip().endswith("?") for q in rule.pivot_questions), rule.file
+
+
+def test_pivot_questions_default_empty_for_other_packs():
+    """Packs that don't curate pivots parse cleanly with an empty list."""
+    pack = load_builtin_pack("windows_baseline")
+    assert all(rule.pivot_questions == [] for rule in pack.rules)

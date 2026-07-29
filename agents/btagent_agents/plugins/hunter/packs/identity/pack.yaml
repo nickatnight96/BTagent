@@ -26,6 +26,10 @@ rules:
       Always high-severity. Any modification to a SAML federation trust
       should be on a CAB record; unexpected changes are Golden SAML
       precursors.
+    pivot_questions:
+      - "Is there a CAB/change record for this federation trust modification?"
+      - "Which tokens were issued under the modified trust since the change?"
+      - "Do signing-certificate thumbprints match the values in the IdP's documented config?"
 
   - file: entra_conditional_access_bypass.yml
     enabled: true
@@ -34,6 +38,10 @@ rules:
       failure, or satisfy only single-factor authentication, evaded the
       controls the tenant expects (T1556 / T1078). Tune out report-only
       policies and documented break-glass / trusted-location exclusions.
+    pivot_questions:
+      - "Which CA policy was expected to apply, and why did it resolve notApplied/failure?"
+      - "Is the source IP in a trusted-location or break-glass exclusion that should be narrowed?"
+      - "Did the under-enforced session go on to access privileged apps or issue tokens?"
 
   - file: entra_service_principal_credential_addition.yml
     enabled: true
@@ -41,6 +49,10 @@ rules:
       Service principal credentials added outside approved automation are
       a common persistence / privilege-escalation mechanism. Tune on
       known CI/CD service account names.
+    pivot_questions:
+      - "Which identity added the credential, and is that identity itself recently compromised-adjacent?"
+      - "Was the addition inside an approved change window or CI/CD automation account?"
+      - "What roles/scopes does this service principal hold - what can the new credential reach?"
 
   - file: okta_mfa_push_bombing.yml
     enabled: true
@@ -48,6 +60,10 @@ rules:
       Three or more Okta DENIED push factors within 10 minutes followed
       by a SUCCESS is the canonical MFA-fatigue pattern. Baseline
       expected to be near-zero; any hit should escalate to triage.
+    pivot_questions:
+      - "Where did the final approved push authenticate from - same geo/ASN as the denied burst?"
+      - "Did the principal report the pushes, and were credentials recently phished or sprayed?"
+      - "What sessions/tokens were minted right after the approval, and are they still live?"
 
   - file: entra_risky_signin_high_confidence.yml
     enabled: true
@@ -55,6 +71,10 @@ rules:
       Surfaces Microsoft Identity Protection HIGH risk-level sign-ins
       directly; requires Entra ID P2 licence. Tune on known RDP jump-box
       IPs that legitimately appear risky.
+    pivot_questions:
+      - "What risk detections compose the score (leaked creds, anonymized IP, unfamiliar features)?"
+      - "Did the sign-in complete despite risk, and under which CA policy outcome?"
+      - "Has this principal's password or session set been reset since the risky sign-in?"
 
   - file: google_workspace_oauth_grant_to_unverified_app.yml
     enabled: true
@@ -62,6 +82,10 @@ rules:
       Google Workspace admin audit events for OAuth grants to apps that
       are not verified by Google. Unverified apps are a common vector
       for OAuth phishing campaigns.
+    pivot_questions:
+      - "How many other users in the org granted the same unverified app?"
+      - "Which scopes did the grant include - mail/drive read scopes are exfil-capable?"
+      - "Does the app's redirect/callback infrastructure resolve to known-bad hosting?"
 
   - file: entra_admin_consent_grant_high_privilege_scope.yml
     enabled: true
@@ -69,6 +93,10 @@ rules:
       Flags admin-consent grants that include high-privilege scopes
       (Directory.ReadWrite.All, RoleManagement.ReadWrite.Directory, etc.).
       Any new grant of these scopes is a significant security event.
+    pivot_questions:
+      - "Which admin granted consent, and was it in response to a user request ticket?"
+      - "What is the app publisher's verification status and tenant of origin?"
+      - "Has the app used the high-privilege scope yet, and against which resources?"
 
   - file: okta_admin_role_granted_to_non_admin.yml
     enabled: true
@@ -77,12 +105,20 @@ rules:
       automation service accounts. Hits should always be reviewed.
 
   # ── Code-based detectors (behavioral — not Sigma-transpilable) ───────────
+    pivot_questions:
+      - "Who granted the role, from which session, and is that grantor's account healthy?"
+      - "Is the grantee in a documented admin-eligibility group or an ordinary end user?"
+      - "What admin actions has the grantee performed since receiving the role?"
   - file: _code_oauth_token_replay.yaml
     enabled: true
     notes: >
       [CODE] Implemented in btagent_shared.hunt.identity.detect_oauth_token_replay.
       Same token/session ID observed from 2+ distinct ASNs in 30 minutes.
       Requires token_id / session_id fields in the identity event stream.
+    pivot_questions:
+      - "Which other principals authenticated from the same ASNs in the replay window?"
+      - "Does the session/token originate from a device enrolled to this principal, or none?"
+      - "What did the replayed session access after the second ASN appeared (mail, files, admin APIs)?"
 
   - file: _code_dormant_app_reactivation.yaml
     enabled: true
@@ -90,6 +126,10 @@ rules:
       [CODE] Implemented in btagent_shared.hunt.identity.detect_dormant_app_reactivation.
       OAuth app idle >90 days then generates activity. Requires OAuthGrant
       snapshot from connector.
+    pivot_questions:
+      - "Who originally consented to this app, and is that employee/owner still active?"
+      - "Did the reactivation coincide with a new client secret or credential on the app?"
+      - "What data did the app touch since reactivation, and does it match its historical pattern?"
 
   - file: _code_impossible_travel.yaml
     enabled: true
@@ -97,3 +137,7 @@ rules:
       [CODE] Implemented in btagent_shared.hunt.identity.detect_impossible_travel.
       Geo-velocity check across sign-in events. Requires IP-to-geo enrichment
       in the event stream (lat/lon populated by connector).
+    pivot_questions:
+      - "Is either location associated with a corporate VPN/proxy egress the baseline knows about?"
+      - "Did MFA satisfy at both locations, and with which factor types?"
+      - "Are there password-spray or phishing findings for this principal in the preceding 24h?"
