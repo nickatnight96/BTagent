@@ -26,7 +26,8 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.14"
-  NODE_VERSION: "20"
+  # 22 to match ci.yml — see the NODE_VERSION note there (undici 8 needs >=22.10).
+  NODE_VERSION: "22"
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:

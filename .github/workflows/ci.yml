@@ -17,7 +17,12 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.14"
-  NODE_VERSION: "20"
+  # 22, not 20: jsdom 30 pulls undici 8, whose webidl requires
+  # worker_threads.markAsUncloneable — added in Node 22.10 and never
+  # backported to 20. On Node 20 every vitest jsdom worker dies at startup
+  # ("webidl.util.markAsUncloneable is not a function"). Local dev already
+  # runs Node 22; this aligns CI with it.
+  NODE_VERSION: "22"
   UV_CACHE_DIR: /tmp/.uv-cache
 
 jobs:
