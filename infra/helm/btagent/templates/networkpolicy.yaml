@@ -50,7 +50,12 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
-    # Allow HTTPS egress (for LLM API calls, MCP connectors)
+    {{- if .Values.networkPolicy.allowInternetEgress }}
+    # Allow HTTPS egress (for LLM API calls, MCP connectors).
+    # Omitted entirely when networkPolicy.allowInternetEgress=false, which is
+    # what an air-gapped install sets: with this rule gone the only egress the
+    # backend has is DNS plus in-cluster PostgreSQL / Redis / local model
+    # server. See docs/deployment/air-gap.md.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -61,6 +66,12 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    {{- end }}
+    {{- with .Values.networkPolicy.extraBackendEgress }}
+    # Operator-supplied extra egress rules (e.g. a local model server or an
+    # on-prem SIEM that lives outside the release namespace).
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

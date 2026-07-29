@@ -10,6 +10,12 @@ image:
   # safely revert to ``IfNotPresent`` for image-pull bandwidth savings.
   pullPolicy: Always
   tag: latest
+  # -- Optional immutable digest (``sha256:...``). When set it WINS over
+  # ``tag``: the ref becomes ``repository@sha256:...``. Empty by default so
+  # existing tag-based deploys are unchanged. Air-gapped installs set this so
+  # the artifact that was reviewed on the connected side is provably the one
+  # that runs inside the enclave — see docs/deployment/air-gap.md.
+  digest: ""
 
 imagePullSecrets: []
 nameOverride: ""
@@ -25,6 +31,8 @@ frontendImage:
   # safely revert to ``IfNotPresent`` for image-pull bandwidth savings.
   pullPolicy: Always
   tag: latest
+  # -- Optional immutable digest; see ``image.digest`` above.
+  digest: ""
 
 frontendReplicaCount: 1
 
@@ -137,6 +145,18 @@ podDisruptionBudget:
 # -- Network Policy
 networkPolicy:
   enabled: true
+  # -- Allow the backend to open TCP/443 to any non-RFC1918 address.
+  # Required by hosted LLM providers and live SIEM/EDR/CTI connectors, so it
+  # stays ``true`` by default — turning it off silently would break every
+  # connected deployment. Air-gapped installs set it to ``false``, which drops
+  # the ``0.0.0.0/0`` egress rule entirely and leaves only DNS + in-cluster
+  # PostgreSQL/Redis/model-server traffic. See docs/deployment/air-gap.md.
+  allowInternetEgress: true
+  # -- Extra egress rules appended verbatim to the backend NetworkPolicy.
+  # A list of ``networking.k8s.io/v1`` egress entries. Used by air-gapped
+  # installs to reach an in-enclave model server or SIEM that sits outside the
+  # release namespace, without re-opening general internet egress.
+  extraBackendEgress: []
 
 # -- Liveness and readiness probes (backend)
 livenessProbe:

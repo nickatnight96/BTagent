@@ -137,6 +137,103 @@ jobs:
         continue-on-error: true
         run: npm audit --audit-level=high
 
+  # ── SBOM (Sovereign Pack, #502) ───────────────────────────
+  # Produces a CycloneDX 1.5 SBOM for BOTH dependency trees and uploads them
+  # as a build artifact. An air-gapped operator cannot run ``pip download`` or
+  # ``npm audit`` inside the enclave, so the component inventory has to be
+  # generated on the connected side and carried in with the bundle — see
+  # docs/deployment/air-gap.md.
+  #
+  # Non-blocking by design (step-level ``continue-on-error``, same rationale as
+  # python-audit above): SBOM tooling breaks on new interpreter/npm releases far
+  # more often than the code does, and a flaky inventory generator must not gate
+  # merges. It is still real: the artifact upload runs ``if: always()`` and the
+  # verify step fails the *step* (visible in logs) when a document is missing or
+  # empty, so a silently-broken generator is noticeable rather than invisible.
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Python workspace + CycloneDX generator
+        continue-on-error: true
+        run: |
+          pip install uv cyclonedx-bom
+          # Same dep order as backend-tests: engine before agents.
+          uv pip install --system -e shared/
+          uv pip install --system -e engine/
+          uv pip install --system -e agents/
+          uv pip install --system -e "backend/[dev]"
+
+      - name: Generate Python SBOM (CycloneDX)
+        continue-on-error: true
+        run: |
+          mkdir -p sbom
+          # ``environment`` walks the installed interpreter environment, so the
+          # document reflects what actually ships in the image rather than what
+          # the pyproject files ask for (extras, transitive pins and all).
+          cyclonedx-py environment \
+            --output-format JSON \
+            --output-file sbom/btagent-python.cdx.json \
+            --spec-version 1.5
+
+      - name: Install frontend dependencies
+        continue-on-error: true
+        working-directory: frontend
+        run: npm ci
+
+      - name: Generate frontend SBOM (CycloneDX)
+        continue-on-error: true
+        working-directory: frontend
+        run: |
+          mkdir -p ../sbom
+          # No ``--omit dev``: the whole installed tree is in scope, because a
+          # supply-chain review of an offline bundle cares about what built the
+          # bundle as much as what runs in it.
+          npx --yes @cyclonedx/cyclonedx-npm@latest \
+            --output-format JSON \
+            --output-file ../sbom/btagent-frontend.cdx.json \
+            --spec-version 1.5
+
+      - name: Verify SBOMs are non-empty
+        # Fails the STEP (not the job) so a broken generator is loud in the log
+        # and in the step annotation without blocking the merge queue.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          for f in sbom/btagent-python.cdx.json sbom/btagent-frontend.cdx.json; do
+            if [ ! -s "$f" ]; then
+              echo "::error::SBOM missing or empty: $f"
+              exit 1
+            fi
+            count=$(python -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('components', [])))" "$f")
+            echo "$f -> $count components"
+            if [ "$count" -eq 0 ]; then
+              echo "::error::SBOM has zero components: $f"
+              exit 1
+            fi
+          done
+
+      - name: Upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-cyclonedx
+          path: sbom/*.json
+          retention-days: 30
+          if-no-files-found: warn
+
   # ── Backend + Agent Unit Tests ──────────────────────────
   backend-tests:
     name: Backend & Agent Tests

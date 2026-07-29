@@ -30,7 +30,7 @@ spec:
         - name: backend
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}{{- if .Values.image.digest }}@{{ .Values.image.digest }}{{- else }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{- end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: http
@@ -118,7 +118,7 @@ spec:
                 - ALL
               add:
                 - NET_BIND_SERVICE
-          image: "{{ .Values.frontendImage.repository }}:{{ .Values.frontendImage.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.frontendImage.repository }}{{- if .Values.frontendImage.digest }}@{{ .Values.frontendImage.digest }}{{- else }}:{{ .Values.frontendImage.tag | default .Chart.AppVersion }}{{- end }}"
           imagePullPolicy: {{ .Values.frontendImage.pullPolicy }}
           ports:
             - name: http
@@ -205,7 +205,7 @@ spec:
         - name: scheduler
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.repository }}{{- if .Values.image.digest }}@{{ .Values.image.digest }}{{- else }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{- end }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           # arq worker — not an HTTP server, so no ports or httpGet probes.
           command: ["arq", "btagent_backend.scheduler.worker.WorkerSettings"]

@@ -1,0 +1,124 @@
+# Air-gapped / zero-egress overrides — Sovereign Pack (#502).
+#
+#   helm upgrade --install btagent infra/helm/btagent \
+#     -f infra/helm/btagent/values-airgap.yaml \
+#     --set image.digest=sha256:<backend-digest> \
+#     --set frontendImage.digest=sha256:<frontend-digest>
+#
+# Read docs/deployment/air-gap.md before using this file. Every placeholder
+# below is marked REPLACE and the chart will happily deploy something useless
+# if you leave them as-is.
+#
+# This file only *subtracts* reachability and pins artifacts. It changes no
+# product default: mock-first connectors stay the default posture, and the
+# stock values.yaml keeps internet egress enabled for connected installs.
+
+# ---------------------------------------------------------------------------
+# Images — pulled from the in-enclave registry, pinned by digest
+# ---------------------------------------------------------------------------
+image:
+  # REPLACE with the in-enclave registry path.
+  repository: registry.internal.invalid/btagent-backend
+  # REPLACE with the digest recorded in the bundle manifest. When set, the
+  # digest wins over ``tag`` and the ref becomes repository@sha256:...
+  digest: ""
+  tag: ""
+  # Nothing to re-pull: the image was side-loaded into the enclave registry.
+  # ``IfNotPresent`` also means a node with the layer cached does not need the
+  # registry to be up to start a pod.
+  pullPolicy: IfNotPresent
+
+frontendImage:
+  # REPLACE with the in-enclave registry path.
+  repository: registry.internal.invalid/btagent-frontend
+  digest: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Network posture — the actual air-gap control
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # THE line that matters: drops the 0.0.0.0/0 TCP/443 egress rule.
+  allowInternetEgress: false
+  # Reach an in-enclave model server that lives outside this namespace. Delete
+  # this block if the model server runs in-namespace (the in-namespace
+  # podSelector rules already cover it), and REPLACE the CIDR otherwise.
+  extraBackendEgress: []
+  #  - to:
+  #      - ipBlock:
+  #          cidr: 10.0.0.0/8
+  #    ports:
+  #      - protocol: TCP
+  #        port: 11434
+
+# Public ACME issuance cannot work without egress. Terminate TLS with an
+# enclave-internal CA instead and pre-create the secret named below.
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+  hosts:
+    # REPLACE with the in-enclave hostname.
+    - host: btagent.internal.invalid
+      paths:
+        - path: /api
+          pathType: Prefix
+          service: backend
+        - path: /ws
+          pathType: Prefix
+          service: backend
+        - path: /
+          pathType: Prefix
+          service: frontend
+  tls:
+    # Pre-created from the enclave CA; cert-manager's ACME issuer is removed
+    # because it needs to reach an external ACME directory.
+    - secretName: btagent-tls
+      hosts:
+        - btagent.internal.invalid
+
+# ---------------------------------------------------------------------------
+# Application configuration
+# ---------------------------------------------------------------------------
+env:
+  BTAGENT_ENV: production
+  BTAGENT_LOG_LEVEL: info
+
+  # Telemetry export must target an in-enclave collector or stay off. Left off
+  # here so a fresh install cannot try to reach a default endpoint.
+  BTAGENT_OTEL_ENABLED: "false"
+
+  # Connector posture. ``true`` = deterministic fixtures only, which is the
+  # posture the zero-egress test verifies (backend/tests/test_zero_egress.py).
+  # Set to "false" ONLY after wiring connectors to systems inside the enclave
+  # and re-reading the "what changes when you enable live connectors" section
+  # of docs/deployment/air-gap.md.
+  BTAGENT_MOCK_CONNECTORS: "true"
+
+  # LLM. "true" keeps the deterministic engine mock (no model server needed).
+  # Set to "false" once a local Ollama/vLLM endpoint is reachable — see the
+  # known limitation about the Ollama base URL in the air-gap guide.
+  BTAGENT_MOCK_LLM: "true"
+
+  # Embeddings — REQUIRED for RAG knowledge search and #482 semantic memory
+  # recall. BOTH keys must be set: the default embedding_model is an OpenAI
+  # model name, so setting only the provider hands an OpenAI model id to your
+  # local server and every embed call fails.
+  BTAGENT_EMBEDDING_PROVIDER: ollama
+  BTAGENT_EMBEDDING_MODEL: nomic-embed-text
+  # REPLACE with the in-enclave model server URL.
+  BTAGENT_OLLAMA_BASE_URL: http://ollama.btagent.svc.cluster.local:11434
+
+secretEnv:
+  # Injected from the enclave secret store; never committed.
+  BTAGENT_DATABASE_URL: ""
+  BTAGENT_REDIS_URL: ""
+  BTAGENT_JWT_SECRET: ""
+  BTAGENT_S3_ENDPOINT: ""
+  BTAGENT_S3_ACCESS_KEY: ""
+  BTAGENT_S3_SECRET_KEY: ""

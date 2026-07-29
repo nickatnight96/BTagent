@@ -1,0 +1,161 @@
+# Air-gapped / zero-egress Docker Compose stack — Sovereign Pack (#502).
+#
+#   cp .env.airgap.example .env.airgap
+#   # fill in every REPLACE_ME, then:
+#   docker compose -f docker-compose.airgap.yml --env-file .env.airgap up -d
+#
+# Read docs/deployment/air-gap.md first. This file is deliberately STANDALONE
+# rather than an overlay on docker-compose.yml: the dev stack carries `build:`
+# stanzas, and an overlay that leaves them in place will happily rebuild from
+# source (pulling base images) the moment a local layer is missing — exactly
+# the silent egress this stack exists to prevent. Every service here is
+# `image:` only, pinned by digest, so `docker compose up` can do nothing but
+# start what was side-loaded.
+#
+# Digests are supplied through the env file. `docker compose config` fails
+# loudly on an unset one, so a half-filled env file cannot start a stack whose
+# provenance you cannot state.
+
+services:
+  # ── Infrastructure ─────────────────────────────────────
+  postgres:
+    image: ${IMAGE_POSTGRES:?set IMAGE_POSTGRES to a digest-pinned ref}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - btagent-net
+
+  redis:
+    image: ${IMAGE_REDIS:?set IMAGE_REDIS to a digest-pinned ref}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - btagent-net
+
+  minio:
+    image: ${IMAGE_MINIO:?set IMAGE_MINIO to a digest-pinned ref}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - btagent-net
+
+  # Local inference + embeddings. The model blobs are NOT downloaded here —
+  # `ollama pull` needs the internet. Pre-seed the `ollama-data` volume from
+  # the transfer bundle (docs/deployment/air-gap.md, "Model bundle") before
+  # first start; this container then serves them with no egress of its own.
+  ollama:
+    image: ${IMAGE_OLLAMA:?set IMAGE_OLLAMA to a digest-pinned ref}
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - btagent-net
+
+  # ── Application ────────────────────────────────────────
+  backend:
+    image: ${IMAGE_BACKEND:?set IMAGE_BACKEND to a digest-pinned ref}
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.airgap
+    environment:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      BTAGENT_REDIS_URL: redis://redis:6379
+      BTAGENT_S3_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/health'); r.raise_for_status()"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - btagent-net
+
+  scheduler:
+    image: ${IMAGE_BACKEND:?set IMAGE_BACKEND to a digest-pinned ref}
+    command: ["arq", "btagent_backend.scheduler.worker.WorkerSettings"]
+    env_file:
+      - .env.airgap
+    environment:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      BTAGENT_REDIS_URL: redis://redis:6379
+      BTAGENT_S3_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - btagent-net
+
+  frontend:
+    image: ${IMAGE_FRONTEND:?set IMAGE_FRONTEND to a digest-pinned ref}
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - btagent-net
+
+  nginx:
+    image: ${IMAGE_NGINX:?set IMAGE_NGINX to a digest-pinned ref}
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # TLS material issued by the enclave CA — public ACME is unreachable.
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - btagent-net
+
+networks:
+  btagent-net:
+    driver: bridge
+    # No `internal: true` here: the stack publishes ports to the host, and an
+    # internal bridge would break that. Confining the HOST is the operator's
+    # job (see the host-firewall section of the air-gap guide) — a compose
+    # network flag is not an air-gap control and this file will not pretend
+    # otherwise.
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  ollama-data:
