@@ -100,7 +100,7 @@ jobs:
       - name: Install frontend deps + build
         working-directory: frontend
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund  # lockfile-exact, matching ci.yml
           # Visual baselines must reflect the prod bundle that real
           # users see. ``vite preview`` serves the build output.
           npm run build || echo "build had non-fatal errors"
@@ -108,7 +108,7 @@ jobs:
       - name: Install Playwright + Chromium
         working-directory: tests/e2e
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund  # lockfile-exact, matching ci.yml
           npx playwright install --with-deps chromium
 
       - name: Run database migrations
