@@ -30,6 +30,7 @@ from btagent_backend.api.v1.reports import router as reports_router
 from btagent_backend.api.v1.response_plan import router as response_plan_router
 from btagent_backend.api.v1.saml import router as saml_router
 from btagent_backend.api.v1.sso import router as sso_router
+from btagent_backend.api.v1.taxii_feeds import router as taxii_feeds_router
 from btagent_backend.api.v1.tlp_policies import router as tlp_policies_router
 from btagent_backend.api.v1.triage import router as triage_router
 from btagent_backend.api.v1.validation import router as validation_router
@@ -69,6 +70,7 @@ api_v1_router.include_router(pattern_hunt_router)
 api_v1_router.include_router(validation_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(handover_router)
+api_v1_router.include_router(taxii_feeds_router)
 
 # Health at root level (no /api/v1 prefix)
 health_router_root = health_router

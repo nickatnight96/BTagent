@@ -64,6 +64,11 @@ make fmt        # ruff format
 - **SOAR Playbooks**: YAML-defined playbooks compiled to LangGraph subgraphs (action, decision, HITL gate, parallel)
 - **MITRE ATT&CK**: Keyword mapper (80+ techniques), coverage analysis, Navigator export
 - **STIX 2.1**: Bidirectional IOC import/export with TLP enforcement (TLP:RED blocked)
+- **TAXII 2.1 feeds (#105)**: org-scoped `taxii_feeds` subscriptions (server URL, collection,
+  `${secret:...}` reference only, poll interval, cursor) + an arq sweep that polls each enabled
+  feed since its cursor and ingests through the *existing* `stix_service` path (so TLP derives
+  from each object's STIX markings). Mock-first client at
+  `engine/btagent_engine/integrations/taxii.py`; real HTTP only with `BTAGENT_MOCK_CONNECTORS=false`.
 
 ## Phase 2 Stores
 - `knowledge_documents` / `knowledge_chunks` — pgvector RAG knowledge base

@@ -83,10 +83,21 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
-# Empty as of the Agent Memory UI (#482) — every route is either wired or
-# declared correct-by-design above. New unreached routes still fail; this
-# stays as the place to name the next honest gap when one lands.
-KNOWN_GAPS: dict[str, str] = {}
+# Was empty as of the Agent Memory UI (#482). The TAXII feed CRUD (#105 /
+# UC-2.1) re-opens it with one named gap: the *pull* half of "STIX/TAXII
+# feeds" ships backend-complete (config store, RBAC-gated CRUD, scheduled
+# poll sweep) but has no admin screen yet. It is genuinely reachable capability
+# — an admin can configure a feed via the API and the sweep polls it — so
+# NOT_BROWSER_CALLED would be a lie: a browser *should* call these. The
+# Settings → Integrations → TAXII feeds panel is the follow-up; delete these
+# five lines when it lands.
+KNOWN_GAPS: dict[str, str] = {
+    "GET /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "GET /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "POST /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "PATCH /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "DELETE /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+}
 
 
 # --------------------------------------------------------------------------- #

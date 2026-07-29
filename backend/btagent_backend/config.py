@@ -429,6 +429,26 @@ class Settings(BaseSettings):
     ndr_hunt_schedule_enabled: bool | None = None
     ndr_hunt_scan_interval_hours: int = 6
 
+    # TAXII 2.1 feed polling (#105 / UC-2.1). The sweep walks every org's
+    # ENABLED feeds and polls the ones whose own ``poll_interval_minutes`` has
+    # elapsed, so this cron only needs to fire often enough to honour the
+    # shortest configured cadence.
+    #
+    # Unlike the hunt schedulers this gate does NOT derive from
+    # ``mock_connectors``: the TAXII client's live path is fully implemented,
+    # so with mocks off the sweep does real work rather than no-opping. It is
+    # also inert by construction in the default posture — a fresh install has
+    # zero feed rows, and creating one is an explicit admin action. Operators
+    # who must guarantee no outbound polling can still hard-off it with
+    # ``BTAGENT_TAXII_POLL_ENABLED=false``.
+    taxii_poll_enabled: bool = True
+    # Minutes-past-the-hour the sweep cron fires on (default every 15 min).
+    taxii_poll_sweep_interval_minutes: int = 15
+    # Ceiling on objects pulled per feed per poll (also hard-capped by
+    # ``taxii_poll_service.MAX_OBJECTS_PER_POLL``, which mirrors the bulk-IOC
+    # import cap).
+    taxii_max_objects_per_poll: int = 500
+
     # Cross-Investigation Pattern Hunter (#120). The weekly scan walks the
     # closed-investigation pgvector corpus and surfaces cross-case weak-signal
     # patterns as hunt proposals. Unlike the hunt-pack scheduler this is NOT
