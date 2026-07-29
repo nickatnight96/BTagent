@@ -6,12 +6,27 @@ live in the pure logic in :mod:`btagent_shared.hunt.behavioral`; this
 module is the side-effectful shell that loads rows, calls that logic, and
 writes back.
 
-Per the codebase convention, this service does **not** commit or emit
-events — the route layer / agent hook / arq job owns those. Embedding
-generation and EDR telemetry ingestion are also out of scope here: the
-service accepts pre-computed vectors + pattern keys so it's testable
-without a real embedding provider, and the IntentClassifier LLM chain
-plugs in via :func:`set_intent` rather than being baked in.
+Per the codebase convention, this service does **not** commit — the route
+layer / agent hook / arq job owns that. Embedding generation and EDR
+telemetry ingestion are also out of scope here: the service accepts
+pre-computed vectors + pattern keys so it's testable without a real
+embedding provider, and the IntentClassifier LLM chain plugs in via
+:func:`set_intent` rather than being baked in.
+
+It *does* emit one event — ``behavioral_outlier_detected`` on a fresh
+detection — because ``detect_outlier`` has several callers (the OCSF
+consumer, the scheduler, the API) and none of them is a natural single
+choke-point. Emission follows the ``tlp_alert_sink`` precedent: build an
+``EventEnvelope`` and hand it to the WebSocket hub, which fans out to the
+global channel. It is strictly best-effort — no hub (unit tests, a worker
+with no app lifespan) or a Redis hiccup must never fail a detection that is
+already persisted — and callers can turn it off with ``emit_event=False``.
+
+The centroid is a fixed-width pgvector ``Vector(1536)`` column, so all
+vectors are normalised to that width on the way in (see
+:func:`_to_centroid_vector`) and cross-entity nearest-neighbour search
+(:func:`find_similar_profiles`) runs on PostgreSQL's HNSW index, degrading
+to an in-Python scan wherever pgvector's operators don't exist.
 """
 
 from __future__ import annotations
@@ -31,6 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models_behavioral import (
+    CENTROID_DIM,
     BehavioralEntityRow,
     BehavioralOutlierRow,
     BehavioralProfileRow,
@@ -39,9 +55,55 @@ from btagent_backend.services import hunt_triage_service
 
 logger = logging.getLogger("btagent.services.behavioral")
 
+# Bound on the fallback (non-pgvector) similarity scan so a large org can't
+# turn a degraded nearest-neighbour query into a full-table sort in Python.
+_MAX_FALLBACK_SCAN = 500
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _is_postgres(session: AsyncSession) -> bool:
+    """True when *session* is bound to PostgreSQL.
+
+    pgvector's ``<=>`` / ``<->`` operators do not exist on SQLite (the backend
+    unit-test DB), so the vector path must only be emitted on PostgreSQL. Any
+    problem resolving the bind is treated as "not PostgreSQL" — the caller then
+    falls back to the in-Python scan, which is always correct, just slower.
+
+    Mirrors ``memory_service._is_postgres`` (the established pattern for this
+    guard); kept local so the two services stay decoupled.
+    """
+    try:
+        bind = session.get_bind()
+    except Exception:  # pragma: no cover - defensive: unbound/odd session
+        return False
+    return getattr(getattr(bind, "dialect", None), "name", "") == "postgresql"
+
+
+def _to_centroid_vector(vector: list[float] | None) -> list[float] | None:
+    """Normalise *vector* to the fixed ``CENTROID_DIM`` width of the column.
+
+    ``behavioral_profiles.centroid`` is a ``Vector(1536)``: pgvector rejects any
+    other width outright, so a shorter vector (a test fixture, or a provider
+    that emits fewer dimensions) is **zero-padded** to 1536. Padding is
+    deliberately safe for this store's only vector operation, cosine distance:
+    appending zeros changes neither the dot product nor either magnitude, so
+    ``cosine_distance(pad(a), pad(b)) == cosine_distance(a, b)`` exactly. A
+    vector *wider* than the column is a real misconfiguration (wrong embedding
+    provider) and raises rather than silently truncating meaning away.
+    """
+    if vector is None:
+        return None
+    values = [float(x) for x in vector]
+    if len(values) > CENTROID_DIM:
+        raise ValueError(
+            f"vector of dimension {len(values)} exceeds the centroid column width {CENTROID_DIM}"
+        )
+    if len(values) < CENTROID_DIM:
+        values.extend([0.0] * (CENTROID_DIM - len(values)))
+    return values
 
 
 # --------------------------------------------------------------------------- #
@@ -59,8 +121,10 @@ async def upsert_entity(
 ) -> BehavioralEntityRow:
     """Find-or-create the entity for ``(org_id, kind, canonical_id)``.
 
-    On hit, bumps ``last_seen`` and merges ``enrichment`` (new keys override).
-    On miss, inserts a fresh row.
+    On hit, bumps ``last_seen``, merges ``enrichment`` (new keys override), and
+    **revives an archived entity** — observing it again is by definition proof
+    it is not stale, so ``archived_at`` is cleared and the entity re-enters the
+    active baseline pool. On miss, inserts a fresh (active) row.
     """
     now = _utcnow()
     result = await db.execute(
@@ -73,6 +137,9 @@ async def upsert_entity(
     row = result.scalar_one_or_none()
     if row is not None:
         row.last_seen = now
+        if row.archived_at is not None:
+            logger.info("reviving archived behavioral entity %s (observed again)", row.id)
+            row.archived_at = None
         if enrichment:
             merged = dict(row.enrichment or {})
             merged.update(enrichment)
@@ -136,6 +203,10 @@ async def build_baseline(
 
     Always writes a NEW profile row for the window; historical baselines
     are preserved for drift visualisation.
+
+    The persisted centroid is widened to the column's fixed ``CENTROID_DIM``
+    (see :func:`_to_centroid_vector`); averaging then padding and padding then
+    averaging give the same vector, so the mean is computed on the input width.
     """
     if vectors and not all(len(v) == len(vectors[0]) for v in vectors):
         raise ValueError("all vectors in a baseline batch must share length")
@@ -147,7 +218,7 @@ async def build_baseline(
         for v in vectors:
             for i, x in enumerate(v):
                 sums[i] += x
-        centroid = [s / len(vectors) for s in sums]
+        centroid = _to_centroid_vector([s / len(vectors) for s in sums])
 
     freq_map = behavioral_logic.aggregate_pattern_keys(pattern_keys)
 
@@ -177,7 +248,13 @@ async def build_baseline(
 
 
 def _row_to_profile_model(row: BehavioralProfileRow):
-    """Build the dependency-free schema for the scorer."""
+    """Build the dependency-free schema for the scorer.
+
+    ``row.centroid`` comes back from pgvector as a numpy array, whose truth
+    value is ambiguous — the emptiness check must be an explicit ``is not
+    None`` (a bare ``if row.centroid`` raises ``ValueError`` on any array
+    longer than one element).
+    """
     from btagent_shared.types.behavioral import BehavioralProfile
 
     return BehavioralProfile(
@@ -185,7 +262,7 @@ def _row_to_profile_model(row: BehavioralProfileRow):
         org_id=row.org_id,
         entity_id=row.entity_id,
         profile_type=ProfileType(row.profile_type),
-        centroid=list(row.centroid) if row.centroid else None,
+        centroid=[float(x) for x in row.centroid] if row.centroid is not None else None,
         frequency_map=dict(row.frequency_map or {}),
         pattern_count=row.pattern_count,
         sample_size=row.sample_size,
@@ -207,6 +284,7 @@ async def detect_outlier(
     raw_event_excerpt: str = "",
     distance_threshold: float = 0.35,
     frequency_floor: int = 1,
+    emit_event: bool = True,
 ) -> BehavioralOutlierRow | None:
     """Score one event against the entity's latest baseline; persist if outlier.
 
@@ -215,6 +293,11 @@ async def detect_outlier(
     behavioral bounds. With no baseline yet, returns ``None`` (the scorer
     can't tell signal from "we haven't observed enough" yet, and we'd
     rather under-call than spam).
+
+    On a detection, a ``behavioral_outlier_detected`` event is broadcast so
+    ``BehavioralHuntsPage`` surfaces it live instead of waiting up to 30 s for
+    the next poll. Emission is best-effort and never affects the return value;
+    pass ``emit_event=False`` to suppress it (batch backfills).
     """
     profile_row = await _get_latest_profile(db, entity_id=entity.id, profile_type=profile_type)
     if profile_row is None or profile_row.sample_size == 0:
@@ -223,7 +306,10 @@ async def detect_outlier(
     profile = _row_to_profile_model(profile_row)
     is_outlier, distance, rank = behavioral_logic.score_outlier(
         profile,
-        event_vector,
+        # The stored centroid is padded to the column width, so the event
+        # vector must be padded identically for the comparison to line up.
+        # Zero-padding both sides leaves the cosine distance unchanged.
+        _to_centroid_vector(event_vector),
         event_pattern_key,
         distance_threshold=distance_threshold,
         frequency_floor=frequency_floor,
@@ -245,7 +331,78 @@ async def detect_outlier(
     )
     db.add(row)
     await db.flush()
+
+    if emit_event:
+        await emit_outlier_detected(row, entity=entity)
     return row
+
+
+# --------------------------------------------------------------------------- #
+# Live surfacing (WebSocket)
+# --------------------------------------------------------------------------- #
+
+
+async def emit_outlier_detected(
+    outlier: BehavioralOutlierRow,
+    *,
+    entity: BehavioralEntityRow,
+    hub: object | None = None,
+) -> bool:
+    """Broadcast a ``behavioral_outlier_detected`` event. Best-effort.
+
+    Follows the ``tlp_alert_sink`` precedent rather than ``RedisEmitter``:
+    an outlier belongs to no investigation, and only ``WebSocketHub.publish``
+    fans out to the **global** channel that the analyst dashboard's default
+    socket listens on (``RedisEmitter`` publishes to a per-investigation
+    channel only). ``investigation_id`` therefore carries the stable
+    ``"system"`` pseudo-id, exactly as the TLP violation alerter does.
+
+    Security: the payload carries ``org_id`` so the hub's per-client org filter
+    (and its TLP egress gate) can act on it, and deliberately carries **no raw
+    telemetry** — no ``raw_event_excerpt``, no command line. It is a "something
+    changed, refetch" ping; the page then re-reads the outlier through the
+    RBAC- and org-scoped ``GET /behavioral/outliers``, so the WS path can never
+    widen what an analyst is allowed to see.
+
+    The event is emitted at flush time, before the caller's commit (this
+    service never commits). A caller that subsequently rolls back therefore
+    leaves a "refetch" ping with nothing behind it — harmless by construction,
+    because the payload is a notification, not the data: the page re-reads the
+    list and simply finds no new row.
+
+    Returns True when the event was handed to a hub, False otherwise (no hub
+    initialised — unit tests, an arq worker with no app lifespan — or a
+    publish failure). Never raises: the outlier is already persisted.
+    """
+    try:
+        from btagent_shared.types.events import EventEnvelope, EventType
+
+        if hub is None:
+            from btagent_backend.ws.routes import get_hub_optional
+
+            hub = get_hub_optional()
+        if hub is None:
+            return False
+
+        envelope = EventEnvelope(
+            type=EventType.BEHAVIORAL_OUTLIER_DETECTED,
+            investigation_id="system",
+            data={
+                "org_id": entity.org_id,
+                "outlier_id": outlier.id,
+                "entity_id": entity.id,
+                "entity_kind": entity.kind,
+                "canonical_id": entity.canonical_id,
+                "profile_type": outlier.profile_type,
+                "cosine_distance": outlier.cosine_distance,
+                "frequency_rank": outlier.frequency_rank,
+            },
+        )
+        await hub.publish(envelope)  # type: ignore[attr-defined]
+        return True
+    except Exception:
+        logger.warning("behavioral outlier event emission failed (non-fatal)", exc_info=True)
+        return False
 
 
 async def get_outlier(db: AsyncSession, outlier_id: str) -> BehavioralOutlierRow | None:
@@ -406,7 +563,94 @@ async def feedback_benign(
 
 
 # --------------------------------------------------------------------------- #
-# Stale-baseline sweep (the arq cron will call this)
+# Cross-entity nearest neighbour (the pgvector substrate)
+# --------------------------------------------------------------------------- #
+
+
+async def find_similar_profiles(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    vector: list[float],
+    profile_type: ProfileType | None = None,
+    exclude_entity_id: str | None = None,
+    limit: int = 5,
+) -> list[tuple[BehavioralProfileRow, float]]:
+    """Nearest baselines to *vector*, across entities, as ``(profile, distance)``.
+
+    This is the query the JSONB centroid could not express and the reason the
+    column moved to pgvector: "which other entities in this org baseline like
+    this one?" — the substrate for peer-group comparison and, later, the
+    most-similar-normal-example panel.
+
+    Security: strictly scoped to a single ``org_id`` (a cross-tenant baseline
+    is never a candidate) and to **active** entities — archived ones are
+    excluded so a decommissioned host stops shaping peer comparisons.
+
+    Graceful degradation, mirroring ``memory_service.recall_semantic``: the
+    pgvector ORDER BY is emitted only on PostgreSQL (``<=>`` does not exist on
+    the SQLite unit-test DB and would raise), and a vector-query failure on
+    PostgreSQL (extension missing, dimension mismatch) is scoped to a SAVEPOINT
+    so it rolls back only itself. Either way the caller gets the same answer
+    from an in-Python cosine scan over the org's candidate profiles — correct,
+    just unindexed. The WHERE clause is identical on both paths; only the
+    ranking mechanism differs.
+    """
+    capped = max(1, limit)
+    query_vector = _to_centroid_vector(vector)
+    if query_vector is None:  # pragma: no cover - defensive; vector is required
+        return []
+
+    clauses = [
+        BehavioralProfileRow.org_id == org_id,
+        BehavioralProfileRow.centroid.is_not(None),
+        BehavioralEntityRow.id == BehavioralProfileRow.entity_id,
+        BehavioralEntityRow.archived_at.is_(None),
+    ]
+    if profile_type is not None:
+        clauses.append(BehavioralProfileRow.profile_type == profile_type.value)
+    if exclude_entity_id is not None:
+        clauses.append(BehavioralProfileRow.entity_id != exclude_entity_id)
+
+    async def _fallback(reason: str) -> list[tuple[BehavioralProfileRow, float]]:
+        logger.debug("behavioral similarity falling back to in-Python scan: %s", reason)
+        stmt = (
+            select(BehavioralProfileRow)
+            .where(*clauses)
+            .order_by(BehavioralProfileRow.window_end.desc())
+            .limit(_MAX_FALLBACK_SCAN)
+        )
+        rows = list((await db.execute(stmt)).scalars().all())
+        scored = [
+            (
+                row,
+                behavioral_logic.cosine_distance(query_vector, [float(x) for x in row.centroid]),
+            )
+            for row in rows
+            if row.centroid is not None
+        ]
+        scored.sort(key=lambda pair: pair[1])
+        return scored[:capped]
+
+    if not _is_postgres(db):
+        return await _fallback("non-PostgreSQL dialect (pgvector operators unavailable)")
+
+    distance = BehavioralProfileRow.centroid.cosine_distance(query_vector)
+    stmt = select(BehavioralProfileRow, distance).where(*clauses).order_by(distance).limit(capped)
+    try:
+        # SAVEPOINT: on PostgreSQL a failed statement aborts the surrounding
+        # transaction, which would take the fallback query — and the caller's
+        # own work — down with it.
+        async with db.begin_nested():
+            result = await db.execute(stmt)
+            return [(row, float(dist)) for row, dist in result.all()]
+    except Exception:
+        logger.warning("behavioral similarity vector query failed; falling back", exc_info=True)
+        return await _fallback("vector query error")
+
+
+# --------------------------------------------------------------------------- #
+# Stale-entity sweep + archival (the arq cron calls these)
 # --------------------------------------------------------------------------- #
 
 
@@ -416,9 +660,58 @@ async def stale_entities(
     now: datetime | None = None,
     stale_after: timedelta = timedelta(days=30),
 ) -> list[BehavioralEntityRow]:
-    """Entities not observed in ``stale_after`` — flagged for archival."""
+    """Active entities not observed in ``stale_after`` — candidates for archival.
+
+    Already-archived entities are excluded: archival is idempotent, and a
+    re-run must not re-report (or re-stamp) what it archived last time.
+    """
     cutoff = (now or _utcnow()) - stale_after
     result = await db.execute(
-        select(BehavioralEntityRow).where(BehavioralEntityRow.last_seen < cutoff)
+        select(BehavioralEntityRow).where(
+            BehavioralEntityRow.last_seen < cutoff,
+            BehavioralEntityRow.archived_at.is_(None),
+        )
     )
     return list(result.scalars().all())
+
+
+async def archive_entities(
+    db: AsyncSession,
+    entities: list[BehavioralEntityRow],
+    *,
+    now: datetime | None = None,
+) -> int:
+    """Stamp ``archived_at`` on *entities*; returns how many were newly archived.
+
+    Non-destructive and reversible: nothing is deleted, the entity's baselines
+    and outliers stay queryable for audit, and :func:`upsert_entity` clears the
+    flag the moment the entity is observed again. Already-archived rows are
+    skipped so the sweep is idempotent. Does NOT commit.
+    """
+    stamp = now or _utcnow()
+    archived = 0
+    for entity in entities:
+        if entity.archived_at is not None:
+            continue
+        entity.archived_at = stamp
+        archived += 1
+    if archived:
+        await db.flush()
+    return archived
+
+
+async def archive_stale_entities(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    stale_after: timedelta = timedelta(days=30),
+) -> tuple[int, int]:
+    """Find and archive stale entities. Returns ``(candidates, archived)``.
+
+    The one call the sweep job needs: previously the job could only *count*
+    stale entities and log the number, so the active baseline pool grew without
+    bound as users left and hosts were decommissioned.
+    """
+    candidates = await stale_entities(db, now=now, stale_after=stale_after)
+    archived = await archive_entities(db, candidates, now=now)
+    return len(candidates), archived

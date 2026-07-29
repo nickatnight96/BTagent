@@ -11,7 +11,7 @@ import pytest
 from btagent_shared.types.behavioral import EntityKind, IntentLabel, ProfileType
 
 from btagent_backend.db.models import DEFAULT_ORG_ID
-from btagent_backend.db.models_behavioral import BehavioralOutlierRow
+from btagent_backend.db.models_behavioral import CENTROID_DIM, BehavioralOutlierRow
 from btagent_backend.services import behavioral_service as svc
 
 # --- entity upsert ---
@@ -63,8 +63,11 @@ async def test_build_baseline_computes_centroid_and_freq_map(db_session):
         window_start=now - timedelta(days=30),
         window_end=now,
     )
-    # Centroid is the elementwise mean: ([1+1+0]/3, [0+0+1]/3)
-    assert profile.centroid == pytest.approx([2 / 3, 1 / 3])
+    # Centroid is the elementwise mean: ([1+1+0]/3, [0+0+1]/3), zero-padded out
+    # to the pgvector column's fixed width (cosine-distance preserving).
+    assert list(profile.centroid[:2]) == pytest.approx([2 / 3, 1 / 3])
+    assert len(profile.centroid) == CENTROID_DIM
+    assert all(x == 0.0 for x in profile.centroid[2:])
     assert profile.frequency_map == {"pwsh.exe": 2, "cmd.exe": 1}
     assert profile.pattern_count == 2
     assert profile.sample_size == 3
