@@ -1,0 +1,130 @@
+# Golden dataset — triage tool evaluation (#382).
+#
+# `classifier` cases evaluate alert_classifier (category + severity).
+# `scorer` cases evaluate severity_scorer (overall severity level).
+#
+# Expectations encode the *intended* behaviour of the deterministic triage
+# heuristics on realistic alert text. If a heuristic change moves aggregate
+# accuracy below the thresholds in test_triage_eval.py, the eval fails and
+# the change needs either better heuristics or a deliberate golden update
+# in the same PR — silent drift is the failure mode this suite exists for.
+
+classifier:
+  - id: ransomware_active
+    text: >
+      CRITICAL: ransomware execution in progress on file server FS-02, mass
+      encryption of SMB shares observed, ransom note dropped.
+    category: malware
+    severity: critical
+
+  - id: trojan_dropper
+    text: >
+      AV quarantined a trojan dropper delivered via drive-by download;
+      backdoor beacon blocked at egress.
+    category: malware
+    severity: high
+
+  - id: phish_link
+    text: >
+      User reported a suspicious email with a deceptive link and spoofed
+      sender; credential harvest page confirmed by URL sandbox.
+    category: phishing
+    severity: medium
+
+  - id: brute_force_vpn
+    text: >
+      4,812 failed login attempts against VPN portal followed by a password
+      spray pattern across 60 accounts.
+    category: unauthorized_access
+    severity: medium
+
+  - id: pth_psexec
+    text: >
+      Pass-the-hash detected, then psexec remote exec and pivot to the
+      finance subnet — lateral movement in progress.
+    category: lateral_movement
+    severity: high
+
+  - id: recon_nmap
+    text: >
+      External host performed an nmap port scan and service enumeration
+      against the DMZ; no exploitation observed.
+    category: reconnaissance
+    severity: low
+
+  - id: ddos_flood
+    text: >
+      Volumetric syn flood (ddos) saturating the public web tier; upstream
+      scrubbing engaged.
+    category: denial_of_service
+    severity: medium
+
+  - id: dlp_exfil
+    text: >
+      DLP alert: bulk download from the document store then large upload —
+      unusual transfer to personal cloud storage.
+    category: data_exfiltration
+    severity: high
+
+  - id: c2_beacon
+    text: >
+      Proxy logs show periodic beaconing to a known c2 domain from an
+      engineering workstation.
+    category: c2_communication
+    severity: high
+
+  - id: insider_hoarding
+    text: >
+      UEBA flagged anomalous user behaviour: terminated employee account
+      showing data hoarding before offboarding completed.
+    category: insider_threat
+    severity: medium
+
+  - id: shadow_it
+    text: >
+      Endpoint inventory found unapproved software (shadow it) on 14
+      marketing laptops; compliance ticket opened.
+    category: policy_violation
+    severity: low
+
+  - id: benign_unknown
+    text: >
+      Scheduled database index maintenance finished; storage utilisation
+      returned to baseline.
+    category: unknown
+    severity: medium
+
+scorer:
+  - id: dc_apt_saturated
+    details: >
+      Active exploitation of the domain controller and active directory by a
+      suspected APT using fileless living off the land tradecraft; spreading
+      in progress across the entire domain with multiple hosts affected —
+      widespread impact and privileged access at risk.
+    severity: critical
+
+  - id: single_workstation_commodity
+    details: >
+      Commodity adware detected on one workstation; no elevated accounts
+      involved, no spread observed, remediation queued for next patch cycle.
+    severity: info
+
+  - id: prod_db_implant
+    details: >
+      Fileless custom implant found on the production database server with
+      privileged access; activity ongoing and in progress, staging observed
+      on multiple hosts.
+    severity: high
+
+  - id: vpn_gateway_spray
+    details: >
+      Password spray against the vpn gateway is active and ongoing, spreading
+      across multiple departments with organization-wide lockout risk;
+      privileged access accounts targeted.
+    severity: high
+
+  - id: firewall_probe_medium
+    details: >
+      Suspicious activity ongoing and in progress on the firewall management
+      interface; spread to the dmz subnet suspected.
+    severity: medium

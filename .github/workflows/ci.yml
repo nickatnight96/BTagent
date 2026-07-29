@@ -303,16 +303,12 @@ jobs:
           uv pip install --system -e "backend/[dev]"
 
       - name: Run agent evaluation suite
-        # The agent-eval suite (tests/agent_eval/) is not implemented yet (#382).
-        # The previous form -- ``pytest tests/agent_eval/ -v || echo ...`` -- masked
-        # pytest's "file or directory not found" error with the ``|| echo`` and
-        # reported a green no-op, falsely implying the eval suite ran. Until the
-        # suite exists, say so honestly instead of masking a failed command.
-        # NB: the issue reference must not follow a bare space in an unquoted
-        # YAML scalar — ``see #382`` starts a YAML comment there, truncating
-        # the script to an unterminated quote (exit 2). Single-quote the whole
-        # scalar so the ``#`` stays part of the shell command.
-        run: 'echo "Agent evaluation suite (tests/agent_eval/) is not implemented yet -- see #382. Skipping."'
+        # #382 v1: golden-dataset evaluation of the deterministic agent
+        # components (MITRE keyword mapper, triage classifier, severity
+        # scorer) with aggregate-metric thresholds. No LLM calls — see
+        # tests/agent_eval/conftest.py for the eval-vs-unit-test semantics.
+        # This job was an honest echo-placeholder until the suite landed.
+        run: pytest tests/agent_eval/ -v
 
   # ── E2E (Playwright Browser Tests) ────────────────────────
   # Real browser-driven UAT — covers what the API-level UAT below

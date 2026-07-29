@@ -1,0 +1,122 @@
+# Golden dataset — MITRE keyword-mapper evaluation (#382).
+#
+# Each positive case is a realistic alert text with the ATT&CK technique IDs
+# an analyst would expect the keyword mapper to surface. `expected` lists
+# technique IDs that MUST appear among the suggestions (recall side); the
+# precision side is checked on the negative cases, which are benign texts
+# where no HIGH-confidence (>= 0.8) technique may fire.
+#
+# Keep cases realistic: these are the sentences SIEM/EDR products actually
+# emit, not keyword soup. When the keyword table grows, add cases here —
+# the eval fails if aggregate recall drops below threshold, which is the
+# point: it catches table regressions (deleted keywords, typo'd IDs).
+
+positive:
+  - id: powershell_encoded
+    text: >
+      EDR detected powershell.exe launched with an encoded command line
+      (base64) spawning from winword.exe on host FIN-WS-042.
+    expected: ["T1059.001", "T1027"]
+
+  - id: mimikatz_lsass
+    text: >
+      Credential dump attempt: mimikatz signature detected reading LSASS
+      process memory on DC01.
+    expected: ["T1003.001", "T1003"]
+
+  - id: ransomware_impact
+    text: >
+      Multiple file shares report mass encryption consistent with ransomware;
+      ransom note dropped in every directory.
+    expected: ["T1486"]
+
+  - id: spearphish_attachment
+    text: >
+      User reported a spearphishing email with a macro-enabled attachment
+      from a spoofed vendor domain.
+    expected: ["T1566.001"]
+
+  - id: pth_lateral
+    text: >
+      Pass the hash authentication followed by psexec service creation on
+      three servers — lateral movement suspected.
+    expected: ["T1550.002", "T1021.002", "T1021"]
+
+  - id: rdp_bruteforce
+    text: >
+      Brute force pattern against exposed RDP endpoint; 4,000 failed logons
+      then one success from the same source IP.
+    expected: ["T1110", "T1021.001"]
+
+  - id: dns_tunnel_c2
+    text: >
+      Anomalous DNS query volume to a single domain suggests a dns tunnel
+      being used for command and control.
+    expected: ["T1071.004", "T1071"]
+
+  - id: cobalt_strike_beacon
+    text: >
+      Network sensor flagged periodic beacon traffic matching a Cobalt Strike
+      profile.
+    expected: ["T1071.001"]
+
+  - id: kerberoast
+    text: >
+      Kerberoasting detected: bulk TGS-REQ for SPN accounts followed by
+      offline cracking indicators.
+    expected: ["T1558.003"]
+
+  - id: webshell_persistence
+    text: >
+      IIS worker process wrote an .aspx web shell to the wwwroot directory
+      and created a scheduled task for persistence.
+    expected: ["T1505.003", "T1053.005"]
+
+  - id: exfil_cloud
+    text: >
+      DLP flagged staged archives followed by exfiltration to an unsanctioned
+      cloud storage provider.
+    expected: ["T1041"]
+
+  - id: mfa_fatigue_token
+    text: >
+      Identity provider logged an MFA fatigue push spam burst, then oauth
+      token abuse from a new device.
+    expected: ["T1621", "T1550.001"]
+
+  - id: golden_saml
+    text: >
+      Federation trust modified; golden saml assertion minted for a cloud
+      admin role.
+    expected: ["T1484.002"]
+
+  - id: recon_scan
+    text: >
+      Perimeter IDS logged an nmap port scan sweeping 1-1024 across the DMZ
+      subnet.
+    expected: ["T1046"]
+
+# Benign operational texts. The mapper may emit low-confidence noise, but no
+# suggestion at confidence >= 0.8 is acceptable — that is the level at which
+# downstream consumers (triage hints, coverage analysis) treat a technique
+# as a real signal.
+negative:
+  - id: patch_window
+    text: >
+      Monthly patch maintenance window completed on schedule; all endpoints
+      rebooted cleanly and services verified healthy.
+
+  - id: cert_renewal
+    text: >
+      TLS certificate for the intranet portal renewed and deployed; no
+      configuration changes were required.
+
+  - id: backup_report
+    text: >
+      Nightly backup job finished with zero errors; retention pruning removed
+      expired snapshots per policy.
+
+  - id: hr_onboarding
+    text: >
+      New starter onboarding completed: workstation imaged, standard
+      permissions granted through the joiner workflow.
