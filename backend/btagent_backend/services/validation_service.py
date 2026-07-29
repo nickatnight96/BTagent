@@ -50,6 +50,7 @@ from btagent_shared.types.detection_validation import (
     CoverageResult,
     EmulationRequest,
     SimulationScenario,
+    TargetEnv,
     TechniqueVerdict,
     ValidationReport,
     ValidationSummary,
@@ -67,6 +68,17 @@ _DEFAULT_PACKS = ("windows_baseline",)
 # ---------------------------------------------------------------------------
 
 
+def _as_bool(value: Any) -> bool | None:
+    """Coerce an event field to a bool (``True``/``"true"``/``1``), else None."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+        return value.strip().lower() == "true"
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    return None
+
+
 def _sigma_value_matches_event_field(
     sigma_val: Any,
     field_val: Any,
@@ -74,12 +86,18 @@ def _sigma_value_matches_event_field(
 ) -> bool:
     """Return True when *sigma_val* matches *field_val* under *modifiers*.
 
-    Handles SigmaString (endswith / startswith / contains / exact) and
-    SigmaNumber (numeric equality).  Case-insensitive for string comparisons.
+    Handles SigmaString (endswith / startswith / contains / exact), SigmaNumber
+    (numeric equality) and SigmaBool (truthiness, so ``hostPID: true`` in a
+    Kubernetes-audit rule matches a JSON ``true``).  Case-insensitive for string
+    comparisons.
     """
-    from sigma.types import SigmaNumber, SigmaString
+    from sigma.types import SigmaBool, SigmaNumber, SigmaString
 
     plain = sigma_val.to_plain()
+
+    if isinstance(sigma_val, SigmaBool):
+        coerced = _as_bool(field_val)
+        return coerced is not None and coerced is bool(plain)
 
     if isinstance(sigma_val, SigmaNumber):
         try:
@@ -120,61 +138,102 @@ def _match_detection_item(item: Any, event: dict[str, Any]) -> bool:
     return any(_sigma_value_matches_event_field(v, field_val, modifier_names) for v in item.value)
 
 
+def _match_detection(det: Any, event: dict[str, Any]) -> bool:
+    """True if a pySigma ``SigmaDetection`` fires on the event dict.
+
+    A detection's members are combined with the linking pySigma itself resolved
+    (``item_linking``): a *mapping* detection ANDs its field/value items, while a
+    *list-of-mappings* detection ORs its nested sub-detections (the shape used by
+    the cloud packs, e.g. ``weakening: [{a: false}, {b: false}]``). Recursing on
+    nested :class:`SigmaDetection` members is what keeps a list-of-mappings rule
+    from raising ``AttributeError: 'SigmaDetection' object has no attribute
+    'field'`` and sinking the whole replay run.
+    """
+    from sigma.conditions import ConditionOR
+
+    members = list(getattr(det, "detection_items", []) or [])
+    if not members:
+        return False
+    results = (
+        _match_detection(m, event)
+        if hasattr(m, "detection_items")
+        else _match_detection_item(m, event)
+        for m in members
+    )
+    return any(results) if getattr(det, "item_linking", None) is ConditionOR else all(results)
+
+
+# Condition tokens: parentheses are their own tokens (they must NOT glue onto an
+# identifier — that was the bug that made every parenthesised condition evaluate
+# to False), everything else is a whitespace-delimited word.
+_COND_TOKEN_RE = re.compile(r"\(|\)|[^\s()]+")
+
+
+def _selector_matches(pattern: str, keys: list[str]) -> list[str]:
+    """Detection names matched by a ``1 of``/``all of`` selector pattern."""
+    if pattern.lower() == "them":
+        return list(keys)
+    regex = re.compile(re.escape(pattern).replace(r"\*", ".*") + "$", re.IGNORECASE)
+    return [k for k in keys if regex.match(k)]
+
+
 def _evaluate_condition(condition_str: str, detection_results: dict[str, bool]) -> bool:
     """Evaluate a Sigma condition expression against per-detection boolean results.
 
-    Supports: AND / OR / NOT operators, parentheses, identifier references,
-    and ``1 of <pattern>`` / ``all of <pattern>`` wildcard forms.
+    A small recursive-descent parser with correct Sigma precedence
+    (``not`` > ``and`` > ``or``), parentheses, identifier references, and the
+    ``1 of <pattern>`` / ``all of <pattern>`` / ``... of them`` selector forms
+    (usable as sub-expressions, not just as the whole condition).
     """
-    cond = condition_str.strip()
+    tokens = _COND_TOKEN_RE.findall(condition_str.strip())
+    keys = list(detection_results)
 
-    m = re.match(r"^1\s+of\s+(\S+)\s*$", cond, re.IGNORECASE)
-    if m:
-        pat = re.compile(m.group(1).replace("*", ".*"), re.IGNORECASE)
-        return any(v for k, v in detection_results.items() if pat.match(k))
-
-    m = re.match(r"^all\s+of\s+(\S+)\s*$", cond, re.IGNORECASE)
-    if m:
-        pat = re.compile(m.group(1).replace("*", ".*"), re.IGNORECASE)
-        keys = [k for k in detection_results if pat.match(k)]
-        return bool(keys) and all(detection_results[k] for k in keys)
-
-    def _eval(tokens: list[str], pos: int) -> tuple[bool, int]:
-        val, pos = _eval_atom(tokens, pos)
-        while pos < len(tokens) and tokens[pos].lower() == "and":
-            right, pos = _eval_atom(tokens, pos + 1)
-            val = val and right
+    def parse_or(pos: int) -> tuple[bool, int]:
+        val, pos = parse_and(pos)
         while pos < len(tokens) and tokens[pos].lower() == "or":
-            right, pos = _eval_atom(tokens, pos + 1)
+            right, pos = parse_and(pos + 1)
             val = val or right
         return val, pos
 
-    def _eval_atom(tokens: list[str], pos: int) -> tuple[bool, int]:
+    def parse_and(pos: int) -> tuple[bool, int]:
+        val, pos = parse_unary(pos)
+        while pos < len(tokens) and tokens[pos].lower() == "and":
+            right, pos = parse_unary(pos + 1)
+            val = val and right
+        return val, pos
+
+    def parse_unary(pos: int) -> tuple[bool, int]:
         if pos >= len(tokens):
             return False, pos
         tok = tokens[pos]
         if tok.lower() == "not":
-            v, pos = _eval_atom(tokens, pos + 1)
-            return not v, pos
+            val, pos = parse_unary(pos + 1)
+            return (not val), pos
         if tok == "(":
-            v, pos = _eval(tokens, pos + 1)
+            val, pos = parse_or(pos + 1)
             if pos < len(tokens) and tokens[pos] == ")":
                 pos += 1
-            return v, pos
+            return val, pos
+        # "1 of <sel>" / "all of <sel>" / "any of <sel>"
+        if tok.lower() in {"1", "all", "any"} and pos + 2 < len(tokens):
+            if tokens[pos + 1].lower() == "of":
+                matched = _selector_matches(tokens[pos + 2], keys)
+                if tok.lower() == "all":
+                    val = bool(matched) and all(detection_results[k] for k in matched)
+                else:
+                    val = any(detection_results[k] for k in matched)
+                return val, pos + 3
         return detection_results.get(tok, False), pos + 1
 
-    tokens = re.findall(r"[()|\w*]+", cond)
-    result, _ = _eval(tokens, 0)
+    result, _ = parse_or(0)
     return result
 
 
 def _match_sigma_rule(sigma_rule: Any, event: dict[str, Any]) -> bool:
     """Return True if the pySigma SigmaRule fires on the event dict."""
-    detection_results: dict[str, bool] = {}
-    for name, det in sigma_rule.detection.detections.items():
-        detection_results[name] = all(
-            _match_detection_item(item, event) for item in det.detection_items
-        )
+    detection_results: dict[str, bool] = {
+        name: _match_detection(det, event) for name, det in sigma_rule.detection.detections.items()
+    }
     condition_str: str = sigma_rule.detection.condition[0]
     return _evaluate_condition(condition_str, detection_results)
 
@@ -218,7 +277,17 @@ def _build_sigma_event_runner(pack_name: str) -> Any:
     async def _runner(event_dict: dict[str, Any]) -> list[dict[str, Any]]:
         hits: list[dict[str, Any]] = []
         for hunt_rule, sigma_rule in parsed:
-            if _match_sigma_rule(sigma_rule, event_dict):
+            try:
+                fired = _match_sigma_rule(sigma_rule, event_dict)
+            except Exception:  # noqa: BLE001 — one odd rule must not sink the run
+                logger.warning(
+                    "Rule %s in pack %s raised while matching an event; treated as no-hit",
+                    hunt_rule.id,
+                    pack_name,
+                    exc_info=True,
+                )
+                continue
+            if fired:
                 hits.append(
                     {
                         "rule_id": hunt_rule.id,
@@ -328,29 +397,63 @@ def build_emulation_report(
     ``wrong_severity`` / ``late`` / ``silent_gap`` / ``errored`` verdict leaves
     the technique as a gap so it surfaces to analysts.
     """
-    detected = 1 if verdict.verdict == ValidationVerdict.VALIDATED else 0
-    missed = 0 if verdict.verdict == ValidationVerdict.VALIDATED else 1
-
-    coverage = CoverageResult(
-        technique_id=verdict.technique_id,
-        total_simulated=1,
-        detected=detected,
-        missed=missed,
-        false_positives=0,
-        rules_fired=[f.rule_id for f in verdict.fired_rules],
-        rules_expected_but_missed=list(verdict.coverage_delta.missing_rules),
+    return build_multi_emulation_report(
+        run_id=run_id,
+        target_env=request.target_env,
+        verdicts=[verdict],
+        generated_at=generated_at,
     )
+
+
+def build_multi_emulation_report(
+    *,
+    run_id: str,
+    target_env: TargetEnv,
+    verdicts: list[TechniqueVerdict],
+    generated_at: datetime,
+) -> ValidationReport:
+    """Fold one *or more* technique verdicts into a single ``ValidationReport``.
+
+    Used by the #113 merge closed loop, where a merged rule may carry several
+    ATT&CK techniques and each one is emulated (sandbox-gated) in turn: the run
+    history then holds ONE row covering every technique the rule claims, which
+    is what the coverage map reads for staleness. Scoring per technique is the
+    same as the single-verdict path — only ``validated`` counts as detected.
+    """
+    if not verdicts:
+        raise ValueError("build_multi_emulation_report needs at least one verdict")
+
+    coverage: list[CoverageResult] = []
+    gaps: list[str] = []
+    detected_count = 0
+    for verdict in verdicts:
+        detected = 1 if verdict.verdict == ValidationVerdict.VALIDATED else 0
+        detected_count += detected
+        if not detected:
+            gaps.append(verdict.technique_id)
+        coverage.append(
+            CoverageResult(
+                technique_id=verdict.technique_id,
+                total_simulated=1,
+                detected=detected,
+                missed=0 if detected else 1,
+                false_positives=0,
+                rules_fired=[f.rule_id for f in verdict.fired_rules],
+                rules_expected_but_missed=list(verdict.coverage_delta.missing_rules),
+            )
+        )
+
     summary = ValidationSummary(
-        detected_pct=100.0 if detected else 0.0,
-        total_techniques=1,
-        gaps=[] if detected else [verdict.technique_id],
+        detected_pct=round(100.0 * detected_count / len(verdicts), 1),
+        total_techniques=len(verdicts),
+        gaps=gaps,
     )
     return ValidationReport(
         run_id=run_id,
-        scenarios_run=1,
-        coverage_by_technique=[coverage],
+        scenarios_run=len(verdicts),
+        coverage_by_technique=coverage,
         summary=summary,
         generated_at=generated_at,
-        emulation_target_env=request.target_env,
-        verdicts=[verdict],
+        emulation_target_env=target_env,
+        verdicts=list(verdicts),
     )

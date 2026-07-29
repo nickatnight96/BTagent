@@ -1,10 +1,12 @@
 """Detection-validation API (#118).
 
 ``POST /api/v1/validation/runs``
-    Replay the built-in simulation scenarios through the ``windows_baseline``
-    Sigma pack, persist the coverage report to ``detection_validation_runs``,
-    and return it. RBAC ``hunt:run`` — replaying scenarios is a run action,
-    same as the CTI proposal validate route.
+    Replay the built-in simulation scenario library (26+ ATT&CK techniques)
+    through the Sigma packs those scenarios target — Windows endpoint, AWS
+    control plane, Kubernetes audit and identity (see
+    ``validation_scenarios.default_validation_packs``) — persist the coverage
+    report to ``detection_validation_runs``, and return it. RBAC ``hunt:run`` —
+    replaying scenarios is a run action, same as the CTI proposal validate route.
 
 ``GET /api/v1/validation/runs``
     List the persisted run history newest-first (org-scoped, paginated).
@@ -47,15 +49,20 @@ from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models_validation import DetectionValidationRunRow
 from btagent_backend.services import validation_coverage_service, validation_run_service
 from btagent_backend.services.detection_emulation_service import run_emulation_validation
-from btagent_backend.services.validation_scenarios import default_validation_scenarios
+from btagent_backend.services.validation_scenarios import (
+    default_validation_packs,
+    default_validation_scenarios,
+)
 from btagent_backend.services.validation_service import build_emulation_report, run_validation
 
 logger = logging.getLogger("btagent.api.validation")
 
 router = APIRouter(prefix="/validation", tags=["validation"])
 
-# Packs the default run validates against (mirrors validation_service defaults).
-_DEFAULT_PACKS = ("windows_baseline",)
+# Packs the default run validates against — every pack the built-in scenario
+# library targets, so the coverage heat-map spans the full technique breadth
+# (#118 scenario library) instead of one pack.
+_DEFAULT_PACKS = default_validation_packs()
 
 
 class ValidationRunSummary(BaseModel):
