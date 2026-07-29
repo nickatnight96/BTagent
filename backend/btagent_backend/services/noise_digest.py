@@ -16,6 +16,16 @@ Diff semantics:
 * Cold start (no state row) treats everything currently noisy as new:
   the first digest after enabling the sweep is a full catch-up, once.
 
+Under-firing (#112 Phase C): the same baseline read now also carries the rules
+that have gone **silent** for a whole 60-day window, and the sweep reports
+their count alongside the noisy ones — so the loop surfaces both halves of "is
+this rule doing its job?" rather than only the loud half. Silent rules are a
+review queue, not an alert: they are surfaced through
+``GET /hunt/under-firing`` (and the noise-baseline payload) and deliberately do
+**not** notify — a rule that has been quiet for two months is quiet again
+tomorrow, so a daily bell would be pure noise. Notification (with its own
+newly-silent diff state) is a follow-up.
+
 Flushes but never commits — the arq job wrapper owns the commit.
 """
 
@@ -51,7 +61,9 @@ async def run_noise_digest(
     """Diff the org's noise baseline against stored state; notify on additions.
 
     Returns counters for the job result: ``noisy`` (current baseline size),
-    ``new`` (rules that notified), ``notified`` (notification rows created).
+    ``new`` (rules that notified), ``notified`` (notification rows created),
+    and ``under_firing`` (rules silent for the whole 60-day window — surfaced
+    for review, never notified; see the module docstring).
     """
     baseline = await noise_baseline(
         db,
@@ -78,10 +90,16 @@ async def run_noise_digest(
     await db.flush()
 
     logger.info(
-        "noise digest (org=%s): noisy=%d new=%d notified=%d",
+        "noise digest (org=%s): noisy=%d new=%d notified=%d under_firing=%d",
         org_id,
         len(current_keys),
         len(new_rules),
         len(notified),
+        len(baseline.under_firing),
     )
-    return {"noisy": len(current_keys), "new": len(new_rules), "notified": len(notified)}
+    return {
+        "noisy": len(current_keys),
+        "new": len(new_rules),
+        "notified": len(notified),
+        "under_firing": len(baseline.under_firing),
+    }

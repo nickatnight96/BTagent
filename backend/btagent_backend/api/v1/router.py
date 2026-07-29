@@ -15,6 +15,7 @@ from btagent_backend.api.v1.cti_detection import router as cti_detection_router
 from btagent_backend.api.v1.handover import router as handover_router
 from btagent_backend.api.v1.health import router as health_router
 from btagent_backend.api.v1.hunt_findings import router as hunt_router
+from btagent_backend.api.v1.hunt_packs import router as hunt_packs_router
 from btagent_backend.api.v1.hunts import router as hunts_router
 from btagent_backend.api.v1.identity import router as identity_router
 from btagent_backend.api.v1.investigations import router as investigations_router
@@ -43,6 +44,7 @@ api_v1_router.include_router(audit_router)
 api_v1_router.include_router(auth_router)
 api_v1_router.include_router(config_router)
 api_v1_router.include_router(hunt_router)
+api_v1_router.include_router(hunt_packs_router)
 api_v1_router.include_router(hunts_router)
 api_v1_router.include_router(investigations_router)
 api_v1_router.include_router(iocs_router)

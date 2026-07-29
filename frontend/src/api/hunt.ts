@@ -12,6 +12,8 @@ import type {
   NdrHuntRunResponse,
   HuntFinding,
   HuntFindingClusterListResponse,
+  HuntPackCatalogEntry,
+  HuntPackCatalogResponse,
   HuntPackRunListResponse,
   NoiseBaseline,
   PromoteClusterRequest,
@@ -19,6 +21,7 @@ import type {
   SuppressionListResponse,
   SuppressionRule,
   SuppressClusterRequest,
+  UnderFiringReport,
 } from "@/types/hunt";
 
 const BASE = "/v1/hunt";
@@ -137,6 +140,37 @@ export async function promoteCluster(
 /** Chronically-hitting pack rules — advisory suppression candidates (#112). */
 export async function getNoiseBaseline(): Promise<NoiseBaseline> {
   return api.get<NoiseBaseline>(`${BASE}/noise-baseline`);
+}
+
+/** Pack rules with a 60-day zero-hit record — review candidates (#112). */
+export async function getUnderFiringRules(params?: {
+  window_days?: number;
+  min_runs?: number;
+}): Promise<UnderFiringReport> {
+  const search = new URLSearchParams();
+  if (params?.window_days) search.set("window_days", String(params.window_days));
+  if (params?.min_runs) search.set("min_runs", String(params.min_runs));
+  const qs = search.toString();
+  return api.get<UnderFiringReport>(`${BASE}/under-firing${qs ? `?${qs}` : ""}`);
+}
+
+/** The builtin hunt-pack catalog + this org's install/enable state (#112). */
+export async function listHuntPacks(): Promise<HuntPackCatalogResponse> {
+  return api.get<HuntPackCatalogResponse>(`${BASE}/packs`);
+}
+
+/**
+ * Enable or disable one pack for the caller's org (#112).
+ * RBAC ``huntpack:manage`` (senior_analyst+) — a 403 means the caller may look
+ * but not switch.
+ */
+export async function setHuntPackEnabled(
+  packId: string,
+  enabled: boolean,
+): Promise<HuntPackCatalogEntry> {
+  return api.put<HuntPackCatalogEntry>(`${BASE}/packs/${encodeURIComponent(packId)}`, {
+    enabled,
+  });
 }
 
 /** Org-scoped hunt-pack run history, newest-first (#112 Phase B). */

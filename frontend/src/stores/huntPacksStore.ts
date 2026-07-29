@@ -1,22 +1,25 @@
 /**
  * HuntPacks (Phase B) Zustand store (#112).
  *
- * The installed-packs view is derived — read-only — from two existing hunt
- * endpoints:
+ * The installed-packs view is composed from three hunt endpoints:
  *
+ *   - ``GET /hunt/packs``         → the per-org pack store: every builtin pack
+ *                                   with its install/enable state.
  *   - ``GET /hunt/pack-runs``     → the pack-run history (per-rule ``rule_stats``
  *                                   + hit volumes + last-run status).
  *   - ``GET /hunt/noise-baseline``→ the chronically-hitting (over-firing) rules.
  *
- * There is no dedicated "installed packs" endpoint yet (the per-org pack store
- * is deferred), so the list of installed packs is inferred by grouping the run
- * history by ``pack_id``. Per-rule health is classified into the five
- * :type:`HuntRuleState` values from the run history + the noise baseline.
+ * The catalog is keyed by the pack's **install key** (``pack_id``, the builtin
+ * pack name the runner loads) while run history carries the pack's *manifest*
+ * id, so the two are joined on ``manifest_pack_id``. A pack that has never run
+ * still appears (from the catalog) so it can be enabled; a pack with runs but
+ * no catalog entry (e.g. an ad-hoc CTI pack) still appears from its history.
  *
- * Enable/disable is a **client-side** toggle only — persisting a per-org
- * enable/disable decision is a deferred follow-up, so the switch here changes
- * local view state (which packs are muted from the operator's own screen) and
- * is intentionally not sent to the backend.
+ * Enable/disable now **persists**: the switch calls
+ * ``PUT /hunt/packs/{pack_id}`` and re-reads the catalog, so what the screen
+ * shows is what the scheduled runner will run. It is RBAC-gated
+ * (``huntpack:manage``, senior_analyst+); a 403 surfaces as an error rather
+ * than silently flipping local state.
  *
  * The pure derivation helpers are exported so they can be unit-tested without a
  * running store (mirrors ``cloudStore`` / ``behavioralStore``).
@@ -24,8 +27,9 @@
 
 import { create } from "zustand";
 import { ApiError } from "@/api/client";
-import { getNoiseBaseline, listPackRuns } from "@/api/hunt";
+import { getNoiseBaseline, listHuntPacks, listPackRuns, setHuntPackEnabled } from "@/api/hunt";
 import type {
+  HuntPackCatalogEntry,
   HuntPackRun,
   HuntPackRunRuleStat,
   HuntRuleState,
@@ -67,17 +71,27 @@ export interface HitVolumePoint {
   hits: number;
 }
 
-/** One installed pack, rolled up from its run history. */
+/** One installed pack, rolled up from its run history + the pack store. */
 export interface InstalledPack {
+  /** The manifest id run history uses (the view's stable key). */
   pack_id: string;
   pack_name: string;
   pack_version: string;
   backends: string[];
-  /** Newest run for the pack, or null if somehow none. */
+  /** Newest run for the pack, or null if it has never run. */
   last_run: HuntPackRun | null;
   run_count: number;
   hit_volume_30d: HitVolumePoint[];
   rules: RuleStatus[];
+  /**
+   * Install key for the enable/disable API (``PUT /hunt/packs/{install_key}``),
+   * or null for a pack with run history but no catalog entry (e.g. an ad-hoc
+   * CTI-merged pack) — those cannot be toggled.
+   */
+  install_key: string | null;
+  /** Whether the scheduled runner will run this pack for the org. */
+  enabled: boolean;
+  rule_count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,13 +192,41 @@ function latestRuleStat(
   return undefined;
 }
 
-/** Roll the run history + baseline into the installed-packs view. */
+/** Index the pack catalog by the manifest id run history carries. */
+export function indexCatalog(
+  catalog: HuntPackCatalogEntry[],
+): Map<string, HuntPackCatalogEntry> {
+  const map = new Map<string, HuntPackCatalogEntry>();
+  for (const entry of catalog) map.set(entry.manifest_pack_id, entry);
+  return map;
+}
+
+/** A catalog-only pack (never run yet) rendered as an empty installed pack. */
+function catalogOnlyPack(entry: HuntPackCatalogEntry): InstalledPack {
+  return {
+    pack_id: entry.manifest_pack_id,
+    pack_name: entry.name,
+    pack_version: entry.version,
+    backends: [],
+    last_run: null,
+    run_count: 0,
+    hit_volume_30d: build30dHitVolume([]),
+    rules: [],
+    install_key: entry.pack_id,
+    enabled: entry.enabled,
+    rule_count: entry.rule_count,
+  };
+}
+
+/** Roll the run history + baseline + pack catalog into the installed view. */
 export function buildInstalledPacks(
   runs: HuntPackRun[],
   baseline: NoiseBaseline | null,
+  catalog: HuntPackCatalogEntry[] = [],
 ): InstalledPack[] {
   const groups = groupRunsByPack(runs);
   const baselineIndex = indexBaseline(baseline);
+  const catalogIndex = indexCatalog(catalog);
   const packs: InstalledPack[] = [];
 
   for (const [packId, packRuns] of groups.entries()) {
@@ -215,6 +257,7 @@ export function buildInstalledPacks(
     }
     rules.sort((a, b) => a.title.localeCompare(b.title));
 
+    const entry = catalogIndex.get(packId);
     packs.push({
       pack_id: packId,
       pack_name: lastRun?.pack_name ?? packId,
@@ -224,7 +267,18 @@ export function buildInstalledPacks(
       run_count: packRuns.length,
       hit_volume_30d: build30dHitVolume(packRuns),
       rules,
+      install_key: entry?.pack_id ?? null,
+      // A pack with history but no catalog entry (ad-hoc CTI pack) is not
+      // schedulable, so it reads as enabled rather than falsely "off".
+      enabled: entry ? entry.enabled : true,
+      rule_count: entry?.rule_count ?? rules.length,
     });
+  }
+
+  // Packs that ship but have never run still belong on the screen — otherwise
+  // there is no way to enable one.
+  for (const entry of catalog) {
+    if (!groups.has(entry.manifest_pack_id)) packs.push(catalogOnlyPack(entry));
   }
 
   packs.sort((a, b) => a.pack_name.localeCompare(b.pack_name));
@@ -247,18 +301,24 @@ function extractErrorMessage(err: unknown, fallback: string): string {
 interface HuntPacksState {
   runs: HuntPackRun[];
   baseline: NoiseBaseline | null;
-  /** Client-side muted packs (the per-org enable/disable store is deferred). */
-  disabledPackIds: string[];
+  /** The per-org pack store: every builtin pack + its enable state. */
+  catalog: HuntPackCatalogEntry[];
   selectedPackId: string | null;
   selectedRuleId: string | null;
+  /** Install key currently being written (drives the switch's pending state). */
+  togglingPackId: string | null;
 
   isLoading: boolean;
   error: string | null;
 
-  /** Fetch the run history + noise baseline in parallel. */
+  /** Fetch the pack catalog + run history + noise baseline in parallel. */
   fetchAll: () => Promise<void>;
-  /** Toggle a pack's local enabled state (view-only, not persisted). */
-  togglePackEnabled: (packId: string) => void;
+  /**
+   * Persist a pack's enabled state for the org (``PUT /hunt/packs/{key}``).
+   * ``installKey`` is the catalog's ``pack_id``; a pack without one (no catalog
+   * entry) is not schedulable and is ignored.
+   */
+  togglePackEnabled: (installKey: string | null, enabled: boolean) => Promise<void>;
   selectPack: (packId: string | null) => void;
   selectRule: (ruleId: string | null) => void;
   clearError: () => void;
@@ -267,9 +327,10 @@ interface HuntPacksState {
 export const useHuntPacksStore = create<HuntPacksState>((set, get) => ({
   runs: [],
   baseline: null,
-  disabledPackIds: [],
+  catalog: [],
   selectedPackId: null,
   selectedRuleId: null,
+  togglingPackId: null,
 
   isLoading: false,
   error: null,
@@ -277,15 +338,18 @@ export const useHuntPacksStore = create<HuntPacksState>((set, get) => ({
   fetchAll: async () => {
     set({ isLoading: true, error: null });
     try {
-      // The baseline is advisory — its failure must not blank the whole page,
-      // so tolerate it while still surfacing a hard pack-runs failure.
-      const [runsResp, baselineResp] = await Promise.all([
+      // The baseline and the catalog are advisory reads — their failure must
+      // not blank the whole page, so tolerate them while still surfacing a
+      // hard pack-runs failure.
+      const [runsResp, baselineResp, catalogResp] = await Promise.all([
         listPackRuns({ page: 1, page_size: RUN_PAGE_SIZE }),
         getNoiseBaseline().catch(() => null),
+        listHuntPacks().catch(() => null),
       ]);
       set({
         runs: runsResp.items ?? [],
         baseline: baselineResp,
+        catalog: catalogResp?.items ?? [],
         isLoading: false,
       });
     } catch (err) {
@@ -296,11 +360,26 @@ export const useHuntPacksStore = create<HuntPacksState>((set, get) => ({
     }
   },
 
-  togglePackEnabled: (packId) => {
-    const disabled = new Set(get().disabledPackIds);
-    if (disabled.has(packId)) disabled.delete(packId);
-    else disabled.add(packId);
-    set({ disabledPackIds: Array.from(disabled) });
+  togglePackEnabled: async (installKey, enabled) => {
+    if (!installKey) return;
+    set({ togglingPackId: installKey, error: null });
+    try {
+      const updated = await setHuntPackEnabled(installKey, enabled);
+      // Splice the server's answer in rather than trusting the optimistic
+      // value — the backend owns the resolution semantics.
+      set({
+        catalog: get().catalog.map((e) => (e.pack_id === updated.pack_id ? updated : e)),
+        togglingPackId: null,
+      });
+    } catch (err) {
+      set({
+        togglingPackId: null,
+        error: extractErrorMessage(
+          err,
+          `Failed to ${enabled ? "enable" : "disable"} '${installKey}'`,
+        ),
+      });
+    }
   },
 
   selectPack: (packId) => set({ selectedPackId: packId, selectedRuleId: null }),

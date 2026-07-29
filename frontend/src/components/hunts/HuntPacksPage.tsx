@@ -5,10 +5,12 @@
  *
  * Layout
  * ------
- * - Installed-packs list (inferred by grouping ``GET /hunt/pack-runs`` by pack):
- *   name + version + backends, an enable/disable switch (client-side only —
- *   the per-org enable/disable store is deferred), the last-run status, and a
- *   30-day hit-volume sparkline.
+ * - Installed-packs list (``GET /hunt/packs`` joined with the run history from
+ *   ``GET /hunt/pack-runs``): name + version + backends, an enable/disable
+ *   switch wired to the **per-org pack store** (``PUT /hunt/packs/{key}``,
+ *   RBAC ``huntpack:manage``), the last-run status, and a 30-day hit-volume
+ *   sparkline. Packs that ship but have never run are listed too — otherwise
+ *   there would be no way to turn one on.
  * - Per-rule status grid: one chip per rule coloured by its
  *   :type:`HuntRuleState` (clean / firing_as_expected / over_firing /
  *   under_firing / errored), derived from the run history + the noise baseline
@@ -50,8 +52,9 @@ import type { HuntRuleState } from "@/types/hunt";
 const POLL_INTERVAL_MS = 30_000;
 
 // ---------------------------------------------------------------------------
-// RBAC — the enable/disable switch is a management affordance (senior+); every
-// authenticated user can view the packs.
+// RBAC — mirrors the backend gate: viewing the catalog is ``hunt:view``, while
+// flipping a pack is ``huntpack:manage`` (senior_analyst+). This only hides the
+// affordance; the server re-checks and 403s regardless.
 // ---------------------------------------------------------------------------
 
 function useCanManage(): boolean {
@@ -228,22 +231,27 @@ function RuleDetail({ rule, onClose }: { rule: RuleStatus; onClose: () => void }
 
 function PackCard({
   pack,
-  disabled,
   canManage,
+  isToggling,
   selectedRuleId,
   onToggle,
   onSelectRule,
 }: {
   pack: InstalledPack;
-  disabled: boolean;
   canManage: boolean;
+  isToggling: boolean;
   selectedRuleId: string | null;
   onToggle: () => void;
   onSelectRule: (ruleId: string) => void;
 }) {
+  const disabled = !pack.enabled;
   const lastRunAt = pack.last_run?.started_at
     ? new Date(pack.last_run.started_at).toLocaleString()
     : "never";
+  const ruleCount = pack.rules.length || pack.rule_count;
+  // A pack with run history but no catalog entry (ad-hoc CTI pack) is not
+  // schedulable, so its switch is inert.
+  const canToggle = canManage && pack.install_key !== null && !isToggling;
   return (
     <Card data-testid={`pack-card-${pack.pack_id}`} className={disabled ? "opacity-60" : ""}>
       <CardContent className="space-y-3 p-4">
@@ -257,7 +265,7 @@ function PackCard({
               </span>
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {pack.rules.length} rule{pack.rules.length === 1 ? "" : "s"} ·{" "}
+              {ruleCount} rule{ruleCount === 1 ? "" : "s"} ·{" "}
               {pack.backends.join(", ") || "no backends"} · {pack.run_count} run
               {pack.run_count === 1 ? "" : "s"}
             </p>
@@ -265,16 +273,20 @@ function PackCard({
           <button
             type="button"
             onClick={onToggle}
-            disabled={!canManage}
+            disabled={!canToggle}
             className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground enabled:hover:text-foreground disabled:cursor-not-allowed"
             data-testid={`pack-toggle-${pack.pack_id}`}
             title={
-              canManage
-                ? "Enable/disable this pack (local view only)"
-                : "Enable/disable requires senior_analyst or higher"
+              pack.install_key === null
+                ? "Ad-hoc pack — not part of the scheduled catalog"
+                : canManage
+                  ? "Enable/disable this pack for your organization"
+                  : "Enable/disable requires senior_analyst or higher"
             }
           >
-            {disabled ? (
+            {isToggling ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : disabled ? (
               <ToggleLeft className="h-5 w-5" />
             ) : (
               <ToggleRight className="h-5 w-5 text-emerald-400" />
@@ -334,7 +346,8 @@ function PackCard({
 export function HuntPacksPage() {
   const runs = useHuntPacksStore((s) => s.runs);
   const baseline = useHuntPacksStore((s) => s.baseline);
-  const disabledPackIds = useHuntPacksStore((s) => s.disabledPackIds);
+  const catalog = useHuntPacksStore((s) => s.catalog);
+  const togglingPackId = useHuntPacksStore((s) => s.togglingPackId);
   const selectedRuleId = useHuntPacksStore((s) => s.selectedRuleId);
   const isLoading = useHuntPacksStore((s) => s.isLoading);
   const error = useHuntPacksStore((s) => s.error);
@@ -360,8 +373,10 @@ export function HuntPacksPage() {
     };
   }, [refresh]);
 
-  const packs = useMemo(() => buildInstalledPacks(runs, baseline), [runs, baseline]);
-  const disabled = useMemo(() => new Set(disabledPackIds), [disabledPackIds]);
+  const packs = useMemo(
+    () => buildInstalledPacks(runs, baseline, catalog),
+    [runs, baseline, catalog],
+  );
 
   const selectedRule = useMemo<RuleStatus | null>(() => {
     if (!selectedRuleId) return null;
@@ -432,10 +447,12 @@ export function HuntPacksPage() {
             <PackCard
               key={pack.pack_id}
               pack={pack}
-              disabled={disabled.has(pack.pack_id)}
               canManage={canManage}
+              isToggling={
+                pack.install_key !== null && togglingPackId === pack.install_key
+              }
               selectedRuleId={selectedRuleId}
-              onToggle={() => togglePackEnabled(pack.pack_id)}
+              onToggle={() => void togglePackEnabled(pack.install_key, !pack.enabled)}
               onSelectRule={(ruleId) =>
                 selectRule(ruleId === selectedRuleId ? null : ruleId)
               }
