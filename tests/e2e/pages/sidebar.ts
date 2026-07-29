@@ -15,6 +15,7 @@ export class Sidebar {
   readonly iocsLink: Locator;
   readonly mitreLink: Locator;
   readonly knowledgeLink: Locator;
+  readonly memoryLink: Locator;
   readonly huntsLink: Locator;
   readonly correlateLink: Locator;
   readonly triageLink: Locator;
@@ -38,6 +39,7 @@ export class Sidebar {
     this.iocsLink = page.getByTestId("nav-iocs-link");
     this.mitreLink = page.getByTestId("nav-mitre-link");
     this.knowledgeLink = page.getByTestId("nav-knowledge-link");
+    this.memoryLink = page.getByTestId("nav-memory-link");
     this.huntsLink = page.getByTestId("nav-hunts-link");
     this.correlateLink = page.getByTestId("nav-correlate-link");
     this.triageLink = page.getByTestId("nav-triage-link");
@@ -71,6 +73,11 @@ export class Sidebar {
   async goToKnowledge(): Promise<void> {
     await this.knowledgeLink.click();
     await this.page.waitForURL("**/knowledge", { timeout: 5_000 });
+  }
+
+  async goToAgentMemory(): Promise<void> {
+    await this.memoryLink.click();
+    await this.page.waitForURL("**/memory", { timeout: 5_000 });
   }
 
   async goToHunts(): Promise<void> {

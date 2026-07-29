@@ -1,6 +1,6 @@
 """Unified long-term Agent Memory API (#482).
 
-Two org-scoped, RBAC-gated endpoints over the compact-fact memory store:
+Three org-scoped, RBAC-gated endpoints over the compact-fact memory store:
 
 * ``POST /memory`` — record (upsert) a memory. Gated ``memory:write``
   (senior_analyst+): authoring a fact shapes what every future investigation in
@@ -10,9 +10,18 @@ Two org-scoped, RBAC-gated endpoints over the compact-fact memory store:
   SEMANTIC recall (embedding cosine similarity) with the identical org + TLP
   filtering; on a non-PostgreSQL dialect, or with no embedding provider
   available, it degrades to the recency ranking rather than failing.
+* ``DELETE /memory/{id}`` — FORGET a memory. Also gated ``memory:write``: the
+  store had no delete at all, so a wrong remembered fact could only be papered
+  over by overwriting it. The delete is SOFT (``superseded_at`` stamped, the
+  same mechanism consolidation uses) so the row drops out of every recall path
+  while remaining on the table for audit, and it writes a hash-chain ledger
+  entry — an analyst editing what the agent believes is a governance act, not
+  a UI convenience.
 
-Both are strictly scoped to the caller's ``org_id`` (taken from the token, never
-the request body) so one tenant can never read or write another tenant's memory.
+All three are strictly scoped to the caller's ``org_id`` (taken from the token,
+never the request body or path) so one tenant can never read, write, or delete
+another tenant's memory. A cross-org id 404s — it is masked as "not found"
+rather than refused as "forbidden", which would confirm the row exists.
 """
 
 from __future__ import annotations
@@ -20,12 +29,14 @@ from __future__ import annotations
 import logging
 
 from btagent_shared.types.config import TLP
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.db.models_memory import MEMORY_KINDS, AgentMemoryRow
+from btagent_backend.services.audit_trail import AuditTrail
 from btagent_backend.services.memory_service import (
     DEFAULT_RECALL_LIMIT,
     MemoryService,
@@ -174,3 +185,69 @@ async def recall_memories(
         )
         mode = "recency"
     return MemoryListResponse(items=[_to_response(r) for r in rows], total=len(rows), mode=mode)
+
+
+@router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def forget_memory(
+    memory_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> None:
+    """Forget a memory (soft delete). 404 if it isn't this org's live memory.
+
+    The missing trust primitive: a recalled fact is injected into every future
+    investigation for the org, so an analyst who spots a wrong one needs a way
+    to *remove* it, not just outvote it with an overwrite.
+
+    Gated on ``memory:write`` (senior_analyst+) — the same bar as authoring a
+    fact, because removing one changes future recall just as decisively.
+
+    SOFT delete: the row is stamped ``superseded_at``, which excludes it from
+    every recall path but keeps it on the table, so the removal is reviewable
+    and the ledger entry below points at a row that still exists. Re-recording
+    the same ``(kind, subject)`` revives it (``record_memory`` clears the
+    stamp), which is the intended "I was wrong to forget that" path.
+    """
+    user.require_permission("memory:write")
+
+    row = await MemoryService().forget_memory(
+        db,
+        user.org_id,
+        memory_id,
+        caller_tlp=_API_RECALL_CLEARANCE,
+    )
+    if row is None:
+        # Unknown id, another org's row, one above the caller's TLP clearance,
+        # or one already forgotten/consolidated — all indistinguishable from
+        # outside, deliberately: a 403 here would confirm the row exists in
+        # some other tenant.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found")
+
+    # An analyst deleting agent memory is a governance-relevant act — it edits
+    # what the agent will believe in every future investigation — so it lands
+    # on the tamper-evident ledger, not just the app log. The ``details`` carry
+    # enough to identify WHICH fact was removed (kind/subject/source/TLP) but
+    # deliberately NOT its content: the row survives the soft delete, so the
+    # content is still recoverable from the store, and copying an AMBER fact
+    # into the ledger would widen its audience to every audit reader.
+    await AuditTrail(db).record(
+        actor=user.id,
+        category=AuditCategory.CONFIG_CHANGE,
+        action="memory_forgotten",
+        resource=row.id,
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "org_id": user.org_id,
+            "kind": row.kind,
+            "subject": row.subject,
+            "source": row.source,
+            "tlp_level": row.tlp_level,
+            "confidence": row.confidence,
+            "deletion": "soft",
+        },
+        org_id=user.org_id,
+    )
+    await db.commit()
+    logger.info(
+        "Memory %s forgotten by %s (org=%s, soft delete)", row.id, user.username, user.org_id
+    )

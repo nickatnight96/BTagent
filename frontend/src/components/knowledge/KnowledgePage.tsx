@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { BookOpen, Plus } from "lucide-react";
+import { BookOpen, Brain, Plus } from "lucide-react";
 import { KnowledgeSearch } from "./KnowledgeSearch";
 import { KnowledgeDocumentList } from "./KnowledgeDocumentList";
 import { KnowledgeIngestModal } from "./KnowledgeIngestModal";
-import { AgentMemoryPanel } from "./AgentMemoryPanel";
 
 export function KnowledgePage() {
   const [showIngestModal, setShowIngestModal] = useState(false);
@@ -47,8 +46,21 @@ export function KnowledgePage() {
           </section>
 
           {/* Agent memory (#482) — the structured-fact sibling of the RAG
-           * corpus above. Hides itself if its fetch fails. */}
-          <AgentMemoryPanel />
+           * corpus above. It now has its own nav entry and page, because it
+           * is what gets recalled into every new investigation rather than a
+           * subsection of the document store; this is the signpost. */}
+          <a
+            href="/memory"
+            className="flex items-center gap-3 rounded-lg border border-border bg-card/50 px-4 py-3 hover:border-purple-500/40"
+            data-testid="knowledge-agent-memory-link"
+          >
+            <Brain className="w-4 h-4 text-purple-400" aria-hidden="true" />
+            <span className="text-sm text-slate-200">Agent Memory</span>
+            <span className="text-xs text-slate-400">
+              facts the agent recalls into every new investigation — search, correct, or forget
+              them
+            </span>
+          </a>
         </div>
       </div>
 
