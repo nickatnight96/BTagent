@@ -79,6 +79,19 @@ guards live mode behind `NotImplementedError`. Each declares a
 `ConnectorManifest` (`mcp/manifests.py`) — the drift-locked source of truth for
 its query/action capabilities, TLP egress, OCSF emit classes, and HITL gating.
 
+**Declarative authoring (#101).** A capability may carry a `routing` block
+(`shared/btagent_shared/types/connector_routing.py`: base_url, method, path
+templating, param mapping, auth style resolved from a `${secret:...}` reference,
+pagination, retry policy, JSON-path response mapping) instead of pointing at
+Python. The generic runner
+(`engine/btagent_engine/integrations/_declarative.py`) executes it — mock-first,
+with retries/pagination/error mapping and credential scrubbing. Declarative
+capabilities are subject to the *same* `ConnectorPolicyMiddleware` gates
+(TLP egress, `hitl_required`) as programmatic ones; the runner never sees a
+call the middleware refused. Live egress additionally requires
+`routing.live_egress_approved=true`. VirusTotal is the converted proof
+connector; everything else is still programmatic.
+
 - **SIEM:** Splunk, Microsoft Sentinel, Elastic
 - **EDR / XDR:** CrowdStrike, Defender for Endpoint, SentinelOne, Palo Alto Cortex XDR
 - **Identity:** Okta, Microsoft Entra ID, Google Workspace, Cisco Duo

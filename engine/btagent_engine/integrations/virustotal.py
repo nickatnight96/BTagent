@@ -1,33 +1,62 @@
-"""VirusTotal integration nodes.
+"""VirusTotal integration nodes — **declaratively authored** (#101).
 
-Three lookup nodes -- IP, domain, and file-hash -- following the
-GreyNoise reference shape (see ``greynoise.py``):
+This connector is the proof of the declarative-connector pattern: none of
+the three lookups contains request code. Each capability in
+``VIRUSTOTAL_MANIFEST`` carries a
+:class:`~btagent_shared.types.connector_routing.RoutingSpec` describing
+the endpoint, the path/query params, the ``${secret:...}``-referenced API
+key, the retry policy, and the JSON-path → output-field mapping. The
+generic runner (:mod:`btagent_engine.integrations._declarative`) executes
+it. Adding a fourth VirusTotal lookup is a manifest entry plus an
+input/output model — no new request logic.
 
-* ``BTAGENT_MOCK_CONNECTORS=true`` returns realistic, deterministic
-  mock fixtures with 1-2 known records plus a clean fall-through for
-  any other input.
-* The production path raises ``NotImplementedError`` -- the real
-  VirusTotal v3 HTTP client + credential vault wiring ships in a
-  Sprint 2 follow-up. Failing loudly prevents a misconfigured prod env
-  from silently returning mock data.
+What is unchanged from the programmatic version:
+
+* ``BTAGENT_MOCK_CONNECTORS=true`` (the default) returns deterministic
+  fixtures for the same two IPs / two domains / two hashes, with a clean
+  "not seen" fall-through for anything else, and the same output shapes.
+  The fixtures now model the **VirusTotal v3 response envelope** and flow
+  through the declared response mapping, so mock runs exercise the real
+  spec instead of a parallel code path.
+* The production path still refuses to egress: the routing specs ship
+  with ``live_egress_approved=False``, so turning mock mode off raises
+  ``NotImplementedError`` exactly as before (the message now names the
+  live-egress gate rather than "Sprint 2").
+* Policy is untouched. Both nodes still declare ``manifest`` +
+  ``capability_id``, so ``ConnectorPolicyMiddleware`` applies the
+  capability's ``tlp_egress`` / ``hitl_required`` gates before ``run()``
+  is entered. Declarative authoring changes *how the request is built*,
+  never *whether the call is allowed*.
 * No imports from ``btagent_agents`` / ``btagent_backend``.
 """
 
 from __future__ import annotations
 
-import os
+from typing import Any
 
 from btagent_shared.types.config import TLP
 from btagent_shared.types.connector import (
+    AuthStyle,
     ConnectorManifest,
     CostClass,
     CredentialType,
     OCSFEventClass,
+    ParamLocation,
     QueryCapability,
+    RequestParam,
+    ResponseMapping,
+    RetryPolicy,
+    RoutingAuth,
+    RoutingSpec,
     TransportKind,
 )
 from pydantic import BaseModel, Field
 
+from btagent_engine.integrations._declarative import (
+    DeclarativeConnector,
+    HTTPRequest,
+    HTTPResponse,
+)
 from btagent_engine.node import (
     Node,
     NodeCategory,
@@ -37,12 +66,112 @@ from btagent_engine.node import (
 )
 
 # ---------------------------------------------------------------------------
+# Routing — the declarative half of the connector (#101)
+# ---------------------------------------------------------------------------
+
+VT_API_BASE = "https://www.virustotal.com/api/v3"
+
+#: VirusTotal authenticates with a bare API key in the ``x-apikey`` header.
+#: The manifest stores a *reference*; the runner resolves it at call time
+#: and scrubs the resolved value out of logs and errors.
+_VT_AUTH = RoutingAuth(
+    style=AuthStyle.API_KEY_HEADER,
+    header="x-apikey",
+    secret_ref="${env:VIRUSTOTAL_API_KEY}",
+)
+
+#: VT rate-limits the public tier hard (4 req/min), so back off generously.
+_VT_RETRY = RetryPolicy(
+    max_attempts=3,
+    backoff_initial_ms=500,
+    backoff_multiplier=2.0,
+    backoff_max_ms=8_000,
+    retry_on_status=[429, 500, 502, 503, 504],
+)
+
+#: Detection counters live in the same place for every VT object type.
+_STATS_FIELDS = {
+    "malicious": "last_analysis_stats.malicious",
+    "suspicious": "last_analysis_stats.suspicious",
+    "harmless": "last_analysis_stats.harmless",
+    "undetected": "last_analysis_stats.undetected",
+}
+
+VT_IP_ROUTING = RoutingSpec(
+    base_url=VT_API_BASE,
+    path="/ip_addresses/{ip}",
+    params=[RequestParam(name="ip", source="ip", location=ParamLocation.PATH)],
+    auth=_VT_AUTH,
+    retry=_VT_RETRY,
+    response=ResponseMapping(
+        root="data.attributes",
+        fields={
+            **_STATS_FIELDS,
+            "reputation": "reputation",
+            "country": "country",
+            "as_owner": "as_owner",
+            "categories": "tags",
+        },
+        constants={"seen": True},
+        # VT answers 404 for an indicator it has never seen — that's a
+        # clean "no record", not a connector failure.
+        not_found_statuses=[404],
+        not_found_output={"seen": False},
+    ),
+)
+
+VT_DOMAIN_ROUTING = RoutingSpec(
+    base_url=VT_API_BASE,
+    path="/domains/{domain}",
+    params=[RequestParam(name="domain", source="domain", location=ParamLocation.PATH)],
+    auth=_VT_AUTH,
+    retry=_VT_RETRY,
+    response=ResponseMapping(
+        root="data.attributes",
+        fields={
+            **_STATS_FIELDS,
+            "reputation": "reputation",
+            "registrar": "registrar",
+            "categories": "tags",
+        },
+        constants={"seen": True},
+        not_found_statuses=[404],
+        not_found_output={"seen": False},
+    ),
+)
+
+VT_HASH_ROUTING = RoutingSpec(
+    base_url=VT_API_BASE,
+    path="/files/{hash}",
+    params=[RequestParam(name="hash", source="hash", location=ParamLocation.PATH)],
+    auth=_VT_AUTH,
+    retry=_VT_RETRY,
+    response=ResponseMapping(
+        root="data.attributes",
+        fields={
+            **_STATS_FIELDS,
+            "threat_label": "popular_threat_classification.suggested_threat_label",
+            "malware_families": "popular_threat_classification.popular_threat_name[*].value",
+            "categories": "tags",
+            # Carried through so the node can render VT's "48/74" ratio; the
+            # denominator is the sum of every analysis bucket, which is how
+            # VT's own UI computes it.
+            "analysis_stats": "last_analysis_stats",
+        },
+        constants={"seen": True},
+        not_found_statuses=[404],
+        not_found_output={"seen": False},
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Connector manifest — VirusTotal (Layer 3 of the connector strategy, #100)
 # ---------------------------------------------------------------------------
 
 VIRUSTOTAL_MANIFEST = ConnectorManifest(
     name="virustotal",
-    version="0.1.0",
+    version="0.2.0",
     description="VirusTotal v3 — IP / domain / file-hash reputation and detection counts.",
     transport=TransportKind.HTTP_REST,
     auth=CredentialType.API_KEY,
@@ -54,6 +183,7 @@ VIRUSTOTAL_MANIFEST = ConnectorManifest(
             tlp_egress=TLP.AMBER,
             cost_class=CostClass.MODERATE,
             hitl_required=False,
+            routing=VT_IP_ROUTING,
         ),
         QueryCapability(
             id="domain_lookup",
@@ -62,6 +192,7 @@ VIRUSTOTAL_MANIFEST = ConnectorManifest(
             tlp_egress=TLP.AMBER,
             cost_class=CostClass.MODERATE,
             hitl_required=False,
+            routing=VT_DOMAIN_ROUTING,
         ),
         QueryCapability(
             id="hash_lookup",
@@ -70,86 +201,144 @@ VIRUSTOTAL_MANIFEST = ConnectorManifest(
             tlp_egress=TLP.AMBER,
             cost_class=CostClass.MODERATE,
             hitl_required=False,
+            routing=VT_HASH_ROUTING,
         ),
     ],
 )
 
 
-def _mock_mode_enabled() -> bool:
-    """Resolve the mock-mode flag at call time so tests can flip it."""
-    return os.getenv("BTAGENT_MOCK_CONNECTORS", "true").lower() == "true"
-
-
 # ---------------------------------------------------------------------------
-# Mock fixtures
+# Mock fixtures — shaped as real VirusTotal v3 API responses
 # ---------------------------------------------------------------------------
+# Same two IPs / two domains / two hashes as the programmatic version, so
+# downstream fixtures and UAT expectations are unchanged. They are now
+# expressed in the vendor's envelope and mapped by the routing spec.
 
-_MOCK_IPS: dict[str, dict[str, object]] = {
+_VT_IP_ATTRIBUTES: dict[str, dict[str, Any]] = {
     "185.220.101.42": {
         "reputation": -87,
-        "malicious": 14,
-        "suspicious": 2,
-        "harmless": 6,
-        "undetected": 62,
+        "last_analysis_stats": {
+            "malicious": 14,
+            "suspicious": 2,
+            "harmless": 6,
+            "undetected": 62,
+        },
         "country": "DE",
         "as_owner": "Tor Exit Node Hosting GmbH",
-        "categories": ["tor-exit-node", "c2-server", "brute-force"],
+        "tags": ["tor-exit-node", "c2-server", "brute-force"],
     },
     "45.155.205.233": {
         "reputation": -94,
-        "malicious": 22,
-        "suspicious": 5,
-        "harmless": 6,
-        "undetected": 41,
+        "last_analysis_stats": {
+            "malicious": 22,
+            "suspicious": 5,
+            "harmless": 6,
+            "undetected": 41,
+        },
         "country": "RU",
         "as_owner": "ShadowNet LLC",
-        "categories": ["c2-server", "cobalt-strike", "apt"],
+        "tags": ["c2-server", "cobalt-strike", "apt"],
     },
 }
 
-_MOCK_DOMAINS: dict[str, dict[str, object]] = {
+_VT_DOMAIN_ATTRIBUTES: dict[str, dict[str, Any]] = {
     "c2-server.xyz": {
         "reputation": -91,
-        "malicious": 18,
-        "suspicious": 6,
-        "harmless": 4,
-        "undetected": 46,
+        "last_analysis_stats": {
+            "malicious": 18,
+            "suspicious": 6,
+            "harmless": 4,
+            "undetected": 46,
+        },
         "registrar": "Namecheap Inc.",
-        "categories": ["cobalt-strike", "c2", "apt"],
+        "tags": ["cobalt-strike", "c2", "apt"],
     },
     "suspicious-domain.ru": {
         "reputation": -72,
-        "malicious": 11,
-        "suspicious": 4,
-        "harmless": 4,
-        "undetected": 55,
+        "last_analysis_stats": {
+            "malicious": 11,
+            "suspicious": 4,
+            "harmless": 4,
+            "undetected": 55,
+        },
         "registrar": "REG.RU LLC",
-        "categories": ["phishing", "c2", "dga"],
+        "tags": ["phishing", "c2", "dga"],
     },
 }
 
-_MOCK_HASHES: dict[str, dict[str, object]] = {
+_VT_FILE_ATTRIBUTES: dict[str, dict[str, Any]] = {
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": {
-        "malicious": 48,
-        "suspicious": 3,
-        "harmless": 0,
-        "undetected": 21,
-        "detection_ratio": "48/74",
-        "threat_label": "trojan.cobaltstrike/agent",
-        "malware_families": ["CobaltStrike", "Beacon"],
-        "categories": ["trojan", "backdoor"],
+        "last_analysis_stats": {
+            "malicious": 48,
+            "suspicious": 3,
+            "harmless": 0,
+            "undetected": 21,
+            "type-unsupported": 2,
+        },
+        "popular_threat_classification": {
+            "suggested_threat_label": "trojan.cobaltstrike/agent",
+            "popular_threat_name": [
+                {"value": "CobaltStrike", "count": 31},
+                {"value": "Beacon", "count": 18},
+            ],
+        },
+        "tags": ["trojan", "backdoor"],
     },
     "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2": {
-        "malicious": 52,
-        "suspicious": 4,
-        "harmless": 0,
-        "undetected": 18,
-        "detection_ratio": "52/74",
-        "threat_label": "trojan.generic/dropper",
-        "malware_families": ["GenericDropper"],
-        "categories": ["trojan", "dropper"],
+        "last_analysis_stats": {
+            "malicious": 52,
+            "suspicious": 4,
+            "harmless": 0,
+            "undetected": 18,
+        },
+        "popular_threat_classification": {
+            "suggested_threat_label": "trojan.generic/dropper",
+            "popular_threat_name": [{"value": "GenericDropper", "count": 26}],
+        },
+        "tags": ["trojan", "dropper"],
     },
 }
+
+_VT_COLLECTIONS: dict[str, tuple[str, dict[str, dict[str, Any]]]] = {
+    "ip_addresses": ("ip_address", _VT_IP_ATTRIBUTES),
+    "domains": ("domain", _VT_DOMAIN_ATTRIBUTES),
+    "files": ("file", _VT_FILE_ATTRIBUTES),
+}
+
+_VT_NOT_FOUND = {
+    "error": {"code": "NotFoundError", "message": "Resource not found."},
+}
+
+
+def virustotal_mock_sender(request: HTTPRequest) -> HTTPResponse:
+    """Stand-in for the VirusTotal v3 API.
+
+    Answers the same request objects the live sender would receive, so
+    mock runs exercise the declared routing spec end-to-end — path
+    templating, auth placement, status handling, and response mapping —
+    without a single byte of network egress.
+    """
+    segments = [s for s in request.url.removeprefix(VT_API_BASE).split("/") if s]
+    if len(segments) != 2:
+        return HTTPResponse(status_code=404, json_body=_VT_NOT_FOUND)
+
+    collection, identifier = segments
+    entry = _VT_COLLECTIONS.get(collection)
+    if entry is None:
+        return HTTPResponse(status_code=404, json_body=_VT_NOT_FOUND)
+
+    object_type, table = entry
+    attributes = table.get(identifier)
+    if attributes is None:
+        return HTTPResponse(status_code=404, json_body=_VT_NOT_FOUND)
+
+    return HTTPResponse(
+        status_code=200,
+        json_body={"data": {"id": identifier, "type": object_type, "attributes": attributes}},
+    )
+
+
+_VT = DeclarativeConnector(VIRUSTOTAL_MANIFEST, mock_sender=virustotal_mock_sender)
 
 
 # ---------------------------------------------------------------------------
@@ -252,8 +441,16 @@ class VirusTotalHashLookupOutput(BaseModel):
     )
 
 
+def _detection_ratio(stats: dict[str, Any] | None, malicious: int) -> str | None:
+    """Render VT's 'malicious/total' ratio from the analysis-stats bucket."""
+    if not isinstance(stats, dict):
+        return None
+    total = sum(value for value in stats.values() if isinstance(value, int))
+    return f"{malicious}/{total}" if total else None
+
+
 # ---------------------------------------------------------------------------
-# Nodes
+# Nodes — no request code, just the declarative call + output shaping
 # ---------------------------------------------------------------------------
 
 
@@ -264,7 +461,7 @@ class VirusTotalIPLookupNode(Node[VirusTotalIPLookupInput, VirusTotalIPLookupOut
     meta = NodeMeta(
         id="integration.virustotal.ip_lookup",
         name="VirusTotal: Lookup IP",
-        version="0.1.0",
+        version="0.2.0",
         category=NodeCategory.INTEGRATION,
         description="VirusTotal IP reputation lookup. Returns engine detection counts, "
         "community reputation, AS owner, country, and applied categories.",
@@ -279,15 +476,8 @@ class VirusTotalIPLookupNode(Node[VirusTotalIPLookupInput, VirusTotalIPLookupOut
         input: VirusTotalIPLookupInput,
         ctx: NodeContext,
     ) -> VirusTotalIPLookupOutput:
-        if _mock_mode_enabled():
-            record = _MOCK_IPS.get(input.ip)
-            if record is None:
-                return VirusTotalIPLookupOutput(seen=False)
-            return VirusTotalIPLookupOutput(seen=True, **record)
-        raise NotImplementedError(
-            "VirusTotal live API integration ships in Sprint 2 follow-up; "
-            "set BTAGENT_MOCK_CONNECTORS=true to use mock fixtures."
-        )
+        mapped = await _VT.execute("ip_lookup", input.model_dump())
+        return VirusTotalIPLookupOutput(**mapped)
 
 
 @NodeRegistry.register
@@ -297,7 +487,7 @@ class VirusTotalDomainLookupNode(Node[VirusTotalDomainLookupInput, VirusTotalDom
     meta = NodeMeta(
         id="integration.virustotal.domain_lookup",
         name="VirusTotal: Lookup Domain",
-        version="0.1.0",
+        version="0.2.0",
         category=NodeCategory.INTEGRATION,
         description="VirusTotal domain reputation lookup. Returns engine detection counts, "
         "community reputation, registrar, and applied categories.",
@@ -312,15 +502,8 @@ class VirusTotalDomainLookupNode(Node[VirusTotalDomainLookupInput, VirusTotalDom
         input: VirusTotalDomainLookupInput,
         ctx: NodeContext,
     ) -> VirusTotalDomainLookupOutput:
-        if _mock_mode_enabled():
-            record = _MOCK_DOMAINS.get(input.domain)
-            if record is None:
-                return VirusTotalDomainLookupOutput(seen=False)
-            return VirusTotalDomainLookupOutput(seen=True, **record)
-        raise NotImplementedError(
-            "VirusTotal live API integration ships in Sprint 2 follow-up; "
-            "set BTAGENT_MOCK_CONNECTORS=true to use mock fixtures."
-        )
+        mapped = await _VT.execute("domain_lookup", input.model_dump())
+        return VirusTotalDomainLookupOutput(**mapped)
 
 
 @NodeRegistry.register
@@ -330,7 +513,7 @@ class VirusTotalHashLookupNode(Node[VirusTotalHashLookupInput, VirusTotalHashLoo
     meta = NodeMeta(
         id="integration.virustotal.hash_lookup",
         name="VirusTotal: Lookup File Hash",
-        version="0.1.0",
+        version="0.2.0",
         category=NodeCategory.INTEGRATION,
         description="VirusTotal file-hash lookup (MD5/SHA1/SHA256). Returns engine "
         "detection counts, detection ratio, suggested threat label, malware families, "
@@ -346,12 +529,9 @@ class VirusTotalHashLookupNode(Node[VirusTotalHashLookupInput, VirusTotalHashLoo
         input: VirusTotalHashLookupInput,
         ctx: NodeContext,
     ) -> VirusTotalHashLookupOutput:
-        if _mock_mode_enabled():
-            record = _MOCK_HASHES.get(input.hash)
-            if record is None:
-                return VirusTotalHashLookupOutput(seen=False)
-            return VirusTotalHashLookupOutput(seen=True, **record)
-        raise NotImplementedError(
-            "VirusTotal live API integration ships in Sprint 2 follow-up; "
-            "set BTAGENT_MOCK_CONNECTORS=true to use mock fixtures."
-        )
+        mapped = await _VT.execute("hash_lookup", input.model_dump())
+        stats = mapped.pop("analysis_stats", None)
+        ratio = _detection_ratio(stats, int(mapped.get("malicious", 0)))
+        if ratio is not None:
+            mapped["detection_ratio"] = ratio
+        return VirusTotalHashLookupOutput(**mapped)

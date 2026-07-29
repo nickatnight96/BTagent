@@ -39,6 +39,18 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_shared.types.config import TLP
+from btagent_shared.types.connector_routing import (
+    AuthStyle,
+    HTTPMethod,
+    PaginationSpec,
+    PaginationStyle,
+    ParamLocation,
+    RequestParam,
+    ResponseMapping,
+    RetryPolicy,
+    RoutingAuth,
+    RoutingSpec,
+)
 
 # ---------------------------------------------------------------------------
 # OCSF — Open Cybersecurity Schema Framework v1.4 (curated subset)
@@ -194,6 +206,21 @@ class _CapabilityBase(BaseModel):
         description="If True, the HITLMiddleware blocks execution until "
         "an analyst approves. Defaults to False for queries; almost always True for actions.",
     )
+    routing: RoutingSpec | None = Field(
+        default=None,
+        description="Declarative HTTP routing (#101). When present the capability needs "
+        "no Python: the generic runner (btagent_engine.integrations._declarative) builds "
+        "the request, applies auth from the declared ${secret:...} reference, retries, "
+        "pages, and maps the response onto output fields. When absent the capability is "
+        "implemented programmatically. Declaring routing does NOT bypass any policy — "
+        "TLP egress and hitl_required are still enforced by ConnectorPolicyMiddleware "
+        "before the node's run() is entered.",
+    )
+
+    @property
+    def is_declarative(self) -> bool:
+        """True when this capability is authored as a routing spec, not code."""
+        return self.routing is not None
 
 
 class QueryCapability(_CapabilityBase):
@@ -299,15 +326,33 @@ class ConnectorManifest(BaseModel):
             if ocsf_class in cap.ocsf_emits
         ]
 
+    def declarative_capabilities(
+        self,
+    ) -> list[QueryCapability | ActionCapability | StreamCapability]:
+        """Capabilities authored as a routing spec rather than as Python (#101)."""
+        return [
+            cap for cap in (*self.queries, *self.actions, *self.streams) if cap.routing is not None
+        ]
+
 
 __all__ = [
     "ActionCapability",
+    "AuthStyle",
     "BlastRadius",
     "ConnectorManifest",
     "CostClass",
     "CredentialType",
+    "HTTPMethod",
     "OCSFEventClass",
+    "PaginationSpec",
+    "PaginationStyle",
+    "ParamLocation",
     "QueryCapability",
+    "RequestParam",
+    "ResponseMapping",
+    "RetryPolicy",
+    "RoutingAuth",
+    "RoutingSpec",
     "StreamCapability",
     "TransportKind",
 ]
