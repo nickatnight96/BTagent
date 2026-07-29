@@ -1,4 +1,12 @@
-"""End-to-end tests for the VirusTotal integration Nodes."""
+"""End-to-end tests for the VirusTotal integration Nodes.
+
+Unchanged by the #101 declarative conversion apart from the non-mock
+assertions: the connector still refuses to egress with mock mode off, but
+the refusal now comes from the declarative runner's live-egress gate
+(``routing.live_egress_approved=False``) rather than the hand-written
+"Sprint 2" placeholder. Every mock-mode expectation below is byte-for-byte
+the pre-conversion contract — that's the parity proof.
+"""
 
 from __future__ import annotations
 
@@ -69,7 +77,7 @@ async def test_virustotal_ip_lookup_accepts_dict_payload_through_runner():
 
 async def test_virustotal_ip_lookup_raises_in_non_mock_mode(monkeypatch):
     monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "false")
-    with pytest.raises(NotImplementedError, match="Sprint 2"):
+    with pytest.raises(NotImplementedError, match="live egress is not approved"):
         await VirusTotalIPLookupNode().run(
             VirusTotalIPLookupInput(ip="8.8.8.8"),
             _ctx(),
@@ -105,7 +113,7 @@ async def test_virustotal_domain_lookup_returns_not_seen_for_unknown_domain():
 
 async def test_virustotal_domain_lookup_raises_in_non_mock_mode(monkeypatch):
     monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "false")
-    with pytest.raises(NotImplementedError, match="Sprint 2"):
+    with pytest.raises(NotImplementedError, match="live egress is not approved"):
         await VirusTotalDomainLookupNode().run(
             VirusTotalDomainLookupInput(domain="example.com"),
             _ctx(),
@@ -145,7 +153,7 @@ async def test_virustotal_hash_lookup_returns_not_seen_for_unknown_hash():
 
 async def test_virustotal_hash_lookup_raises_in_non_mock_mode(monkeypatch):
     monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "false")
-    with pytest.raises(NotImplementedError, match="Sprint 2"):
+    with pytest.raises(NotImplementedError, match="live egress is not approved"):
         await VirusTotalHashLookupNode().run(
             VirusTotalHashLookupInput(hash="0" * 64),
             _ctx(),

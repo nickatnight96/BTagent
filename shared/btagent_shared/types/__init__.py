@@ -20,6 +20,18 @@ from btagent_shared.types.connector import (
     StreamCapability,
     TransportKind,
 )
+from btagent_shared.types.connector_routing import (
+    AuthStyle,
+    HTTPMethod,
+    PaginationSpec,
+    PaginationStyle,
+    ParamLocation,
+    RequestParam,
+    ResponseMapping,
+    RetryPolicy,
+    RoutingAuth,
+    RoutingSpec,
+)
 from btagent_shared.types.correlation import (
     AuditEntry,
     CorrelationTimeline,
@@ -235,6 +247,17 @@ __all__ = [
     "QueryCapability",
     "StreamCapability",
     "TransportKind",
+    # Declarative connector routing (#101)
+    "AuthStyle",
+    "HTTPMethod",
+    "PaginationSpec",
+    "PaginationStyle",
+    "ParamLocation",
+    "RequestParam",
+    "ResponseMapping",
+    "RetryPolicy",
+    "RoutingAuth",
+    "RoutingSpec",
     # Correlation types (UC-1.2)
     "AuditEntry",
     "CorrelationTimeline",
