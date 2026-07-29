@@ -19,8 +19,8 @@ what it ran before this table existed.
 
 Fully reversible.
 
-Revision ID: 0062_org_hunt_packs
-Revises: 0060_memory_embedding
+Revision ID: 0064_org_hunt_packs
+Revises: 0063_behavioral_vector
 Create Date: 2026-07-29
 """
 
@@ -29,8 +29,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0062_org_hunt_packs"
-down_revision: str | None = "0060_memory_embedding"
+revision: str = "0064_org_hunt_packs"
+down_revision: str | None = "0063_behavioral_vector"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
