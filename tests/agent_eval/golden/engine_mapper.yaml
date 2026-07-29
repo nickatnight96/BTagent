@@ -1,0 +1,70 @@
+# Golden dataset — engine MitreMapperNode evaluation (#382 / #498).
+#
+# The engine mapper exists BECAUSE of word-boundary matching: the agents-side
+# substring matcher shipped "lateral" matching "collateral". Its keyword table
+# now lives in engine/btagent_engine/data/mitre_techniques.yaml (#498), which
+# a security team can edit freely — this eval is the aggregate-quality gate on
+# those edits: recall over realistic alerts, and zero tolerance for boundary
+# regressions on the trap corpus.
+
+positive:
+  - id: powershell_office_spawn
+    text: >
+      Suspicious powershell.exe process spawned by winword.exe with an
+      encoded command line.
+    expected: ["T1059.001"]
+
+  - id: cmd_shell
+    text: >
+      Interactive cmd.exe launched by the web server service account.
+    expected: ["T1059.003"]
+
+  - id: lateral_rdp
+    text: >
+      Lateral movement suspected: RDP session from a workstation to three
+      servers within five minutes.
+    expected: ["T1021", "T1021.001"]
+
+  - id: spray
+    text: >
+      Password spray pattern against the VPN portal followed by brute force
+      on the admin account.
+    expected: ["T1110"]
+
+  - id: ransomware_note
+    text: >
+      Mass file encryption in progress; ransomware note dropped on every
+      share.
+    expected: ["T1486"]
+
+  - id: beacon_http
+    text: >
+      Periodic http beacon to a newly registered domain observed at the
+      proxy.
+    expected: ["T1071.001"]
+
+  - id: spearphish_attachment
+    text: >
+      User opened a spearphishing attachment; macro executed.
+    expected: ["T1566.001"]
+
+  - id: mimikatz_dump
+    text: >
+      Mimikatz signature detected; lsass dump written to temp.
+    expected: ["T1003"]
+
+  - id: schtasks_persistence
+    text: >
+      Persistence via schtasks: scheduled task created to relaunch the
+      implant at logon.
+    expected: ["T1053.005"]
+
+# Word-boundary traps: substrings of real keywords inside innocent words.
+# ANY hit here is a regression of the mapper's core property.
+boundary_traps:
+  - id: collateral
+    text: The report discusses collateral damage estimates for the exercise.
+  - id: manuscript
+    text: The manuscript describes remote-desktop-era protocols historically.
+  - id: pwsh_inside_word
+    text: The tool "superpwshell" is an internal brand name, not a shell.
