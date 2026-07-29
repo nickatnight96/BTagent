@@ -137,6 +137,11 @@ const DetectionValidationPage = lazy(() =>
     default: m.DetectionValidationPage,
   })),
 );
+const CoverageConsolePage = lazy(() =>
+  import("@/components/coverage-console/CoverageConsolePage").then((m) => ({
+    default: m.CoverageConsolePage,
+  })),
+);
 const DetectionProposalsPage = lazy(() =>
   import("@/components/detection/DetectionProposalsPage").then((m) => ({
     default: m.DetectionProposalsPage,
@@ -307,6 +312,10 @@ export const router = createBrowserRouter([
       {
         path: "identity-hunts",
         element: lazyRoute(IdentityHuntsPage),
+      },
+      {
+        path: "coverage",
+        element: lazyRoute(CoverageConsolePage),
       },
       {
         path: "detection-validation",
