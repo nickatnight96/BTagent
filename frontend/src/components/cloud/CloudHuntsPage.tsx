@@ -47,6 +47,14 @@ import {
 } from "@/stores/cloudStore";
 import { useAuthStore } from "@/stores/authStore";
 import { UserRole } from "@/types/config";
+import {
+  acceptCloudContainmentProposal,
+  getCloudContainmentProposal,
+  rejectCloudContainmentProposal,
+} from "@/api/cloud";
+import { ApiError } from "@/api/client";
+import { CloudContainmentModal } from "./CloudContainmentModal";
+import type { CloudContainmentProposal } from "@/types/cloud_hunt";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
@@ -78,6 +86,12 @@ function useCanTriage(): boolean {
     role === UserRole.INCIDENT_COMMANDER ||
     role === UserRole.ADMIN
   );
+}
+
+/** containment:execute — accepting a containment proposal IS executing. */
+function useCanExecuteContainment(): boolean {
+  const role = useAuthStore((s) => s.user?.role);
+  return role === UserRole.INCIDENT_COMMANDER || role === UserRole.ADMIN;
 }
 
 function useCanPromote(): boolean {
@@ -833,6 +847,15 @@ export function CloudHuntsPage() {
   } = useCloudStore();
 
   const [promoteTargetId, setPromoteTargetId] = useState<string | null>(null);
+  const canExecuteContainment = useCanExecuteContainment();
+  // #117 Phase C: the containment proposal an IAM/STS promotion attached,
+  // shown BEFORE navigating so the HITL decision isn't lost to the redirect.
+  const [containment, setContainment] = useState<{
+    investigationId: string;
+    proposal: CloudContainmentProposal;
+  } | null>(null);
+  const [containmentMutating, setContainmentMutating] = useState(false);
+  const [containmentError, setContainmentError] = useState<string | null>(null);
 
   // Initial load.
   useEffect(() => {
@@ -864,10 +887,78 @@ export function CloudHuntsPage() {
     async (findingId: string) => {
       const investigationId = await promote([findingId]);
       setPromoteTargetId(null);
+      // IAM/STS promotions carry an inert containment proposal (#117 Phase C);
+      // 404 simply means this finding class attaches none — navigate on.
+      try {
+        const proposal = await getCloudContainmentProposal(investigationId);
+        setContainmentError(null);
+        setContainment({ investigationId, proposal });
+        return;
+      } catch {
+        // No proposal (or transient read failure): never block the promote.
+      }
       navigate(`/investigations/${investigationId}`);
     },
     [promote, navigate],
   );
+
+  const containmentErrMessage = (e: unknown): string => {
+    if (e instanceof ApiError) {
+      const detail = (e.body as { detail?: unknown } | null)?.detail;
+      if (typeof detail === "string" && detail) return detail;
+      if (detail !== undefined) return JSON.stringify(detail);
+    }
+    return "Containment decision failed.";
+  };
+
+  const handleContainmentAccept = useCallback(
+    async (actionIds: string[], rationale: string) => {
+      if (!containment) return;
+      setContainmentMutating(true);
+      setContainmentError(null);
+      try {
+        const proposal = await acceptCloudContainmentProposal(containment.investigationId, {
+          approved: true,
+          rationale,
+          action_ids: actionIds,
+        });
+        setContainment({ investigationId: containment.investigationId, proposal });
+      } catch (e) {
+        // A fully-denied accept returns 403 with the per-action denials; the
+        // proposal stays decidable, so surface the reason and keep the modal.
+        setContainmentError(containmentErrMessage(e));
+      } finally {
+        setContainmentMutating(false);
+      }
+    },
+    [containment],
+  );
+
+  const handleContainmentReject = useCallback(
+    async (rationale: string) => {
+      if (!containment) return;
+      setContainmentMutating(true);
+      setContainmentError(null);
+      try {
+        const proposal = await rejectCloudContainmentProposal(containment.investigationId, {
+          rationale,
+        });
+        setContainment({ investigationId: containment.investigationId, proposal });
+      } catch (e) {
+        setContainmentError(containmentErrMessage(e));
+      } finally {
+        setContainmentMutating(false);
+      }
+    },
+    [containment],
+  );
+
+  const handleContainmentDismiss = useCallback(() => {
+    if (!containment) return;
+    const target = containment.investigationId;
+    setContainment(null);
+    navigate(`/investigations/${target}`);
+  }, [containment, navigate]);
 
   return (
     <div className="flex flex-col h-full" data-testid="cloud-hunts-page">
@@ -972,6 +1063,19 @@ export function CloudHuntsPage() {
           <Pagination page={page} total={total} pageSize={pageSize} onPage={setPage} />
         </div>
       </div>
+
+      {/* ---- Cloud containment proposal (#117 Phase C) ---- */}
+      {containment && (
+        <CloudContainmentModal
+          proposal={containment.proposal}
+          canDecide={canExecuteContainment}
+          isMutating={containmentMutating}
+          error={containmentError}
+          onAccept={handleContainmentAccept}
+          onReject={handleContainmentReject}
+          onDismiss={handleContainmentDismiss}
+        />
+      )}
 
       {/* ---- Promote modal ---- */}
       {promoteTargetId && (

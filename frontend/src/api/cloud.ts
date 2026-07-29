@@ -96,3 +96,49 @@ export async function promoteCloudFindings(
 ): Promise<PromoteFindingsResponse> {
   return promoteFindings(findingIds, title);
 }
+
+// --------------------------------------------------------------------------- //
+// Cloud IAM containment proposal (#117 Phase C review UI)
+// --------------------------------------------------------------------------- //
+
+import type {
+  CloudContainmentDecisionRequest,
+  CloudContainmentProposal,
+} from "@/types/cloud_hunt";
+
+const CLOUD_BASE = "/cloud";
+
+/** Read the inert proposal attached to an investigation (404 when none). */
+export async function getCloudContainmentProposal(
+  investigationId: string,
+): Promise<CloudContainmentProposal> {
+  return api.get<CloudContainmentProposal>(
+    `${CLOUD_BASE}/investigations/${investigationId}/containment-proposal`,
+  );
+}
+
+/**
+ * Accept — routes the selected actions through the #106 containment execute
+ * path (containment:execute RBAC + explicit approved flag + safelist screen,
+ * all enforced server-side; this client adds no authority).
+ */
+export async function acceptCloudContainmentProposal(
+  investigationId: string,
+  body: CloudContainmentDecisionRequest,
+): Promise<CloudContainmentProposal> {
+  return api.post<CloudContainmentProposal>(
+    `${CLOUD_BASE}/investigations/${investigationId}/containment-proposal/accept`,
+    body,
+  );
+}
+
+/** Reject — records the decision + rationale; nothing dispatches. */
+export async function rejectCloudContainmentProposal(
+  investigationId: string,
+  body: CloudContainmentDecisionRequest,
+): Promise<CloudContainmentProposal> {
+  return api.post<CloudContainmentProposal>(
+    `${CLOUD_BASE}/investigations/${investigationId}/containment-proposal/reject`,
+    body,
+  );
+}

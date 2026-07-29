@@ -93,23 +93,12 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 #
 # * #105 / UC-2.1 — the *pull* half of "STIX/TAXII feeds" is backend-complete
 #   (config store, RBAC-gated CRUD, scheduled poll sweep) with no admin screen.
-# * #117 — the cloud IAM containment loop ships the backend only; reviewing an
-#   inert containment proposal is exactly a browser workflow.
 KNOWN_GAPS: dict[str, str] = {
     "GET /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
     "GET /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
     "POST /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
     "PATCH /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
     "DELETE /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "GET /cloud/investigations/{}/containment-proposal": (
-        "#117 cloud IAM containment proposal review UI not built yet"
-    ),
-    "POST /cloud/investigations/{}/containment-proposal/accept": (
-        "#117 containment accept is API-only pending the proposal review UI"
-    ),
-    "POST /cloud/investigations/{}/containment-proposal/reject": (
-        "#117 containment reject is API-only pending the proposal review UI"
-    ),
 }
 
 
