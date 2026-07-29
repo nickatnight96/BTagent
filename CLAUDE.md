@@ -47,7 +47,7 @@ make fmt        # ruff format
 - UAT: 52+ automated acceptance tests across Phase 1 (22) and Phase 2 (30+)
 - Security UAT: 15 dedicated security tests (prompt injection, RBAC, audit, TLP, JWT)
 - E2E: Playwright browser tests
-- Agent eval: DeepEval with golden datasets — planned, not implemented yet (#382). `tests/agent_eval/` does not exist; `make eval` and the CI `agent-eval` job are honest placeholders (exit 0, run nothing) until the suite lands.
+- Agent eval: `tests/agent_eval/` — golden-dataset evals of the deterministic agent components (MITRE keyword mapper, triage classifier, severity scorer) with aggregate-metric thresholds; runs via `make eval` and the CI `agent-eval` job, no LLM calls (#382 v1). Live-LLM evaluation (DeepEval on investigation transcripts) is the planned v2, behind an explicit opt-in.
 - Load: k6
 
 ## Agent Architecture
