@@ -262,15 +262,19 @@ attestation (Sigstore, in-toto, SLSA provenance) is implemented.
 | Scope enforcement on agent actions | `engine/btagent_engine/middleware/scope.py` |
 | Classification propagation | `engine/btagent_engine/middleware/classification.py` |
 | Mock-first connectors; live paths raise `NotImplementedError` | `agents/btagent_agents/mcp/servers/*`, `engine/btagent_engine/integrations/*` |
+| Declarative connectors: live egress needs `routing.live_egress_approved=true` **and** mocks off, else `NotImplementedError` | `engine/btagent_engine/integrations/_declarative.py` — `DeclarativeRunner._select_sender()` |
+| Credential scrubbing in declarative request/response logging | `engine/btagent_engine/integrations/_declarative.py` — `_Scrubber` |
 | Fail-safe LLM enablement (only literal `"false"` enables live) | `backend/btagent_backend/main.py` |
 | Deterministic mock LLM/embedding fallbacks | `engine/btagent_engine/integrations/llm_call.py`, `backend/btagent_backend/services/embedding_service.py` |
 
 **Cross-reference:** ISO/IEC 42001 A.6.2 (life cycle), A.7 (data), A.9.2 (responsible use) · NIST SI-10, AC-4
 
 **Limits.** Prompt-injection defence is input fencing plus scope and budget
-middleware; there is no model-side guarantee. Agent evaluation against golden
-datasets is **not implemented** (#382) — `tests/agent_eval/` does not exist and
-the CI `agent-eval` job is an honest placeholder that runs nothing.
+middleware; there is no model-side guarantee. Agent evaluation (`tests/agent_eval/`,
+CI job `agent-eval`) covers the **deterministic** components only — MITRE
+keyword mapper, triage classifier, severity scorer — against golden datasets
+with aggregate-metric thresholds, and makes no LLM calls (#382 v1). Evaluation
+of live-LLM behaviour on investigation transcripts is not implemented.
 
 ---
 
@@ -281,6 +285,7 @@ the CI `agent-eval` job is an honest placeholder that runs nothing.
 * No FIPS-validated cryptographic module claim.
 * No artifact signing / SLSA provenance.
 * No database-level row security or append-only audit storage.
-* No agent-evaluation suite (#382).
+* No evaluation of live-LLM agent behaviour (the existing eval suite is
+  deterministic-only — see §11).
 * No control implemented solely to satisfy a framework. Every row above
   predates this document; the document only maps what was already there.

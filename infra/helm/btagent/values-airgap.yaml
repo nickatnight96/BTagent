@@ -106,9 +106,14 @@ env:
   BTAGENT_MOCK_LLM: "true"
 
   # Embeddings — REQUIRED for RAG knowledge search and #482 semantic memory
-  # recall. BOTH keys must be set: the default embedding_model is an OpenAI
-  # model name, so setting only the provider hands an OpenAI model id to your
-  # local server and every embed call fails.
+  # recall. Two traps, both covered in air-gap.md §4.2/§4.3:
+  #  1. BTAGENT_MOCK_CONNECTORS=true short-circuits the embedding factory
+  #     BEFORE it reads the provider below, so with mocks on you get the
+  #     deterministic MockEmbeddingService — stable, and useless for
+  #     retrieval. These keys take effect only once mocks are off.
+  #  2. BOTH keys must be set: the default embedding_model is an OpenAI model
+  #     name, so setting only the provider hands an OpenAI model id to your
+  #     local server and every embed call fails.
   BTAGENT_EMBEDDING_PROVIDER: ollama
   BTAGENT_EMBEDDING_MODEL: nomic-embed-text
   # REPLACE with the in-enclave model server URL.

@@ -172,6 +172,33 @@ The stock chart's ingress annotations request an ACME cluster issuer, which
 cannot work without egress. `values-airgap.yaml` drops it; terminate TLS with a
 certificate issued by the enclave CA and pre-create the referenced secret.
 
+### 3.3 What changes when you enable live connectors
+
+`BTAGENT_MOCK_CONNECTORS=true` is the shipped posture and the one the
+zero-egress test verifies. Setting it to `false` is a deliberate step, taken
+only after every connector you intend to use is bound to a system **inside**
+the enclave. What changes:
+
+* **Programmatic connectors** (`agents/btagent_agents/mcp/servers/*`, most of
+  `engine/btagent_engine/integrations/*`) raise `NotImplementedError` on their
+  live paths. They fail loudly rather than silently returning fixtures — so a
+  half-migrated install is obvious, not subtly wrong.
+* **Declarative connectors** (`engine/btagent_engine/integrations/_declarative.py`)
+  add a second gate: with mocks off, a capability whose routing spec has
+  `live_egress_approved=false` still raises `NotImplementedError`.
+  `DeclarativeRunner._select_sender()` is the single place that decides, so
+  there is one thing to audit rather than one per connector.
+* **Manifest policy still applies.** `ConnectorPolicyMiddleware`
+  (`engine/btagent_engine/middleware/connector_policy.py`) enforces the
+  capability's declared `tlp_egress` ceiling and `hitl_required` flag before
+  dispatch, for declarative and programmatic capabilities alike.
+* **Embeddings change too.** `mock_connectors=True` short-circuits the
+  embedding factory *before* it looks at `embedding_provider` — so turning
+  mocks off is also what makes your configured local embedding model take
+  effect. Read §4.2 before you do it.
+* **Re-run the verification checklist** (§7). The zero-egress test asserts the
+  *default* posture; it does not certify yours.
+
 ---
 
 ## 4. Local models — LLM and embeddings

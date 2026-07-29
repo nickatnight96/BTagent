@@ -148,6 +148,8 @@ Backend: `http://localhost:8000` | Frontend: `http://localhost:3000` | API docs:
 | [API Reference](docs/API.md) | REST, WebSocket, and webhook endpoint reference |
 | [Deployment](docs/DEPLOYMENT.md) | Docker Compose, Kubernetes, and AWS deployment |
 | [Deployment Plan](docs/DEPLOYMENT_PLAN.md) | Production deploy blockers, readiness, and roadmap sequencing |
+| [Air-Gapped Deployment](docs/deployment/air-gap.md) | Offline install: bundle-and-transfer, digest pinning, local models, offline ATT&CK refresh |
+| [Controls Mapping](docs/compliance/controls-mapping.md) | Implemented controls cross-referenced to NIST 800-53 / ISO/IEC 42001, with code citations |
 | [SIEM Setup](docs/SIEM_SETUP.md) | Splunk, CrowdStrike, Sentinel, and Elastic connector guides |
 | [Playbook Schema](docs/PLAYBOOK_SCHEMA.md) | SOAR playbook YAML reference |
 | [Knowledge Base](docs/KNOWLEDGE_BASE.md) | RAG pipeline architecture and configuration |
