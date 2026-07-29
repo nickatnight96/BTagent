@@ -607,8 +607,7 @@ def test_finding_request_carries_pivot_questions() -> None:
     assert results
     req = to_record_finding_request(results[0])
     assert (
-        req.evidence["pivot_questions"]
-        == IDENTITY_PIVOT_QUESTIONS["identity.oauth_token_replay"]
+        req.evidence["pivot_questions"] == IDENTITY_PIVOT_QUESTIONS["identity.oauth_token_replay"]
     )
 
 
@@ -632,8 +631,13 @@ def test_pack_manifests_carry_pivot_questions() -> None:
         / "pack.yaml"
     )
     engine_pack = (
-        agents_pack.parents[6] / "engine" / "btagent_engine" / "hunting" / "packs"
-        / "identity" / "pack.yaml"
+        agents_pack.parents[6]
+        / "engine"
+        / "btagent_engine"
+        / "hunting"
+        / "packs"
+        / "identity"
+        / "pack.yaml"
     )
     covered: list[set[str]] = []
     for manifest in (agents_pack, engine_pack):
