@@ -104,6 +104,12 @@ PERMISSIONS: dict[str, UserRole] = {
     # Hunt package + correlation workbench (UC-1.2 / UC-2.2): read-only
     # engine-backed pivots and advisory triage — analysts run these directly.
     "hunt:run": UserRole.ANALYST,
+    # Per-org hunt-pack install/enable store (#112). Enabling or disabling a
+    # pack changes what the scheduled runner hunts for the WHOLE tenant — a
+    # detection-posture decision with the same blast radius as suppressing a
+    # rule, so it carries the same senior_analyst gate as ``hunt:suppress``.
+    # Viewing the catalog stays ``hunt:view``.
+    "huntpack:manage": UserRole.SENIOR_ANALYST,
     # Alert triage (EPIC-3 UC-3.1): read-only auto-classification of an
     # alert into a reviewed case. Tier 1-2 analysts run it directly; the
     # node executes nothing, so this is a plain analyst capability.

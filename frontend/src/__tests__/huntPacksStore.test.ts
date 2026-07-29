@@ -4,13 +4,19 @@
  * exercised with mocked API calls — mirrors patternStore/cloudStore tests.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { HuntPackRun, HuntPackRunRuleStat, NoiseBaseline } from "@/types/hunt";
+import type {
+  HuntPackCatalogEntry,
+  HuntPackRun,
+  HuntPackRunRuleStat,
+  NoiseBaseline,
+} from "@/types/hunt";
 import {
   buildInstalledPacks,
   build30dHitVolume,
   classifyRuleState,
   groupRunsByPack,
   indexBaseline,
+  indexCatalog,
   HIT_VOLUME_DAYS,
 } from "@/stores/huntPacksStore";
 
@@ -44,6 +50,24 @@ function run(overrides: Partial<HuntPackRun> & { id: string }): HuntPackRun {
 
 function baseline(items: NoiseBaseline["items"]): NoiseBaseline {
   return { items, runs_analyzed: items.length, min_runs: 3, hit_rate_threshold: 0.8 };
+}
+
+function catalogEntry(
+  overrides: Partial<HuntPackCatalogEntry> & { pack_id: string; manifest_pack_id: string },
+): HuntPackCatalogEntry {
+  return {
+    name: "Windows Baseline",
+    version: "1.0.0",
+    description: "",
+    rule_count: 4,
+    enabled: true,
+    installed: false,
+    default_enabled: true,
+    installed_at: null,
+    updated_at: null,
+    updated_by: null,
+    ...overrides,
+  };
 }
 
 function noisyRule(pack_id: string, rule_id: string) {
@@ -214,6 +238,61 @@ describe("buildInstalledPacks", () => {
     );
     expect(packs.map((p) => p.pack_name)).toEqual(["Alpha", "Zeta"]);
   });
+
+  it("joins the pack catalog on manifest_pack_id for the enable switch", () => {
+    const packs = buildInstalledPacks(
+      [run({ id: "a", pack_id: "hpack_win", rule_stats: {} })],
+      null,
+      [
+        catalogEntry({
+          pack_id: "windows_baseline",
+          manifest_pack_id: "hpack_win",
+          enabled: false,
+        }),
+      ],
+    );
+    expect(packs).toHaveLength(1);
+    expect(packs[0]!.install_key).toBe("windows_baseline");
+    expect(packs[0]!.enabled).toBe(false);
+  });
+
+  it("lists a shipped pack that has never run so it can be enabled", () => {
+    const packs = buildInstalledPacks([], null, [
+      catalogEntry({
+        pack_id: "identity",
+        manifest_pack_id: "hpack_identity",
+        name: "Identity Hunt Pack",
+        enabled: false,
+        default_enabled: false,
+        rule_count: 11,
+      }),
+    ]);
+    expect(packs.map((p) => p.pack_name)).toEqual(["Identity Hunt Pack"]);
+    expect(packs[0]!.run_count).toBe(0);
+    expect(packs[0]!.last_run).toBeNull();
+    expect(packs[0]!.rule_count).toBe(11);
+    expect(packs[0]!.enabled).toBe(false);
+  });
+
+  it("leaves a pack with history but no catalog entry untoggleable", () => {
+    const packs = buildInstalledPacks(
+      [run({ id: "a", pack_id: "cti-merged-x", pack_name: "CTI merged", rule_stats: {} })],
+      null,
+      [],
+    );
+    expect(packs[0]!.install_key).toBeNull();
+    expect(packs[0]!.enabled).toBe(true);
+  });
+});
+
+describe("indexCatalog", () => {
+  it("keys entries by the manifest id the run history carries", () => {
+    const idx = indexCatalog([
+      catalogEntry({ pack_id: "identity", manifest_pack_id: "hpack_identity" }),
+    ]);
+    expect(idx.get("hpack_identity")!.pack_id).toBe("identity");
+    expect(idx.get("identity")).toBeUndefined();
+  });
 });
 
 // --------------------------------------------------------------------------- //
@@ -222,38 +301,52 @@ describe("buildInstalledPacks", () => {
 
 const mockListPackRuns = vi.fn();
 const mockGetNoiseBaseline = vi.fn();
+const mockListHuntPacks = vi.fn();
+const mockSetHuntPackEnabled = vi.fn();
 
 vi.mock("@/api/hunt", () => ({
   listPackRuns: (...a: unknown[]) => mockListPackRuns(...a),
   getNoiseBaseline: (...a: unknown[]) => mockGetNoiseBaseline(...a),
+  listHuntPacks: (...a: unknown[]) => mockListHuntPacks(...a),
+  setHuntPackEnabled: (...a: unknown[]) => mockSetHuntPackEnabled(...a),
 }));
 
 import { useHuntPacksStore } from "@/stores/huntPacksStore";
 
+const CATALOG = catalogEntry({ pack_id: "windows_baseline", manifest_pack_id: "hpack_win" });
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockListHuntPacks.mockResolvedValue({ items: [], total: 0, default_packs: [] });
   useHuntPacksStore.setState({
     runs: [],
     baseline: null,
-    disabledPackIds: [],
+    catalog: [],
     selectedPackId: null,
     selectedRuleId: null,
+    togglingPackId: null,
     isLoading: false,
     error: null,
   });
 });
 
 describe("useHuntPacksStore.fetchAll", () => {
-  it("populates runs and baseline from the API", async () => {
+  it("populates runs, baseline and the pack catalog from the API", async () => {
     const items = [run({ id: "x" })];
     mockListPackRuns.mockResolvedValueOnce({ items, total: 1 });
     mockGetNoiseBaseline.mockResolvedValueOnce(baseline([noisyRule("hpack_win", "ruleA")]));
+    mockListHuntPacks.mockResolvedValueOnce({
+      items: [CATALOG],
+      total: 1,
+      default_packs: ["windows_baseline"],
+    });
 
     await useHuntPacksStore.getState().fetchAll();
 
-    const { runs, baseline: bl, isLoading, error } = useHuntPacksStore.getState();
+    const { runs, baseline: bl, catalog, isLoading, error } = useHuntPacksStore.getState();
     expect(runs).toEqual(items);
     expect(bl!.items).toHaveLength(1);
+    expect(catalog).toEqual([CATALOG]);
     expect(isLoading).toBe(false);
     expect(error).toBeNull();
   });
@@ -270,6 +363,19 @@ describe("useHuntPacksStore.fetchAll", () => {
     expect(state.error).toBeNull();
   });
 
+  it("tolerates a pack-catalog failure without blanking the page", async () => {
+    mockListPackRuns.mockResolvedValueOnce({ items: [run({ id: "x" })], total: 1 });
+    mockGetNoiseBaseline.mockResolvedValueOnce(baseline([]));
+    mockListHuntPacks.mockRejectedValueOnce(new Error("catalog down"));
+
+    await useHuntPacksStore.getState().fetchAll();
+
+    const state = useHuntPacksStore.getState();
+    expect(state.runs).toHaveLength(1);
+    expect(state.catalog).toEqual([]);
+    expect(state.error).toBeNull();
+  });
+
   it("sets error state when pack-runs fails", async () => {
     mockListPackRuns.mockRejectedValueOnce(new Error("boom"));
     mockGetNoiseBaseline.mockResolvedValueOnce(baseline([]));
@@ -282,11 +388,35 @@ describe("useHuntPacksStore.fetchAll", () => {
 });
 
 describe("useHuntPacksStore.togglePackEnabled", () => {
-  it("adds then removes a pack from the disabled set", () => {
-    useHuntPacksStore.getState().togglePackEnabled("hpack_win");
-    expect(useHuntPacksStore.getState().disabledPackIds).toContain("hpack_win");
-    useHuntPacksStore.getState().togglePackEnabled("hpack_win");
-    expect(useHuntPacksStore.getState().disabledPackIds).not.toContain("hpack_win");
+  it("persists the new state and splices the server's answer in", async () => {
+    useHuntPacksStore.setState({ catalog: [CATALOG] });
+    mockSetHuntPackEnabled.mockResolvedValueOnce({ ...CATALOG, enabled: false, installed: true });
+
+    await useHuntPacksStore.getState().togglePackEnabled("windows_baseline", false);
+
+    expect(mockSetHuntPackEnabled).toHaveBeenCalledWith("windows_baseline", false);
+    const state = useHuntPacksStore.getState();
+    expect(state.catalog[0]!.enabled).toBe(false);
+    expect(state.catalog[0]!.installed).toBe(true);
+    expect(state.togglingPackId).toBeNull();
+    expect(state.error).toBeNull();
+  });
+
+  it("surfaces a failure (e.g. RBAC 403) instead of flipping local state", async () => {
+    useHuntPacksStore.setState({ catalog: [CATALOG] });
+    mockSetHuntPackEnabled.mockRejectedValueOnce(new Error("forbidden"));
+
+    await useHuntPacksStore.getState().togglePackEnabled("windows_baseline", false);
+
+    const state = useHuntPacksStore.getState();
+    expect(state.catalog[0]!.enabled).toBe(true); // unchanged
+    expect(state.error).toBeTruthy();
+    expect(state.togglingPackId).toBeNull();
+  });
+
+  it("ignores a pack with no install key (not in the scheduled catalog)", async () => {
+    await useHuntPacksStore.getState().togglePackEnabled(null, false);
+    expect(mockSetHuntPackEnabled).not.toHaveBeenCalled();
   });
 });
 
