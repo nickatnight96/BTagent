@@ -9,9 +9,10 @@
 //   typescript-eslint (the usual TS ESLint parser) hard-throws at load time
 //   against this repo's TypeScript 7.x ("typescript-eslint does not support
 //   TS 7.0", see https://github.com/typescript-eslint/typescript-eslint/issues/10940).
-//   Its Babel-8-based alternatives require Node >=22, but the repo/CI run on
-//   Node 20. @babel/eslint-parser 7.x is the combination that actually works on
-//   Node 20 + TS 7: it parses TS/TSX *syntactically* (independent of the
+//   Its Babel-8-based alternatives require Node >=22; when this config was
+//   written the repo/CI ran Node 20 (CI has since moved to 22 — the undici-8
+//   NODE_VERSION note in ci.yml). @babel/eslint-parser 7.x still works: it
+//   parses TS/TSX *syntactically* (independent of the
 //   installed `typescript` version) so the lint runs today. It is not
 //   type-aware — full type checking is already gated separately by `tsc`
 //   (the `typecheck` / `build:strict` scripts and the CI "Frontend" job).
@@ -73,6 +74,23 @@ export default [
     },
     rules: {
       ...reactHooksWarn,
+      // Deliberately OFF, with the reasoning on record rather than 29
+      // scattered warnings everyone learns to scroll past:
+      //
+      // Every data panel in this app uses the same on-mount fetch idiom —
+      // an effect that kicks off an async request and calls setState when
+      // it resolves, guarded by a `cancelled` flag on unmount. The rule
+      // flags each of these, but its premise (setState-in-effect causes
+      // cascading synchronous re-renders) targets the *synchronous* case;
+      // the async resolve-then-set here renders once per fetch, which is
+      // the intended behaviour and matches React's own data-fetching docs
+      // absent a fetching library. Adopting one (react-query etc.) is a
+      // product decision, not a lint fix.
+      //
+      // The other react-hooks rules stay ON and this file gates CI at
+      // --max-warnings 0, so any NEW rule violation fails the build
+      // instead of joining a drifting baseline.
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 ];

@@ -42,7 +42,12 @@ export function useLiveEventRefresh(
   // Stable membership check without re-subscribing when the caller passes a
   // fresh array literal each render.
   const typesRef = useRef<ReadonlySet<EventType>>(new Set(eventTypes));
-  typesRef.current = new Set(eventTypes);
+  // Updated in an effect, not during render (react-hooks/refs): the
+  // subscription handler reads the ref at event time, so an after-commit
+  // update is exactly as fresh, without the render-phase write.
+  useEffect(() => {
+    typesRef.current = new Set(eventTypes);
+  });
 
   useEffect(() => {
     let pollTimer: ReturnType<typeof setInterval> | null = null;

@@ -25,7 +25,7 @@ import { IOCDetailPanel } from "./IOCDetailPanel";
 import { IOCImportModal } from "./IOCImportModal";
 import { IOCExportDialog } from "./IOCExportDialog";
 import { NotebookSearchPanel } from "./NotebookSearchPanel";
-import type { IOC, IOCType, IOCSortField, EnrichmentStatus } from "@/types/ioc";
+import type { IOC, IOCType, IOCSortField, IOCSortConfig, EnrichmentStatus } from "@/types/ioc";
 
 /**
  * Pinned-first stable reorder (UC-5.2): pinned IOCs surface at the top of
@@ -158,6 +158,44 @@ function EnrichmentIcon({ status }: { status: EnrichmentStatus }) {
   }
 }
 
+/**
+ * Sortable column header. Module-level (not nested in IOCNotebook) so React
+ * keeps a stable component identity across renders — nested definitions
+ * remount on every parent render, which resets focus and defeats
+ * reconciliation (react-hooks/static-components).
+ */
+function SortHeader({
+  field,
+  sort,
+  onSort,
+  children,
+}: {
+  field: IOCSortField;
+  sort: IOCSortConfig;
+  onSort: (field: IOCSortField) => void;
+  children: React.ReactNode;
+}) {
+  const active = sort.field === field;
+  return (
+    <button
+      className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground uppercase tracking-wide transition-colors"
+      onClick={() => onSort(field)}
+      data-testid={`ioc-notebook-sort-${field}-button`}
+    >
+      {children}
+      {active ? (
+        sort.direction === "asc" ? (
+          <ArrowUp className="w-3 h-3" aria-hidden="true" />
+        ) : (
+          <ArrowDown className="w-3 h-3" aria-hidden="true" />
+        )
+      ) : (
+        <ArrowUpDown className="w-3 h-3 opacity-40" aria-hidden="true" />
+      )}
+    </button>
+  );
+}
+
 export function IOCNotebook() {
   const {
     iocs,
@@ -248,34 +286,6 @@ export function IOCNotebook() {
   // UC-5.2: pinned IOCs always surface at the top of the current page,
   // whatever the server-side sort.
   const displayIOCs = useMemo(() => pinnedFirst(iocs), [iocs]);
-
-  function SortHeader({
-    field,
-    children,
-  }: {
-    field: IOCSortField;
-    children: React.ReactNode;
-  }) {
-    const active = sort.field === field;
-    return (
-      <button
-        className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground uppercase tracking-wide transition-colors"
-        onClick={() => handleSort(field)}
-        data-testid={`ioc-notebook-sort-${field}-button`}
-      >
-        {children}
-        {active ? (
-          sort.direction === "asc" ? (
-            <ArrowUp className="w-3 h-3" aria-hidden="true" />
-          ) : (
-            <ArrowDown className="w-3 h-3" aria-hidden="true" />
-          )
-        ) : (
-          <ArrowUpDown className="w-3 h-3 opacity-40" aria-hidden="true" />
-        )}
-      </button>
-    );
-  }
 
   return (
     <>
@@ -585,7 +595,7 @@ export function IOCNotebook() {
                         : "none"
                     }
                   >
-                    <SortHeader field="type">Type</SortHeader>
+                    <SortHeader sort={sort} onSort={handleSort} field="type">Type</SortHeader>
                   </th>
                   <th
                     className="px-3 py-3 text-left"
@@ -597,7 +607,7 @@ export function IOCNotebook() {
                         : "none"
                     }
                   >
-                    <SortHeader field="value">Value</SortHeader>
+                    <SortHeader sort={sort} onSort={handleSort} field="value">Value</SortHeader>
                   </th>
                   <th
                     className="px-3 py-3 text-left"
@@ -609,7 +619,7 @@ export function IOCNotebook() {
                         : "none"
                     }
                   >
-                    <SortHeader field="confidence">Confidence</SortHeader>
+                    <SortHeader sort={sort} onSort={handleSort} field="confidence">Confidence</SortHeader>
                   </th>
                   <th
                     className="px-3 py-3 text-left"
@@ -621,7 +631,7 @@ export function IOCNotebook() {
                         : "none"
                     }
                   >
-                    <SortHeader field="source">Source</SortHeader>
+                    <SortHeader sort={sort} onSort={handleSort} field="source">Source</SortHeader>
                   </th>
                   <th
                     className="px-3 py-3 text-left"
@@ -633,7 +643,7 @@ export function IOCNotebook() {
                         : "none"
                     }
                   >
-                    <SortHeader field="enrichment_status">
+                    <SortHeader sort={sort} onSort={handleSort} field="enrichment_status">
                       Enriched
                     </SortHeader>
                   </th>
@@ -652,7 +662,7 @@ export function IOCNotebook() {
                         : "none"
                     }
                   >
-                    <SortHeader field="first_seen">First Seen</SortHeader>
+                    <SortHeader sort={sort} onSort={handleSort} field="first_seen">First Seen</SortHeader>
                   </th>
                 </tr>
               </thead>
