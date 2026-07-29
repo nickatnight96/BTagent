@@ -32,6 +32,9 @@ const MitreMatrix = lazy(() =>
 const KnowledgePage = lazy(() =>
   import("@/components/knowledge/KnowledgePage").then((m) => ({ default: m.KnowledgePage })),
 );
+const AgentMemoryPage = lazy(() =>
+  import("@/components/memory/AgentMemoryPage").then((m) => ({ default: m.AgentMemoryPage })),
+);
 const HuntTriagePage = lazy(() =>
   import("@/components/hunt/HuntTriagePage").then((m) => ({ default: m.HuntTriagePage })),
 );
@@ -204,6 +207,10 @@ export const router = createBrowserRouter([
       {
         path: "knowledge",
         element: lazyRoute(KnowledgePage),
+      },
+      {
+        path: "memory",
+        element: lazyRoute(AgentMemoryPage),
       },
       {
         path: "hunt",

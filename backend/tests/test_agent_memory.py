@@ -17,10 +17,16 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from btagent_shared.types.config import TLP
-from btagent_shared.types.enums import InvestigationStatus, Severity
+from btagent_shared.types.enums import AuditCategory, InvestigationStatus, Severity
 from btagent_shared.utils.ids import generate_id
+from sqlalchemy import select
 
-from btagent_backend.db.models import InvestigationRow, OrganizationRow
+from btagent_backend.db.models import (
+    DEFAULT_ORG_ID,
+    AuditLogRow,
+    InvestigationRow,
+    OrganizationRow,
+)
 from btagent_backend.db.models_memory import AgentMemoryRow
 from btagent_backend.services.memory_service import (
     MemoryService,
@@ -378,3 +384,206 @@ async def test_api_record_rejects_unknown_kind(client, admin_token):
         json={"kind": "nonsense", "subject": "x", "content": "y"},
     )
     assert resp.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# FORGET — soft delete (#482 follow-up)
+# --------------------------------------------------------------------------- #
+
+
+async def _seed_memory(db_session, org_id: str, *, subject: str, tlp: str = "green") -> str:
+    """Commit one live memory row directly and return its id."""
+    row = AgentMemoryRow(
+        id=generate_id("mem"),
+        org_id=org_id,
+        kind="entity_note",
+        subject=subject,
+        content="A fact worth forgetting.",
+        source="analyst",
+        tlp_level=tlp,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    db_session.add(row)
+    await db_session.commit()
+    return row.id
+
+
+async def _get_memory(db_session, memory_id: str) -> AgentMemoryRow | None:
+    """Re-read a row from the DB, bypassing the session's identity map."""
+    db_session.expire_all()
+    return (
+        await db_session.execute(select(AgentMemoryRow).where(AgentMemoryRow.id == memory_id))
+    ).scalar_one_or_none()
+
+
+async def test_forget_is_a_soft_delete_that_drops_out_of_recall(
+    client, admin_token, analyst_token, db_session
+):
+    """The row leaves recall but stays on the table — auditable, not destroyed."""
+    subject = f"forget-host-{generate_id('mem')}"
+    created = await client.post(
+        "/api/v1/memory",
+        headers=auth_header(admin_token),
+        json={"kind": "entity_note", "subject": subject, "content": "wrong fact"},
+    )
+    assert created.status_code == 201, created.text
+    mem_id = created.json()["id"]
+
+    resp = await client.delete(f"/api/v1/memory/{mem_id}", headers=auth_header(admin_token))
+    assert resp.status_code == 204, resp.text
+
+    # Gone from recall for every reader...
+    recalled = await client.get(
+        f"/api/v1/memory?subject={subject}", headers=auth_header(analyst_token)
+    )
+    assert recalled.status_code == 200
+    assert recalled.json()["total"] == 0
+
+    # ...but the row survives, stamped superseded_at (soft delete).
+    row = await _get_memory(db_session, mem_id)
+    assert row is not None, "forget must not destroy the row"
+    assert row.superseded_at is not None
+    assert row.content == "wrong fact"
+
+
+async def test_forget_is_idempotent_second_call_is_404(client, admin_token):
+    subject = f"forget-twice-{generate_id('mem')}"
+    created = await client.post(
+        "/api/v1/memory",
+        headers=auth_header(admin_token),
+        json={"kind": "learning", "subject": subject, "content": "x"},
+    )
+    mem_id = created.json()["id"]
+
+    first = await client.delete(f"/api/v1/memory/{mem_id}", headers=auth_header(admin_token))
+    assert first.status_code == 204
+    second = await client.delete(f"/api/v1/memory/{mem_id}", headers=auth_header(admin_token))
+    assert second.status_code == 404
+
+
+async def test_forget_unknown_id_is_404(client, admin_token):
+    resp = await client.delete(
+        "/api/v1/memory/mem_does_not_exist", headers=auth_header(admin_token)
+    )
+    assert resp.status_code == 404
+
+
+async def test_forget_of_another_orgs_memory_is_404_and_leaves_it_live(
+    client, admin_token, db_session, fresh_org
+):
+    """Cross-tenant delete is masked as 'not found' — no 403 existence leak."""
+    theirs = await _seed_memory(db_session, fresh_org, subject="their-host")
+
+    resp = await client.delete(f"/api/v1/memory/{theirs}", headers=auth_header(admin_token))
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Memory not found"
+
+    row = await _get_memory(db_session, theirs)
+    assert row is not None
+    assert row.superseded_at is None, "another tenant's memory must be untouched"
+
+
+async def test_forget_denied_for_analyst(client, admin_token, analyst_token, db_session):
+    """memory:write is senior_analyst+: removing a fact reshapes future recall."""
+    subject = f"rbac-host-{generate_id('mem')}"
+    created = await client.post(
+        "/api/v1/memory",
+        headers=auth_header(admin_token),
+        json={"kind": "entity_note", "subject": subject, "content": "still true"},
+    )
+    mem_id = created.json()["id"]
+
+    resp = await client.delete(f"/api/v1/memory/{mem_id}", headers=auth_header(analyst_token))
+    assert resp.status_code == 403
+
+    row = await _get_memory(db_session, mem_id)
+    assert row is not None and row.superseded_at is None
+
+
+async def test_forget_writes_an_audit_ledger_entry(client, admin_token, admin_user, db_session):
+    """Removing agent memory is a governance act — it lands on the hash chain."""
+    # Read the actor id up front: the ``expire_all()`` below would otherwise
+    # force a lazy (sync) refresh of this ORM object mid-assertion.
+    actor_id = admin_user.id
+    subject = f"audit-host-{generate_id('mem')}"
+    created = await client.post(
+        "/api/v1/memory",
+        headers=auth_header(admin_token),
+        json={
+            "kind": "decision",
+            "subject": subject,
+            "content": "closed as benign",
+            "source": "inv_abc",
+            "confidence": 0.4,
+        },
+    )
+    mem_id = created.json()["id"]
+
+    resp = await client.delete(f"/api/v1/memory/{mem_id}", headers=auth_header(admin_token))
+    assert resp.status_code == 204
+
+    db_session.expire_all()
+    entries = (
+        (
+            await db_session.execute(
+                select(AuditLogRow).where(AuditLogRow.resource == mem_id).order_by(AuditLogRow.seq)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.action == "memory_forgotten"
+    assert entry.category == AuditCategory.CONFIG_CHANGE.value
+    assert entry.actor == actor_id
+    assert entry.org_id == DEFAULT_ORG_ID
+    assert entry.details["subject"] == subject
+    assert entry.details["kind"] == "decision"
+    assert entry.details["source"] == "inv_abc"
+    assert entry.details["deletion"] == "soft"
+    # The forgotten CONTENT is deliberately not copied onto the ledger: the row
+    # survives the soft delete, and an audit reader is a wider audience than a
+    # memory reader.
+    assert "content" not in entry.details
+
+
+async def test_forget_service_refuses_memory_above_caller_clearance(db_session, fresh_org):
+    """TLP fail-closed on the delete path too — no existence oracle for RED."""
+    red_id = await _seed_memory(db_session, fresh_org, subject="red-host", tlp="red")
+
+    forgotten = await MemoryService().forget_memory(
+        db_session, fresh_org, red_id, caller_tlp=TLP.AMBER_STRICT
+    )
+    assert forgotten is None
+
+    row = await _get_memory(db_session, red_id)
+    assert row is not None and row.superseded_at is None
+
+
+async def test_re_recording_revives_a_forgotten_memory(client, admin_token, analyst_token):
+    """'I was wrong to forget that' — the upsert clears the soft-delete stamp."""
+    subject = f"revive-host-{generate_id('mem')}"
+    created = await client.post(
+        "/api/v1/memory",
+        headers=auth_header(admin_token),
+        json={"kind": "entity_note", "subject": subject, "content": "v1"},
+    )
+    mem_id = created.json()["id"]
+    forgotten = await client.delete(f"/api/v1/memory/{mem_id}", headers=auth_header(admin_token))
+    assert forgotten.status_code == 204
+
+    again = await client.post(
+        "/api/v1/memory",
+        headers=auth_header(admin_token),
+        json={"kind": "entity_note", "subject": subject, "content": "v2 - corrected"},
+    )
+    assert again.status_code == 201
+    assert again.json()["id"] == mem_id
+
+    recalled = await client.get(
+        f"/api/v1/memory?subject={subject}", headers=auth_header(analyst_token)
+    )
+    assert recalled.json()["total"] == 1
+    assert recalled.json()["items"][0]["content"] == "v2 - corrected"
