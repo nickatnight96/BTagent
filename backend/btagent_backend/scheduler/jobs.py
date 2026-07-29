@@ -72,6 +72,57 @@ async def memory_consolidation_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+async def taxii_feed_poll_sweep(ctx: dict[str, Any]) -> dict[str, int]:
+    """Poll every org's due TAXII 2.1 feeds and ingest their objects (#105).
+
+    The cron entry point for the pull half of UC-2.1 "STIX/TAXII feeds". For
+    each **enabled** feed whose own ``poll_interval_minutes`` has elapsed, the
+    service polls the collection since that feed's stored cursor, ingests the
+    returned STIX objects through the *existing* ``stix_service`` path (so TLP
+    is derived from each object's markings exactly as the bundle import does),
+    advances the cursor, and stamps the poll telemetry.
+
+    Multi-tenant, mirroring :func:`weekly_pattern_scan` /
+    :func:`memory_consolidation_sweep`: the service walks **every** org's feeds
+    — a single hard-coded ``DEFAULT_ORG_ID`` sweep would permanently exclude
+    every other tenant.
+
+    Best-effort per feed: a feed that raises is recorded on its own row
+    (``last_status='error'`` plus a scrubbed ``last_error``) and the sweep
+    continues, so one unreachable server cannot sink the tick.
+
+    Gate: ``taxii_poll_enabled``. Unlike the hunt schedulers this does not
+    derive from ``mock_connectors`` — the TAXII client's live path is fully
+    implemented, and the sweep is inert by construction when no feeds exist.
+
+    Thin shell: the single commit lives here; all decisions are in
+    :mod:`btagent_backend.services.taxii_poll_service`.
+    """
+    settings = get_settings()
+    if not settings.taxii_poll_enabled:
+        logger.warning("TAXII feed polling disabled: set BTAGENT_TAXII_POLL_ENABLED=true to enable")
+        return {
+            "feeds_considered": 0,
+            "feeds_polled": 0,
+            "feeds_skipped": 0,
+            "feeds_failed": 0,
+            "objects_fetched": 0,
+            "iocs_created": 0,
+        }
+
+    from btagent_backend.services import taxii_poll_service
+
+    async with async_session_factory() as session:
+        result = await taxii_poll_service.poll_due_feeds(
+            session, max_objects=settings.taxii_max_objects_per_poll
+        )
+        await session.commit()
+
+    counts = result.as_counts()
+    logger.info("taxii_feed_poll_sweep: %s", counts)
+    return counts
+
+
 async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
     """Run the enabled builtin hunt packs and land hits in the inbox (#112).
 

@@ -148,6 +148,14 @@ PERMISSIONS: dict[str, UserRole] = {
     # what credentials a connector resolves and so is admin-only.
     "credential:view": UserRole.SENIOR_ANALYST,
     "credential:manage": UserRole.ADMIN,
+    # TAXII 2.1 feed subscriptions (#105 / UC-2.1). Same posture as connector
+    # credentials, and for the same reason: a feed row exposes the
+    # ``${secret:...}`` reference string (never material), so reading it is a
+    # senior_analyst audit capability; creating/editing one points the poller
+    # at a new external server — i.e. it changes where the platform makes
+    # outbound calls and what lands in the IOC store — so writes are admin-only.
+    "taxii:view": UserRole.SENIOR_ANALYST,
+    "taxii:manage": UserRole.ADMIN,
     # Detection validation — adversary emulation (#118). Browsing/replaying the
     # deterministic simulation scenarios is a hunt-class analyst action
     # (``hunt:run`` / ``hunt:view``). TRIGGERING an adversary emulation (Atomic

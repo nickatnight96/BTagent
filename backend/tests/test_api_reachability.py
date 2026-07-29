@@ -83,14 +83,24 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
-# Was empty as of the Agent Memory UI (#482); the #117 cloud IAM containment
-# loop re-opens it with three named gaps. They are deliberately KNOWN_GAPS and
-# not NOT_BROWSER_CALLED: an analyst reviewing an inert containment proposal is
-# exactly a browser workflow, and this slice ships the backend loop only. A
-# hollow ``frontend/src/api`` client with no component behind it would silence
-# this check without making the capability reachable — which is the failure mode
-# this file exists to catch. The debt is named instead.
+# Was empty as of the Agent Memory UI (#482). Two slices re-open it, each
+# shipping a backend loop ahead of its screen. Both are deliberately KNOWN_GAPS
+# and not NOT_BROWSER_CALLED: a browser *should* call these, so claiming
+# otherwise would be a lie. A hollow ``frontend/src/api`` client with no
+# component behind it would silence this check without making the capability
+# reachable — the exact failure mode this file exists to catch. The debt is
+# named instead; delete each line when its panel lands.
+#
+# * #105 / UC-2.1 — the *pull* half of "STIX/TAXII feeds" is backend-complete
+#   (config store, RBAC-gated CRUD, scheduled poll sweep) with no admin screen.
+# * #117 — the cloud IAM containment loop ships the backend only; reviewing an
+#   inert containment proposal is exactly a browser workflow.
 KNOWN_GAPS: dict[str, str] = {
+    "GET /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "GET /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "POST /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "PATCH /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
+    "DELETE /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
     "GET /cloud/investigations/{}/containment-proposal": (
         "#117 cloud IAM containment proposal review UI not built yet"
     ),

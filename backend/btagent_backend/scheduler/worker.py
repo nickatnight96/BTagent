@@ -31,6 +31,7 @@ from btagent_backend.scheduler.jobs import (
     scheduled_ndr_hunt_scan,
     shift_handover_digest,
     stale_suppression_sweep,
+    taxii_feed_poll_sweep,
     validate_detection_proposal,
     weekly_pattern_scan,
 )
@@ -113,6 +114,22 @@ def _ndr_hunt_cron_hours() -> set[int]:
     return set(range(0, 24, interval))
 
 
+def _taxii_poll_cron_minutes() -> set[int]:
+    """Minutes-past-the-hour the TAXII feed-poll sweep fires on (#105).
+
+    arq crons are wall-clock, so an "every N minutes" cadence is the set
+    ``{0, N, 2N, ...}`` within the hour. Derived from
+    ``BTAGENT_TAXII_POLL_SWEEP_INTERVAL_MINUTES`` (default 15 → :00, :15, :30,
+    :45). An interval ≤0 or >60 clamps to once an hour. The sweep itself is
+    cheap when nothing is due — it only polls feeds whose own
+    ``poll_interval_minutes`` has elapsed.
+    """
+    interval = get_settings().taxii_poll_sweep_interval_minutes
+    if interval <= 0 or interval > 60:
+        return {0}
+    return set(range(0, 60, interval))
+
+
 async def _on_startup(ctx: dict) -> None:
     logger.info("BTagent scheduler worker started")
 
@@ -151,6 +168,9 @@ class WorkerSettings:
         weekly_pattern_scan,
         behavioral_baseline_sweep,
         memory_consolidation_sweep,
+        # #105 UC-2.1: poll every org's due TAXII 2.1 feeds and ingest their
+        # objects through the existing STIX ingest path.
+        taxii_feed_poll_sweep,
         # #120 Phase C: enqueue-on-demand from the proposal accept / execute
         # routes (live paths; mock mode runs inline in the route).
         compile_proposal_plan,
@@ -249,6 +269,17 @@ class WorkerSettings:
             shift_handover_digest,
             hour={6, 14, 22},
             minute=0,
+            unique=True,
+        ),
+        # #105 UC-2.1: TAXII feed poll sweep. Fires on the configured
+        # minute cadence (default every 15 min); the per-feed
+        # ``poll_interval_minutes`` decides which feeds actually poll on a
+        # given tick. ``unique=True`` so a tick runs exactly once across
+        # worker replicas — two replicas polling the same feed concurrently
+        # would double-ingest and race the cursor.
+        cron(
+            taxii_feed_poll_sweep,
+            minute=_taxii_poll_cron_minutes(),
             unique=True,
         ),
     ]
