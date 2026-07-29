@@ -60,7 +60,6 @@ export function InvestigationWorkspace() {
     if (id) {
       void useInvestigationStore.getState().fetchInvestigation(id);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Connect WebSocket for real-time events

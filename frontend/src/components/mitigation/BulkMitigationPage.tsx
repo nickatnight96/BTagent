@@ -122,7 +122,9 @@ export function BulkMitigationPage() {
     }
   }, [parsedIocs, allowlist]);
 
-  const actions = output?.plan.actions ?? [];
+  // Memoized: `output?.plan.actions ?? []` is a fresh array identity every
+  // render, which would invalidate the blocks memo each time.
+  const actions = useMemo(() => output?.plan.actions ?? [], [output]);
   const blocks = useMemo(() => actions.filter((a) => a.decision === "block"), [actions]);
   const approvedCount = blocks.filter((a) => approvals[a.id]).length;
   const allApproved = blocks.length > 0 && approvedCount === blocks.length;

@@ -122,7 +122,9 @@ export function ResponsePlanPage() {
     }
   }, [intent, severity, host, ip, user, domain]);
 
-  const steps = output?.plan.tactical_steps ?? [];
+  // Memoized: a fresh `?? []` identity every render would invalidate the
+  // approvalSteps memo and the handleStage callback each time.
+  const steps = useMemo(() => output?.plan.tactical_steps ?? [], [output]);
   const approvalSteps = useMemo(() => steps.filter((s) => s.requires_approval), [steps]);
   const approvedCount = approvalSteps.filter((s) => approvals[s.id]).length;
   const allApproved = approvalSteps.length > 0 && approvedCount === approvalSteps.length;

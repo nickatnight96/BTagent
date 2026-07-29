@@ -73,6 +73,23 @@ export default [
     },
     rules: {
       ...reactHooksWarn,
+      // Deliberately OFF, with the reasoning on record rather than 29
+      // scattered warnings everyone learns to scroll past:
+      //
+      // Every data panel in this app uses the same on-mount fetch idiom —
+      // an effect that kicks off an async request and calls setState when
+      // it resolves, guarded by a `cancelled` flag on unmount. The rule
+      // flags each of these, but its premise (setState-in-effect causes
+      // cascading synchronous re-renders) targets the *synchronous* case;
+      // the async resolve-then-set here renders once per fetch, which is
+      // the intended behaviour and matches React's own data-fetching docs
+      // absent a fetching library. Adopting one (react-query etc.) is a
+      // product decision, not a lint fix.
+      //
+      // The other react-hooks rules stay ON and this file gates CI at
+      // --max-warnings 0, so any NEW rule violation fails the build
+      // instead of joining a drifting baseline.
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 ];

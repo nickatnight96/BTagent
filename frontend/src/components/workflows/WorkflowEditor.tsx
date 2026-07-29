@@ -647,7 +647,12 @@ function NodeConfigPanel({
   }, [node.id]);
 
   // ----- config editing mode (typed form vs raw JSON) -----
-  const inputSchema = (catalogEntry?.input_schema ?? {}) as JsonSchemaObject;
+  const inputSchema = useMemo(
+    // `?? {}` mints a fresh object identity every render, which would
+    // invalidate the schemaUsable memo each time.
+    () => (catalogEntry?.input_schema ?? {}) as JsonSchemaObject,
+    [catalogEntry],
+  );
   const schemaUsable = useMemo(() => formUsable(inputSchema), [inputSchema]);
   const parsedConfig = useMemo(() => parseConfigObject(data.configJson), [data.configJson]);
   // Form mode needs both a renderable schema AND parsable JSON to edit;

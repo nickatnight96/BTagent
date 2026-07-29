@@ -755,6 +755,20 @@ jobs:
         # pass, so type checking now gates the build.
         run: npx tsc --noEmit
 
+      - name: Run unit tests
+        # Until now this job ran only tsc + the build — the entire vitest
+        # suite (512+ tests) had never gated CI; a red suite could merge as
+        # long as it type-checked. Now it gates like backend pytest does.
+        run: npx vitest run
+
+      - name: Lint (zero warnings)
+        # Also previously absent from CI. The eslint baseline was driven to
+        # zero warnings first (static-components / exhaustive-deps / refs
+        # fixed; set-state-in-effect disabled in eslint.config.js with the
+        # rationale on record), so --max-warnings 0 fails on any NEW warning
+        # instead of letting a baseline drift.
+        run: npx eslint . --max-warnings 0
+
       - name: Build
         # REQUIRED: build invokes tsc (``tsc -b && vite build``); gated on
         # zero type errors same as the Type check step above.
