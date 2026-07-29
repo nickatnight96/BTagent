@@ -423,6 +423,67 @@ class MemoryService:
             return await _fallback("no embedded rows matched")
         return rows
 
+    async def forget_memory(
+        self,
+        session: AsyncSession,
+        org_id: str,
+        memory_id: str,
+        *,
+        caller_tlp: TLP | str = TLP.GREEN,
+        now: datetime | None = None,
+    ) -> AgentMemoryRow | None:
+        """Forget (SOFT-delete) one memory, returning the row or ``None``.
+
+        "Forget" is the correction primitive the store was missing: until a
+        row can be removed, a wrong remembered fact — which is recalled into
+        EVERY future investigation for the org — can only be papered over by
+        writing a better one on top of it.
+
+        Implemented as a soft delete: the row is stamped ``superseded_at``,
+        exactly like consolidation does, which drops it out of every recall
+        path (all of them filter ``superseded_at IS NULL``) while the row
+        itself survives for audit. Nothing is destroyed, so a forget is
+        reviewable and reversible; the ledger entry the API writes says who
+        did it and to what.
+
+        Lookup applies the SAME shared clause builder as recall
+        (:func:`_scope_clauses`), so the security invariants cannot drift:
+
+        * **Org scope is a WHERE clause, not a post-fetch check.** Another
+          tenant's id matches nothing, so the caller gets "not found" and the
+          route 404s — a cross-org delete can neither succeed nor confirm the
+          row exists.
+        * **TLP fail-closed.** A memory above the caller's clearance is not
+          selectable here either, so the delete path can't be used as an
+          existence oracle for facts the caller may not read.
+        * **Already-forgotten (or consolidated) rows are not live**, so a
+          repeat forget returns ``None`` (idempotent 404) rather than
+          re-stamping and re-auditing.
+
+        Flushes; the caller owns the commit (and the audit entry).
+        """
+        clearance = _coerce_tlp(caller_tlp, default=TLP.GREEN, fail_closed=TLP.WHITE)
+        result = await session.execute(
+            select(AgentMemoryRow).where(
+                *_scope_clauses(org_id, clearance, live_only=True),
+                AgentMemoryRow.id == memory_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+
+        row.superseded_at = now or datetime.now(UTC)
+        await session.flush()
+        logger.info(
+            "Forgot memory %s (org=%s kind=%s subject=%r) — soft delete",
+            row.id,
+            org_id,
+            row.kind,
+            row.subject,
+        )
+        return row
+
 
 # ---------------------------------------------------------------------------
 # Prompt rendering

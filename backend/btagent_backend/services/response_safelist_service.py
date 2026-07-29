@@ -13,6 +13,11 @@ two points that must agree:
 
 Every read/query here is scoped to a single ``org_id`` so one tenant can neither
 read nor be governed by another tenant's safelist.
+
+Entry kinds: ``ip`` (exact), ``domain`` (suffix), and — since the #117 cloud IAM
+containment loop — ``principal`` (exact, case-insensitive: a cloud IAM ARN /
+service-account email / object id that automated containment must never revoke,
+freeze, or strip). All three are screened at the same execute-time chokepoint.
 """
 
 from __future__ import annotations
@@ -30,8 +35,15 @@ from btagent_backend.db.models import ResponseSafelistRow
 
 logger = logging.getLogger("btagent.services.response_safelist")
 
-# Entry kinds an operator may add. IPs match exactly; domains match by suffix.
-VALID_ENTRY_TYPES: frozenset[str] = frozenset({"ip", "domain"})
+# Entry kinds an operator may add. IPs match exactly; domains match by suffix;
+# principals (cloud IAM ARN / service-account email / object id — #117) match
+# exactly, case-insensitively.
+VALID_ENTRY_TYPES: frozenset[str] = frozenset({"ip", "domain", "principal"})
+
+# ``ResponseSafelistRow.value`` is String(255); refuse over-long principals up
+# front rather than letting Postgres truncate (a truncated ARN would silently
+# stop matching — i.e. silently stop protecting the principal).
+_MAX_VALUE_LEN = 255
 
 _DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$"
@@ -57,12 +69,20 @@ def normalize_entry(entry_type: str, value: str) -> tuple[str, str]:
         )
     if not raw:
         raise SafelistValidationError("value must be non-blank")
+    if len(raw) > _MAX_VALUE_LEN:
+        raise SafelistValidationError(f"value must be at most {_MAX_VALUE_LEN} characters")
     if etype == "ip":
         try:
             canonical = str(ipaddress.ip_address(raw))
         except ValueError as exc:
             raise SafelistValidationError(f"{raw!r} is not a valid IP address") from exc
         return "ip", canonical
+    if etype == "principal":
+        # Cloud IAM principals are provider-specific (AWS ARN, GCP SA email,
+        # Entra object id) so we only canonicalize case + whitespace rather than
+        # imposing one provider's grammar on all three. Matching in
+        # ``SafelistPolicy.principal_safelisted`` is exact on this same form.
+        return "principal", raw.lower()
     # domain
     host = raw.lower().rstrip(".")
     if not _DOMAIN_RE.match(host):
@@ -156,11 +176,16 @@ async def remove_entry(
 
 
 async def load_policy(db: AsyncSession, *, org_id: str) -> SafelistPolicy:
-    """Build the effective never-block policy for an org: baseline + org rows."""
+    """Build the effective never-touch policy for an org: baseline + org rows."""
     rows = await list_entries(db, org_id=org_id)
     ips = [r.value for r in rows if r.entry_type == "ip"]
     suffixes = [r.value for r in rows if r.entry_type == "domain"]
-    return BASELINE_SAFELIST.merge(extra_ips=ips, extra_domain_suffixes=suffixes)
+    principals = [r.value for r in rows if r.entry_type == "principal"]
+    return BASELINE_SAFELIST.merge(
+        extra_ips=ips,
+        extra_domain_suffixes=suffixes,
+        extra_principals=principals,
+    )
 
 
 async def load_policy_tuples(db: AsyncSession, *, org_id: str) -> tuple[list[str], list[str]]:

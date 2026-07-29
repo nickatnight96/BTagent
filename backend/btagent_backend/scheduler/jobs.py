@@ -374,11 +374,12 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     commits once. Two halves:
 
     * **Stale-entity archival** — always runs. Entities unseen for
-      ``behavioral_stale_after_days`` are candidates for archival so the active
+      ``behavioral_stale_after_days`` are stamped ``archived_at`` so the active
       baseline pool doesn't accumulate noise from departed users /
-      decommissioned hosts. The list is logged here; the destructive archival
-      action (and the per-entity ``BehavioralEntityRow`` lifecycle column) is a
-      Phase B follow-up — surfacing the count is the Phase A slice.
+      decommissioned hosts. Archival is a reversible flag, not a delete: the
+      rows (and their baselines/outliers) remain queryable for audit, archived
+      entities are excluded from later sweeps and from cross-entity similarity
+      search, and observing the entity again revives it automatically.
     * **Baseline rebuild** — gated on ``behavioral_schedule_enabled``. When on,
       the job pulls last-``behavioral_stale_after_days`` EDR process telemetry
       per host from the mock-first CrowdStrike MCP, embeds each host's cmdlines
@@ -402,7 +403,7 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
 
     baselines_built = 0
     async with async_session_factory() as session:
-        stale = await behavioral_service.stale_entities(
+        stale_count, archived_count = await behavioral_service.archive_stale_entities(
             session,
             stale_after=timedelta(days=settings.behavioral_stale_after_days),
         )
@@ -416,8 +417,8 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
                 lookback_days=settings.behavioral_stale_after_days,
             )
             baselines_built = summary["baselines_built"]
-        # The single commit lives here (stale sweep is read-only; the rebuild
-        # half flushes new entity/profile rows that this commit persists).
+        # The single commit lives here — it persists both the archival stamps
+        # and the rebuild half's new entity/profile rows.
         await session.commit()
 
     if not settings.behavioral_schedule_enabled:
@@ -430,7 +431,11 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
             "configured to enable the baseline rebuild half of this sweep"
         )
 
-    counts = {"stale_entities": len(stale), "baselines_built": baselines_built}
+    counts = {
+        "stale_entities": stale_count,
+        "entities_archived": archived_count,
+        "baselines_built": baselines_built,
+    }
     logger.info("behavioral_baseline_sweep: %s", counts)
     return counts
 

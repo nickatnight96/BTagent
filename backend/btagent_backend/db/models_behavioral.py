@@ -5,24 +5,40 @@ The baseline-driven counterpart to the Hunt Pack Runner. Three tables:
 * ``behavioral_entities`` — the subject of profiling (user / host / SP / IP),
   unique per ``(org_id, kind, canonical_id)`` so the service can upsert.
 * ``behavioral_profiles`` — one per ``(entity, profile_type)`` baseline window.
-  Centroid stored as JSONB ``list[float]`` rather than ``pgvector.Vector`` for
-  the Phase A slice: the OutlierDetector looks up by ``entity_id`` (no
-  cross-entity nearest-neighbor query), so HNSW search isn't needed yet.
-  When that lookup pattern lands (Phase B's drift dashboard / Phase C's
-  closed-loop retraining), we'll migrate to ``Vector(1536)`` + an HNSW
-  index — a straightforward additive change.
+  The centroid is a pgvector ``Vector(1536)`` with an HNSW **cosine** index,
+  mirroring ``KnowledgeChunkRow.embedding`` / ``AgentMemoryRow.embedding``
+  exactly (same dimension, same index shape, same provider) so the Behavioral
+  Hunter genuinely reuses the platform's pgvector substrate. That is what makes
+  *cross-entity* nearest-neighbour possible (``behavioral_service.
+  find_similar_profiles`` — "which other entities baseline like this one?"),
+  which the original JSONB ``list[float]`` column could not express.
 * ``behavioral_outliers`` — per-event anomaly records with optional LLM
   intent label and a back-reference to the #119 ``HuntFinding`` they're
   promoted into.
+
+Entity lifecycle: ``BehavioralEntityRow.archived_at`` (NULL == active) is
+stamped by the stale sweep when an entity has not been observed for the
+configured window (a departed user / decommissioned host). Archived entities
+are excluded from the stale sweep and from cross-entity similarity search, and
+are revived automatically the moment the entity is observed again (the upsert
+clears the flag). Nothing is deleted — archival is a reversible flag, not a
+destructive action.
 """
 
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from btagent_backend.db.models import DEFAULT_ORG_ID, Base, utcnow
+
+# Centroid dimension. Identical to ``KnowledgeChunkRow.embedding`` and
+# ``AgentMemoryRow.embedding`` (OpenAI text-embedding-3-small / the mock
+# embedder's deterministic 1536-dim vector) so one embedding provider and one
+# index shape serve RAG, agent memory, and behavioral baselines alike.
+CENTROID_DIM = 1536
 
 
 class BehavioralEntityRow(Base):
@@ -47,6 +63,13 @@ class BehavioralEntityRow(Base):
         DateTime(timezone=True), default=utcnow, nullable=False
     )
     enrichment: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Lifecycle flag. NULL == active; a timestamp == archived by the stale
+    # sweep because the entity went unobserved for the configured window.
+    # Archived entities are excluded from the stale sweep and from
+    # cross-entity similarity search, and are revived (flag cleared) the next
+    # time the entity is observed. Never deleted — the baselines stay for
+    # audit/forensics.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("idx_behavioral_entities_org_id", "org_id"),
@@ -58,6 +81,9 @@ class BehavioralEntityRow(Base):
             "canonical_id",
             unique=True,
         ),
+        # Covers the "active entities only" filter the sweep + similarity
+        # search apply.
+        Index("idx_behavioral_entities_archived_at", "org_id", "archived_at"),
     )
 
 
@@ -79,8 +105,10 @@ class BehavioralProfileRow(Base):
     )
     # ``ProfileType`` value (cmdline_embedding / process_tree_pattern / etc.).
     profile_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    # Centroid as JSONB list[float] — see module docstring on the choice.
-    centroid: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Baseline centroid as a pgvector ``Vector(1536)`` — see module docstring.
+    # Nullable: a profile_type can be frequency-map-only (process lineage,
+    # identity action sequences) with no meaningful embedding centroid.
+    centroid = mapped_column(Vector(CENTROID_DIM), nullable=True)
     frequency_map: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     pattern_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sample_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -97,6 +125,18 @@ class BehavioralProfileRow(Base):
         Index("idx_behavioral_profiles_org_id", "org_id"),
         Index("idx_behavioral_profiles_entity_type", "entity_id", "profile_type"),
         Index("idx_behavioral_profiles_window_end", "window_end"),
+        # ANN index for cross-entity nearest-neighbour search — cosine
+        # distance, matching ``idx_knowledge_chunks_embedding_hnsw`` and
+        # ``idx_agent_memory_embedding_hnsw``. PostgreSQL only; the conftest
+        # strips postgresql-specific indexes before ``create_all`` builds the
+        # SQLite unit-test schema.
+        Index(
+            "idx_behavioral_profiles_centroid_hnsw",
+            "centroid",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"centroid": "vector_cosine_ops"},
+        ),
     )
 
 

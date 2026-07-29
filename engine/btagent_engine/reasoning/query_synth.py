@@ -2,8 +2,9 @@
 
 The Phase B counterpart to HypothesisGenNode (#99). Takes a hypothesis's
 behavioural description + target backends and emits a concrete query for
-each backend (Splunk SPL, Sentinel KQL, Elastic EQL, CrowdStrike CQL,
-Sigma). RunbookCompiler then folds these into the per-TTP runbook entry.
+each backend (Splunk SPL, Sentinel KQL, Elastic ES|QL, CrowdStrike Falcon
+search, Sigma). RunbookCompiler then folds these into the per-TTP runbook
+entry.
 
 Design notes:
 
@@ -24,11 +25,20 @@ Design notes:
 
 3. **Unknown TTP -> generic template.** If a TTP isn't in the library
    the node emits a generic "search for the technique id" query per
-   backend rather than failing — the analyst can refine it.
+   backend rather than failing — the analyst can refine it. A
+   sub-technique with no entry of its own first tries to inherit its
+   parent technique's template (``T1110.001`` -> ``T1110``); only when
+   that misses too does the generic placeholder come out.
 
 4. **Backend selection.** The node only emits queries for the backends
    the caller requests (from ``HuntScope.backends`` or an explicit
    list). Empty request -> all backends in the library.
+
+The curated template library itself lives in
+:mod:`btagent_engine.reasoning.query_templates` (kept separate so the node
+stays readable as coverage grows). Its per-backend technique counts are
+golden-tested in ``engine/tests/test_query_synth_coverage.py`` so breadth
+can't silently regress.
 """
 
 from __future__ import annotations
@@ -46,6 +56,11 @@ from btagent_engine.node import (
     NodeMeta,
     NodeRegistry,
 )
+from btagent_engine.reasoning.query_templates import (
+    QUERY_LIBRARY,
+    TECHNIQUE_NAMES,
+    lookup_template,
+)
 
 
 def _mock_mode_enabled() -> bool:
@@ -56,139 +71,9 @@ def _mock_mode_enabled() -> bool:
 # Per-(TTP, backend) query template library
 # ---------------------------------------------------------------------------
 #
-# Each template is a structurally-valid, count-capped query. Field names
-# follow the common defaults for each platform; the real LLM path will
-# resolve them against the org's actual schema registry.
-
-_QUERY_LIBRARY: dict[str, dict[Backend, str]] = {
-    "T1059.001": {  # PowerShell
-        Backend.SPLUNK: (
-            'index=endpoint EventCode=4688 (process_name="powershell.exe" OR '
-            'process_name="pwsh.exe") (CommandLine="*-EncodedCommand*" OR '
-            'CommandLine="*-enc*" OR CommandLine="*FromBase64String*") '
-            "| head 1000"
-        ),
-        Backend.SENTINEL: (
-            "DeviceProcessEvents | where FileName in~ ('powershell.exe','pwsh.exe') "
-            "| where ProcessCommandLine has_any ('-EncodedCommand','-enc','FromBase64String') "
-            "| take 1000"
-        ),
-        Backend.ELASTIC: (
-            'process where process.name in ("powershell.exe","pwsh.exe") and '
-            'process.command_line : ("*-EncodedCommand*","*-enc*","*FromBase64String*")'
-        ),
-        Backend.CROWDSTRIKE: (
-            "event_simpleName=ProcessRollup2 (FileName=powershell.exe OR FileName=pwsh.exe) "
-            "CommandLine=*EncodedCommand* | head 1000"
-        ),
-        Backend.SIGMA: (
-            "title: Encoded PowerShell Execution\n"
-            "logsource: {category: process_creation, product: windows}\n"
-            "detection:\n"
-            "  selection:\n"
-            "    Image|endswith: ['\\powershell.exe','\\pwsh.exe']\n"
-            "    CommandLine|contains: ['-EncodedCommand','-enc','FromBase64String']\n"
-            "  condition: selection"
-        ),
-    },
-    "T1078.004": {  # Cloud Accounts
-        Backend.SPLUNK: (
-            'index=cloud sourcetype=aws:cloudtrail eventName="ConsoleLogin" '
-            'errorMessage="*" | stats count by sourceIPAddress, userIdentity.userName '
-            "| where count > 5 | head 1000"
-        ),
-        Backend.SENTINEL: (
-            "SigninLogs | where ResultType != 0 | summarize FailedAttempts=count() "
-            "by IPAddress, UserPrincipalName | where FailedAttempts > 5 | take 1000"
-        ),
-        Backend.ELASTIC: (
-            'authentication where event.outcome == "failure" and '
-            "cloud.provider != null | stats by source.ip, user.name"
-        ),
-        Backend.SIGMA: (
-            "title: Suspicious Cloud Account Authentication\n"
-            "logsource: {product: azure, service: signinlogs}\n"
-            "detection:\n"
-            "  selection: {ResultType: '50126'}\n"
-            "  condition: selection | count() by IPAddress > 5"
-        ),
-    },
-    "T1566.001": {  # Spearphishing Attachment
-        Backend.SPLUNK: (
-            'index=email (attachment_type="*.docm" OR attachment_type="*.xlsm" OR '
-            'attachment_type="*.zip") | stats count by sender, recipient, attachment_name '
-            "| head 1000"
-        ),
-        Backend.SENTINEL: (
-            "EmailAttachmentInfo | where FileType in ('docm','xlsm','zip','iso') "
-            "| join EmailEvents on NetworkMessageId | take 1000"
-        ),
-        Backend.SIGMA: (
-            "title: Suspicious Email Attachment\n"
-            "logsource: {category: email}\n"
-            "detection:\n"
-            "  selection: {attachment_extension: ['docm','xlsm','iso','zip']}\n"
-            "  condition: selection"
-        ),
-    },
-    "T1110": {  # Brute Force
-        Backend.SPLUNK: (
-            "index=auth action=failure | stats count by src_ip, user | where count > 10 | head 1000"
-        ),
-        Backend.SENTINEL: (
-            "SecurityEvent | where EventID == 4625 | summarize Failures=count() "
-            "by IpAddress, Account | where Failures > 10 | take 1000"
-        ),
-        Backend.ELASTIC: (
-            'authentication where event.outcome == "failure" | stats by source.ip, user.name'
-        ),
-        Backend.CROWDSTRIKE: (
-            "event_simpleName=UserLogonFailed | stats count by RemoteAddressIP4, UserName "
-            "| where count > 10"
-        ),
-        Backend.SIGMA: (
-            "title: Brute Force Authentication\n"
-            "logsource: {product: windows, service: security}\n"
-            "detection:\n"
-            "  selection: {EventID: 4625}\n"
-            "  condition: selection | count() by IpAddress > 10"
-        ),
-    },
-    "T1190": {  # Exploit Public-Facing Application
-        Backend.SPLUNK: (
-            'index=web (status>=500 OR uri_path="*..*" OR uri_query="*union*select*") '
-            "| stats count by src_ip, uri_path | head 1000"
-        ),
-        Backend.SENTINEL: (
-            "W3CIISLog | where scStatus >= 500 or csUriQuery has_any ('union','select','..') "
-            "| take 1000"
-        ),
-        Backend.SIGMA: (
-            "title: Web Exploitation Attempt\n"
-            "logsource: {category: webserver}\n"
-            "detection:\n"
-            "  selection: {sc_status: [500,501,502]}\n"
-            "  condition: selection"
-        ),
-    },
-    "T1486": {  # Data Encrypted for Impact (ransomware)
-        Backend.SPLUNK: (
-            'index=endpoint EventCode=11 (file_name="*.encrypted" OR file_name="*.locked" '
-            'OR file_name="*READ*ME*ransom*") | stats count by host, process_name | head 1000'
-        ),
-        Backend.SENTINEL: (
-            "DeviceFileEvents | where FileName endswith '.encrypted' or FileName endswith '.locked' "
-            "| summarize count() by DeviceName, InitiatingProcessFileName | take 1000"
-        ),
-        Backend.SIGMA: (
-            "title: Ransomware File Encryption\n"
-            "logsource: {category: file_event, product: windows}\n"
-            "detection:\n"
-            "  selection: {TargetFilename|endswith: ['.encrypted','.locked']}\n"
-            "  condition: selection"
-        ),
-    },
-}
+# Data lives in ``query_templates`` — each template is a structurally-valid,
+# count-capped query. Field names follow the common defaults for each
+# platform; the real LLM path resolves them against the org's schema registry.
 
 # Backends covered by the library at all (for the "all backends" default).
 _DEFAULT_BACKENDS: list[Backend] = [
@@ -198,6 +83,12 @@ _DEFAULT_BACKENDS: list[Backend] = [
     Backend.CROWDSTRIKE,
     Backend.SIGMA,
 ]
+
+
+def _technique_label(ttp_id: str) -> str:
+    """``"T1059.001"`` -> ``"T1059.001 (PowerShell...)"`` when the name is known."""
+    name = TECHNIQUE_NAMES.get(ttp_id)
+    return f"{ttp_id} ({name})" if name else ttp_id
 
 
 def _generic_query(ttp_id: str, backend: Backend) -> str:
@@ -257,10 +148,10 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
     meta: ClassVar[NodeMeta] = NodeMeta(
         id="reasoning.query_synth",
         name="Query Synthesizer",
-        version="0.1.0",
+        version="0.2.0",
         category=NodeCategory.REASONING,
         description=(
-            "Generate per-backend hunt queries (SPL / KQL / EQL / CQL / Sigma) "
+            "Generate per-backend hunt queries (SPL / KQL / ES|QL / Falcon / Sigma) "
             "from an ATT&CK technique and behavioural description."
         ),
     )
@@ -286,17 +177,26 @@ class QuerySynthNode(Node[QuerySynthInput, QuerySynthOutput]):
             if llm_queries:
                 return QuerySynthOutput(ttp_id=input.ttp_id, queries=llm_queries, mock_mode=False)
 
-        library_entry = _QUERY_LIBRARY.get(input.ttp_id, {})
         queries: dict[Backend, Query] = {}
         for backend in backends:
-            template = library_entry.get(backend)
-            if template is None:
+            hit = lookup_template(input.ttp_id, backend)
+            if hit is None:
                 template = _generic_query(input.ttp_id, backend)
                 note = f"Generic placeholder for {input.ttp_id} — refine against your schema."
             else:
-                note = (
-                    f"Count-capped template for {input.ttp_id}. Review field names before running."
-                )
+                template, source_ttp = hit
+                label = _technique_label(source_ttp)
+                if source_ttp == input.ttp_id:
+                    note = (
+                        f"Count-capped curated template for {label}. "
+                        "Review field names before running."
+                    )
+                else:
+                    note = (
+                        f"Count-capped curated template inherited from parent technique "
+                        f"{label} (no {input.ttp_id}-specific template yet). "
+                        "Review field names before running."
+                    )
             queries[backend] = Query(backend=backend, query=template, notes=note)
 
         return QuerySynthOutput(ttp_id=input.ttp_id, queries=queries, mock_mode=True)
@@ -353,6 +253,8 @@ NodeRegistry.register(QuerySynthNode)
 
 
 __all__ = [
+    "QUERY_LIBRARY",
+    "TECHNIQUE_NAMES",
     "QuerySynthInput",
     "QuerySynthNode",
     "QuerySynthOutput",

@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from btagent_backend.api.v1.audit import router as audit_router
 from btagent_backend.api.v1.auth import router as auth_router
 from btagent_backend.api.v1.behavioral import router as behavioral_router
+from btagent_backend.api.v1.cloud_containment import router as cloud_containment_router
 from btagent_backend.api.v1.config import router as config_router
 from btagent_backend.api.v1.connectors import router as connectors_router
 from btagent_backend.api.v1.containment import router as containment_router
@@ -63,6 +64,7 @@ api_v1_router.include_router(workflows_router)
 api_v1_router.include_router(behavioral_router)
 api_v1_router.include_router(connectors_router)
 api_v1_router.include_router(containment_router)
+api_v1_router.include_router(cloud_containment_router)
 api_v1_router.include_router(coverage_router)
 api_v1_router.include_router(credentials_router)
 api_v1_router.include_router(cti_detection_router)

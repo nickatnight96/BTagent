@@ -78,6 +78,11 @@ class EventType(StrEnum):
     HUNT_FINDING_SUPPRESSED = "hunt_finding_suppressed"
     HUNT_FINDING_PROMOTED = "hunt_finding_promoted"
 
+    # Behavioral Hunter (#114) — a baseline deviation was detected. Carries
+    # entity/score metadata only (never raw telemetry); the UI refetches
+    # through the RBAC-scoped API.
+    BEHAVIORAL_OUTLIER_DETECTED = "behavioral_outlier_detected"
+
     # Cost & metrics
     METRICS_UPDATE = "metrics_update"
     COST_UPDATE = "cost_update"

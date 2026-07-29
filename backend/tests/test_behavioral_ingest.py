@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from btagent_shared.types.behavioral import EntityKind, ProfileType
 
 from btagent_backend.db.models import DEFAULT_ORG_ID
+from btagent_backend.db.models_behavioral import CENTROID_DIM
 from btagent_backend.services import behavioral_ingest_service as ingest
 from btagent_backend.services import behavioral_service as svc
 from btagent_backend.services.embedding_service import EmbeddingService
@@ -127,9 +128,12 @@ async def test_build_baseline_from_events_embeds_cmdlines(db_session):
     )
     profile = await _build_ingest_baseline(db_session, entity)
 
-    # Centroid is the elementwise mean of the 6-dim toy embeddings.
+    # Centroid is the elementwise mean of the 6-dim toy embeddings, widened to
+    # the fixed pgvector column width (zero-padding is cosine-distance
+    # preserving — see ``behavioral_service._to_centroid_vector``).
     assert profile.centroid is not None
-    assert len(profile.centroid) == 6
+    assert len(profile.centroid) == CENTROID_DIM
+    assert all(x == 0.0 for x in profile.centroid[6:])
     # All five benign cmdlines land on the benign axis -> centroid ~ [1,0,...].
     assert profile.centroid[0] > 0.9
     # Frequency map keyed on parent>child lineage.
@@ -168,8 +172,11 @@ async def test_build_baseline_skips_blank_cmdlines(db_session):
         window_end=now,
         embedding_service=_ToyEmbeddingService(),
     )
-    # Only one cmdline embedded -> centroid built from one vector.
-    assert profile.centroid == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    # Only one cmdline embedded -> centroid built from one vector (then
+    # zero-padded out to the fixed column width).
+    assert list(profile.centroid[:6]) == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    assert len(profile.centroid) == CENTROID_DIM
+    assert all(x == 0.0 for x in profile.centroid[6:])
     # Both lineages counted in the frequency map.
     assert set(profile.frequency_map) == {"explorer.exe>cmd.exe", "services.exe>svchost.exe"}
 
