@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.services import cti_detection_service as svc
+from btagent_backend.services import detection_edit_export_service as edit_export
 from btagent_backend.services import stix_bundle_store
 from btagent_backend.services.audit_trail import AuditTrail
 from btagent_backend.services.cti_detection_service import CTIDetectionService
@@ -212,6 +213,118 @@ async def list_detection_proposals(
     )
     return DetectionProposalListResponse(
         items=[DetectionProposalRecord.model_validate(r) for r in rows], total=total
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Draft → final edit-pair export (#113 drafter-quality signal)
+#
+# Declared BEFORE any ``/proposals/{row_id}`` route so the literal path segment
+# is never swallowed by the path parameter (FastAPI matches in declaration
+# order). Read-only: no row is written, no schema is added.
+# --------------------------------------------------------------------------- #
+
+
+class EditPairMetrics(BaseModel):
+    """Edit distance between a drafted rule and the analyst's final body."""
+
+    char_distance: int
+    normalized_distance: float
+    similarity: float
+    draft_chars: int
+    final_chars: int
+    lines_added: int
+    lines_removed: int
+    lines_changed: int
+    truncated: bool
+
+
+class EditPairRecord(BaseModel):
+    """One (draft → analyst-final) preference pair.
+
+    ``chosen`` / ``rejected`` mirror the DPO framing: the analyst's edited rule
+    is the chosen completion, the drafter's original is the rejected one.
+    """
+
+    proposal_row_id: str
+    proposal_id: str
+    org_id: str
+    title: str
+    technique_ids: list[str]
+    source_stix_id: str
+    bundle_id: str | None
+    state: str
+    pr_outcome: str
+    edited: bool
+    chosen: str
+    rejected: str
+    draft_sigma_yaml: str
+    final_sigma_yaml: str
+    metrics: EditPairMetrics
+    review_rationale: str
+    reviewed_by: str | None
+    reviewed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EditPairSummaryRecord(BaseModel):
+    """Aggregate drafter-quality signal across the exported pairs."""
+
+    total_pairs: int
+    edited_pairs: int
+    unedited_pairs: int
+    edited_fraction: float
+    mean_normalized_distance: float
+    median_normalized_distance: float
+    max_normalized_distance: float
+    mean_char_distance: float
+    techniques_covered: list[str]
+
+
+class EditPairExportResponse(BaseModel):
+    items: list[EditPairRecord]
+    total: int
+    summary: EditPairSummaryRecord
+
+
+@router.get("/proposals/edit-pairs", response_model=EditPairExportResponse)
+async def export_detection_edit_pairs(
+    include_unedited: bool = Query(
+        False,
+        description="Also emit rules shipped unchanged (distance 0) as positive pairs.",
+    ),
+    only_shipped: bool = Query(
+        False, description="Restrict to rules that reached a detection-repo PR."
+    ),
+    limit: int = Query(edit_export.DEFAULT_EXPORT_LIMIT, ge=1, le=edit_export.MAX_EXPORT_LIMIT),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> EditPairExportResponse:
+    """Export ``(drafted rule → analyst-edited final rule)`` pairs with edit distance.
+
+    The drafter-quality signal for #113: each pair is a DPO-style preference
+    record (analyst body = ``chosen``, drafted body = ``rejected``) carrying a
+    Levenshtein character distance, its length-normalised form, and line-level
+    add/remove/change counts. The ``summary`` block aggregates them — mean /
+    median normalised distance and the share of drafts an analyst had to edit.
+
+    Read-only and strictly org-scoped: the query filters on the caller's org, so
+    an export can never contain another tenant's detection content. RBAC
+    ``hunt:view`` (analyst+), the same gate as reading the proposal store.
+    """
+    user.require_permission("hunt:view")
+    pairs, summary = await edit_export.export_edit_pairs(
+        db,
+        org_id=user.org_id,
+        include_unedited=include_unedited,
+        only_shipped=only_shipped,
+        limit=limit,
+    )
+    return EditPairExportResponse(
+        items=[EditPairRecord.model_validate(p.to_dict()) for p in pairs],
+        total=len(pairs),
+        summary=EditPairSummaryRecord.model_validate(summary.to_dict()),
     )
 
 
@@ -512,9 +625,10 @@ async def record_proposal_pr_outcome(
     ``merged`` / ``rejected`` are recordable, and only once a PR is open — a
     409 otherwise (not shipped, or already terminal). On ``merged`` the closed
     loop fires: the rule is auto-installed as a #112 hunt-pack entry AND a #118
-    sandbox-gated detection-validation run is triggered for its technique — both
-    best-effort, so a hook failure never sinks the merge write. 404 masks
-    unknown / cross-org rows.
+    SANDBOX-gated detection-validation run is triggered for every technique the
+    rule claims (one persisted run, sandbox gate + audit enforced per technique
+    by ``detection_emulation_service``) — both best-effort, so a hook failure
+    never sinks the merge write. 404 masks unknown / cross-org rows.
 
     RBAC: ``hunt:promote`` (senior_analyst+) — recording a merge arms a live
     recurring detection, the same authority as composing the PR.

@@ -689,10 +689,16 @@ async def compose_detection_pr(
 # Phase-C closed loop (#113): a MERGED rule installs + validates itself
 #
 # When a composed detection-repo PR merges, the rule is real: it should start
-# hunting on a schedule (#112) AND its technique should be re-validated by a
-# sandbox-gated emulation (#118). ``record_pr_outcome`` records the merge and
-# fires both, each BEST-EFFORT under its own savepoint so a hook failure can
-# never roll back (sink) the merge-outcome write itself.
+# hunting on a schedule (#112) AND every technique it claims should be
+# re-validated by a SANDBOX-gated emulation (#118). ``record_pr_outcome`` records
+# the merge and fires both, each BEST-EFFORT under its own savepoint so a hook
+# failure can never roll back (sink) the merge-outcome write itself.
+#
+# The validation hook NEVER reaches an emulator on its own: it calls
+# ``detection_emulation_service.run_emulation_validation`` with
+# ``target_env=SANDBOX``, which applies the sandbox allowlist and writes the
+# hash-chained audit row before anything is dispatched. A denied target yields
+# no verdict and no persisted run — the gate is not bypassable from here.
 # ---------------------------------------------------------------------------
 
 from collections.abc import Awaitable, Callable  # noqa: E402
@@ -708,10 +714,33 @@ ValidationTrigger = Callable[[AsyncSession, str, DetectionProposalRow], Awaitabl
 _RECORDABLE_PR_OUTCOMES = frozenset({PROutcome.MERGED.value, PROutcome.REJECTED.value})
 
 
+# Cap on how many of a merged rule's techniques are auto-emulated. A CTI-derived
+# rule normally carries 1-2; the cap bounds the work a single merge can queue.
+MAX_AUTO_VALIDATED_TECHNIQUES = 5
+
+
 def _primary_technique(row: DetectionProposalRow) -> str | None:
     """The rule's primary ATT&CK technique — what the validation run emulates."""
-    techniques = row.technique_ids or []
+    techniques = _validatable_techniques(row)
     return techniques[0] if techniques else None
+
+
+def _validatable_techniques(row: DetectionProposalRow) -> list[str]:
+    """Every ATT&CK technique the merged rule claims, de-duplicated and capped.
+
+    Order-preserving so the primary technique stays first; capped at
+    :data:`MAX_AUTO_VALIDATED_TECHNIQUES` so one merge cannot queue unbounded
+    emulation work.
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for technique in row.technique_ids or []:
+        cleaned = (technique or "").strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        ordered.append(cleaned)
+    return ordered[:MAX_AUTO_VALIDATED_TECHNIQUES]
 
 
 async def _default_install_hunt_pack(db: AsyncSession, row: DetectionProposalRow) -> dict[str, Any]:
@@ -726,7 +755,10 @@ async def _default_install_hunt_pack(db: AsyncSession, row: DetectionProposalRow
     run_row = await hunt_pack_run_service.run_adhoc_rule_pack(
         db,
         org_id=row.org_id,
-        rule_id=f"cti-{row.id}",
+        # The ad-hoc pack id becomes ``cti-merged-<row id>`` — the same label
+        # ``merged_rule_pack_id`` stamps on the closed loop's validation run, so
+        # install and validation are correlatable from the run history.
+        rule_id=row.id,
         title=row.title,
         sigma_yaml=_shipped_yaml(row, None),
         technique_ids=list(row.technique_ids or []),
@@ -740,18 +772,37 @@ async def _default_install_hunt_pack(db: AsyncSession, row: DetectionProposalRow
     }
 
 
+def merged_rule_pack_id(row: DetectionProposalRow) -> str:
+    """Label tying a merged rule's hunt-pack install and validation run together.
+
+    Mirrors ``hunt_pack_run_service.run_adhoc_rule_pack``'s ``cti-merged-*``
+    pack id so ``GET /validation/runs`` shows *which* merged rule a run came
+    from without a schema change.
+    """
+    return f"cti-merged-{row.id}"
+
+
 async def _default_trigger_validation(
     db: AsyncSession, actor_id: str, row: DetectionProposalRow
 ) -> dict[str, Any]:
-    """Default validation trigger: a SANDBOX-gated #118 emulation run.
+    """Default validation trigger: SANDBOX-gated #118 emulation of the merged rule.
 
-    Calls :func:`detection_emulation_service.run_emulation_validation` with
-    ``target_env=SANDBOX`` (respecting its sandbox gate + audit; mock-first),
-    then persists the resulting report to ``detection_validation_runs`` — so a
-    merged rule's technique is re-validated end to end. Returns a descriptor.
+    Every technique the merged rule claims (capped at
+    :data:`MAX_AUTO_VALIDATED_TECHNIQUES`) is emulated through
+    :func:`detection_emulation_service.run_emulation_validation` with
+    ``target_env=SANDBOX`` — the ONLY path to an emulator, so the sandbox gate,
+    the hash-chained audit row, and the mock-first default all still apply
+    exactly as they do for the operator-driven ``POST /validation/emulate``
+    route. Nothing here bypasses that gate: a denied technique yields no
+    verdict and is reported as such.
+
+    The collected verdicts are folded into ONE ``ValidationReport`` and
+    persisted to ``detection_validation_runs``, labelled with the merged rule's
+    pack id, so the coverage map sees every technique of a newly merged rule as
+    freshly validated. Returns a descriptor for the audit detail.
     """
-    technique_id = _primary_technique(row)
-    if technique_id is None:
+    technique_ids = _validatable_techniques(row)
+    if not technique_ids:
         return {"validation_triggered": False, "reason": "no technique on rule"}
 
     from datetime import datetime as _dt
@@ -764,34 +815,54 @@ async def _default_trigger_validation(
 
     from btagent_backend.services import validation_run_service
     from btagent_backend.services.detection_emulation_service import run_emulation_validation
-    from btagent_backend.services.validation_service import build_emulation_report
+    from btagent_backend.services.validation_service import build_multi_emulation_report
 
-    request = EmulationRequest(
-        technique_id=technique_id,
-        target_env=TargetEnv.SANDBOX,
-        emulator=Emulator.ATOMIC_RED_TEAM,
-    )
-    outcome = await run_emulation_validation(
-        db, actor_id=actor_id, org_id=row.org_id, request=request
-    )
+    verdicts = []
+    audit_ids: list[str] = []
+    denied: list[str] = []
+    for technique_id in technique_ids:
+        request = EmulationRequest(
+            technique_id=technique_id,
+            target_env=TargetEnv.SANDBOX,
+            emulator=Emulator.ATOMIC_RED_TEAM,
+        )
+        # GUARDRAIL: sandbox-gated + audited inside run_emulation_validation.
+        outcome = await run_emulation_validation(
+            db, actor_id=actor_id, org_id=row.org_id, request=request
+        )
+        audit_ids.append(outcome.audit_id)
+        if not outcome.approved:
+            denied.append(technique_id)
+            continue
+        if outcome.verdict is not None:
+            verdicts.append(outcome.verdict)
+
     descriptor: dict[str, Any] = {
-        "validation_triggered": outcome.approved,
-        "technique_id": technique_id,
-        "target_env": outcome.target_env,
-        "audit_id": outcome.audit_id,
+        "validation_triggered": bool(verdicts),
+        "technique_id": technique_ids[0],
+        "technique_ids": technique_ids,
+        "target_env": TargetEnv.SANDBOX.value,
+        "audit_id": audit_ids[0] if audit_ids else None,
+        "audit_ids": audit_ids,
     }
-    if outcome.approved and outcome.verdict is not None:
-        report = build_emulation_report(
-            run_id=generate_id("valrun"),
-            request=request,
-            verdict=outcome.verdict,
-            generated_at=_dt.now(UTC),
-        )
-        run = await validation_run_service.persist_validation_report(
-            db, report, org_id=row.org_id, packs=()
-        )
-        descriptor["validation_run_id"] = run.id
-        descriptor["verdict"] = outcome.verdict.verdict.value
+    if denied:
+        descriptor["denied_techniques"] = denied
+    if not verdicts:
+        descriptor.setdefault("reason", "no sandbox-approved verdict produced")
+        return descriptor
+
+    report = build_multi_emulation_report(
+        run_id=generate_id("valrun"),
+        target_env=TargetEnv.SANDBOX,
+        verdicts=verdicts,
+        generated_at=_dt.now(UTC),
+    )
+    run = await validation_run_service.persist_validation_report(
+        db, report, org_id=row.org_id, packs=(merged_rule_pack_id(row),)
+    )
+    descriptor["validation_run_id"] = run.id
+    descriptor["verdict"] = verdicts[0].verdict.value
+    descriptor["verdicts"] = {v.technique_id: v.verdict.value for v in verdicts}
     return descriptor
 
 
@@ -870,10 +941,12 @@ async def record_pr_outcome(
     raises :class:`LookupError` (route → 404).
 
     On ``merged`` the closed loop fires: the rule is auto-installed as a #112
-    hunt-pack entry AND a #118 sandbox-gated detection-validation run is
-    triggered for its technique — both BEST-EFFORT (a hook failure never sinks
-    the merge write). Returns ``(row, closed_loop_summary)``; the summary is
-    ``{}`` for a non-merge outcome.
+    hunt-pack entry AND a #118 SANDBOX-gated detection-validation run is
+    triggered for EVERY technique the rule claims (capped at
+    :data:`MAX_AUTO_VALIDATED_TECHNIQUES`, folded into one persisted run) — both
+    BEST-EFFORT (a hook failure never sinks the merge write). Returns
+    ``(row, closed_loop_summary)``; the summary is ``{}`` for a non-merge
+    outcome.
 
     ``install_hunt_pack`` / ``trigger_validation`` are injectable (default impls
     call the real services) so a test can assert the wiring with a spy.
