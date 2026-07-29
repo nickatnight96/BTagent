@@ -393,7 +393,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           # Cache ``~/.npm`` keyed on BOTH lockfiles this job installs from
           # (frontend deps + the tests/e2e Playwright runner), so the two
-          # ``npm install`` steps below reuse the download cache.
+          # ``npm ci`` steps below reuse the download cache.
           cache: 'npm'
           cache-dependency-path: |
             frontend/package-lock.json
@@ -418,7 +418,8 @@ jobs:
       - name: Install frontend deps + build
         working-directory: frontend
         run: |
-          npm install --no-audit --no-fund
+          # npm ci: honour the committed lockfile (see the Frontend job note).
+          npm ci --no-audit --no-fund
           # ``npm run build`` is now ``vite build`` only (the previous
           # ``tsc -b && vite build`` chain swallowed the tsc failure
           # via the ``|| echo`` below, then vite build was *skipped*
@@ -454,7 +455,8 @@ jobs:
         # the final retry is actually reachable on repeated lock hangs.
         timeout-minutes: 18
         run: |
-          npm install --no-audit --no-fund
+          # npm ci: honour the committed lockfile (see the Frontend job note).
+          npm ci --no-audit --no-fund
           # On a cache hit the browser binary is already present, so download
           # only the OS shared libs. On a miss, download the binary + OS deps.
           if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
@@ -745,13 +747,17 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # Cache ``~/.npm`` keyed on the lockfile so ``npm install`` reuses
+          # Cache ``~/.npm`` keyed on the lockfile so the install step reuses
           # the download cache across runs. Restored before the install step.
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        run: npm install
+        # ``npm ci``, not ``npm install``: install exactly the committed
+        # lockfile. ``npm install`` re-resolves ranges at run time, so what CI
+        # tested could drift from what anyone else installs — the undici-8
+        # jsdom break (#492) shipped through exactly that gap.
+        run: npm ci --no-audit --no-fund
 
       - name: Type check
         # REQUIRED: the pre-existing tsc errors (ReactFlow type drift, unused
