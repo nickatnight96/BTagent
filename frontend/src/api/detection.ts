@@ -166,3 +166,20 @@ export async function proposeDetections(
     active_tlp: activeTlp,
   });
 }
+
+/**
+ * Unstructured CTI report text → Sigma proposals (#113 back half).
+ * The server extracts IOCs (defanged forms handled) into a synthetic STIX
+ * bundle and runs the identical propose pipeline; 422 when no IOCs found.
+ */
+export async function proposeDetectionsFromReport(
+  reportText: string,
+  reportName = "",
+  activeTlp = "green",
+): Promise<ProposeDetectionsResponse> {
+  return api.post<ProposeDetectionsResponse>(`${BASE}/propose-detections`, {
+    report_text: reportText,
+    report_name: reportName,
+    active_tlp: activeTlp,
+  });
+}

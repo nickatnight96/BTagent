@@ -3,7 +3,11 @@ import { FileUp, Loader2 } from "lucide-react";
 import { Button } from "@/components/ds/button";
 import { Textarea } from "@/components/ds/textarea";
 import { NativeSelect } from "@/components/ds/native-select";
-import { proposeDetections, type ProposeDetectionsResponse } from "@/api/detection";
+import {
+  proposeDetections,
+  proposeDetectionsFromReport,
+  type ProposeDetectionsResponse,
+} from "@/api/detection";
 import { ApiError } from "@/api/client";
 
 /** Pull a server-supplied reason out of an ApiError, or fall back. */
@@ -36,6 +40,10 @@ function errMessage(e: unknown, fallback: string): string {
 export function ImportBundlePanel({ onImported }: { onImported?: () => void }) {
   const [raw, setRaw] = useState("");
   const [tlp, setTlp] = useState("green");
+  // "bundle" = STIX 2.1 JSON; "report" = unstructured CTI prose (#113 back
+  // half) — the server refangs + extracts IOCs into a synthetic bundle.
+  const [mode, setMode] = useState<"bundle" | "report">("bundle");
+  const [reportName, setReportName] = useState("");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ProposeDetectionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,23 +51,29 @@ export function ImportBundlePanel({ onImported }: { onImported?: () => void }) {
   const handleImport = async () => {
     const text = raw.trim();
     if (!text) {
-      setError("Paste a STIX 2.1 bundle to import.");
+      setError(
+        mode === "bundle" ? "Paste a STIX 2.1 bundle to import." : "Paste CTI report text.",
+      );
       return;
     }
-    let bundle: Record<string, unknown>;
-    try {
-      bundle = JSON.parse(text);
-    } catch {
-      // Caught client-side only because the message can be more specific
-      // than the server's; the server still validates the STIX shape.
-      setError("That isn't valid JSON.");
-      return;
+    let bundle: Record<string, unknown> | null = null;
+    if (mode === "bundle") {
+      try {
+        bundle = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        // Caught client-side only because the message can be more specific
+        // than the server's; the server still validates the STIX shape.
+        setError("That isn't valid JSON.");
+        return;
+      }
     }
     setError(null);
     setResult(null);
     setBusy(true);
     try {
-      const resp = await proposeDetections(bundle, tlp);
+      const resp = bundle
+        ? await proposeDetections(bundle, tlp)
+        : await proposeDetectionsFromReport(text, reportName.trim(), tlp);
       setResult(resp);
       onImported?.();
     } catch (e) {
@@ -78,10 +92,36 @@ export function ImportBundlePanel({ onImported }: { onImported?: () => void }) {
     >
       <div className="mb-2 flex items-center gap-2">
         <FileUp className="w-4 h-4 text-primary" aria-hidden="true" />
-        <h2 className="text-sm font-semibold">Import STIX bundle</h2>
+        <h2 className="text-sm font-semibold">Import CTI</h2>
         <span className="text-xs text-muted-foreground">
           converts indicators into Sigma proposals for review
         </span>
+        <div className="ml-2 flex overflow-hidden rounded-md border border-border text-xs">
+          <button
+            type="button"
+            onClick={() => setMode("bundle")}
+            data-testid="import-mode-bundle"
+            className={
+              mode === "bundle"
+                ? "bg-primary/20 px-2 py-0.5 text-primary"
+                : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
+            }
+          >
+            STIX bundle
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("report")}
+            data-testid="import-mode-report"
+            className={
+              mode === "report"
+                ? "bg-primary/20 px-2 py-0.5 text-primary"
+                : "px-2 py-0.5 text-muted-foreground hover:text-foreground"
+            }
+          >
+            Report text
+          </button>
+        </div>
         {busy && (
           <Loader2
             className="w-3.5 h-3.5 animate-spin text-muted-foreground"
@@ -91,8 +131,9 @@ export function ImportBundlePanel({ onImported }: { onImported?: () => void }) {
       </div>
 
       <p className="mb-2 max-w-3xl text-xs text-muted-foreground">
-        Re-importing a bundle updates proposals still awaiting review and leaves
-        any you have already decided alone. TLP:RED bundles are refused.
+        {mode === "bundle"
+          ? "Re-importing a bundle updates proposals still awaiting review and leaves any you have already decided alone. TLP:RED bundles are refused."
+          : "Paste an advisory, blog post or incident write-up. IOCs are extracted (defanged hxxp:// and [.] forms handled) and each proposal picks up ATT&CK techniques from its surrounding prose. Re-submitting the same report updates, never duplicates."}
       </p>
 
       <Textarea
@@ -102,11 +143,27 @@ export function ImportBundlePanel({ onImported }: { onImported?: () => void }) {
           setError(null);
         }}
         rows={5}
-        placeholder='{"type": "bundle", "objects": [...]}'
-        aria-label="STIX 2.1 bundle JSON"
+        placeholder={
+          mode === "bundle"
+            ? '{"type": "bundle", "objects": [...]}'
+            : "APT campaign report: spearphishing from billing[at]example[.]net delivered a dropper beaconing to hxxps://c2[.]example[.]com …"
+        }
+        aria-label={mode === "bundle" ? "STIX 2.1 bundle JSON" : "CTI report text"}
         data-testid="import-bundle-input"
         className="font-mono text-xs"
       />
+
+      {mode === "report" && (
+        <input
+          type="text"
+          value={reportName}
+          onChange={(e) => setReportName(e.target.value)}
+          placeholder="Report name (optional, shown in proposal provenance)"
+          aria-label="Report name"
+          data-testid="import-report-name"
+          className="mt-2 h-9 w-full max-w-md rounded-md border border-border bg-background px-3 text-xs"
+        />
+      )}
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <NativeSelect
@@ -127,7 +184,7 @@ export function ImportBundlePanel({ onImported }: { onImported?: () => void }) {
           onClick={() => void handleImport()}
           data-testid="import-bundle-submit"
         >
-          Import bundle
+          {mode === "bundle" ? "Import bundle" : "Extract & propose"}
         </Button>
       </div>
 
