@@ -28,6 +28,9 @@ frontend/build/
 .env
 .env.local
 .env.*.local
+# Air-gapped stack env (#502). Carries DB/MinIO/JWT material and the resolved
+# image digests; only the `.example` template is tracked.
+.env.airgap
 !.env.example
 
 # OS
