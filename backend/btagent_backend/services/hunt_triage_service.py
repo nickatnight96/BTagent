@@ -21,6 +21,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from btagent_shared.hunt import triage
+from btagent_shared.hunt.cloud import build_cloud_containment_proposal
 from btagent_shared.hunt.identity import build_revocation_proposal
 from btagent_shared.types.enums import AuditCategory, AuditOutcome, Severity, UserRole
 from btagent_shared.types.hunt import (
@@ -813,6 +814,17 @@ async def promote_to_investigation(
         # Deciders (playbook:create holders) are notified after the flush
         # below, once the investigation id exists.
 
+    # #117 Phase C bullet 2: promoted cloud IAM/STS findings get INERT
+    # containment proposals (revoke role / freeze access key / detach policy).
+    # Same posture as the revocation proposal above — pure data on the
+    # investigation config. Acceptance runs through the #106 containment
+    # execute path (``containment:execute`` RBAC + explicit approved flag +
+    # org safelist screen + audit on execute AND denial); promotion itself
+    # grants no execution authority whatsoever.
+    cloud_containment = build_cloud_containment_proposal(findings)
+    if cloud_containment is not None:
+        config["cloud_containment_proposal"] = cloud_containment.model_dump(mode="json")
+
     inv = InvestigationRow(
         id=generate_id("inv"),
         org_id=org_id,
@@ -918,6 +930,9 @@ async def promote_to_investigation(
             "hunt_finding_ids": [r.id for r in rows],
             "mitre_techniques": techniques,
             "revocation_proposed": revocation is not None,
+            "cloud_containment_proposed": (
+                len(cloud_containment.actions) if cloud_containment is not None else 0
+            ),
         },
     )
     await db.flush()

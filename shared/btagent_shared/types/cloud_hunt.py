@@ -5,6 +5,9 @@ Defines the data contracts for:
   identities) with trust-policy metadata enabling transitive STS closure analysis.
 - :class:`AgenticWorkload` — AI agent workloads (Bedrock AgentCore, Vertex Agent Engine,
   Cloud Run MCP servers, GKE inference) classified as managed vs. shadow.
+- :class:`CloudContainmentProposal` — the Phase-C bullet-2 IAM → IR bridge: inert
+  containment proposals (revoke role / freeze access key / detach policy) seeded on
+  an Investigation when IAM/STS findings are promoted.
 
 These types are the serialisation layer between:
   * :mod:`btagent_shared.hunt.cloud` (pure detection logic, no network)
@@ -202,3 +205,107 @@ class AgenticWorkload(BaseModel):
     # Free-form enrichment from connector / fixture.
     enrichment: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Containment proposals (#117 Phase C bullet 2 — IAM/STS finding → IR)
+# ---------------------------------------------------------------------------
+
+
+class CloudContainmentActionType(StrEnum):
+    """The three cloud control-plane containment verbs this slice proposes.
+
+    ``REVOKE_ROLE`` — revoke the role's active STS sessions / strip the abused
+        trust relationship so the assume-role pivot stops working.
+    ``FREEZE_ACCESS_KEY`` — deactivate a long-lived access key an attacker
+        minted for persistence.
+    ``DETACH_POLICY`` — remove an inline/attached policy that granted the
+        unexpected privilege.
+
+    These names are *also* the ``action_type`` handed to the #106 containment
+    execute service, so they are what shows up in the audit ledger
+    (``execute:revoke_role`` etc.).
+    """
+
+    REVOKE_ROLE = "revoke_role"
+    FREEZE_ACCESS_KEY = "freeze_access_key"
+    DETACH_POLICY = "detach_policy"
+
+
+class CloudContainmentActionStatus(StrEnum):
+    """Per-action lifecycle.
+
+    An action is ``PROPOSED`` (inert) until an incident commander accepts the
+    proposal; the #106 execute path then flips it to ``EXECUTED`` or ``DENIED``
+    (RBAC/approval/safelist refusal — always with an audit row behind it).
+    """
+
+    PROPOSED = "proposed"
+    EXECUTED = "executed"
+    DENIED = "denied"
+
+
+class CloudContainmentProposalStatus(StrEnum):
+    """Lifecycle of the proposal attached to an investigation."""
+
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+class CloudContainmentAction(BaseModel):
+    """One proposed containment action against one cloud IAM principal.
+
+    Deliberately *inert data*: it carries everything the #106 containment
+    execute path needs (``action_type`` / ``connector`` / ``target``) but no
+    execution machinery of its own. Nothing in this model can dispatch; the
+    only way it becomes an action is a human accepting the proposal through the
+    double-gated containment route.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Stable within the proposal (``cca_1``, ``cca_2``, …) so a partial accept
+    # can name exactly which actions to run.
+    id: str = Field(..., min_length=1, max_length=64)
+    action_type: CloudContainmentActionType
+    provider: CloudProvider
+    # The principal acted on — an ARN / service-account email / object id. This
+    # is the value screened against the org never-touch safelist before any
+    # dispatch.
+    target: str = Field(..., min_length=1, max_length=512)
+    # Connector that would enforce it (``aws_iam`` / ``gcp_iam`` / ``azure_iam``).
+    # Live cloud control-plane connectors are deferred to #100, so in practice
+    # this dispatches mock-first and fails closed in live mode.
+    connector: str = Field(..., min_length=1, max_length=64)
+    description: str = Field(default="", max_length=2048)
+    # Action-shaped detail: policy_name, user_name, external trustees, …
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    source_finding_ids: list[str] = Field(default_factory=list)
+    status: CloudContainmentActionStatus = CloudContainmentActionStatus.PROPOSED
+    # Set once the action has been through the #106 execute path.
+    outcome: str = Field(default="", max_length=64)
+    audit_id: str | None = None
+    message: str = Field(default="", max_length=2048)
+
+
+class CloudContainmentProposal(BaseModel):
+    """Inert containment proposals seeded on promotion of IAM/STS findings.
+
+    Mirrors the identity-hunt :class:`~btagent_shared.types.identity_hunt.RevocationProposal`
+    pattern: promotion attaches proposal-shaped data, and a *separate* human
+    decision is what can ever make it act. Here that decision is routed through
+    the #106 containment execute service, so acceptance inherits the
+    ``containment:execute`` RBAC scope, the explicit approved-flag second gate,
+    mock-by-default dispatch, the org safelist screen, and an audit row on
+    every execute AND every denial.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    actions: list[CloudContainmentAction]
+    rationale: str = Field(default="", max_length=8192)
+    status: CloudContainmentProposalStatus = CloudContainmentProposalStatus.PROPOSED
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    decision_rationale: str = Field(default="", max_length=8192)

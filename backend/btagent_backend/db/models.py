@@ -546,10 +546,11 @@ class ResponseSafelistRow(Base):
     """Org-scoped never-block safelist entry (EPIC-3 #106 — collateral-outage guard).
 
     Replaces the hard-coded never-block allowlist that used to live inside the
-    bulk-mitigation engine node. Each row pins one IP or domain that must never
-    be pushed to a perimeter/EDR blocklist for this org — blocking it would be a
-    self-inflicted outage (a corporate proxy, a business-critical SaaS domain,
-    an upstream resolver, etc.).
+    bulk-mitigation engine node. Each row pins one IP, domain, or cloud IAM
+    principal that automated containment must never touch for this org — acting
+    on it would be a self-inflicted outage (a corporate proxy, a
+    business-critical SaaS domain, an upstream resolver, a break-glass IAM role
+    or the CI/CD deploy identity).
 
     A universal baseline (public resolvers, critical-infra domains, RFC1918/
     reserved IPs) is always enforced in code
@@ -575,8 +576,9 @@ class ResponseSafelistRow(Base):
         index=True,
         default=DEFAULT_ORG_ID,
     )
-    # "ip" | "domain" — matches SafelistPolicy semantics (exact IP, domain
-    # suffix). Kept as a plain string (not an enum) to stay create_all-friendly.
+    # "ip" | "domain" | "principal" — matches SafelistPolicy semantics (exact
+    # IP, domain suffix, exact cloud IAM principal). Kept as a plain string (not
+    # an enum) to stay create_all-friendly; new kinds need no migration.
     entry_type: Mapped[str] = mapped_column(String(16), nullable=False)
     value: Mapped[str] = mapped_column(String(255), nullable=False)
     reason: Mapped[str] = mapped_column(Text, default="")

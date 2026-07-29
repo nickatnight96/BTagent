@@ -14,9 +14,10 @@ SAFETY (this module is the enforcement point for #106's non-negotiables):
    on). Live connectors stay behind their existing ``NotImplementedError``
    guards — this module never unbolts them and raises its own guard for any
    action with no mock path. Tests never perform real egress.
-3. **Safelist first.** For any block, the org safelist is consulted *before* any
-   dispatch. A safelisted target is refused with an audited denial — never
-   silently skipped.
+3. **Safelist first.** For any block — and, since #117, any cloud IAM
+   control-plane action (revoke role / freeze access key / detach policy) — the
+   org safelist is consulted *before* any dispatch. A safelisted target is
+   refused with an audited denial — never silently skipped.
 4. **Audit always.** Every execute AND every denial writes a hash-chain audit
    row (``AuditCategory.CONTAINMENT``) stamping the acting user as
    ``approver_id`` plus the tool response and outcome. Nothing runs, and nothing
@@ -106,6 +107,9 @@ async def _dispatch(action_type: str, connector: str, target: str) -> dict[str, 
 
     # No live-capable mock method wired for this (action, connector) pair — return
     # a deterministic mock envelope so the audit + change-record flow still runs.
+    # This is where the #117 cloud IAM actions land: live cloud control-plane
+    # connectors are deferred to #100, so they are mock-only here and the live
+    # branch above already refused before reaching this point.
     return {
         "status": "success",
         "is_mock": True,
@@ -128,6 +132,17 @@ def _outcome_for(tool_response: dict[str, Any]) -> AuditOutcome:
 # Response action_types whose target is a blocklist entry (safelist applies).
 _BLOCK_ACTION_TYPES: frozenset[str] = frozenset({"block_ip", "block_domain"})
 
+# Cloud IAM control-plane action_types (#117 Phase C bullet 2). Their target is
+# a cloud *principal* (ARN / service-account email / object id), so they screen
+# against the org principal safelist instead of the IP/domain sets — same
+# chokepoint, same audited denial, same single dispatch path below.
+_CLOUD_IAM_ACTION_TYPES: frozenset[str] = frozenset(
+    {"revoke_role", "freeze_access_key", "detach_policy"}
+)
+
+# Every action_type that must be safelist-screened before any dispatch.
+_SAFELIST_SCREENED_ACTION_TYPES: frozenset[str] = _BLOCK_ACTION_TYPES | _CLOUD_IAM_ACTION_TYPES
+
 
 async def execute_response_action(
     db: AsyncSession,
@@ -143,10 +158,11 @@ async def execute_response_action(
 ) -> dict[str, Any]:
     """Execute one approved :class:`ResponseAction` and record it.
 
-    Double-gated (RBAC at the route + ``approved`` here). Block-type actions are
-    safelist-screened before dispatch; a safelisted target is refused with an
-    audited denial. Every path writes exactly one audit row stamping ``actor_id``
-    as approver. Returns a result dict carrying ``http_status``.
+    Double-gated (RBAC at the route + ``approved`` here). Block-type actions and
+    cloud IAM control-plane actions are safelist-screened before dispatch; a
+    safelisted target is refused with an audited denial. Every path writes
+    exactly one audit row stamping ``actor_id`` as approver. Returns a result
+    dict carrying ``http_status``.
     """
     resource = f"response_action:{action_id}"
     action = f"execute:{action_type}"
@@ -163,10 +179,12 @@ async def execute_response_action(
             reason="Action is not approved (the HITL half of the double-gate is missing).",
         )
 
-    # Safelist guard for block-type actions (never block a safelisted target).
-    if action_type in _BLOCK_ACTION_TYPES:
+    # Safelist guard (never act on a safelisted target). One screen covers both
+    # blocklist targets and cloud IAM principals — see _target_safelisted.
+    if action_type in _SAFELIST_SCREENED_ACTION_TYPES:
         policy = await response_safelist_service.load_policy(db, org_id=org_id)
         if _target_safelisted(policy, action_type, target):
+            noun = "never-touch" if action_type in _CLOUD_IAM_ACTION_TYPES else "never-block"
             return await _record_denial(
                 db,
                 actor_id=actor_id,
@@ -175,7 +193,7 @@ async def execute_response_action(
                 resource=resource,
                 target=target,
                 tool=connector,
-                reason="Target is on the org never-block safelist (collateral-outage guard).",
+                reason=f"Target is on the org {noun} safelist (collateral-outage guard).",
             )
 
     tool_response = await _dispatch(action_type, connector, target)
@@ -359,6 +377,10 @@ def _target_safelisted(policy: SafelistPolicy, action_type: str, target: str) ->
         return policy.ip_safelisted(target)
     if action_type == "block_domain":
         return policy.domain_safelisted(target)
+    if action_type in _CLOUD_IAM_ACTION_TYPES:
+        # Cloud IAM containment targets a *principal*, so it screens the org
+        # principal safelist (plus the always-on account-root guard).
+        return policy.principal_safelisted(target)
     return False
 
 

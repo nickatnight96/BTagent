@@ -793,3 +793,103 @@ MCP_DNS_RECORDS: list[DnsRecord] = [
         values=["web-frontend-def.a.run.app"],
     ),
 ]
+
+# ---------------------------------------------------------------------------
+# Containment-proposal fixtures (#117 Phase C bullet 2 — IAM → IR)
+#
+# These drive the inert containment proposals seeded on promotion
+# (``btagent_shared.hunt.cloud.build_cloud_containment_proposal``) and the
+# accept path that runs them through the #106 containment execute service.
+#
+# The proposal maps CloudTrail persistence events to the containment verb that
+# actually undoes them:
+#   CreateAccessKey        → freeze_access_key   (long-lived credential)
+#   PutUserPolicy/RolePolicy → detach_policy     (unexpected privilege grant)
+#   UpdateAssumeRolePolicy → revoke_role         (trust-policy mutation)
+# ---------------------------------------------------------------------------
+
+# The actor throughout: a session on a role the attacker already controls.
+CONTAINMENT_ACTOR_ARN = f"arn:aws:iam::{TRUSTED_ACCOUNT}:assumed-role/AttackerRole/session9"
+
+# Principals an org would safelist: touching either is a self-inflicted outage.
+BREAK_GLASS_ROLE_ARN = f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BreakGlassIncidentRole"
+ACCOUNT_ROOT_PRINCIPAL = f"arn:aws:iam::{TRUSTED_ACCOUNT}:root"
+
+# Principals the proposal is expected to name, per verb.
+CONTAINMENT_FREEZE_TARGET = f"arn:aws:iam::{TRUSTED_ACCOUNT}:user/svc-backup"
+CONTAINMENT_DETACH_TARGET = f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/BackdoorRole"
+CONTAINMENT_REVOKE_TARGET = f"arn:aws:iam::{TRUSTED_ACCOUNT}:role/ProdDeployRole"
+
+# One event per containable verb, plus two that must produce NO action.
+IAM_CONTAINMENT_EVENTS: list[dict] = [
+    # → freeze_access_key on arn:aws:iam::<acct>:user/svc-backup
+    {
+        "eventName": "CreateAccessKey",
+        "eventTime": "2026-06-18T12:00:00Z",
+        "awsRegion": "us-east-1",
+        "userIdentity": {"arn": CONTAINMENT_ACTOR_ARN},
+        "requestParameters": {"userName": "svc-backup"},
+    },
+    # → detach_policy on arn:aws:iam::<acct>:role/BackdoorRole
+    {
+        "eventName": "PutRolePolicy",
+        "eventTime": "2026-06-18T12:01:00Z",
+        "awsRegion": "us-east-1",
+        "userIdentity": {"arn": CONTAINMENT_ACTOR_ARN},
+        "requestParameters": {
+            "roleName": "BackdoorRole",
+            "policyName": "AdminAccess",
+            "policyDocument": '{"Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}',
+        },
+    },
+    # → revoke_role on arn:aws:iam::<acct>:role/ProdDeployRole
+    {
+        "eventName": "UpdateAssumeRolePolicy",
+        "eventTime": "2026-06-18T12:02:00Z",
+        "awsRegion": "us-east-1",
+        "userIdentity": {"arn": CONTAINMENT_ACTOR_ARN},
+        "requestParameters": {
+            "roleName": "ProdDeployRole",
+            "policyDocument": (
+                f'{{"Statement":[{{"Effect":"Allow","Principal":'
+                f'{{"AWS":"arn:aws:iam::{EXTERNAL_ACCOUNT}:root"}},"Action":"sts:AssumeRole"}}]}}'
+            ),
+        },
+    },
+    # Detected as IAM persistence, but NOT containable by any of the three
+    # verbs — the proposal must stay silent rather than propose theatre.
+    {
+        "eventName": "DeactivateMFADevice",
+        "eventTime": "2026-06-18T12:03:00Z",
+        "awsRegion": "us-east-1",
+        "userIdentity": {"arn": CONTAINMENT_ACTOR_ARN},
+        "requestParameters": {"userName": "dana"},
+    },
+    # Benign — no finding at all, therefore no action.
+    {
+        "eventName": "GetCallerIdentity",
+        "eventTime": "2026-06-18T12:04:00Z",
+        "awsRegion": "us-east-1",
+        "userIdentity": {"arn": f"arn:aws:iam::{TRUSTED_ACCOUNT}:user/alice"},
+        "requestParameters": {},
+    },
+]
+
+# A single event whose containment target is the org's break-glass role. The
+# proposal is still generated (the finding is real); the org never-touch
+# safelist is what refuses it at execute time, with an audited denial.
+SAFELISTED_CONTAINMENT_EVENTS: list[dict] = [
+    {
+        "eventName": "UpdateAssumeRolePolicy",
+        "eventTime": "2026-06-18T12:10:00Z",
+        "awsRegion": "us-east-1",
+        "userIdentity": {"arn": CONTAINMENT_ACTOR_ARN},
+        "requestParameters": {
+            "roleName": "BreakGlassIncidentRole",
+            "policyDocument": (
+                f'{{"Statement":[{{"Effect":"Allow","Principal":'
+                f'{{"AWS":"arn:aws:iam::{EXTERNAL_ACCOUNT}:root"}},"Action":"sts:AssumeRole"}}]}}'
+            ),
+        },
+    },
+]
