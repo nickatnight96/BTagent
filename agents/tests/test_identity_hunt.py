@@ -569,3 +569,76 @@ def test_build_grant_graph_session_edge_ignores_empty_session_id() -> None:
     _, events = dormant_grant_and_events()  # reactivation event has no session_id
     graph = build_grant_graph([], events)
     assert SESSION_EDGES_KEY not in graph
+
+
+# ---------------------------------------------------------------------------
+# #435 — curated per-rule pivot questions ride with every finding
+# ---------------------------------------------------------------------------
+
+
+def test_every_detector_rule_has_pivot_questions() -> None:
+    """Each code detector's rule_id carries curated pivot questions.
+
+    A new detector added without questions fails here — the curation is a
+    deliverable of the detector, not an optional garnish (#435 criterion 3).
+    """
+    from btagent_shared.hunt.identity import IDENTITY_PIVOT_QUESTIONS
+
+    expected_rule_ids = {
+        "identity.oauth_token_replay",
+        "identity.dormant_app_reactivation",
+        "identity.impossible_travel",
+        "identity.service_principal_credential_addition",
+        "identity.federation_trust_modification",
+        "identity.mfa_fatigue",
+        "identity.conditional_access_bypass",
+    }
+    assert set(IDENTITY_PIVOT_QUESTIONS) == expected_rule_ids
+    for rule_id, questions in IDENTITY_PIVOT_QUESTIONS.items():
+        assert 2 <= len(questions) <= 5, f"{rule_id}: want 2-5 questions"
+        assert all(q.strip().endswith("?") for q in questions), f"{rule_id}: not questions"
+
+
+def test_finding_request_carries_pivot_questions() -> None:
+    """to_record_finding_request attaches the rule's pivot questions."""
+    from btagent_shared.hunt.identity import IDENTITY_PIVOT_QUESTIONS
+
+    results = detect_oauth_token_replay(token_replay_events())
+    assert results
+    req = to_record_finding_request(results[0])
+    assert (
+        req.evidence["pivot_questions"]
+        == IDENTITY_PIVOT_QUESTIONS["identity.oauth_token_replay"]
+    )
+
+
+def test_pack_manifests_carry_pivot_questions() -> None:
+    """Both identity pack manifests give every rule a pivot_questions list.
+
+    The Sigma rules have no code home, so pack.yaml is their only carrier;
+    the copies must not drift apart on which rules are covered.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    agents_pack = (
+        Path(__file__).resolve().parents[1]
+        / "btagent_agents"
+        / "plugins"
+        / "hunter"
+        / "packs"
+        / "identity"
+        / "pack.yaml"
+    )
+    engine_pack = (
+        agents_pack.parents[6] / "engine" / "btagent_engine" / "hunting" / "packs"
+        / "identity" / "pack.yaml"
+    )
+    covered: list[set[str]] = []
+    for manifest in (agents_pack, engine_pack):
+        rules = yaml.safe_load(manifest.read_text())["rules"]
+        with_pivots = {r["file"] for r in rules if r.get("pivot_questions")}
+        assert with_pivots == {r["file"] for r in rules}, f"{manifest}: rules missing pivots"
+        covered.append(with_pivots)
+    assert covered[0] == covered[1], "agents/engine identity pack copies drifted"

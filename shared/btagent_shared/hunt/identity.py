@@ -84,6 +84,51 @@ _TECHNIQUES: dict[str, list[str]] = {
     "conditional_access_bypass": ["T1556", "T1078"],
 }
 
+# Curated per-rule pivot questions (#435, criterion 3). Keyed by the exact
+# ``rule_id`` each detector emits; attached to finding evidence by
+# :func:`to_record_finding_request` so every identity finding carries its
+# "what should I look at next?" list without an LLM round-trip. The Sigma
+# rules in the identity packs carry their own ``pivot_questions`` in
+# ``pack.yaml`` (both copies) — these cover the code-based detectors, which
+# have no pack.yaml rule entry of their own.
+IDENTITY_PIVOT_QUESTIONS: dict[str, list[str]] = {
+    "identity.oauth_token_replay": [
+        "Which other principals authenticated from the same ASNs in the replay window?",
+        "Does the session/token originate from a device enrolled to this principal, or none?",
+        "What did the replayed session access after the second ASN appeared (mail, files, admin APIs)?",
+    ],
+    "identity.dormant_app_reactivation": [
+        "Who originally consented to this app, and is that employee/owner still active?",
+        "Did the reactivation coincide with a new client secret or credential on the app?",
+        "What data did the app touch since reactivation, and does it match its historical pattern?",
+    ],
+    "identity.impossible_travel": [
+        "Is either location associated with a corporate VPN/proxy egress the baseline knows about?",
+        "Did MFA satisfy at both locations, and with which factor types?",
+        "Are there password-spray or phishing findings for this principal in the preceding 24h?",
+    ],
+    "identity.service_principal_credential_addition": [
+        "Which identity added the credential, and is that identity itself recently compromised-adjacent?",
+        "Was the addition inside an approved change window or CI/CD automation account?",
+        "What roles/scopes does this service principal hold — what can the new credential reach?",
+    ],
+    "identity.federation_trust_modification": [
+        "Is there a CAB/change record for this federation trust modification?",
+        "Which tokens were issued under the modified trust since the change?",
+        "Do signing-certificate thumbprints match the values in the IdP's documented config?",
+    ],
+    "identity.mfa_fatigue": [
+        "Where did the final approved push authenticate from — same geo/ASN as the denied burst?",
+        "Did the principal report the pushes, and were credentials recently phished or sprayed?",
+        "What sessions/tokens were minted right after the approval, and are they still live?",
+    ],
+    "identity.conditional_access_bypass": [
+        "Which CA policy was expected to apply, and why did it resolve notApplied/failure?",
+        "Is the source IP in a trusted-location or break-glass exclusion that should be narrowed?",
+        "Did the under-enforced session go on to access privileged apps or issue tokens?",
+    ],
+}
+
 
 # ---------------------------------------------------------------------------
 # Geo helpers (pure math, no network)
@@ -866,6 +911,10 @@ def to_record_finding_request(result: IdentityDetectionResult) -> RecordFindingR
         evidence={
             "rule_id": result.rule_id,
             "detection_id": result.detection_id,
+            # #435: curated next-step questions ride with the finding so the
+            # UI can render them without a second lookup. Empty for rule ids
+            # outside the curated map (nothing renders).
+            "pivot_questions": IDENTITY_PIVOT_QUESTIONS.get(result.rule_id, []),
             **result.evidence,
         },
     )

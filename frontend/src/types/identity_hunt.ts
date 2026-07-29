@@ -170,6 +170,8 @@ export interface IdentityFindingEvidence {
   dormant_days?: number;
   /** Whether the app previously had revoked grants (dormant reactivation). */
   previously_revoked?: boolean;
+  /** Curated "what should I look at next?" questions for this rule (#435). */
+  pivot_questions?: string[];
   /** Additional freeform fields from the detector. */
   [key: string]: unknown;
 }
