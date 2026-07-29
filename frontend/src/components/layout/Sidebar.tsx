@@ -24,6 +24,7 @@ import {
   Cloud,
   ScanSearch,
   UserSearch,
+  Gauge,
   ShieldCheck,
   FlaskConical,
   Plug,
@@ -131,6 +132,12 @@ const navItems: NavItem[] = [
     path: "/identity-hunts",
     icon: <UserSearch className="w-5 h-5" />,
     testId: "nav-identity-hunts-link",
+  },
+  {
+    label: "Coverage Console",
+    path: "/coverage",
+    icon: <Gauge className="w-5 h-5" />,
+    testId: "nav-coverage-link",
   },
   {
     label: "Detection Validation",
