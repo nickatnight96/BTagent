@@ -238,6 +238,46 @@ class HuntPackRunRow(Base):
     )
 
 
+class OrgHuntPackRow(Base):
+    """A hunt pack installed for one org, with its enable/disable state (#112).
+
+    The per-org pack store the scheduled runner reads instead of the hardcoded
+    builtin default: one row per ``(org_id, pack_id)``, where ``pack_id`` is the
+    **builtin pack name** (the directory under ``btagent_engine/hunting/packs``,
+    e.g. ``windows_baseline``) — the identity ``load_builtin_pack`` takes, not
+    the manifest's ``hpack_…`` id that ``hunt_pack_runs.pack_id`` records.
+
+    Absence is meaningful: an org with **no rows** falls back to the builtin
+    default set (``hunt_pack_store.DEFAULT_BUILTIN_PACKS``), so existing orgs
+    keep running exactly what they ran before this table existed. A row is only
+    written when someone explicitly enables or disables a pack.
+    """
+
+    __tablename__ = "org_hunt_packs"
+
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    # Builtin pack name (``load_builtin_pack`` key), e.g. "windows_baseline".
+    pack_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    installed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+    # User id of whoever last flipped the switch (null for system installs).
+    updated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        # The runner's question is "which packs are enabled for this org?".
+        Index("idx_org_hunt_packs_org_enabled", "org_id", "enabled"),
+    )
+
+
 class NoiseDigestStateRow(Base):
     """Per-org memory of the last noise-digest run (#112).
 

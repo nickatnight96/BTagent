@@ -681,6 +681,10 @@ async def get_noise_baseline(
     Read-only analysis over the org's pack-run history (``rule_stats``);
     nothing is suppressed automatically — the analyst acts through the
     existing suppression API. RBAC: ``hunt:view``.
+
+    The payload also carries ``under_firing`` — the mirror-image advisory
+    (rules with a zero-hit record across the whole 60-day window), so the
+    review surface shows both halves of "is this rule doing its job?".
     """
     user.require_permission("hunt:view")
     return await noise_baseline.noise_baseline(
@@ -689,6 +693,39 @@ async def get_noise_baseline(
         lookback_runs=lookback_runs,
         min_runs=min_runs,
         hit_rate_threshold=hit_rate_threshold,
+    )
+
+
+@router.get("/under-firing", response_model=noise_baseline.UnderFiringReport)
+async def get_under_firing(
+    window_days: int = Query(
+        noise_baseline.UNDER_FIRING_WINDOW_DAYS,
+        ge=1,
+        le=365,
+        description="Days of run history a rule must have gone silent through.",
+    ),
+    min_runs: int = Query(
+        noise_baseline.UNDER_FIRING_MIN_RUNS,
+        ge=1,
+        le=100,
+        description="Minimum observations inside the window before a verdict.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> noise_baseline.UnderFiringReport:
+    """Pack rules with a 60-day zero-hit record — review candidates (#112).
+
+    The mirror of ``GET /hunt/noise-baseline``: a rule that has not fired once
+    across a whole window is coverage that only *looks* present (mis-scoped
+    query, telemetry the org does not send, or a genuinely dead detection).
+    Advisory only — nothing is retired automatically; the analyst decides.
+    Rules whose most recent run errored are reported as ``errored`` elsewhere
+    and excluded here (dark, not silent). RBAC: ``hunt:view``; strictly
+    org-scoped.
+    """
+    user.require_permission("hunt:view")
+    return await noise_baseline.under_firing(
+        db, org_id=user.org_id, window_days=window_days, min_runs=min_runs
     )
 
 

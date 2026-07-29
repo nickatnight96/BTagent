@@ -14,9 +14,10 @@ Three layers, mirroring the rest of the hunt backend:
 * :func:`persist_pack_run` — the side-effectful shell: ingests the converted
   findings via :func:`hunt_triage_service.persist_hunt_findings` (so
   suppressions apply *pre-insert*) and writes the history row.
-* :func:`run_pack_and_ingest` — orchestration: loads the builtin packs, runs
-  them through the engine runner against the configured backends, converts,
-  persists, and (best-effort) emits the run events.
+* :func:`run_pack_and_ingest` — orchestration: resolves which packs the org has
+  enabled (:mod:`hunt_pack_store`), loads them, runs them through the engine
+  runner against the configured backends, converts, persists, and
+  (best-effort) emits the run events.
 
 Resume-from-checkpoint (#112, "survives worker restart"): a pack run advertises
 an in-flight ``running`` status and records, per rule, which rules it has
@@ -87,7 +88,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import DEFAULT_ORG_ID
 from btagent_backend.db.models_hunt import HuntPackRunRow
-from btagent_backend.services import hunt_triage_service
+from btagent_backend.services import hunt_pack_store, hunt_triage_service
 
 if TYPE_CHECKING:  # avoid importing the (pysigma-heavy) engine at module load
     from btagent_engine.hunting.runner import PackRunResult, RuleRunResult, SigmaHit
@@ -101,9 +102,10 @@ _RAW_EVIDENCE_CAP_BYTES = 4096
 # How much of an over-cap raw event to keep as a human-readable preview.
 _RAW_PREVIEW_CHARS = 512
 
-# The builtin packs run by the scheduled job. v1 ships the one builtin pack;
-# enabling/disabling per-org is a follow-up (the pack store, #112 FE).
-DEFAULT_BUILTIN_PACKS: tuple[str, ...] = ("windows_baseline",)
+# The packs a scheduled sweep runs for an org with no rows in the per-org pack
+# store. The store (:mod:`hunt_pack_store`) owns the enable/disable decision
+# now; this alias keeps the historical import path working.
+DEFAULT_BUILTIN_PACKS: tuple[str, ...] = hunt_pack_store.DEFAULT_BUILTIN_PACKS
 
 # In-flight status a resumable run wears until it lands a terminal status.
 _RUNNING = "running"
@@ -508,12 +510,15 @@ async def run_pack_and_ingest(
     emit_events: bool = True,
     checkpoint: bool = True,
 ) -> list[HuntPackRunRow]:
-    """Run the enabled builtin packs and land their hits in the triage inbox.
+    """Run the org's enabled packs and land their hits in the triage inbox.
 
-    Org-aware: ingests into ``org_id`` (the default org in v1 — scheduled
-    runs have no per-org pack store yet; see ``DEFAULT_BUILTIN_PACKS``). One
-    history row per pack. A failure running a single pack is captured as a
-    ``failed`` history row and does not abort the rest.
+    Org-aware: ingests into ``org_id`` and — when ``pack_names`` is not given —
+    runs exactly the packs that org has **enabled** in the per-org pack store
+    (:func:`hunt_pack_store.enabled_pack_names`). An org with no rows falls
+    back to the builtin default set, so behaviour for existing orgs is
+    unchanged. An explicit ``pack_names`` (ad-hoc / test runs) bypasses the
+    store. One history row per pack; a failure running a single pack is
+    captured as a ``failed`` history row and does not abort the rest.
 
     Resume-aware (#112): before running a pack it looks for the newest
     in-flight (``running``) run for ``(org_id, pack)`` — the remnant of a
@@ -529,8 +534,16 @@ async def run_pack_and_ingest(
     from btagent_engine.node import NodeContext
 
     settings = get_settings()
-    pack_names = list(pack_names or DEFAULT_BUILTIN_PACKS)
+    if pack_names is None:
+        pack_names = await hunt_pack_store.enabled_pack_names(db, org_id=org_id)
+    else:
+        pack_names = list(pack_names)
     backends = list(backends or settings.hunt_scheduler_backends)
+    if not pack_names:
+        # Every pack explicitly disabled for this org — a legitimate state, not
+        # an error. Say so once rather than silently returning nothing.
+        logger.info("no hunt packs enabled for org=%s; skipping sweep", org_id)
+        return []
 
     run_rows: list[HuntPackRunRow] = []
     for name in pack_names:

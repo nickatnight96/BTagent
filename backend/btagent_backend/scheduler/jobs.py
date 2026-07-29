@@ -75,13 +75,16 @@ async def memory_consolidation_sweep(ctx: dict[str, Any]) -> dict[str, int]:
 async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
     """Run the enabled builtin hunt packs and land hits in the inbox (#112).
 
-    The cron entry point for the Phase-6 integration slice: loads the enabled
-    builtin packs, runs them through the engine runner against the configured
-    backends, converts each :class:`SigmaHit` into a ``HuntFinding`` (so active
-    suppressions apply pre-insert), and records a pack-run history row per pack.
+    The cron entry point for the Phase-6 integration slice: loads the packs the
+    org has **enabled** in the per-org pack store, runs them through the engine
+    runner against the configured backends, converts each :class:`SigmaHit`
+    into a ``HuntFinding`` (so active suppressions apply pre-insert), and
+    records a pack-run history row per pack.
 
-    Org scope: v1 ingests into the **default org** — scheduled runs have no
-    per-org pack store yet (see ``hunt_pack_run_service.DEFAULT_BUILTIN_PACKS``).
+    Org scope: the cron still sweeps the **default org**; which packs it runs
+    for that org now comes from ``org_hunt_packs`` via
+    :func:`hunt_pack_store.enabled_pack_names`, falling back to
+    ``hunt_pack_store.DEFAULT_BUILTIN_PACKS`` when the org has no rows.
 
     Overlap guard: registered with arq's ``unique=True`` cron (a Redis lock on
     the scheduled instant), so a slow run can't be double-started by another
@@ -508,13 +511,18 @@ async def noise_digest_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     rules that turned chronically noisy since the previous sweep. The arq
     redis (``ctx["redis"]``) rides along for the real-time WS push; the DB
     rows are the source of truth either way.
+
+    The sweep also *counts* the mirror-image signal — rules with a 60-day
+    zero-hit record (#112 Phase C) — so the loop reports both halves of rule
+    health. Silent rules are surfaced for review (``GET /hunt/under-firing``)
+    and deliberately never notify; see :mod:`services.noise_digest`.
     """
     from sqlalchemy import select as _select
 
     from btagent_backend.db.models_hunt import HuntPackRunRow
     from btagent_backend.services.noise_digest import run_noise_digest
 
-    totals = {"orgs": 0, "noisy": 0, "new": 0, "notified": 0}
+    totals = {"orgs": 0, "noisy": 0, "new": 0, "notified": 0, "under_firing": 0}
     async with async_session_factory() as session:
         org_ids = [
             org_id
@@ -525,15 +533,16 @@ async def noise_digest_sweep(ctx: dict[str, Any]) -> dict[str, int]:
         for org_id in org_ids:
             result = await run_noise_digest(session, org_id=org_id, redis=ctx.get("redis"))
             totals["orgs"] += 1
-            for key in ("noisy", "new", "notified"):
-                totals[key] += result[key]
+            for key in ("noisy", "new", "notified", "under_firing"):
+                totals[key] += result.get(key, 0)
         await session.commit()
     logger.info(
-        "noise_digest_sweep: orgs=%d noisy=%d new=%d notified=%d",
+        "noise_digest_sweep: orgs=%d noisy=%d new=%d notified=%d under_firing=%d",
         totals["orgs"],
         totals["noisy"],
         totals["new"],
         totals["notified"],
+        totals["under_firing"],
     )
     return totals
 

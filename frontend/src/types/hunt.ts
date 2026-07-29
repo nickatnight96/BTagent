@@ -236,12 +236,63 @@ export interface NoisyRule {
   last_hit_at: string | null;
 }
 
+/** One rule with a zero-hit record across the whole window (#112 Phase C). */
+export interface UnderFiringRule {
+  pack_id: string;
+  pack_name: string;
+  rule_id: string;
+  rule_title: string;
+  runs_observed: number;
+  total_hits: number;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
+  days_silent: number;
+  window_days: number;
+}
+
+/** Response from GET /hunt/under-firing. */
+export interface UnderFiringReport {
+  items: UnderFiringRule[];
+  runs_analyzed: number;
+  window_days: number;
+  min_runs: number;
+}
+
 /** Response from GET /hunt/noise-baseline. */
 export interface NoiseBaseline {
   items: NoisyRule[];
   runs_analyzed: number;
   min_runs: number;
   hit_rate_threshold: number;
+  /** Mirror-image advisory: rules silent for the whole window (#112 Phase C). */
+  under_firing?: UnderFiringRule[];
+  under_firing_window_days?: number;
+}
+
+/** One builtin hunt pack + this org's install/enable state (GET /hunt/packs). */
+export interface HuntPackCatalogEntry {
+  /** Install key — the builtin pack name the runner loads. */
+  pack_id: string;
+  /** The id this pack's runs carry in ``hunt_pack_runs.pack_id``. */
+  manifest_pack_id: string;
+  name: string;
+  version: string;
+  description: string;
+  rule_count: number;
+  enabled: boolean;
+  /** True when an explicit org row exists (vs. resolved from the defaults). */
+  installed: boolean;
+  default_enabled: boolean;
+  installed_at: string | null;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** Response from GET /hunt/packs. */
+export interface HuntPackCatalogResponse {
+  items: HuntPackCatalogEntry[];
+  total: number;
+  default_packs: string[];
 }
 
 /**
