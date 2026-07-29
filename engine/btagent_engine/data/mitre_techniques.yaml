@@ -1,0 +1,78 @@
+# MITRE ATT&CK technique keyword table for the engine MitreMapperNode.
+#
+# Externalized from the former hardcoded table (the Sprint-4A TODO) so
+# security teams can extend coverage without a code change: add an entry
+# here, ship the package, done. Format:
+#
+#   - technique_id: T1059.001
+#     name: PowerShell
+#     keywords:            # [keyword, confidence 0.0-1.0]; any match fires,
+#       - [powershell, 0.95]   # highest-confidence matching keyword wins
+#
+# Matching is word-boundary (hand-rolled lookarounds — 'lateral' must not
+# match 'collateral'), case-insensitive; the loader validates every row at
+# import time and fails loud on malformed content.
+
+- technique_id: T1059.001
+  name: PowerShell
+  keywords:
+    - ["powershell", 0.95]
+    - ["pwsh", 0.85]
+    - ["powershell.exe", 0.95]
+
+- technique_id: T1059.003
+  name: Windows Command Shell
+  keywords:
+    - ["cmd.exe", 0.9]
+    - ["command shell", 0.7]
+
+- technique_id: T1021
+  name: Remote Services
+  keywords:
+    - ["lateral movement", 0.85]
+    - ["remote service", 0.7]
+
+- technique_id: T1021.001
+  name: Remote Desktop Protocol
+  keywords:
+    - ["rdp", 0.9]
+    - ["remote desktop", 0.85]
+
+- technique_id: T1110
+  name: Brute Force
+  keywords:
+    - ["brute force", 0.9]
+    - ["password spray", 0.85]
+    - ["credential stuffing", 0.85]
+
+- technique_id: T1486
+  name: Data Encrypted for Impact
+  keywords:
+    - ["ransomware", 0.95]
+    - ["file encryption", 0.7]
+
+- technique_id: T1071.001
+  name: Web Protocols
+  keywords:
+    - ["c2 over http", 0.9]
+    - ["http beacon", 0.85]
+    - ["https beacon", 0.85]
+
+- technique_id: T1566.001
+  name: Spearphishing Attachment
+  keywords:
+    - ["spearphishing attachment", 0.95]
+    - ["phishing attachment", 0.85]
+
+- technique_id: T1003
+  name: OS Credential Dumping
+  keywords:
+    - ["mimikatz", 0.95]
+    - ["credential dump", 0.85]
+    - ["lsass dump", 0.9]
+
+- technique_id: T1053.005
+  name: Scheduled Task
+  keywords:
+    - ["scheduled task", 0.85]
+    - ["schtasks", 0.9]

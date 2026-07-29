@@ -9,9 +9,9 @@ and similar near-misses.
 
 This engine port:
 
-* ships an embedded minimal mapping (~10 high-confidence techniques as
-  a hardcoded Python dict). Loading from a config file is on the Phase 2
-  backlog -- see TODO below.
+* loads its curated high-confidence mapping from the packaged
+  ``mitre_techniques.yaml`` next to this module -- extend coverage by
+  editing the YAML, no code change (validated loud at import).
 * uses **word-boundary** matching (``re``) so ``lateral`` no longer
   matches ``collateral``, ``script`` no longer matches ``manuscript``,
   etc.
@@ -27,8 +27,10 @@ not as a precision metric.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Final
 
+import yaml
 from pydantic import BaseModel, Field
 
 from btagent_engine.node import (
@@ -50,63 +52,39 @@ class _TechniqueSpec(BaseModel):
     # its keywords; the highest-confidence keyword that fires wins.
 
 
-# TODO(sprint-future): externalise this table to a YAML config file shipped
-# with the engine package so security teams can extend it without a code
-# change. For Sprint 4A we hardcode a small high-confidence set; the full
-# 80+-technique mapping currently lives in agents/btagent_agents/mitre/data
-# but the engine must not import from agents.
-_EMBEDDED_TECHNIQUES: Final[tuple[_TechniqueSpec, ...]] = (
-    _TechniqueSpec(
-        technique_id="T1059.001",
-        name="PowerShell",
-        keywords=[("powershell", 0.95), ("pwsh", 0.85), ("powershell.exe", 0.95)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1059.003",
-        name="Windows Command Shell",
-        keywords=[("cmd.exe", 0.9), ("command shell", 0.7)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1021",
-        name="Remote Services",
-        keywords=[("lateral movement", 0.85), ("remote service", 0.7)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1021.001",
-        name="Remote Desktop Protocol",
-        keywords=[("rdp", 0.9), ("remote desktop", 0.85)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1110",
-        name="Brute Force",
-        keywords=[("brute force", 0.9), ("password spray", 0.85), ("credential stuffing", 0.85)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1486",
-        name="Data Encrypted for Impact",
-        keywords=[("ransomware", 0.95), ("file encryption", 0.7)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1071.001",
-        name="Web Protocols",
-        keywords=[("c2 over http", 0.9), ("http beacon", 0.85), ("https beacon", 0.85)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1566.001",
-        name="Spearphishing Attachment",
-        keywords=[("spearphishing attachment", 0.95), ("phishing attachment", 0.85)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1003",
-        name="OS Credential Dumping",
-        keywords=[("mimikatz", 0.95), ("credential dump", 0.85), ("lsass dump", 0.9)],
-    ),
-    _TechniqueSpec(
-        technique_id="T1053.005",
-        name="Scheduled Task",
-        keywords=[("scheduled task", 0.85), ("schtasks", 0.9)],
-    ),
-)
+# The keyword table ships as ``mitre_techniques.yaml`` next to this module
+# (the Sprint-4A TODO, now done): security teams extend coverage by editing
+# the YAML — no code change. The full 80+-technique mapping still lives in
+# agents/btagent_agents/mitre/data (the engine must not import from agents);
+# this file remains the engine's own curated high-confidence set.
+_TECHNIQUES_YAML_PATH: Final = Path(__file__).resolve().parent / "mitre_techniques.yaml"
+
+
+def _load_techniques(path: Path = _TECHNIQUES_YAML_PATH) -> tuple[_TechniqueSpec, ...]:
+    """Load and validate the packaged keyword table.
+
+    Fails LOUD at import time on a missing or malformed file: a silently
+    empty mapper would make every downstream consumer (triage hints,
+    coverage analysis) look like "no technique matched" — the worst failure
+    mode is the quiet one.
+    """
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list) or not raw:
+        raise RuntimeError(f"MITRE technique table {path} must be a non-empty list")
+    specs: list[_TechniqueSpec] = []
+    for entry in raw:
+        specs.append(
+            _TechniqueSpec(
+                technique_id=entry["technique_id"],
+                name=entry["name"],
+                keywords=[(str(kw), float(conf)) for kw, conf in entry["keywords"]],
+            )
+        )
+    return tuple(specs)
+
+
+# Kept under the original name — the compiled-regex cache and tests key off it.
+_EMBEDDED_TECHNIQUES: Final[tuple[_TechniqueSpec, ...]] = _load_techniques()
 
 
 # Pre-compile a regex per keyword once at import time. ``\b`` only treats

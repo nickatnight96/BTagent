@@ -176,3 +176,54 @@ async def test_dict_payload_through_runner():
     ids = {t.technique_id for t in out.techniques}
     assert "T1021.001" in ids
     assert "T1110" in ids
+
+
+# ---------------------------------------------------------------------------
+# Packaged YAML table (the externalization the Sprint-4A TODO promised)
+# ---------------------------------------------------------------------------
+
+
+def test_yaml_table_is_packaged_and_valid():
+    """The keyword table ships inside the package and every row validates."""
+    from btagent_engine.data.mitre_mapper import (
+        _EMBEDDED_TECHNIQUES,
+        _TECHNIQUES_YAML_PATH,
+    )
+
+    assert _TECHNIQUES_YAML_PATH.exists()
+    assert len(_EMBEDDED_TECHNIQUES) >= 10
+    for spec in _EMBEDDED_TECHNIQUES:
+        assert spec.technique_id.startswith("T")
+        assert spec.name
+        assert spec.keywords
+        for keyword, confidence in spec.keywords:
+            assert keyword == keyword.lower(), "keywords are matched case-insensitively"
+            assert 0.0 < confidence <= 1.0
+
+
+def test_yaml_extension_needs_no_code_change(tmp_path):
+    """A team-added YAML row loads through the same validator."""
+    from btagent_engine.data.mitre_mapper import _load_techniques
+
+    custom = tmp_path / "custom.yaml"
+    custom.write_text(
+        "- technique_id: T9999\n"
+        "  name: Custom Team Technique\n"
+        "  keywords:\n"
+        '    - ["bespoke beacon", 0.9]\n'
+    )
+    specs = _load_techniques(custom)
+    assert specs[0].technique_id == "T9999"
+    assert specs[0].keywords == [("bespoke beacon", 0.9)]
+
+
+def test_yaml_malformed_fails_loud(tmp_path):
+    """An empty/malformed table raises rather than silently emptying the mapper."""
+    import pytest as _pytest
+
+    from btagent_engine.data.mitre_mapper import _load_techniques
+
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("{}\n")
+    with _pytest.raises(RuntimeError, match="non-empty list"):
+        _load_techniques(empty)
