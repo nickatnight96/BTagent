@@ -71,19 +71,37 @@ def domain_from_url(value: str) -> str:
     return s.split("/", 1)[0].split("?", 1)[0].split("#", 1)[0]
 
 
+def is_account_root_principal(value: str) -> bool:
+    """True for a cloud *account root* principal (e.g. ``arn:aws:iam::1234:root``).
+
+    Freezing / revoking the account root is not containment, it is locking every
+    responder out of the account mid-incident — the cloud-control-plane analogue
+    of blocking your own resolver. Always refused, regardless of org policy.
+    Malformed input returns ``False`` (validation is a separate concern).
+    """
+    v = value.strip().lower().rstrip("/")
+    return v.endswith(":root") or v.endswith("/root")
+
+
 @dataclass(frozen=True)
 class SafelistPolicy:
-    """A never-block set: exact IPs plus domain suffixes.
+    """A never-touch set: exact IPs, domain suffixes, and cloud principals.
 
     Structural-reserved IPs are always safelisted (see
     :func:`is_structurally_reserved_ip`) in addition to ``ips``. Domain matching
     is suffix-based: an entry ``example.com`` safelists ``example.com`` and any
-    ``*.example.com`` subdomain. Values are normalized (trim + lowercase) on
-    construction so lookups are case-insensitive.
+    ``*.example.com`` subdomain. ``principals`` are cloud IAM identities (ARN /
+    service-account email / object id) that must never be revoked, frozen, or
+    stripped by automated containment — a break-glass role, the CI/CD deploy
+    identity, the EDR agent's own service account. Matching is exact
+    (case-insensitive); the account root is always safelisted structurally.
+    Values are normalized (trim + lowercase) on construction so lookups are
+    case-insensitive.
     """
 
     ips: frozenset[str] = field(default_factory=frozenset)
     domain_suffixes: tuple[str, ...] = ()
+    principals: frozenset[str] = field(default_factory=frozenset)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "ips", frozenset(v.strip() for v in self.ips if v and v.strip()))
@@ -91,6 +109,11 @@ class SafelistPolicy:
             self,
             "domain_suffixes",
             tuple(s.strip().lower().rstrip(".") for s in self.domain_suffixes if s and s.strip()),
+        )
+        object.__setattr__(
+            self,
+            "principals",
+            frozenset(p.strip().lower() for p in self.principals if p and p.strip()),
         )
 
     def ip_safelisted(self, value: str) -> bool:
@@ -106,11 +129,19 @@ class SafelistPolicy:
     def url_safelisted(self, value: str) -> bool:
         return self.domain_safelisted(domain_from_url(value))
 
+    def principal_safelisted(self, value: str) -> bool:
+        """True when a cloud IAM principal must never be touched by containment."""
+        v = value.strip().lower()
+        if not v:
+            return False
+        return is_account_root_principal(v) or v in self.principals
+
     def merge(
         self,
         *,
         extra_ips: object = (),
         extra_domain_suffixes: object = (),
+        extra_principals: object = (),
     ) -> SafelistPolicy:
         """Return a new policy layering org-scoped entries on top of this one."""
         ips = set(self.ips)
@@ -121,7 +152,16 @@ class SafelistPolicy:
             for s in (extra_domain_suffixes or ())
             if s and str(s).strip()
         )
-        return replace(self, ips=frozenset(ips), domain_suffixes=tuple(suffixes))
+        principals = set(self.principals)
+        principals.update(
+            str(p).strip().lower() for p in (extra_principals or ()) if p and str(p).strip()
+        )
+        return replace(
+            self,
+            ips=frozenset(ips),
+            domain_suffixes=tuple(suffixes),
+            principals=frozenset(principals),
+        )
 
 
 # The universal baseline every org inherits. Org ``response_safelist`` rows are
@@ -136,5 +176,6 @@ __all__ = [
     "BASELINE_SAFELIST",
     "SafelistPolicy",
     "domain_from_url",
+    "is_account_root_principal",
     "is_structurally_reserved_ip",
 ]

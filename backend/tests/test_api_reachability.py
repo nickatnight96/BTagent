@@ -83,10 +83,24 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
-# Empty as of the Agent Memory UI (#482) — every route is either wired or
-# declared correct-by-design above. New unreached routes still fail; this
-# stays as the place to name the next honest gap when one lands.
-KNOWN_GAPS: dict[str, str] = {}
+# Was empty as of the Agent Memory UI (#482); the #117 cloud IAM containment
+# loop re-opens it with three named gaps. They are deliberately KNOWN_GAPS and
+# not NOT_BROWSER_CALLED: an analyst reviewing an inert containment proposal is
+# exactly a browser workflow, and this slice ships the backend loop only. A
+# hollow ``frontend/src/api`` client with no component behind it would silence
+# this check without making the capability reachable — which is the failure mode
+# this file exists to catch. The debt is named instead.
+KNOWN_GAPS: dict[str, str] = {
+    "GET /cloud/investigations/{}/containment-proposal": (
+        "#117 cloud IAM containment proposal review UI not built yet"
+    ),
+    "POST /cloud/investigations/{}/containment-proposal/accept": (
+        "#117 containment accept is API-only pending the proposal review UI"
+    ),
+    "POST /cloud/investigations/{}/containment-proposal/reject": (
+        "#117 containment reject is API-only pending the proposal review UI"
+    ),
+}
 
 
 # --------------------------------------------------------------------------- #
