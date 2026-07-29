@@ -725,3 +725,53 @@ def test_unsupported_indicator_pattern_recorded_as_skipped():
     patterns = {s.pattern for s in unsupported}
     assert "[file:name = 'definitely_evil.exe']" in patterns
     assert "[x-custom-object:foo = 'bar']" in patterns
+
+
+@pytest.mark.asyncio
+async def test_api_propose_from_report_text(client, analyst_token):
+    """report_text propose: extraction + the identical persistence pipeline."""
+    from helpers import auth_header
+
+    report = (
+        "Spearphishing from billing[at]invoice-portal[.]net delivered a dropper "
+        "beaconing to hxxps://cdn-metrics[.]net/api and 203.0.113.77 via powershell."
+    )
+    resp = await client.post(
+        "/api/v1/cti/propose-detections",
+        json={"report_text": report, "report_name": "Frostline", "active_tlp": "green"},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["proposals"]) == 3  # email + url + ip
+    assert body["persisted"]["created"] + body["persisted"]["updated"] >= 3
+    titles = " ".join(p["title"] for p in body["proposals"])
+    assert "203.0.113.77" in titles
+
+
+@pytest.mark.asyncio
+async def test_api_propose_report_text_no_iocs_422(client, analyst_token):
+    """Prose without indicators is a 422 with an actionable message."""
+    from helpers import auth_header
+
+    resp = await client.post(
+        "/api/v1/cti/propose-detections",
+        json={"report_text": "The quarterly threat landscape remained calm."},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 422, resp.text
+    assert "No supported IOCs" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_api_propose_report_text_and_bundle_422(client, analyst_token):
+    """report_text is mutually exclusive with the bundle inputs."""
+    from helpers import auth_header
+
+    resp = await client.post(
+        "/api/v1/cti/propose-detections",
+        json={"report_text": "beacon to 203.0.113.77", "stix_bundle": _SAMPLE_BUNDLE},
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 422, resp.text
+    assert "Exactly one" in resp.json()["detail"]

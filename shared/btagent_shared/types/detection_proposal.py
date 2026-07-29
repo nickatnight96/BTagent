@@ -105,13 +105,14 @@ class DetectionProposal(BaseModel):
 
 
 class CTIToDetectionRequest(BaseModel):
-    """Request payload for the STIX → Sigma proposal endpoint.
+    """Request payload for the CTI → Sigma proposal endpoint.
 
-    Exactly one of ``stix_bundle`` or ``stix_bundle_id`` must be supplied.
-    ``stix_bundle`` carries the raw STIX 2.1 bundle dict (for immediate
-    processing); ``stix_bundle_id`` references a bundle already imported via
-    the IOC import endpoint (deferred resolution, out of scope for this slice
-    but the field is wired so the API contract is stable).
+    Exactly one of ``stix_bundle``, ``stix_bundle_id`` or ``report_text``
+    must be supplied. ``stix_bundle`` carries the raw STIX 2.1 bundle dict;
+    ``stix_bundle_id`` references a previously-stored bundle;
+    ``report_text`` is unstructured CTI prose to extract IOCs/TTPs from
+    (#113 back half — converted to a synthetic bundle server-side so the
+    downstream pipeline is identical).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -123,6 +124,18 @@ class CTIToDetectionRequest(BaseModel):
     stix_bundle_id: str | None = Field(
         default=None,
         description="ID of a previously-imported STIX bundle (deferred — not yet resolved).",
+    )
+    report_text: str | None = Field(
+        default=None,
+        max_length=200_000,
+        description="Unstructured CTI report text (#113). IOCs are extracted "
+        "(defanged forms handled) into a synthetic STIX bundle and run through "
+        "the same pipeline. Mutually exclusive with the bundle inputs.",
+    )
+    report_name: str = Field(
+        default="",
+        max_length=300,
+        description="Optional label for the report; appears in proposal titles' provenance.",
     )
     active_tlp: TLP = Field(
         default=TLP.GREEN,

@@ -720,8 +720,213 @@ def process_stix_bundle(
     return CTIToDetectionResponse(proposals=proposals, skipped=skipped)
 
 
+# ---------------------------------------------------------------------------
+# Unstructured CTI report → synthetic STIX bundle (#113 back half)
+# ---------------------------------------------------------------------------
+#
+# CTI rarely arrives as clean STIX — it arrives as prose: vendor blog posts,
+# ISAC advisories, incident write-ups, usually with defanged IOCs. This
+# converter turns that prose into a *synthetic* STIX 2.1 bundle so the entire
+# existing pipeline (TLP gate, dedup, technique resolution via the keyword
+# mapper, Sigma generation, persistence, review, validation, PR compose)
+# runs unchanged — extraction is a pre-processor, not a parallel pipeline.
+
+import re as _re  # noqa: E402  (section-local import, matches file's late-import convention)
+
+# Defang conventions seen in the wild, most specific first. Refanging is
+# applied to a COPY used for extraction; the original text is never mutated.
+_REFANG_RULES: list[tuple[str, str]] = [
+    (r"hxxps://", "https://"),
+    (r"hxxp://", "http://"),
+    (r"\[\.\]", "."),
+    (r"\(\.\)", "."),
+    (r"\[dot\]", "."),
+    (r"\(dot\)", "."),
+    (r"\[at\]", "@"),
+    (r"\(at\)", "@"),
+    (r"\[:\]", ":"),
+    (r"\[://\]", "://"),
+]
+
+# Extraction order matters: hashes longest-first so a SHA-256 is never
+# double-counted as its embedded hex substrings (\b guards the boundaries),
+# and URLs before domains so a domain inside an extracted URL is dropped.
+_REPORT_IOC_PATTERNS: list[tuple[str, _re.Pattern[str]]] = [
+    ("hash_sha256", _re.compile(r"\b[a-fA-F0-9]{64}\b")),
+    ("hash_sha1", _re.compile(r"\b[a-fA-F0-9]{40}\b")),
+    ("hash_md5", _re.compile(r"\b[a-fA-F0-9]{32}\b")),
+    ("url", _re.compile(r"\bhttps?://[^\s\"'<>\)\]]+", _re.IGNORECASE)),
+    ("email", _re.compile(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b")),
+    ("ip", _re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")),
+    (
+        "domain",
+        _re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"),
+    ),
+]
+
+_IOC_TYPE_TO_STIX_PATH: dict[str, str] = {
+    "ip": "ipv4-addr:value",
+    "domain": "domain-name:value",
+    "url": "url:value",
+    "hash_md5": "file:hashes.'MD5'",
+    "hash_sha1": "file:hashes.'SHA-1'",
+    "hash_sha256": "file:hashes.'SHA-256'",
+    "email": "email-addr:value",
+}
+
+# Private / loopback / link-local ranges: in report prose these are almost
+# always the VICTIM's internal addressing, not an indicator worth a rule.
+_NON_ROUTABLE_IP = _re.compile(
+    r"^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|255\.)"
+)
+
+# Common file names / TLD-lookalikes that the bare-domain regex over-matches
+# in prose ("update.exe", "index.php"). Anything whose final label is one of
+# these is not a domain.
+_NOT_TLDS = frozenset(
+    {
+        "exe",
+        "dll",
+        "bat",
+        "ps1",
+        "php",
+        "asp",
+        "aspx",
+        "js",
+        "vbs",
+        "zip",
+        "rar",
+        "doc",
+        "docx",
+        "xls",
+        "xlsx",
+        "pdf",
+        "txt",
+        "log",
+        "tmp",
+        "dat",
+        "bin",
+        "sh",
+        "py",
+        "yml",
+        "yaml",
+        "json",
+        "xml",
+        "html",
+        "htm",
+        "local",
+        "internal",
+        "lan",
+    }
+)
+
+
+def _refang(text: str) -> str:
+    for pattern, replacement in _REFANG_RULES:
+        text = _re.sub(pattern, replacement, text, flags=_re.IGNORECASE)
+    return text
+
+
+def _context_window(text: str, value: str, *, radius: int = 160) -> str:
+    """Return the prose surrounding *value*'s first occurrence.
+
+    This becomes the synthetic indicator's ``description``, which is exactly
+    what :func:`_resolve_technique_ids` feeds the keyword mapper — so each
+    proposal inherits the techniques the report describes AROUND its IOC,
+    not a blanket technique list for the whole report.
+    """
+    idx = text.find(value)
+    if idx < 0:
+        return ""
+    start = max(0, idx - radius)
+    end = min(len(text), idx + len(value) + radius)
+    return " ".join(text[start:end].split())
+
+
+def stix_bundle_from_report_text(
+    report_text: str,
+    *,
+    report_name: str = "",
+) -> dict[str, Any]:
+    """Build a synthetic STIX 2.1 bundle from unstructured CTI report text.
+
+    Deterministic: the same text yields the same bundle id and indicator ids
+    (UUIDv5 over the refanged value), so re-submitting a report upserts the
+    same proposals instead of duplicating them — identical semantics to
+    re-importing the same STIX bundle.
+
+    Raises ``ValueError`` when no supported IOCs are found: an empty synthetic
+    bundle would 200 with zero proposals, and "we found nothing to act on" is
+    information the analyst must see, not swallow.
+    """
+    if not report_text or not report_text.strip():
+        raise ValueError("report_text is empty")
+
+    text = _refang(report_text)
+
+    # Extract with de-dup and URL-shadowing (a domain that only appears inside
+    # an extracted URL is the URL's host, not an independent indicator).
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    url_values: list[str] = []
+    for ioc_type, pattern in _REPORT_IOC_PATTERNS:
+        for match in pattern.finditer(text):
+            value = match.group(0).rstrip(".,;")
+            if ioc_type == "ip" and _NON_ROUTABLE_IP.match(value):
+                continue
+            if ioc_type == "domain":
+                if value.rsplit(".", 1)[-1].lower() in _NOT_TLDS:
+                    continue
+                if any(value in url for url in url_values):
+                    continue
+                # The email regex ran earlier; an email's domain part is not
+                # an independent indicator either.
+                if any(value in v for t, v in found if t == "email"):
+                    continue
+            key = f"{ioc_type}:{value.lower()}"
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append((ioc_type, value))
+            if ioc_type == "url":
+                url_values.append(value)
+
+    if not found:
+        raise ValueError(
+            "No supported IOCs (IP / domain / URL / file hash / email) were found in "
+            "the report text. Check that indicators are present (defanged forms like "
+            "hxxp:// and [.] are handled)."
+        )
+
+    label = report_name.strip() or "unstructured CTI report"
+    objects: list[dict[str, Any]] = []
+    for ioc_type, value in found:
+        stix_path = _IOC_TYPE_TO_STIX_PATH[ioc_type]
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        objects.append(
+            {
+                "type": "indicator",
+                "spec_version": "2.1",
+                "id": f"indicator--{_uuid.uuid5(_uuid.NAMESPACE_URL, f'btagent-report:{ioc_type}:{value.lower()}')}",
+                "name": f"{ioc_type} extracted from {label}",
+                "description": _context_window(text, value),
+                "pattern": f"[{stix_path} = '{escaped}']",
+                "pattern_type": "stix",
+                "valid_from": "1970-01-01T00:00:00Z",
+            }
+        )
+
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return {
+        "type": "bundle",
+        "id": f"bundle--{_uuid.uuid5(_uuid.NAMESPACE_URL, f'btagent-report:{digest}')}",
+        "objects": objects,
+    }
+
+
 __all__ = [
     "extract_detectable_indicators",
     "process_stix_bundle",
     "propose_sigma_rule",
+    "stix_bundle_from_report_text",
 ]

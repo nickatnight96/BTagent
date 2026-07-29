@@ -14,9 +14,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 const proposeDetections = vi.fn();
+const proposeDetectionsFromReport = vi.fn();
 
 vi.mock("@/api/detection", () => ({
   proposeDetections: (...a: unknown[]) => proposeDetections(...a),
+  proposeDetectionsFromReport: (...a: unknown[]) => proposeDetectionsFromReport(...a),
 }));
 
 import { ImportBundlePanel } from "@/components/detection/ImportBundlePanel";
@@ -37,6 +39,7 @@ describe("ImportBundlePanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     proposeDetections.mockResolvedValue(result());
+    proposeDetectionsFromReport.mockResolvedValue(result());
   });
 
   function paste(text: string) {
@@ -171,5 +174,66 @@ describe("ImportBundlePanel", () => {
     fireEvent.click(screen.getByTestId("import-bundle-submit"));
     await screen.findByTestId("import-bundle-error");
     expect(screen.queryByTestId("import-bundle-result")).toBeNull();
+  });
+});
+
+describe("ImportBundlePanel report mode (#113 back half)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    proposeDetectionsFromReport.mockResolvedValue({
+      proposals: [{ id: "p1" }, { id: "p2" }],
+      skipped: [],
+      persisted: { created: 2, updated: 0, unchanged: 0 },
+    });
+  });
+
+  function paste(text: string) {
+    fireEvent.change(screen.getByTestId("import-bundle-input"), {
+      target: { value: text },
+    });
+  }
+
+  it("sends raw prose (no JSON parsing) with the report name and TLP", async () => {
+    render(<ImportBundlePanel />);
+    fireEvent.click(screen.getByTestId("import-mode-report"));
+    paste("dropper beaconing to hxxps://c2[.]example[.]com");
+    fireEvent.change(screen.getByTestId("import-report-name"), {
+      target: { value: "Frostline advisory" },
+    });
+    fireEvent.click(screen.getByTestId("import-bundle-submit"));
+
+    await waitFor(() => expect(proposeDetectionsFromReport).toHaveBeenCalled());
+    expect(proposeDetectionsFromReport).toHaveBeenCalledWith(
+      "dropper beaconing to hxxps://c2[.]example[.]com",
+      "Frostline advisory",
+      "green",
+    );
+    // Prose must never be run through the JSON path.
+    expect(proposeDetections).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("import-bundle-result")).toBeInTheDocument();
+  });
+
+  it("does not reject prose as invalid JSON", async () => {
+    render(<ImportBundlePanel />);
+    fireEvent.click(screen.getByTestId("import-mode-report"));
+    paste("plain prose, definitely not JSON");
+    fireEvent.click(screen.getByTestId("import-bundle-submit"));
+    await waitFor(() => expect(proposeDetectionsFromReport).toHaveBeenCalled());
+    expect(screen.queryByTestId("import-bundle-error")).not.toBeInTheDocument();
+  });
+
+  it("surfaces the server's no-IOCs-found 422 verbatim", async () => {
+    proposeDetectionsFromReport.mockRejectedValue(
+      new ApiError(422, "Unprocessable Entity", {
+        detail: "No supported IOCs (IP / domain / URL / file hash / email) were found in the report text.",
+      }),
+    );
+    render(<ImportBundlePanel />);
+    fireEvent.click(screen.getByTestId("import-mode-report"));
+    paste("calm quarter, nothing observed");
+    fireEvent.click(screen.getByTestId("import-bundle-submit"));
+    expect(await screen.findByTestId("import-bundle-error")).toHaveTextContent(
+      /No supported IOCs/,
+    );
   });
 });

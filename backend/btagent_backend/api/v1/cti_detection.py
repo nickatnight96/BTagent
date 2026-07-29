@@ -19,6 +19,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from btagent_shared.hunt.cti_to_detection import stix_bundle_from_report_text
 from btagent_shared.security.tlp import TLPViolation
 from btagent_shared.types.config import TLP
 from btagent_shared.types.detection_proposal import (
@@ -66,28 +67,39 @@ async def propose_detections(
     ``GET /cti/proposals`` + ``POST /cti/proposals/{id}/accept|reject``.
 
     The endpoint refuses TLP:RED bundles (HTTP 403) and bundles that are
-    not valid STIX 2.1 (HTTP 422).  Exactly one of ``stix_bundle`` or
-    ``stix_bundle_id`` must be supplied; ``stix_bundle_id`` resolves a bundle
-    previously stored by an inline-bundle propose call (HTTP 404 if unknown).
+    not valid STIX 2.1 (HTTP 422).  Exactly one of ``stix_bundle``,
+    ``stix_bundle_id`` or ``report_text`` must be supplied; ``stix_bundle_id``
+    resolves a bundle previously stored by an inline-bundle propose call
+    (HTTP 404 if unknown); ``report_text`` extracts IOCs/TTPs from
+    unstructured CTI prose (defanged forms handled) into a synthetic bundle
+    that runs the identical pipeline (#113) — 422 when no IOCs are found.
 
     RBAC: ``hunt:create`` (analyst+).
     """
     user.require_permission("hunt:create")
 
-    # Validate that exactly one input variant is provided
-    if body.stix_bundle is None and body.stix_bundle_id is None:
+    # Validate that exactly one input variant is provided.
+    provided = [
+        v for v in (body.stix_bundle, body.stix_bundle_id, body.report_text) if v is not None
+    ]
+    if len(provided) != 1:
         raise HTTPException(
             status_code=422,
-            detail="Exactly one of 'stix_bundle' or 'stix_bundle_id' must be supplied.",
+            detail="Exactly one of 'stix_bundle', 'stix_bundle_id' or 'report_text' "
+            "must be supplied.",
         )
 
-    if body.stix_bundle is not None and body.stix_bundle_id is not None:
-        raise HTTPException(
-            status_code=422,
-            detail="Supply exactly one of 'stix_bundle' or 'stix_bundle_id', not both.",
-        )
+    # Resolve the bundle: inline dict, a previously-stored bundle by id, or a
+    # synthetic bundle extracted from unstructured report text (#113).
+    if body.report_text is not None:
+        try:
+            report_bundle = stix_bundle_from_report_text(
+                body.report_text, report_name=body.report_name
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        body = body.model_copy(update={"stix_bundle": report_bundle, "report_text": None})
 
-    # Resolve the bundle: inline dict, or a previously-stored bundle by id.
     if body.stix_bundle_id is not None:
         stored = await stix_bundle_store.get_bundle(
             db, org_id=user.org_id, bundle_id=body.stix_bundle_id
