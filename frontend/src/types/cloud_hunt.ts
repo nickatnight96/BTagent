@@ -196,3 +196,42 @@ export const WORKLOAD_KINDS_ORDERED: AgenticWorkloadKind[] = [
 
 /** All cloud providers in a stable row order for the matrix table. */
 export const CLOUD_PROVIDERS_ORDERED: CloudProvider[] = ["aws", "azure", "gcp"];
+
+// --------------------------------------------------------------------------- //
+// Cloud IAM containment proposal (#117 Phase C — mirrors RevocationProposal)
+// --------------------------------------------------------------------------- //
+
+export type CloudContainmentActionType = "revoke_role" | "freeze_access_key" | "detach_policy";
+
+export type CloudContainmentActionStatus = "proposed" | "executed" | "denied";
+
+export type CloudContainmentProposalStatus = "proposed" | "accepted" | "rejected";
+
+/** One inert proposed action against one cloud IAM principal. */
+export interface CloudContainmentAction {
+  id: string;
+  action_type: CloudContainmentActionType;
+  provider: string;
+  target: string;
+  rationale?: string;
+  source_finding_ids: string[];
+  status: CloudContainmentActionStatus;
+  audit_id: string | null;
+}
+
+/** The proposal attached to an investigation on IAM/STS promotion. */
+export interface CloudContainmentProposal {
+  actions: CloudContainmentAction[];
+  rationale: string;
+  status: CloudContainmentProposalStatus;
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_rationale: string;
+}
+
+/** Accept/reject body — `approved` is the explicit HITL half of the gate. */
+export interface CloudContainmentDecisionRequest {
+  approved?: boolean;
+  rationale?: string;
+  action_ids?: string[];
+}
