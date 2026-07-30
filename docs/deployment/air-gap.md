@@ -284,34 +284,48 @@ docker run --rm -v infra_ollama-data:/data -v "$PWD/models:/in" alpine \
 Model licences are the operator's responsibility. This repository vendors no
 weights.
 
-### 4.5 Enabling the local LLM — and a limitation to plan around
+### 4.5 Enabling the local LLM
 
 Set `BTAGENT_MOCK_LLM=false` to register the LiteLLM-backed client
 (`backend/btagent_backend/main.py`). The flag is fail-safe: only the literal
 string `false` enables it, so a typo or empty value leaves the mock on and
 cannot cause egress.
 
-Two things to know before you flip it:
+Then configure the local-model keys:
 
-* **The Ollama base URL used for chat completions is not read from settings.**
-  `LiteLLMClient` constructs `TLPAwareLLMRouter()` with no arguments, and that
-  router's `ollama_base_url` defaults to `http://localhost:11434`
-  (`agents/btagent_agents/llm/router.py`). `BTAGENT_OLLAMA_BASE_URL` is honoured
-  by the *embedding* service but not by this path. Until that is wired,
-  arrange for the model server to be reachable at `localhost:11434` from the
-  backend container — e.g. co-locate it in the same pod/network namespace, or
-  publish it there. Verify with a real completion; do not assume.
-* **Provider routing is by static preference, not by credential availability.**
-  `TLPAwareLLMRouter.resolve` picks the first provider in the allow-list for the
-  request's TLP. For `TLP.RED` and `TLP.AMBER_STRICT` that list is Ollama-first
-  (RED is Ollama-*only*), which is what you want. For `TLP.GREEN` the list
-  starts with Anthropic, so a GREEN request resolves to a hosted provider and
-  then **fails** with no credentials — it does not silently fall back to
-  Ollama, and it does not silently succeed either. In an enclave, either
-  classify work at `AMBER_STRICT`/`RED`, or pass `preferred_provider="ollama"`
-  (honoured whenever Ollama is in the allow-list for that TLP, which excludes
-  plain `AMBER`). There is currently no single "local providers only" switch;
-  see *Known gaps*.
+```bash
+BTAGENT_MOCK_LLM=false
+BTAGENT_OLLAMA_BASE_URL=http://ollama:11434   # chat completions AND embeddings
+BTAGENT_LOCAL_LLM_ONLY=true                   # refuse hosted providers outright
+```
+
+* **`BTAGENT_OLLAMA_BASE_URL` applies to chat completions.** The backend threads
+  it (and the switch below) from `Settings` into the router that builds the chat
+  model, so the value you set is the endpoint chat actually dials —
+  `api_base` on the LiteLLM call. Up to #506 only the *embedding* service read
+  this variable and chat was pinned to `http://localhost:11434`; if you are
+  reading an older copy of this guide that told you to publish the model server
+  on loopback, that workaround is no longer needed (it still works). Unset
+  still means `http://localhost:11434`.
+* **`BTAGENT_LOCAL_LLM_ONLY=true` restricts routing to local providers and fails
+  closed.** Without it, provider choice is by static preference order
+  (`TLPAwareLLMRouter.TLP_ROUTING`), so "no cloud egress" is only a property of
+  *not having credentials* — a weaker guarantee than a setting you can point at
+  during an inspection. With it on, the allow-list for every TLP level is
+  intersected with the local providers — `ollama` and `vllm`, though only
+  Ollama has model ids in `MODEL_TIERS` today, so vLLM is named for the day a
+  provider entry exists rather than being selectable now. A
+  `preferred_provider` naming a hosted provider is ignored, and any level that
+  authorises **no** local provider raises `RoutingError` instead of falling
+  back. In practice that is plain `TLP.AMBER`, whose allow-list is
+  Anthropic/Bedrock/Vertex: classify that work at `AMBER_STRICT` or `RED`
+  (Ollama-first, and RED is Ollama-*only*) if it must run in the enclave. The
+  error text names the flag and the TLP level, so the refusal is diagnosable
+  rather than mysterious.
+
+The switch defaults to **off**, so a connected deployment behaves exactly as
+before. It only ever narrows routing — it never enables egress that TLP policy
+would otherwise refuse, and TLP:RED remains local-only either way.
 
 ---
 
@@ -330,9 +344,10 @@ export) is loaded from a vendored STIX bundle.
    (`enterprise-attack.json`) from the MITRE CTI distribution, record its
    SHA-256, and add it to the transfer bundle under `reference/`.
 2. Offline, place it at **`backend/btagent_backend/data/enterprise-attack.json`**
-   inside the backend container or on a mounted volume. (The route's 404
-   message says "backend/data/" — the path the code actually resolves is
-   `btagent_backend/data/`; trust the code.)
+   inside the backend container or on a mounted volume. (The route's 404 message
+   quotes this same directory — it is derived from the path the code resolves,
+   so the two cannot drift. Before #506 it named `backend/data/`, which does not
+   exist.)
 3. Call the admin-only reload:
 
    ```bash
@@ -407,12 +422,14 @@ Run these on the installed system and keep the output.
 | 3 | Network policy denies internet egress | `kubectl get networkpolicy <release>-backend -o yaml` — no `0.0.0.0/0` rule |
 | 4 | Embedding provider is **not** mock | Backend log line at first embed; must not say `mock` |
 | 5 | LLM completion works locally | Run one reasoning task end to end with `BTAGENT_MOCK_LLM=false` |
-| 6 | ATT&CK matrix loaded | `GET /api/v1/mitre/techniques` returns a populated matrix |
-| 7 | Audit chain verifies | `GET /api/v1/audit/verify` (admin) |
-| 8 | No hosted-provider credentials present | Grep the rendered env / secret for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, … |
-| 9 | Perimeter denies egress | From the host: attempt an outbound connection and confirm it fails |
+| 6 | Chat is dialling *your* model server | Backend startup log: `Live LLM client registered (LiteLLM router; ollama_base_url=… local_only=…)` — both values must be the ones you set |
+| 7 | Local-only routing is on | Same log line shows `local_only=True`; a hosted-provider request then fails with `RoutingError` naming `BTAGENT_LOCAL_LLM_ONLY` |
+| 8 | ATT&CK matrix loaded | `GET /api/v1/mitre/techniques` returns a populated matrix |
+| 9 | Audit chain verifies | `GET /api/v1/audit/verify` (admin) |
+| 10 | No hosted-provider credentials present | Grep the rendered env / secret for `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, … |
+| 11 | Perimeter denies egress | From the host: attempt an outbound connection and confirm it fails |
 
-Checks 1–8 are about the application. Check 9 is the one that actually holds
+Checks 1–10 are about the application. Check 11 is the one that actually holds
 the line.
 
 ---
@@ -422,16 +439,13 @@ the line.
 Stated plainly, because a deployment guide that hides its sharp edges is worse
 than none.
 
-* **No single "local providers only" switch.** TLP-based routing gets you there
-  for `RED`/`AMBER_STRICT`; `GREEN` and `WHITE` still list hosted providers
-  first and fail (loudly) without credentials.
-* **`BTAGENT_OLLAMA_BASE_URL` is not honoured by the chat-completion path** —
-  only by embeddings. See §4.5.
 * **`mock_connectors=True` overrides the embedding provider**, so the default
   air-gapped posture selects mock embeddings unless you deliberately turn
   connector mocks off after wiring in-enclave connectors. See §4.2.
-* **The MITRE seed 404 message names the wrong directory** (`backend/data/`
-  rather than `btagent_backend/data/`).
+* **`TLP.AMBER` has no local route.** `BTAGENT_LOCAL_LLM_ONLY=true` refuses that
+  level rather than downgrading it (that is the intended fail-closed
+  behaviour), but it does mean AMBER-classified reasoning cannot run in an
+  enclave without reclassifying the work. See §4.5.
 * **Model weights are not vendored** and never will be in this repository.
 * **No accreditation is claimed or pursued.** See
   [`docs/compliance/controls-mapping.md`](../compliance/controls-mapping.md)

@@ -101,9 +101,16 @@ env:
   BTAGENT_MOCK_CONNECTORS: "true"
 
   # LLM. "true" keeps the deterministic engine mock (no model server needed).
-  # Set to "false" once a local Ollama/vLLM endpoint is reachable — see the
-  # known limitation about the Ollama base URL in the air-gap guide.
+  # Set to "false" once a local Ollama/vLLM endpoint is reachable (air-gap.md
+  # §4.5), and set BTAGENT_LOCAL_LLM_ONLY below at the same time.
   BTAGENT_MOCK_LLM: "true"
+
+  # Restrict LLM routing to local providers (ollama / vllm) and fail closed: a
+  # request whose TLP level authorises no local provider raises RoutingError
+  # rather than resolving to a hosted provider. Default in the chart's product
+  # config is false; an enclave should keep it "true" so the guarantee is a
+  # setting an inspector can point at, not just the absence of credentials.
+  BTAGENT_LOCAL_LLM_ONLY: "true"
 
   # Embeddings — REQUIRED for RAG knowledge search and #482 semantic memory
   # recall. Two traps, both covered in air-gap.md §4.2/§4.3:
@@ -116,7 +123,8 @@ env:
   #     local server and every embed call fails.
   BTAGENT_EMBEDDING_PROVIDER: ollama
   BTAGENT_EMBEDDING_MODEL: nomic-embed-text
-  # REPLACE with the in-enclave model server URL.
+  # REPLACE with the in-enclave model server URL. Read by the embedding service
+  # AND by the chat-completion router (passed through as the LiteLLM api_base).
   BTAGENT_OLLAMA_BASE_URL: http://ollama.btagent.svc.cluster.local:11434
 
 secretEnv:

@@ -405,6 +405,12 @@ The `TLPAwareLLMRouter` enforces that classified data only reaches authorized pr
 | GREEN | Anthropic, OpenAI, Bedrock, Vertex AI, Ollama |
 | WHITE | All 6 providers |
 
+`BTAGENT_LOCAL_LLM_ONLY=true` intersects every row above with the local
+providers (`ollama`, `vllm`) and fails closed: a TLP level authorising no local
+provider raises `RoutingError` rather than falling back to a hosted one. It also
+threads `BTAGENT_OLLAMA_BASE_URL` into chat completions, not only embeddings.
+Default off; see [`docs/deployment/air-gap.md`](deployment/air-gap.md) §4.5.
+
 ### Model Tiers
 
 | Tier | Use Case | Anthropic | OpenAI | Gemini |

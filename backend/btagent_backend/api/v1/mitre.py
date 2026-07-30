@@ -33,6 +33,14 @@ _DEFAULT_STIX_PATH = (
     Path(__file__).resolve().parent.parent.parent / "data" / "enterprise-attack.json"
 )
 
+# Repo-relative form of the directory above, quoted in the seed 404 so an
+# operator troubleshooting an offline data refresh is told where the code
+# actually looks. #506: the message used to say ``backend/data/`` -- a
+# directory that does not exist -- while the resolution above lands in
+# ``backend/btagent_backend/data/``. Derived from the resolved path rather
+# than written out again so the two cannot drift apart a second time.
+_STIX_DIR_HINT = "/".join(_DEFAULT_STIX_PATH.parent.parts[-3:]) + "/"
+
 
 # ---------------------------------------------------------------------------
 # Org scoping helpers (GH #375)
@@ -491,7 +499,7 @@ async def seed_matrix(
             status_code=404,
             detail=(
                 f"STIX bundle not found at {_DEFAULT_STIX_PATH}. "
-                "Place enterprise-attack.json in backend/data/."
+                f"Place enterprise-attack.json in {_STIX_DIR_HINT}."
             ),
         )
 

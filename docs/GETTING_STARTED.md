@@ -68,7 +68,8 @@ Open `infra/.env` and configure the following variables:
 | `BTAGENT_S3_ACCESS_KEY` | `minioadmin` | MinIO/S3 access key (change for non-dev) |
 | `BTAGENT_S3_SECRET_KEY` | `minioadmin` | MinIO/S3 secret key (change for non-dev) |
 | `BTAGENT_EMBEDDING_PROVIDER` | `openai` | Embedding provider: `openai` or `ollama` |
-| `BTAGENT_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama endpoint for local LLM/embedding |
+| `BTAGENT_OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama endpoint for local LLM/embedding (chat completions included) |
+| `BTAGENT_LOCAL_LLM_ONLY` | `false` | Restrict LLM routing to local providers (`ollama`/`vllm`); fails closed instead of using a hosted provider |
 | `BTAGENT_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
 | `BTAGENT_OTEL_ENDPOINT` | `http://localhost:4317` | OTLP collector endpoint |
 | `BTAGENT_LANGFUSE_ENABLED` | `false` | Enable LangFuse LLM observability |

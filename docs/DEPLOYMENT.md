@@ -528,7 +528,8 @@ Complete list of all `BTAGENT_*` environment variables:
 | `BTAGENT_EMBEDDING_PROVIDER` | `openai` | No | Embedding provider: `openai`, `ollama` |
 | `BTAGENT_EMBEDDING_MODEL` | `text-embedding-3-small` | No | Embedding model name |
 | `BTAGENT_OPENAI_API_KEY` | (empty) | Conditional | Required if embedding_provider is openai |
-| `BTAGENT_OLLAMA_BASE_URL` | `http://localhost:11434` | No | Ollama endpoint |
+| `BTAGENT_OLLAMA_BASE_URL` | `http://localhost:11434` | No | Ollama endpoint — used for both embeddings and chat completions |
+| `BTAGENT_LOCAL_LLM_ONLY` | `false` | No | Restrict LLM routing to local providers (`ollama`/`vllm`) and fail closed when a TLP level authorises none. For air-gapped installs — see [`docs/deployment/air-gap.md`](deployment/air-gap.md) §4.5 |
 | `BTAGENT_RATE_LIMIT_ENABLED` | `true` | No | Enable rate limiting |
 | `BTAGENT_OTEL_ENABLED` | `false` | No | Enable OpenTelemetry |
 | `BTAGENT_OTEL_ENDPOINT` | `http://localhost:4317` | No | OTLP collector endpoint |
