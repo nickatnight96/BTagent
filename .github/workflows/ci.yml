@@ -550,6 +550,11 @@ jobs:
         run: |
           # npm ci: honour the committed lockfile (see the Frontend job note).
           npm ci --no-audit --no-fund
+          # Type-check the spec tree. Playwright itself never type-checks, so
+          # spec-only TS errors used to lurk unreported (two shipped before
+          # this gate existed: an indexed-access error in hunt-triage and a
+          # playwright-core type skew in the a11y fixture).
+          npx tsc --noEmit
           # On a cache hit the browser binary is already present, so download
           # only the OS shared libs. On a miss, download the binary + OS deps.
           if [ "${{ steps.playwright-cache.outputs.cache-hit }}" = "true" ]; then
