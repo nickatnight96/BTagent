@@ -36,6 +36,7 @@ import {
   X,
 } from "lucide-react";
 import { PackSuggestionsPanel } from "./PackSuggestionsPanel";
+import { CustomPacksPanel } from "./CustomPacksPanel";
 import {
   useHuntPacksStore,
   buildInstalledPacks,
@@ -429,6 +430,9 @@ export function HuntPacksPage() {
        * installed packs listed below, so the queue belongs above them.
        * Hides itself if its fetch fails; it's advisory, not a dependency. */}
       <PackSuggestionsPanel />
+
+      {/* Org-custom pack bundles (#112 slice 2) */}
+      <CustomPacksPanel />
 
       {selectedRule && (
         <RuleDetail rule={selectedRule} onClose={() => selectRule(null)} />
