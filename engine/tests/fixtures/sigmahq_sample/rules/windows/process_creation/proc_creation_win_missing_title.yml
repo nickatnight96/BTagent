@@ -1,0 +1,13 @@
+# Deliberately incomplete fixture: valid YAML, but no ``title`` — the one
+# field a hunt-pack rule cannot do without. Must be skipped with a reason.
+id: 0a0a0a0a-0000-4000-8000-000000000002
+status: test
+description: A rule file that forgot its title.
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\nothing.exe'
+  condition: selection
+level: low

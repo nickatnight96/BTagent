@@ -57,6 +57,10 @@ dependencies = [
     "prometheus_client>=0.25.0",
 ]
 
+[project.scripts]
+# Operator CLI (#112). Pure-stdlib argparse — no new runtime dependency.
+bt = "btagent_backend.cli.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",

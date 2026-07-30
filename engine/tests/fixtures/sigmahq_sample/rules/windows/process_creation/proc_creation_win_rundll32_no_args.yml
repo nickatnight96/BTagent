@@ -1,0 +1,25 @@
+title: Rundll32 Execution Without DLL Argument
+id: 7c9b4d21-0f6c-4a55-9a35-2b8e4f1d55aa
+status: experimental
+description: |
+  Detects rundll32.exe launched with no DLL on the command line, a hallmark of
+  a hollowed / injected host process.
+references:
+  - https://attack.mitre.org/techniques/T1218/011/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.defense-evasion
+  - attack.t1218.011
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\rundll32.exe'
+  filter_args:
+    CommandLine|contains: '.dll'
+  condition: selection and not filter_args
+falsepositives:
+  - Rare legitimate wrappers that pass an ordinal instead of a DLL name
+level: high

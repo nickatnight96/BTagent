@@ -1,0 +1,22 @@
+# Deliberate duplicate fixture: same Sigma ``id`` as
+# proc_creation_win_certutil_encode.yml (merged trees do this). ``load_pack``
+# refuses duplicate rule ids, so the importer must drop the second copy with a
+# ``duplicate`` reason instead of producing an unloadable pack.
+title: Suspicious Certutil Encode Command (Duplicate Id)
+id: e2a9a1b6-4b1e-4e0e-9d33-2f4b8f7f0c11
+status: test
+description: A second copy of the certutil encode rule carrying the same id.
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.defense-evasion
+  - attack.t1027
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\certutil.exe'
+    CommandLine|contains: ' -encode '
+  condition: selection
+level: medium

@@ -129,7 +129,7 @@ def extract_techniques(tags: list[Any]) -> list[str]:
     return techniques
 
 
-def _parse_rule_file(path: Path) -> tuple[dict[str, Any], str]:
+def parse_rule_file(path: Path) -> tuple[dict[str, Any], str]:
     """Load one Sigma rule file -> (parsed mapping, raw yaml text)."""
     raw = path.read_text(encoding="utf-8")
     try:
@@ -143,7 +143,7 @@ def _parse_rule_file(path: Path) -> tuple[dict[str, Any], str]:
     return parsed, raw
 
 
-def _deterministic_id(prefix: str, *parts: str) -> str:
+def deterministic_id(prefix: str, *parts: str) -> str:
     """Derive a stable ID from input parts.
 
     Codex #198: when pack.yaml or a rule omits an explicit ``id``, the old
@@ -157,8 +157,15 @@ def _deterministic_id(prefix: str, *parts: str) -> str:
     return f"{prefix}_{digest}"
 
 
-def _rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPackRule:
-    parsed, raw = _parse_rule_file(path)
+def rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPackRule:
+    """Build one :class:`HuntPackRule` from a Sigma rule file + pack.yaml metadata.
+
+    Public because the external-corpus importer
+    (:mod:`btagent_engine.hunting.corpus`) parses SigmaHQ rule files with the
+    *same* semantics as a pack directory — one parser, not two. Raises
+    :class:`PackLoadError` for an unparseable / titleless rule file.
+    """
+    parsed, raw = parse_rule_file(path)
 
     logsource_raw = parsed.get("logsource") or {}
     logsource = (
@@ -174,7 +181,7 @@ def _rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPa
 
     level = str(parsed.get("level") or "").strip().lower()
 
-    rule_id = str(parsed.get("id") or "").strip() or _deterministic_id(
+    rule_id = str(parsed.get("id") or "").strip() or deterministic_id(
         "hrule", pack_id, path.name, raw
     )
 
@@ -236,12 +243,12 @@ def load_pack(pack_dir: Path | str) -> HuntPack:
     # repeated loads of the same versioned pack produce the same id.
     pack_name = str(manifest.get("name") or pack_dir.name)
     pack_version = str(manifest.get("version") or "0.0.0")
-    pack_id = str(manifest.get("id") or "").strip() or _deterministic_id(
+    pack_id = str(manifest.get("id") or "").strip() or deterministic_id(
         "hpack", pack_name, pack_version
     )
 
     rules = [
-        _rule_from_file(path, meta_by_file.get(path.name, {}), pack_id=pack_id)
+        rule_from_file(path, meta_by_file.get(path.name, {}), pack_id=pack_id)
         for path in rule_paths
     ]
 

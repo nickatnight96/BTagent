@@ -366,6 +366,13 @@ class Settings(BaseSettings):
     hunt_scheduler_max_hits_per_query: int = 100
     # The stale-suppression sweep cadence (minutes past each hour it fires on).
     hunt_suppression_sweep_minute: int = 0
+    # Where externally-imported hunt packs (#112 SigmaHQ corpus install) are
+    # materialised. Packs land under ``<dir>/<org_id>/<pack_id>/`` — org-scoped
+    # on disk as well as in the DB, so one tenant's imported corpus is never
+    # visible in another tenant's catalog. Override with
+    # ``BTAGENT_HUNT_PACK_INSTALL_DIR`` (a persistent volume in a container);
+    # the relative default is resolved against the process CWD.
+    hunt_pack_install_dir: str = "./data/hunt_packs"
     # Codex #202 P1: whether the scheduled hunt-pack cron is allowed to run.
     # The default backends (``hunt_scheduler_backends``) target Splunk, whose
     # LIVE execution path raises NotImplementedError (the ``_real_executor``

@@ -1,0 +1,13 @@
+# Deliberately malformed fixture: an unterminated flow sequence. A real
+# community corpus contains files like this; the importer must SKIP it with a
+# reason rather than abort the whole import.
+title: Broken YAML Rule
+id: 0a0a0a0a-0000-4000-8000-000000000001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: [ '\evil.exe'
+  condition: selection
+level: high

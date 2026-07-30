@@ -514,11 +514,13 @@ async def run_pack_and_ingest(
 
     Org-aware: ingests into ``org_id`` and — when ``pack_names`` is not given —
     runs exactly the packs that org has **enabled** in the per-org pack store
-    (:func:`hunt_pack_store.enabled_pack_names`). An org with no rows falls
-    back to the builtin default set, so behaviour for existing orgs is
-    unchanged. An explicit ``pack_names`` (ad-hoc / test runs) bypasses the
-    store. One history row per pack; a failure running a single pack is
-    captured as a ``failed`` history row and does not abort the rest.
+    (:func:`hunt_pack_store.enabled_pack_names`), resolving each name through
+    :func:`hunt_pack_store.load_pack_for_org` so an externally imported corpus
+    (#112 ``bt huntpack install``) runs alongside the shipped packs. An org
+    with no rows falls back to the builtin default set, so behaviour for
+    existing orgs is unchanged. An explicit ``pack_names`` (ad-hoc / test runs)
+    bypasses the store. One history row per pack; a failure running a single
+    pack is captured as a ``failed`` history row and does not abort the rest.
 
     Resume-aware (#112): before running a pack it looks for the newest
     in-flight (``running``) run for ``(org_id, pack)`` — the remnant of a
@@ -529,7 +531,6 @@ async def run_pack_and_ingest(
     process restart; the arq job wrapper still owns the final commit.
     """
     # Lazy: the engine pulls pysigma, only present in the worker image.
-    from btagent_engine.hunting.pack import load_builtin_pack
     from btagent_engine.hunting.runner import run_pack
     from btagent_engine.node import NodeContext
 
@@ -549,7 +550,9 @@ async def run_pack_and_ingest(
     for name in pack_names:
         run_row: HuntPackRunRow | None = None
         try:
-            pack = load_builtin_pack(name)
+            # Installed (externally imported) packs first, then the builtins —
+            # an imported SigmaHQ corpus runs the exact same pipeline (#112).
+            pack = hunt_pack_store.load_pack_for_org(name, org_id=org_id)
             # Resume the in-flight run for this pack if one survived a restart,
             # else open a fresh one. Either way we run against its stable id.
             run_row = await _find_resumable_run(db, org_id=org_id, pack_id=pack.id)
