@@ -25,6 +25,19 @@ vi.mock("@/api/connectors", () => ({
   verifyCredential: (...a: unknown[]) => verifyCredential(...a),
 }));
 
+// The page also mounts the TAXII feeds panel (#105). Stub its client so this
+// suite stays about the connector catalog and issues no requests of its own;
+// the panel has its own test file.
+vi.mock("@/api/taxii", () => ({
+  listTaxiiFeeds: () => Promise.resolve({ items: [], total: 0 }),
+  getTaxiiFeed: () => Promise.reject(new Error("not used")),
+  createTaxiiFeed: () => Promise.reject(new Error("not used")),
+  updateTaxiiFeed: () => Promise.reject(new Error("not used")),
+  deleteTaxiiFeed: () => Promise.resolve(undefined),
+  MIN_POLL_INTERVAL_MINUTES: 5,
+  MAX_POLL_INTERVAL_MINUTES: 10080,
+}));
+
 // Settable current role — defaults to admin so credential controls render.
 // The store is used both with a selector (IntegrationsPage) and bare
 // (Header destructures { user, logout }), so support both call styles.

@@ -69,6 +69,11 @@ make fmt        # ruff format
   feed since its cursor and ingests through the *existing* `stix_service` path (so TLP derives
   from each object's STIX markings). Mock-first client at
   `engine/btagent_engine/integrations/taxii.py`; real HTTP only with `BTAGENT_MOCK_CONNECTORS=false`.
+  Operators manage subscriptions from the **Settings → Integrations** TAXII panel
+  (`frontend/src/components/connectors/TaxiiFeedsPanel.tsx`): list + poll telemetry
+  (`last_polled_at`, cursor, `last_error`, objects ingested) gated on `taxii:view`, and
+  create/edit/delete gated on `taxii:manage`. The auth field takes a `${secret:...}` /
+  `${env:VAR}` **reference** — the UI never resolves one, and the server 422s raw material.
 
 ## Phase 2 Stores
 - `knowledge_documents` / `knowledge_chunks` — pgvector RAG knowledge base

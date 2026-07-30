@@ -34,6 +34,7 @@ import {
   type ConnectorCredential,
   type CredentialVerification,
 } from "@/api/connectors";
+import { TaxiiFeedsPanel } from "@/components/connectors/TaxiiFeedsPanel";
 import { useAuthStore } from "@/stores/authStore";
 import { UserRole } from "@/types/config";
 
@@ -461,6 +462,12 @@ export function IntegrationsPage() {
       <Header title="Integrations" />
       <div className="flex-1 overflow-y-auto p-6">
         <div className="mx-auto max-w-4xl space-y-4">
+          {/* #105 / UC-2.1: TAXII pull subscriptions. Sits above the connector
+           * catalog because it is the only *editable* thing on this page —
+           * the catalog below is a read-only manifest listing plus per-
+           * connector credential bindings. */}
+          <TaxiiFeedsPanel />
+
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Plug className="h-4 w-4" />
