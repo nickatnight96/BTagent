@@ -10,6 +10,7 @@ keys; persistence + telemetry ingestion live in
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
@@ -153,6 +154,74 @@ def update_frequency_map(
 def topk_patterns(freq_map: dict[str, int], k: int = 10) -> list[tuple[str, int]]:
     """Top-K most common patterns in the map (for UI / debugging)."""
     return sorted(freq_map.items(), key=lambda kv: (-kv[1], kv[0]))[:k]
+
+
+# --------------------------------------------------------------------------- #
+# Explainability: "what does normal look like for this entity?" (#114 Phase B)
+# --------------------------------------------------------------------------- #
+
+# Pattern keys are process lineages (``winword.exe>powershell.exe``) or other
+# short, punctuation-separated identifiers, so split on everything that isn't a
+# word character (keeping ``.`` inside ``powershell.exe`` intact).
+_PATTERN_TOKEN_RE = re.compile(r"[^a-z0-9.]+")
+
+
+def pattern_tokens(pattern_key: str) -> set[str]:
+    """Lower-cased, punctuation-split tokens of a pattern key.
+
+    ``"winword.exe>powershell.exe"`` → ``{"winword.exe", "powershell.exe"}``.
+    Empty segments are dropped so a trailing/leading separator (a lineage with
+    an unknown parent, ``">powershell.exe"``) doesn't produce a blank token.
+    """
+    return {tok for tok in _PATTERN_TOKEN_RE.split((pattern_key or "").lower()) if tok}
+
+
+def pattern_similarity(left: str, right: str) -> float:
+    """Token-overlap (Jaccard) similarity of two pattern keys, in ``[0, 1]``.
+
+    Deliberately **lexical, not semantic**: the per-event embedding of a scored
+    event is not retained (only the outlier's distance to the centroid is), so
+    there is no vector to rank an entity's individual baseline patterns by. This
+    is the honest substitute — callers must label it as token overlap rather
+    than passing it off as the detector's cosine distance.
+
+    Returns ``0.0`` when either side has no tokens (nothing to compare).
+    """
+    a, b = pattern_tokens(left), pattern_tokens(right)
+    if not a or not b:
+        return 0.0
+    union = len(a | b)
+    if union == 0:  # pragma: no cover - unreachable: both sets are non-empty
+        return 0.0
+    return len(a & b) / union
+
+
+def nearest_patterns(
+    freq_map: dict[str, int],
+    pattern_key: str | None,
+    *,
+    k: int = 3,
+) -> list[tuple[str, int, float]]:
+    """The baseline patterns most like *pattern_key*, as ``(key, count, similarity)``.
+
+    The "most-similar normal example" ranking over one entity's frequency map:
+    what the entity *does* normally, ordered by how close it is to the thing it
+    just did anomalously.
+
+    Ranked by similarity (desc), then observation count (desc), then key
+    (asc) — fully deterministic, so the same baseline always explains an
+    outlier the same way. With no usable ``pattern_key`` the similarities are
+    all ``0.0`` and the ranking degrades to "the entity's most common
+    patterns", which is still a truthful answer to "what does normal look
+    like here?".
+    """
+    if k <= 0:
+        return []
+    scored = [
+        (key, count, pattern_similarity(pattern_key or "", key)) for key, count in freq_map.items()
+    ]
+    scored.sort(key=lambda triple: (-triple[2], -triple[1], triple[0]))
+    return scored[:k]
 
 
 def is_baseline_stale(

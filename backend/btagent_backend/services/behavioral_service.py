@@ -27,17 +27,36 @@ vectors are normalised to that width on the way in (see
 :func:`_to_centroid_vector`) and cross-entity nearest-neighbour search
 (:func:`find_similar_profiles`) runs on PostgreSQL's HNSW index, degrading
 to an in-Python scan wherever pgvector's operators don't exist.
+
+Phase B adds the analyst-facing half of that substrate:
+
+* :func:`explain_outlier` / :func:`nearest_baseline_exemplars` — "why is this
+  an outlier?": the anomalous event beside the entity's most-similar *normal*
+  examples, the baseline it was scored against, and the signals the detector
+  already computed. It reports what exists and says so when something isn't
+  produced; it invents no scores.
+* :func:`reevaluate_benign_labels` / :func:`reevaluate_benign_labels_all_orgs`
+  — the periodic re-check of historical benign verdicts against the *current*
+  baseline, flagging drift on the entity for review (arq cron
+  ``behavioral_benign_reeval_sweep``).
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from btagent_shared.hunt import behavioral as behavioral_logic
 from btagent_shared.types.behavioral import (
+    BaselineExemplar,
+    BaselineSummary,
+    BehavioralOutlier,
     EntityKind,
+    ExemplarSource,
+    ExplainSignal,
     IntentLabel,
+    OutlierExplanation,
     ProfileType,
 )
 from btagent_shared.types.hunt_finding import HuntEntity, RecordFindingRequest
@@ -58,6 +77,18 @@ logger = logging.getLogger("btagent.services.behavioral")
 # Bound on the fallback (non-pgvector) similarity scan so a large org can't
 # turn a degraded nearest-neighbour query into a full-table sort in Python.
 _MAX_FALLBACK_SCAN = 500
+
+# Enrichment key the benign-label re-evaluation sweep writes its drift flag
+# under. ``behavioral_entities.enrichment`` is an existing free-form JSONB
+# column, so flagging needs no schema change; ``upsert_entity`` merges rather
+# than replaces enrichment, so a flag survives the entity being observed again.
+BENIGN_DRIFT_KEY = "benign_drift"
+
+# Cap on how many previously-benign outliers one org's re-evaluation pass
+# examines, so a tenant with years of triage history can't turn the sweep into
+# an unbounded scan. Newest-first, since recent benign calls are the ones an
+# analyst would still act on.
+_MAX_BENIGN_REEVAL_ROWS = 500
 
 
 def _utcnow() -> datetime:
@@ -647,6 +678,538 @@ async def find_similar_profiles(
     except Exception:
         logger.warning("behavioral similarity vector query failed; falling back", exc_info=True)
         return await _fallback("vector query error")
+
+
+# --------------------------------------------------------------------------- #
+# "Why is this an outlier?" — explainability (#114 Phase B)
+# --------------------------------------------------------------------------- #
+
+
+def to_outlier_model(row: BehavioralOutlierRow) -> BehavioralOutlier:
+    """Row → the shared :class:`BehavioralOutlier` contract (the API's shape)."""
+    return BehavioralOutlier(
+        id=row.id,
+        org_id=row.org_id,
+        entity_id=row.entity_id,
+        profile_type=ProfileType(row.profile_type),
+        event_id=row.event_id,
+        event_pattern_key=row.event_pattern_key,
+        cosine_distance=row.cosine_distance,
+        frequency_rank=row.frequency_rank,
+        raw_event_excerpt=row.raw_event_excerpt or "",
+        intent_label=IntentLabel(row.intent_label) if row.intent_label else None,
+        intent_rationale=row.intent_rationale,
+        promoted_to_finding_id=row.promoted_to_finding_id,
+        created_at=row.created_at,
+    )
+
+
+async def nearest_baseline_exemplars(
+    db: AsyncSession,
+    *,
+    outlier: BehavioralOutlierRow,
+    entity: BehavioralEntityRow | None = None,
+    profile: BehavioralProfileRow | None = None,
+    limit: int = 3,
+    peer_limit: int = 2,
+) -> tuple[list[BaselineExemplar], list[str]]:
+    """Most-similar *normal* examples for an outlier. Returns ``(exemplars, notes)``.
+
+    Two sources, both labelled so the analyst knows whose normal they're looking
+    at, and neither carrying a score the platform doesn't actually compute:
+
+    * ``entity_baseline`` — patterns from THIS entity's latest baseline window,
+      ranked by token overlap with the outlier's pattern key
+      (:func:`behavioral_logic.nearest_patterns`). This is the "here is what
+      this entity normally does" panel. Ranking is lexical because the scored
+      event's embedding is not retained — only its distance to the centroid is
+      — so there is no vector to rank individual baseline patterns by; the
+      exemplar records that honestly in ``token_similarity`` and the note.
+    * ``peer_baseline`` — the most common pattern of each entity whose baseline
+      centroid is a nearest neighbour of this entity's, via
+      :func:`find_similar_profiles`. That is the **pgvector** path: strictly
+      org-scoped, active entities only, ``_is_postgres``-guarded with an
+      in-Python cosine fallback, so on the SQLite unit-test DB it degrades
+      instead of raising. Skipped (with a note) when the baseline has no
+      centroid to query with.
+
+    ``notes`` explains anything that could not be produced, so the UI can say
+    "unavailable" rather than render an empty panel. Never raises for missing
+    data — an outlier with no baseline yields ``([], [reason])``.
+    """
+    notes: list[str] = []
+    if entity is None:
+        entity = await db.get(BehavioralEntityRow, outlier.entity_id)
+    if entity is None:  # pragma: no cover - FK guarantees the entity exists
+        return [], ["The entity this outlier belongs to no longer exists."]
+
+    profile_type = ProfileType(outlier.profile_type)
+    if profile is None:
+        profile = await _get_latest_profile(db, entity_id=entity.id, profile_type=profile_type)
+    if profile is None:
+        return [], [
+            "No baseline window exists for this entity and profile type any more, "
+            "so there is nothing to show as normal."
+        ]
+
+    freq_map = dict(profile.frequency_map or {})
+    exemplars: list[BaselineExemplar] = []
+
+    if freq_map:
+        if not outlier.event_pattern_key:
+            notes.append(
+                "This outlier carries no pattern key, so the entity's most frequent "
+                "baseline patterns are shown instead of the most similar ones."
+            )
+        for pattern_key, count, similarity in behavioral_logic.nearest_patterns(
+            freq_map, outlier.event_pattern_key, k=max(0, limit)
+        ):
+            exemplars.append(
+                BaselineExemplar(
+                    pattern_key=pattern_key,
+                    source=ExemplarSource.ENTITY_BASELINE,
+                    observation_count=count,
+                    frequency_rank=behavioral_logic.frequency_rank(freq_map, pattern_key),
+                    token_similarity=similarity,
+                    entity_id=entity.id,
+                    entity_canonical_id=entity.canonical_id,
+                    profile_id=profile.id,
+                )
+            )
+    else:
+        notes.append(
+            "The entity's current baseline window recorded no patterns, so it has "
+            "no normal examples of its own to compare against."
+        )
+
+    if peer_limit > 0:
+        if profile.centroid is None:
+            notes.append(
+                "This baseline has no embedding centroid, so peer baselines could "
+                "not be searched for comparison."
+            )
+        else:
+            peers = await find_similar_profiles(
+                db,
+                org_id=entity.org_id,
+                vector=[float(x) for x in profile.centroid],
+                profile_type=profile_type,
+                exclude_entity_id=entity.id,
+                limit=peer_limit,
+            )
+            for peer_profile, distance in peers:
+                peer_freq = dict(peer_profile.frequency_map or {})
+                top = behavioral_logic.topk_patterns(peer_freq, k=1)
+                if not top:
+                    continue
+                peer_key, peer_count = top[0]
+                peer_entity = await db.get(BehavioralEntityRow, peer_profile.entity_id)
+                exemplars.append(
+                    BaselineExemplar(
+                        pattern_key=peer_key,
+                        source=ExemplarSource.PEER_BASELINE,
+                        observation_count=peer_count,
+                        frequency_rank=1,
+                        centroid_distance=min(max(float(distance), 0.0), 2.0),
+                        entity_id=peer_profile.entity_id,
+                        entity_canonical_id=(
+                            peer_entity.canonical_id if peer_entity is not None else None
+                        ),
+                        profile_id=peer_profile.id,
+                    )
+                )
+            if not peers:
+                notes.append(
+                    "No peer entity in this org has a comparable baseline yet, so no "
+                    "peer normal is shown."
+                )
+
+    return exemplars, notes
+
+
+def _explain_signals(
+    outlier: BehavioralOutlierRow,
+    profile: BehavioralProfileRow | None,
+    entity: BehavioralEntityRow,
+) -> list[ExplainSignal]:
+    """The signals the detector actually computed for this outlier.
+
+    Strictly a rendering of persisted values — no new scoring happens here. The
+    run-time detection thresholds (``distance_threshold`` / ``frequency_floor``)
+    are call-site parameters that are *not* stored per outlier, so they are
+    emitted as explicitly unavailable rather than back-filled with the defaults,
+    which would be a guess presented as fact.
+    """
+    signals = [
+        ExplainSignal(
+            key="cosine_distance",
+            label="Distance from baseline",
+            value=f"{outlier.cosine_distance:.3f}",
+            detail=(
+                "Cosine distance between this event's embedding and the entity's "
+                "baseline centroid, in [0, 2]. Higher means less like the entity's "
+                "normal activity."
+            ),
+        ),
+        ExplainSignal(
+            key="frequency_rank",
+            label="Frequency rank",
+            value=str(outlier.frequency_rank),
+            detail=(
+                "Rank of this event's pattern in the entity's baseline frequency map "
+                "(1 = most common). 0 means the pattern was never observed in the "
+                "baseline window."
+                if outlier.frequency_rank
+                else "0 — this pattern was never observed in the entity's baseline window."
+            ),
+        ),
+        ExplainSignal(
+            key="process_lineage",
+            label="Parent/child lineage",
+            value=outlier.event_pattern_key,
+            detail=(
+                "The parent>child process lineage the frequency floor matched on."
+                if outlier.event_pattern_key
+                else (
+                    "No pattern key was recorded for this event, so the frequency "
+                    "floor scored it as unseen."
+                )
+            ),
+            available=bool(outlier.event_pattern_key),
+        ),
+        ExplainSignal(
+            key="frequency_floor",
+            label="Frequency floor used",
+            value=None,
+            detail=(
+                "The distance threshold and frequency floor are detection-run "
+                "parameters and are not stored per outlier, so the exact values "
+                "used for this detection are unavailable."
+            ),
+            available=False,
+        ),
+    ]
+
+    if profile is not None:
+        signals.append(
+            ExplainSignal(
+                key="baseline_sample_size",
+                label="Baseline sample size",
+                value=str(profile.sample_size),
+                detail=(
+                    f"{profile.sample_size} event(s) and {profile.pattern_count} distinct "
+                    "pattern(s) built the baseline this event was compared against."
+                ),
+            )
+        )
+    else:
+        signals.append(
+            ExplainSignal(
+                key="baseline_sample_size",
+                label="Baseline sample size",
+                value=None,
+                detail="The entity has no current baseline window for this profile type.",
+                available=False,
+            )
+        )
+
+    if outlier.intent_label:
+        signals.append(
+            ExplainSignal(
+                key="intent",
+                label="Intent verdict",
+                value=outlier.intent_label,
+                detail=outlier.intent_rationale or "No rationale recorded.",
+            )
+        )
+    else:
+        signals.append(
+            ExplainSignal(
+                key="intent",
+                label="Intent verdict",
+                value=None,
+                detail="No analyst or classifier verdict has been recorded yet.",
+                available=False,
+            )
+        )
+
+    drift = (entity.enrichment or {}).get(BENIGN_DRIFT_KEY)
+    if isinstance(drift, dict):
+        signals.append(
+            ExplainSignal(
+                key="benign_label_drift",
+                label="Benign labels need re-review",
+                value=str(drift.get("flagged_at") or ""),
+                detail=(
+                    "The periodic re-evaluation found previously-benign patterns for "
+                    "this entity that are no longer in its current baseline "
+                    f"({drift.get('reason', 'baseline drift')})."
+                ),
+            )
+        )
+
+    return signals
+
+
+async def explain_outlier(
+    db: AsyncSession,
+    *,
+    outlier_id: str,
+    exemplar_limit: int = 3,
+    peer_limit: int = 2,
+) -> OutlierExplanation:
+    """Assemble the "why is this an outlier?" view for one outlier.
+
+    Read-only: loads the outlier, its entity, the entity's current baseline,
+    the most-similar normal examples (:func:`nearest_baseline_exemplars`) and
+    the detector's own signals (:func:`_explain_signals`). Raises ``ValueError``
+    when the outlier (or its entity) is missing — the route turns that into a
+    404; the org-scoping check stays in the route layer, exactly as the other
+    behavioral reads do.
+    """
+    outlier = await db.get(BehavioralOutlierRow, outlier_id)
+    if outlier is None:
+        raise ValueError(f"Behavioral outlier not found: {outlier_id}")
+    entity = await db.get(BehavioralEntityRow, outlier.entity_id)
+    if entity is None:  # pragma: no cover - FK guarantees the entity exists
+        raise ValueError(f"Behavioral entity not found: {outlier.entity_id}")
+
+    profile_type = ProfileType(outlier.profile_type)
+    profile = await _get_latest_profile(db, entity_id=entity.id, profile_type=profile_type)
+
+    exemplars, notes = await nearest_baseline_exemplars(
+        db,
+        outlier=outlier,
+        entity=entity,
+        profile=profile,
+        limit=exemplar_limit,
+        peer_limit=peer_limit,
+    )
+    if any(e.source == ExemplarSource.ENTITY_BASELINE for e in exemplars):
+        # State the ranking method wherever a ranked list is actually shown, so
+        # nobody reads token overlap as the detector's cosine distance.
+        notes.append(
+            "Baseline examples are ranked by token overlap with the anomalous pattern; "
+            "per-event embeddings are not retained, so they are not ranked by the "
+            "detector's cosine distance."
+        )
+
+    baseline: BaselineSummary | None = None
+    if profile is not None:
+        baseline = BaselineSummary(
+            profile_id=profile.id,
+            profile_type=ProfileType(profile.profile_type),
+            sample_size=profile.sample_size,
+            pattern_count=profile.pattern_count,
+            has_centroid=profile.centroid is not None,
+            window_start=profile.window_start,
+            window_end=profile.window_end,
+            computed_at=profile.computed_at,
+        )
+
+    return OutlierExplanation(
+        outlier=to_outlier_model(outlier),
+        entity_id=entity.id,
+        entity_kind=EntityKind(entity.kind),
+        entity_canonical_id=entity.canonical_id,
+        anomalous_event=outlier.raw_event_excerpt or outlier.event_id,
+        event_pattern_key=outlier.event_pattern_key,
+        baseline=baseline,
+        exemplars=exemplars,
+        signals=_explain_signals(outlier, profile, entity),
+        notes=notes,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Periodic re-evaluation of historical benign labels (#114 Phase B)
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class BenignDriftResult:
+    """Counts from one benign-label re-evaluation pass (per org, or aggregated)."""
+
+    orgs: int = 0
+    outliers_checked: int = 0
+    entities_checked: int = 0
+    entities_flagged: int = 0
+    entities_cleared: int = 0
+    failures: int = 0
+    flagged_entity_ids: list[str] = field(default_factory=list)
+
+    def as_counts(self) -> dict[str, int]:
+        """Log/job-friendly counts (drops the id list)."""
+        return {
+            "orgs": self.orgs,
+            "outliers_checked": self.outliers_checked,
+            "entities_checked": self.entities_checked,
+            "entities_flagged": self.entities_flagged,
+            "entities_cleared": self.entities_cleared,
+            "failures": self.failures,
+        }
+
+
+async def reevaluate_benign_labels(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    now: datetime | None = None,
+    max_rows: int = _MAX_BENIGN_REEVAL_ROWS,
+) -> BenignDriftResult:
+    """Re-check one org's benign-labelled outliers against the CURRENT baseline.
+
+    A benign verdict is a judgement about a moment: "this pattern is normal for
+    this entity". Baselines are rebuilt on a cadence, and an entity's normal
+    moves — so a pattern an analyst waved through months ago may no longer be
+    anything this entity does. That is drift worth a second look, and this pass
+    finds it.
+
+    For each entity with benign outliers, the pattern key of each benign outlier
+    is looked up in the entity's *latest* baseline frequency map. A pattern with
+    rank 0 (absent), or an entity with no current baseline at all, is drift; the
+    entity is flagged for review by writing a ``benign_drift`` record into its
+    existing ``enrichment`` JSONB (no schema change, and ``upsert_entity``
+    merges rather than clobbers it). An entity whose benign patterns are all
+    still present has any stale flag cleared — the drift resolved itself when
+    the baseline picked the pattern back up.
+
+    Deliberately non-destructive: nothing is re-labelled, unpromoted, or
+    deleted. The flag is a "please re-review" marker an analyst acts on.
+
+    Best-effort per entity: one entity that blows up is logged and counted in
+    ``failures``, never aborting the org. Strictly scoped to ``org_id``. Does
+    NOT commit.
+    """
+    stamp = now or _utcnow()
+    result = BenignDriftResult(orgs=1)
+
+    rows = list(
+        (
+            await db.execute(
+                select(BehavioralOutlierRow)
+                .where(
+                    BehavioralOutlierRow.org_id == org_id,
+                    BehavioralOutlierRow.intent_label == IntentLabel.BENIGN.value,
+                )
+                .order_by(BehavioralOutlierRow.created_at.desc())
+                .limit(max(1, max_rows))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    result.outliers_checked = len(rows)
+
+    by_entity: dict[str, list[BehavioralOutlierRow]] = {}
+    for row in rows:
+        by_entity.setdefault(row.entity_id, []).append(row)
+
+    for entity_id, entity_rows in by_entity.items():
+        try:
+            entity = await db.get(BehavioralEntityRow, entity_id)
+            if entity is None or entity.org_id != org_id:
+                # Defensive: the query is org-scoped, so this only fires if the
+                # entity vanished mid-sweep.
+                continue
+            result.entities_checked += 1
+
+            drifted: list[str] = []
+            reasons: set[str] = set()
+            profiles: dict[str, BehavioralProfileRow | None] = {}
+            for row in entity_rows:
+                profile_type = row.profile_type
+                if profile_type not in profiles:
+                    profiles[profile_type] = await _get_latest_profile(
+                        db, entity_id=entity_id, profile_type=ProfileType(profile_type)
+                    )
+                profile = profiles[profile_type]
+                if profile is None:
+                    drifted.append(row.id)
+                    reasons.add("no current baseline for this profile type")
+                    continue
+                pattern_key = row.event_pattern_key or row.event_id
+                rank = behavioral_logic.frequency_rank(
+                    dict(profile.frequency_map or {}), pattern_key
+                )
+                if rank == 0:
+                    drifted.append(row.id)
+                    reasons.add("pattern absent from the current baseline")
+
+            enrichment = dict(entity.enrichment or {})
+            if drifted:
+                enrichment[BENIGN_DRIFT_KEY] = {
+                    "flagged_at": stamp.isoformat(),
+                    "reason": "; ".join(sorted(reasons)),
+                    "outliers_checked": len(entity_rows),
+                    # Bounded: the flag is a pointer for review, not a payload.
+                    "drifted_outlier_ids": drifted[:20],
+                    "drifted_count": len(drifted),
+                }
+                entity.enrichment = enrichment
+                result.entities_flagged += 1
+                result.flagged_entity_ids.append(entity_id)
+            elif BENIGN_DRIFT_KEY in enrichment:
+                enrichment.pop(BENIGN_DRIFT_KEY)
+                entity.enrichment = enrichment
+                result.entities_cleared += 1
+        except Exception:
+            result.failures += 1
+            logger.exception(
+                "Benign-label re-evaluation failed for entity %s (org %s); continuing",
+                entity_id,
+                org_id,
+            )
+            continue
+
+    await db.flush()
+    if result.entities_flagged or result.entities_cleared:
+        logger.info("reevaluate_benign_labels(org=%s): %s", org_id, result.as_counts())
+    return result
+
+
+async def reevaluate_benign_labels_all_orgs(
+    db: AsyncSession,
+    *,
+    now: datetime | None = None,
+    max_rows: int = _MAX_BENIGN_REEVAL_ROWS,
+) -> BenignDriftResult:
+    """Run :func:`reevaluate_benign_labels` for every org with benign outliers.
+
+    Best-effort and per-org isolated, mirroring
+    ``memory_service.consolidate_all_orgs``: one tenant's failure is logged,
+    counted, and skipped rather than aborting the sweep. Multi-tenant by
+    construction — a single ``DEFAULT_ORG_ID`` pass would permanently exclude
+    every other tenant's baselines. The caller owns the commit.
+    """
+    totals = BenignDriftResult()
+    org_ids = [
+        org_id
+        for (org_id,) in (
+            await db.execute(
+                select(BehavioralOutlierRow.org_id)
+                .where(BehavioralOutlierRow.intent_label == IntentLabel.BENIGN.value)
+                .distinct()
+            )
+        ).all()
+    ]
+    for org_id in org_ids:
+        try:
+            one = await reevaluate_benign_labels(db, org_id=org_id, now=now, max_rows=max_rows)
+        except Exception:
+            totals.failures += 1
+            logger.exception("Benign-label re-evaluation failed for org %s; continuing", org_id)
+            continue
+        totals.orgs += 1
+        totals.outliers_checked += one.outliers_checked
+        totals.entities_checked += one.entities_checked
+        totals.entities_flagged += one.entities_flagged
+        totals.entities_cleared += one.entities_cleared
+        totals.failures += one.failures
+        totals.flagged_entity_ids.extend(one.flagged_entity_ids)
+
+    logger.info("reevaluate_benign_labels_all_orgs: %s", totals.as_counts())
+    return totals
 
 
 # --------------------------------------------------------------------------- #
