@@ -12,10 +12,24 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { CloudContainmentModal } from "@/components/cloud/CloudContainmentModal";
 import type { CloudContainmentProposal } from "@/types/cloud_hunt";
 
+/**
+ * Fields the server always sends on an action but this modal doesn't render.
+ * Spread into each fixture so the fixtures stay a faithful payload — the type
+ * mirrors ``CloudContainmentAction`` in ``shared/btagent_shared/types/cloud_hunt.py``.
+ */
+const WIRE_DEFAULTS = {
+  connector: "aws_iam",
+  description: "",
+  parameters: {},
+  outcome: "",
+  message: "",
+} as const;
+
 function proposal(over: Partial<CloudContainmentProposal> = {}): CloudContainmentProposal {
   return {
     actions: [
       {
+        ...WIRE_DEFAULTS,
         id: "cca_1",
         action_type: "revoke_role",
         provider: "aws",
@@ -25,6 +39,7 @@ function proposal(over: Partial<CloudContainmentProposal> = {}): CloudContainmen
         audit_id: null,
       },
       {
+        ...WIRE_DEFAULTS,
         id: "cca_2",
         action_type: "freeze_access_key",
         provider: "aws",
@@ -112,21 +127,26 @@ describe("CloudContainmentModal", () => {
       status: "accepted",
       actions: [
         {
+          ...WIRE_DEFAULTS,
           id: "cca_1",
           action_type: "revoke_role",
           provider: "aws",
           target: "arn:aws:iam::123456789012:role/finance-admin",
           source_finding_ids: [],
           status: "executed",
+          outcome: "success",
           audit_id: "aud_exec_1",
         },
         {
+          ...WIRE_DEFAULTS,
           id: "cca_2",
           action_type: "freeze_access_key",
           provider: "aws",
           target: "AKIAEXAMPLEKEY",
           source_finding_ids: [],
           status: "denied",
+          outcome: "denied",
+          message: "Target is on the org never-touch safelist (collateral-outage guard).",
           audit_id: "aud_deny_2",
         },
       ],

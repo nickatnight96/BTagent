@@ -9,6 +9,7 @@ import {
   Eye,
   FileText,
   Radio,
+  ShieldAlert,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useInvestigationStore } from "@/stores/investigationStore";
@@ -32,14 +33,24 @@ import { StatusBadge } from "@/components/ds/status-badge";
 import { CostBadge } from "./CostBadge";
 import { AgentChat } from "./AgentChat";
 import { EventStream } from "./EventStream";
+import { CloudContainmentPanel } from "./CloudContainmentPanel";
 
-type WorkspaceTab = "timeline" | "iocs" | "evidence" | "events";
+type WorkspaceTab = "timeline" | "iocs" | "evidence" | "events" | "containment";
 
 const tabs: { id: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
   { id: "timeline", label: "Timeline", icon: <Clock className="w-4 h-4" /> },
   { id: "iocs", label: "IOCs", icon: <Eye className="w-4 h-4" /> },
   { id: "evidence", label: "Evidence", icon: <FileText className="w-4 h-4" /> },
   { id: "events", label: "Events", icon: <Radio className="w-4 h-4" /> },
+  // #117: the cloud IAM containment proposal seeded on promotion of an IAM/STS
+  // hunt finding is reviewed here — in the case, next to the timeline and IOCs
+  // that justify it. The panel fetches lazily (it only mounts when selected)
+  // and shows an empty state on the investigations that carry no proposal.
+  {
+    id: "containment",
+    label: "Containment",
+    icon: <ShieldAlert className="w-4 h-4" />,
+  },
 ];
 
 export function InvestigationWorkspace() {
@@ -281,7 +292,9 @@ export function InvestigationWorkspace() {
         <div className="w-[400px] lg:w-[480px] hidden md:flex flex-col bg-background shrink-0">
           {/* Tabs */}
           <div
-            className="flex border-b border-border/50 shrink-0"
+            // overflow-x-auto rather than wrap: the tab strip has to stay one
+            // row inside a 400px panel now that Containment is a fifth tab.
+            className="flex border-b border-border/50 shrink-0 overflow-x-auto"
             role="tablist"
             aria-label="Investigation panels"
             data-testid="investigation-workspace-tabs"
@@ -294,7 +307,7 @@ export function InvestigationWorkspace() {
                 aria-selected={rightTab === tab.id}
                 data-testid={`investigation-workspace-tab-${tab.id}`}
                 className={clsx(
-                  "flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors",
+                  "flex shrink-0 items-center gap-1.5 whitespace-nowrap px-4 py-2.5 text-xs font-medium border-b-2 transition-colors",
                   rightTab === tab.id
                     ? "text-primary border-blue-400"
                     : "text-muted-foreground border-transparent hover:text-foreground hover:border-border",
@@ -314,6 +327,9 @@ export function InvestigationWorkspace() {
             {rightTab === "iocs" && <IOCsPanel iocs={inv.iocs ?? []} />}
             {rightTab === "evidence" && <EvidencePanel />}
             {rightTab === "events" && <EventStream investigationId={inv.id} />}
+            {rightTab === "containment" && (
+              <CloudContainmentPanel investigationId={inv.id} />
+            )}
           </div>
         </div>
       </div>

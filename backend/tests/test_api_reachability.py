@@ -83,14 +83,21 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
-# Was empty as of the Agent Memory UI (#482). Two slices re-open it, each
-# shipping a backend loop ahead of its screen. Both are deliberately KNOWN_GAPS
-# and not NOT_BROWSER_CALLED: a browser *should* call these, so claiming
-# otherwise would be a lie. A hollow ``frontend/src/api`` client with no
-# component behind it would silence this check without making the capability
-# reachable — the exact failure mode this file exists to catch. The debt is
-# named instead; delete each line when its panel lands.
+# Entries are deliberately KNOWN_GAPS rather than NOT_BROWSER_CALLED when a
+# browser *should* call the route — claiming otherwise would be a lie, and a
+# hollow ``frontend/src/api`` client with no component behind it would silence
+# this check without making the capability reachable (the exact failure mode
+# this file exists to catch). Name the debt instead; delete the line when the
+# screen lands.
 #
+# **Known blind spot, learned the hard way (#117).** This guard matches route
+# *shapes*, and the routers it reads do not carry the ``/v1`` prefix the app is
+# actually mounted under. A client whose base was ``/cloud`` instead of
+# ``/v1/cloud`` therefore satisfied this check while every real browser request
+# 404'd on ``/api/cloud/...``. Path-shape matching cannot catch a wrong base
+# path — only a real request can. If you are adding a client here, verify the
+# base against ``frontend/src/api/client.ts`` (which prepends ``/api``), not
+# against this test passing.
 KNOWN_GAPS: dict[str, str] = {}
 
 

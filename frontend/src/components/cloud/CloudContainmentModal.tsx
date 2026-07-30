@@ -31,6 +31,7 @@ export function CloudContainmentModal({
   canDecide,
   isMutating,
   error,
+  refusal = null,
   onAccept,
   onReject,
   onDismiss,
@@ -38,7 +39,15 @@ export function CloudContainmentModal({
   proposal: CloudContainmentProposal;
   canDecide: boolean;
   isMutating: boolean;
+  /** A request that recorded NO decision (RBAC 403, 409, transport). Red. */
   error: string | null;
+  /**
+   * An audited guardrail refusal — the safelist or the approved-flag gate said
+   * no, ledger rows were written, and nothing dispatched. Deliberately a
+   * separate channel from ``error``: a refusal is the platform working, and
+   * colouring it as a failure would misread a safe outcome as a broken one.
+   */
+  refusal?: string | null;
   onAccept: (actionIds: string[], rationale: string) => void;
   onReject: (rationale: string) => void;
   onDismiss: () => void;
@@ -149,6 +158,16 @@ export function CloudContainmentModal({
               data-testid="cloud-containment-rationale"
             />
           </>
+        )}
+
+        {refusal && (
+          <div
+            className="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-400"
+            role="status"
+            data-testid="cloud-containment-refusal"
+          >
+            {refusal}
+          </div>
         )}
 
         {error && (

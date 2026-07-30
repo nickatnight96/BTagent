@@ -856,6 +856,11 @@ export function CloudHuntsPage() {
   } | null>(null);
   const [containmentMutating, setContainmentMutating] = useState(false);
   const [containmentError, setContainmentError] = useState<string | null>(null);
+  // Kept apart from `containmentError` on purpose: a guardrail refusal (org
+  // never-touch safelist / the approved-flag gate) is an audited outcome with a
+  // ledger row, not a failed request. Showing it in the red error box would tell
+  // the operator the call broke, when in fact the platform refused on purpose.
+  const [containmentRefusal, setContainmentRefusal] = useState<string | null>(null);
 
   // Initial load.
   useEffect(() => {
@@ -916,16 +921,28 @@ export function CloudHuntsPage() {
       if (!containment) return;
       setContainmentMutating(true);
       setContainmentError(null);
+      setContainmentRefusal(null);
       try {
-        const proposal = await acceptCloudContainmentProposal(containment.investigationId, {
-          approved: true,
-          rationale,
-          action_ids: actionIds,
-        });
+        // A fully-denied accept comes back as an *outcome*, not a throw: 403 whose
+        // body is the proposal itself, every selected action denied with its reason
+        // and audit id, and the proposal still `proposed` (a refusal must not
+        // consume the decision). Store that proposal so the per-action denials and
+        // their ledger ids render, and say plainly that nothing executed.
+        const { executed, proposal } = await acceptCloudContainmentProposal(
+          containment.investigationId,
+          { approved: true, rationale, action_ids: actionIds },
+        );
         setContainment({ investigationId: containment.investigationId, proposal });
+        if (!executed) {
+          setContainmentRefusal(
+            "Refused before dispatch — nothing executed. Each action below carries " +
+              "the server's reason and its audit id; the proposal is still awaiting " +
+              "a decision, so it can be re-decided.",
+          );
+        }
       } catch (e) {
-        // A fully-denied accept returns 403 with the per-action denials; the
-        // proposal stays decidable, so surface the reason and keep the modal.
+        // Only a request that recorded NO decision lands here (RBAC 403, 404,
+        // 409, transport failure).
         setContainmentError(containmentErrMessage(e));
       } finally {
         setContainmentMutating(false);
@@ -939,6 +956,7 @@ export function CloudHuntsPage() {
       if (!containment) return;
       setContainmentMutating(true);
       setContainmentError(null);
+      setContainmentRefusal(null);
       try {
         const proposal = await rejectCloudContainmentProposal(containment.investigationId, {
           rationale,
@@ -1071,6 +1089,7 @@ export function CloudHuntsPage() {
           canDecide={canExecuteContainment}
           isMutating={containmentMutating}
           error={containmentError}
+          refusal={containmentRefusal}
           onAccept={handleContainmentAccept}
           onReject={handleContainmentReject}
           onDismiss={handleContainmentDismiss}
