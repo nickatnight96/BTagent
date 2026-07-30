@@ -47,7 +47,11 @@ export interface CreateTaxiiFeedRequest {
 
 export type UpdateTaxiiFeedRequest = Partial<CreateTaxiiFeedRequest>;
 
-const BASE = "/taxii/feeds";
+// NB: the shared client's prefix is only "/api" — the version segment lives
+// here, as in every other module ("/v1/..."). This shipped as "/taxii/feeds"
+// (→ /api/taxii/feeds, 404) and the panel silently self-effaced; the unit
+// suite mocks this module, so only the TAXII E2E spec caught it.
+const BASE = "/v1/taxii/feeds";
 
 export async function listTaxiiFeeds(): Promise<TaxiiFeedListResponse> {
   return api.get<TaxiiFeedListResponse>(`${BASE}`);
