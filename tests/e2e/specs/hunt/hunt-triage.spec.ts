@@ -101,8 +101,7 @@ async function seedDecoyFindings(seniorPage: Page, runTag: string): Promise<void
     "T1800.906",
   ] as const;
 
-  for (let i = 0; i < DECOY_COUNT; i++) {
-    const tech = decoyTechniques[i];
+  for (const [i, tech] of decoyTechniques.slice(0, DECOY_COUNT).entries()) {
     await seedFinding(seniorPage, {
       source: "hunt_pack",
       domain: "sigma",
