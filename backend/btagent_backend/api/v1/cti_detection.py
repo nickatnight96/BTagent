@@ -173,6 +173,11 @@ class DetectionProposalRecord(BaseModel):
     confidence: float
     rationale: str
     state: str
+    # Persisted #113 DataSourceMatcher output (#501). ``None`` means the matcher
+    # never ran for this row (it predates 0066_proposal_ds_gaps, or the rule's
+    # logsource gave nothing to reconcile) — NOT "no gaps"; ``[]`` is "no gaps".
+    data_sources_required: list[str] | None
+    data_source_gaps: list[str] | None
     validation: dict | None
     validated_at: datetime | None
     pr_url: str | None

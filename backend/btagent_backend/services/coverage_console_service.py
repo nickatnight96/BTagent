@@ -16,8 +16,10 @@ This module is that composition — and only that. It **recomputes nothing**:
   EXISTING ``hunt_pack_runs.rule_stats`` substrate with the same precedence the
   HuntPacks view already uses client-side, so a rule's health reads identically
   on both screens;
-* proposals, their review state and their telemetry outcome come from the #113
-  ``detection_proposals`` rows;
+* proposals, their review state, their telemetry outcome and their stored
+  ``DataSourceMatcher`` result come from the #113 ``detection_proposals`` rows —
+  the OCSF gap set is *read*, never re-matched here (the matcher runs once, at
+  persist time, in ``cti_detection_service``);
 * verdict counts are a tally of the persisted ``detection_validation_runs``
   verdicts.
 
@@ -26,16 +28,36 @@ carries no cross-tenant join.
 
 A note on "telemetry gaps"
 --------------------------
-The agent-side ``DetectionDraft.data_source_gaps`` (OCSF classes no connected
-connector emits) is **not persisted** on ``detection_proposals`` — there is no
-column for it and this change set adds no migration. The closest *durable*
-signal for "we cannot cover this technique with current telemetry" is the
-proposal's stored historical-validation outcome: a rule whose backends all
-errored could not be executed against the org's telemetry at all, and one that
-has never been validated has never been proven against it. Both are surfaced
-here, distinguished by ``reason``, annotated with the technique's ATT&CK
-``data_sources`` for context. Persisting the richer OCSF gap set is deferred
-(it needs a schema change).
+Two different questions hide behind the phrase, and this panel answers both
+without blurring them. Each gap row says which via ``reason`` + ``signal``:
+
+1. **Can this rule fire at all?** The #113 ``DataSourceMatcher`` reconciles the
+   OCSF event classes a rule needs against the ``ocsf_emits`` of the connectors
+   the org has actually bound. Since migration ``0066_proposal_ds_gaps`` that
+   output is **persisted** on ``detection_proposals``
+   (``data_sources_required`` / ``data_source_gaps``), so a gap here is a stored
+   fact, not an inference: nothing the org is connected to emits the telemetry
+   the rule keys on. ``reason="ocsf_telemetry_gap"``, ``signal="persisted"``,
+   and ``missing_ocsf_classes`` names the classes. This is the primary signal
+   and it outranks the other two.
+
+2. **Has this rule been proven against telemetry?** The pre-#501 heuristic,
+   kept verbatim as the **fallback**: a rule whose backends all errored could
+   not be executed against the org's telemetry at all
+   (``reason="backends_errored"``), and one that was never validated has never
+   been proven against it (``reason="never_validated"``). Both are
+   ``signal="derived"``.
+
+The fallback is what a row written before ``0066`` gets — its
+``data_source_gaps`` is NULL, meaning *the matcher never ran*, which is not the
+same claim as ``[]`` ("it ran, nothing is missing"). Collapsing those two would
+turn "unknown" into "covered", so the NULL/``[]`` distinction is load-bearing
+here and in the column comments. A post-``0066`` row with an empty gap set still
+falls through to the derived checks, so no row loses the older signal — the new
+one only takes precedence when it fires.
+
+Every gap row is still annotated with the technique's ATT&CK ``data_sources``
+for context (a name for the telemetry a human would go onboard).
 """
 
 from __future__ import annotations
@@ -74,6 +96,20 @@ _ACTION_SAMPLE = 10
 
 _FAILED = "failed"
 _UNKNOWN_TACTIC = "unknown"
+
+# Telemetry-gap reasons, worst-first. ``OCSF_GAP`` is the persisted
+# DataSourceMatcher verdict (the rule cannot fire); the other two are the
+# validation-derived fallback (the rule was never proven).
+REASON_OCSF_GAP = "ocsf_telemetry_gap"
+REASON_BACKENDS_ERRORED = "backends_errored"
+REASON_NEVER_VALIDATED = "never_validated"
+_REASON_ORDER = {REASON_OCSF_GAP: 0, REASON_BACKENDS_ERRORED: 1, REASON_NEVER_VALIDATED: 2}
+
+# Provenance of a gap row: a stored matcher result vs. an inference from the
+# validation blob. Surfaced so the UI never presents the weaker one as the
+# stronger one.
+SIGNAL_PERSISTED = "persisted"
+SIGNAL_DERIVED = "derived"
 
 # Heatmap bands. Red = never proven / proven-silent, amber = stale, green = fresh.
 STATUS_SILENT_GAP = "silent_gap"
@@ -133,16 +169,25 @@ class BrokenRule(BaseModel):
 
 
 class TelemetryGap(BaseModel):
-    """A technique whose detection cannot be proven against current telemetry."""
+    """A technique whose detection cannot fire — or cannot be proven — today."""
 
     technique_id: str
     name: str | None = None
     proposal_id: str
     proposal_row_id: str
     title: str
-    # ``backends_errored`` (every backend failed to run the rule) or
+    # ``ocsf_telemetry_gap`` (persisted: no connected connector emits a required
+    # OCSF class), ``backends_errored`` (every backend failed to run the rule) or
     # ``never_validated`` (no historical-telemetry validation has ever run).
     reason: str
+    # ``persisted`` (the stored #113 DataSourceMatcher verdict) or ``derived``
+    # (inferred from the stored validation blob — the pre-#501 fallback).
+    signal: str = SIGNAL_DERIVED
+    # OCSF event classes the rule needs that NOTHING connected emits. Non-empty
+    # only for ``reason="ocsf_telemetry_gap"``.
+    missing_ocsf_classes: list[str] = Field(default_factory=list)
+    # Connectors the matcher found that CAN supply part of the rule's telemetry.
+    data_sources_required: list[str] = Field(default_factory=list)
     unavailable_backends: list[str] = Field(default_factory=list)
     available_backends: list[str] = Field(default_factory=list)
     # ATT&CK-declared data sources for the technique (context, not a decision).
@@ -193,6 +238,9 @@ class CoverageSummary(BaseModel):
     # Rule health + pipeline.
     broken_rules: int = 0
     telemetry_gaps: int = 0
+    # The subset of ``telemetry_gaps`` backed by the persisted DataSourceMatcher
+    # verdict (a rule that cannot fire), as opposed to the derived fallback.
+    ocsf_telemetry_gaps: int = 0
     open_proposals: int = 0
     proposals_awaiting_review: int = 0
     prs_open: int = 0
@@ -278,6 +326,52 @@ def _backend_split(validation: dict[str, Any] | None) -> tuple[list[str], list[s
             continue
         (unavailable if entry.get("error") else available).append(name)
     return sorted(set(unavailable)), sorted(set(available))
+
+
+def _json_str_list(value: Any) -> list[str] | None:
+    """A persisted JSON list of strings, or ``None`` when the column is unset.
+
+    ``None`` in, ``None`` out — the "matcher never ran" marker must survive
+    intact, because it is what selects the derived fallback. A stored ``[]``
+    comes back as ``[]`` (a real "nothing missing"), and any non-list junk is
+    treated as unset rather than coerced into a claim.
+    """
+    if not isinstance(value, list):
+        return None
+    return [str(item) for item in value if isinstance(item, str) and item]
+
+
+def classify_telemetry_gap(
+    *,
+    persisted_gaps: list[str] | None,
+    validation: dict[str, Any] | None,
+    unavailable_backends: list[str],
+    available_backends: list[str],
+) -> tuple[str, str] | None:
+    """``(reason, signal)`` for one proposal, or ``None`` when it is not a gap.
+
+    Precedence, worst-first:
+
+    1. ``ocsf_telemetry_gap`` — the persisted DataSourceMatcher verdict says a
+       required OCSF class is emitted by nothing the org has connected. The rule
+       *cannot* fire, so it outranks any question of whether it was ever proven.
+    2. ``backends_errored`` — a validation ran and every backend failed, so the
+       rule could not be executed against the org's telemetry at all.
+    3. ``never_validated`` — no historical-telemetry validation has ever run.
+
+    (2) and (3) are the pre-#501 derived heuristic, unchanged. They still apply
+    to rows whose matcher output is absent (NULL — legacy rows) *and* to rows
+    whose matcher output is present but empty, so nothing that used to surface
+    stops surfacing.
+    """
+    if persisted_gaps:
+        return (REASON_OCSF_GAP, SIGNAL_PERSISTED)
+    if unavailable_backends and not available_backends:
+        return (REASON_BACKENDS_ERRORED, SIGNAL_DERIVED)
+    if validation is None:
+        return (REASON_NEVER_VALIDATED, SIGNAL_DERIVED)
+    # The rule ran somewhere and its telemetry reconciles — not a gap.
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -435,16 +529,31 @@ def _build_actions(
         )
 
     if telemetry_gaps:
+        # Name the hard, stored half explicitly — "no connector emits this" and
+        # "nobody has checked" need different fixes (onboard telemetry vs. run a
+        # validation), and one detail line that only described the softer case
+        # was part of the honesty debt #501 left behind.
+        missing_classes = sorted({c for g in telemetry_gaps for c in g.missing_ocsf_classes if c})
+        cannot_fire = sum(1 for g in telemetry_gaps if g.reason == REASON_OCSF_GAP)
+        title = f"{len(telemetry_gaps)} detection(s) unproven against telemetry"
+        detail = (
+            "The rule could not be executed against the org's historical "
+            "telemetry, so its coverage claim is unverified. Check the "
+            "data sources it needs."
+        )
+        if missing_classes:
+            title = f"{len(telemetry_gaps)} detection(s) cannot fire or are unproven"
+            detail = (
+                f"{cannot_fire} cannot fire at all: no connected connector emits "
+                f"{', '.join(missing_classes[:_ACTION_SAMPLE])} — onboard that "
+                "telemetry. The rest are unproven against the org's history."
+            )
         actions.append(
             NextBestAction(
                 id="nba_telemetry_gaps",
                 kind="author_detection",
-                title=f"{len(telemetry_gaps)} detection(s) unproven against telemetry",
-                detail=(
-                    "The rule could not be executed against the org's historical "
-                    "telemetry, so its coverage claim is unverified. Check the "
-                    "data sources it needs."
-                ),
+                title=title,
+                detail=detail,
                 priority=3,
                 count=len(telemetry_gaps),
                 link="/detection-proposals",
@@ -591,14 +700,24 @@ async def build_coverage_console(
 
         validation = row.validation if isinstance(row.validation, dict) else None
         unavailable, available = _backend_split(validation)
-        if validation is None:
-            reason = "never_validated"
-        elif unavailable and not available:
-            reason = "backends_errored"
-        else:
-            # The rule ran somewhere — telemetry exists for it.
+        # PRIMARY signal: the persisted #113 DataSourceMatcher verdict. NULL here
+        # means the matcher never ran (a row predating 0066_proposal_ds_gaps), so
+        # the derived heuristic below is all we have for it — that is the
+        # documented fallback, not a silent downgrade.
+        persisted_gaps = _json_str_list(row.data_source_gaps)
+        classified = classify_telemetry_gap(
+            persisted_gaps=persisted_gaps,
+            validation=validation,
+            unavailable_backends=unavailable,
+            available_backends=available,
+        )
+        if classified is None:
             continue
-        # One gap row per technique the unprovable rule claims to cover.
+        reason, signal = classified
+        # Only the persisted reason may name classes; the derived ones know none.
+        missing_ocsf = list(persisted_gaps or []) if reason == REASON_OCSF_GAP else []
+        supplying = _json_str_list(row.data_sources_required) or []
+        # One gap row per technique the rule claims to cover.
         for technique_id in row.technique_ids or []:
             technique_meta = meta.get(technique_id)
             telemetry_gaps.append(
@@ -609,14 +728,19 @@ async def build_coverage_console(
                     proposal_row_id=row.id,
                     title=row.title,
                     reason=reason,
+                    signal=signal,
+                    missing_ocsf_classes=list(missing_ocsf),
+                    data_sources_required=supplying,
                     unavailable_backends=unavailable,
                     available_backends=available,
                     attack_data_sources=technique_meta[2] if technique_meta else [],
                 )
             )
-    # Backends that actually errored are a harder signal than never-run.
-    telemetry_gaps.sort(key=lambda g: (g.reason != "backends_errored", g.technique_id))
+    # Worst-first: a rule nothing can feed, then one no backend could run, then
+    # one nobody has checked.
+    telemetry_gaps.sort(key=lambda g: (_REASON_ORDER.get(g.reason, 9), g.technique_id))
     telemetry_gaps = telemetry_gaps[:MAX_TELEMETRY_GAPS]
+    ocsf_gap_count = sum(1 for g in telemetry_gaps if g.reason == REASON_OCSF_GAP)
 
     # ---- (6) verdict counts across the org's validation history.
     verdict_payloads = list(
@@ -650,6 +774,7 @@ async def build_coverage_console(
         unmapped_techniques=max(mitre_total - mapped, 0),
         broken_rules=len(broken_rules),
         telemetry_gaps=len(telemetry_gaps),
+        ocsf_telemetry_gaps=ocsf_gap_count,
         open_proposals=len(proposals),
         proposals_awaiting_review=awaiting_review,
         prs_open=prs_open,
@@ -674,11 +799,12 @@ async def build_coverage_console(
     )
     logger.info(
         "coverage console built (org=%s): %d technique(s), %d broken rule(s), "
-        "%d telemetry gap(s), %d action(s)",
+        "%d telemetry gap(s) (%d persisted OCSF), %d action(s)",
         org_id,
         len(cells),
         len(broken_rules),
         len(telemetry_gaps),
+        ocsf_gap_count,
         len(console.next_best_actions),
     )
     return console
@@ -690,6 +816,11 @@ __all__ = [
     "CoverageSummary",
     "DEFAULT_LOOKBACK_RUNS",
     "NextBestAction",
+    "REASON_BACKENDS_ERRORED",
+    "REASON_NEVER_VALIDATED",
+    "REASON_OCSF_GAP",
+    "SIGNAL_DERIVED",
+    "SIGNAL_PERSISTED",
     "TacticColumn",
     "TechniqueCoverageCell",
     "TelemetryGap",
@@ -697,5 +828,6 @@ __all__ = [
     "build_coverage_console",
     "classify_rule_state",
     "classify_status",
+    "classify_telemetry_gap",
     "tally_verdicts",
 ]

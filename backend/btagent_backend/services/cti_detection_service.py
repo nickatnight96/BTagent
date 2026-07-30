@@ -16,6 +16,10 @@ What this module does
 - The module-level async helpers below persist and drive the review
   lifecycle: :func:`persist_proposals`, :func:`list_proposals`,
   :func:`set_proposal_state`, :func:`validate_proposal`.
+- :func:`match_data_sources` runs the #113 ``DataSourceMatcher`` over a stored
+  rule body so its output (which connectors can feed the rule, which required
+  OCSF classes nothing emits) is **persisted** on the row instead of discarded
+  (#501). :func:`connected_connector_ids` supplies the org's connector set.
 
 Resolving a bundle by id
 ------------------------
@@ -136,6 +140,7 @@ from btagent_shared.utils.ids import generate_id  # noqa: E402
 from sqlalchemy import func, select  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
+from btagent_backend.db.models_connector import ConnectorCredentialRow  # noqa: E402
 from btagent_backend.db.models_cti import DetectionProposalRow  # noqa: E402
 
 # States an analyst has explicitly decided — a re-propose never clobbers them.
@@ -148,12 +153,140 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+# ---------------------------------------------------------------------------
+# DataSourceMatcher persistence (#501 — the gap set the Coverage Console reads)
+#
+# The #113 ``DataSourceMatcher`` already answers "can the org's telemetry even
+# feed this rule?". Before migration 0066 that answer was thrown away and the
+# console *inferred* a weaker one from the validation blob. These helpers run the
+# same matcher against a persisted rule body and hand back exactly the two lists
+# the row now stores.
+# ---------------------------------------------------------------------------
+
+
+async def connected_connector_ids(db: AsyncSession, *, org_id: str) -> list[str] | None:
+    """Connector ids the org has bound a credential *reference* for, or ``None``.
+
+    ``connector_credentials.connector_name`` matches ``ConnectorManifest.name``
+    (the key of ``btagent_agents.mcp.manifests.MANIFESTS``), so an org's bindings
+    are precisely its "connected connectors" for reconciliation purposes. Reads
+    only the name column — never the ``${secret:...}`` reference — and is
+    org-scoped at the query.
+
+    ``None`` (rather than ``[]``) when the org has bound nothing at all: that is
+    "we do not know what is wired", and it makes the matcher fall back to its own
+    default of treating every manifest as connected. Returning ``[]`` there would
+    declare *every* required OCSF class missing for every mock-mode / not-yet-
+    onboarded org — a fabricated wall of gaps, which is worse than no signal.
+    """
+    names = (
+        (
+            await db.execute(
+                select(ConnectorCredentialRow.connector_name).where(
+                    ConnectorCredentialRow.org_id == org_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    cleaned = sorted({(n or "").strip() for n in names} - {""})
+    return cleaned or None
+
+
+def match_data_sources(
+    *,
+    title: str,
+    sigma_yaml: str,
+    technique_ids: list[str],
+    connected: list[str] | None = None,
+) -> tuple[list[str], list[str]] | None:
+    """Run the #113 ``DataSourceMatcher`` over a stored rule body.
+
+    Returns ``(data_sources_required, data_source_gaps)`` — connector ids that
+    can supply the rule's telemetry, and the OCSF event-class *values* nothing
+    connected emits — ready to write to the row.
+
+    Returns ``None`` when no honest reconciliation is possible, and the caller
+    must then leave both columns NULL rather than store an empty pair:
+
+    * the connector registry is unavailable (``shared`` may run without the
+      ``agents`` package installed) — with no manifests every class would look
+      missing;
+    * the rule's ``logsource.category`` maps to no OCSF class (Sigma's
+      ``generic``, a vendor category) — with nothing required, the reconciliation
+      would come back "zero gaps", i.e. it would *invent* coverage.
+
+    Pure and synchronous: no DB, no network, no LLM.
+    """
+    from btagent_shared.hunt.detection_engineer import (
+        DataSourceMatcher,
+        connector_ocsf_emits,
+        ocsf_classes_for_sigma,
+    )
+    from btagent_shared.types.detection_engineer import DetectionDraft, DraftMethod
+
+    # Guard 1: probe the UNFILTERED registry. An empty map there means "the
+    # manifests are not importable", which is not the same as "nothing is
+    # connected" — reconciling against it would call every class missing. A
+    # caller that explicitly passes ``connected=[]`` *does* mean "nothing is
+    # connected", and that legitimately yields a full gap set.
+    if not connector_ocsf_emits():
+        logger.debug("data-source match skipped: no connector manifests available")
+        return None
+
+    required_classes = ocsf_classes_for_sigma(sigma_yaml)
+    # Guard 2: nothing required → nothing to reconcile → no claim either way.
+    if not required_classes:
+        return None
+
+    draft = DetectionDraft(
+        id=generate_id("ddraft"),
+        title=title,
+        sigma_yaml=sigma_yaml,
+        method=DraftMethod.DETERMINISTIC,
+        technique_ids=list(technique_ids or []),
+        ocsf_classes_required=required_classes,
+        generated_at=_utcnow(),
+    )
+    matched = DataSourceMatcher().match(draft, connected=connected)
+    return (
+        list(matched.data_sources_required),
+        [ocsf_class.value for ocsf_class in matched.data_source_gaps],
+    )
+
+
+def _match_columns(
+    *,
+    title: str,
+    sigma_yaml: str,
+    technique_ids: list[str],
+    connected: list[str] | None,
+) -> dict[str, list[str]]:
+    """The matcher output as row column kwargs — ``{}`` when no claim is possible.
+
+    An empty dict leaves both columns untouched (NULL on insert, unchanged on
+    update), which is the "matcher never ran" marker the Coverage Console falls
+    back on. See :func:`match_data_sources` for when that happens.
+    """
+    match = match_data_sources(
+        title=title,
+        sigma_yaml=sigma_yaml,
+        technique_ids=technique_ids,
+        connected=connected,
+    )
+    if match is None:
+        return {}
+    return {"data_sources_required": match[0], "data_source_gaps": match[1]}
+
+
 async def persist_proposals(
     db: AsyncSession,
     *,
     org_id: str,
     proposals: list[DetectionProposal],
     bundle_id: str | None = None,
+    connected: list[str] | None = None,
 ) -> tuple[int, int, int]:
     """Upsert pipeline proposals into ``detection_proposals``.
 
@@ -165,10 +298,23 @@ async def persist_proposals(
     * existing row already decided → leave untouched (``unchanged``) — an
       analyst decision is never silently overwritten by a re-import
 
+    Every written row also carries the #113 ``DataSourceMatcher`` output
+    (``data_sources_required`` / ``data_source_gaps``, #501) so the Coverage
+    Console can report the real missing OCSF classes rather than infer coverage
+    from the validation blob. ``connected`` overrides the connector set to
+    reconcile against; omit it and the org's own credential bindings are used
+    (:func:`connected_connector_ids`). A row an analyst has already decided is
+    left alone here too — including its stored match — because the whole point of
+    ``unchanged`` is that a re-import touches nothing.
+
     Returns ``(created, updated, unchanged)`` counts. Flushes, never commits.
     """
     if not proposals:
         return (0, 0, 0)
+
+    resolved_connected = (
+        connected if connected is not None else await connected_connector_ids(db, org_id=org_id)
+    )
 
     stix_ids = [p.source_stix_id for p in proposals]
     existing_rows = (
@@ -189,6 +335,18 @@ async def persist_proposals(
     now = _utcnow()
     for proposal in proposals:
         row = by_stix_id.get(proposal.source_stix_id)
+        if row is not None and row.state in _DECIDED_STATES:
+            unchanged += 1
+            continue
+
+        # Reconcile this rule's telemetry against the org's connectors once, and
+        # use it for both the insert and the refresh path.
+        match = _match_columns(
+            title=proposal.title,
+            sigma_yaml=proposal.sigma_yaml,
+            technique_ids=list(proposal.technique_ids),
+            connected=resolved_connected,
+        )
         if row is None:
             db.add(
                 DetectionProposalRow(
@@ -205,11 +363,10 @@ async def persist_proposals(
                     state=ProposalState.PROPOSED.value,
                     created_at=now,
                     updated_at=now,
+                    **match,
                 )
             )
             created += 1
-        elif row.state in _DECIDED_STATES:
-            unchanged += 1
         else:
             row.proposal_id = proposal.id
             row.title = proposal.title
@@ -218,6 +375,8 @@ async def persist_proposals(
             row.confidence = proposal.confidence
             row.rationale = proposal.rationale
             row.bundle_id = bundle_id or row.bundle_id
+            for column, value in match.items():
+                setattr(row, column, value)
             row.updated_at = now
             updated += 1
 
@@ -390,6 +549,17 @@ async def set_proposal_sigma(
         )
 
     row.final_sigma_yaml = cleaned
+    # An edit can move the rule's logsource, so the stored DataSourceMatcher
+    # result must follow the body that will actually ship (#501). A body we
+    # cannot reconcile leaves the columns as they were rather than blanking a
+    # previously valid match.
+    for column, value in _match_columns(
+        title=row.title,
+        sigma_yaml=cleaned,
+        technique_ids=list(row.technique_ids or []),
+        connected=await connected_connector_ids(db, org_id=org_id),
+    ).items():
+        setattr(row, column, value)
     row.state = ProposalState.MODIFIED.value
     row.review_rationale = review_rationale
     row.reviewed_by = edited_by
