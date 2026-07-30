@@ -47,10 +47,11 @@ export interface CreateTaxiiFeedRequest {
 
 export type UpdateTaxiiFeedRequest = Partial<CreateTaxiiFeedRequest>;
 
-// NB: the shared client's prefix is only "/api" — the version segment lives
-// here, as in every other module ("/v1/..."). This shipped as "/taxii/feeds"
-// (→ /api/taxii/feeds, 404) and the panel silently self-effaced; the unit
-// suite mocks this module, so only the TAXII E2E spec caught it.
+// ``client.ts`` prepends only ``/api`` and the backend mounts every v1 route
+// under ``/api/v1``, so this base MUST carry the ``/v1``. It shipped as
+// "/taxii/feeds" (→ /api/taxii/feeds, 404, panel silently self-effaced; the
+// unit suite mocks this module) — fixed via the TAXII E2E spec (#527-era) and
+// now pinned by the hardened reachability guard (#482).
 const BASE = "/v1/taxii/feeds";
 
 export async function listTaxiiFeeds(): Promise<TaxiiFeedListResponse> {
