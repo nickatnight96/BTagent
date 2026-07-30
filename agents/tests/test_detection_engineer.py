@@ -28,6 +28,7 @@ from btagent_shared.hunt.detection_engineer import (
     RuleDrafter,
     connector_ocsf_emits,
     draft_detections_from_report,
+    ocsf_classes_for_sigma,
     required_ocsf_classes,
 )
 from btagent_shared.types.connector import OCSFEventClass
@@ -238,6 +239,43 @@ async def test_matcher_flags_gap_when_connector_cannot_supply() -> None:
     matched2 = DataSourceMatcher().match(draft, connected=["proofpoint", "splunk"])
     assert matched2.data_sources_required == ["proofpoint"]
     assert matched2.data_source_gaps == []
+
+
+async def test_matcher_reconciles_a_stored_rule_body_via_its_logsource() -> None:
+    """``ocsf_classes_for_sigma`` lets the matcher run on a *persisted* rule.
+
+    The Coverage Console's telemetry-gaps panel reads a gap set stored on
+    ``detection_proposals`` (#501); the rows written there are STIX-pipeline
+    proposals, so the matcher has to start from a rule body rather than the TTP
+    behind it.
+    """
+    email_draft = await RuleDrafter().draft(
+        BehavioralTTP(technique_id="T1566.001", logsource_category="email"),
+        method=DraftMethod.DETERMINISTIC,
+    )
+    # Reading the body back yields the same requirement as reading the TTP.
+    assert ocsf_classes_for_sigma(email_draft.sigma_yaml) == [OCSFEventClass.EMAIL_ACTIVITY]
+
+    rebuilt = email_draft.model_copy(
+        update={"ocsf_classes_required": ocsf_classes_for_sigma(email_draft.sigma_yaml)}
+    )
+    assert DataSourceMatcher().match(rebuilt, connected=["splunk"]).data_source_gaps == [
+        OCSFEventClass.EMAIL_ACTIVITY
+    ]
+
+
+def test_ocsf_classes_for_sigma_makes_no_claim_it_cannot_support() -> None:
+    # An empty result must be read as "unknown", never as "needs nothing" — the
+    # latter reconciles to zero gaps, i.e. it would fabricate coverage.
+    assert ocsf_classes_for_sigma("title: t\nlogsource:\n  category: generic\n") == []
+    assert ocsf_classes_for_sigma("title: t\n") == []
+    assert ocsf_classes_for_sigma("not: [valid yaml") == []
+    assert ocsf_classes_for_sigma("- just\n- a\n- list\n") == []
+    assert ocsf_classes_for_sigma("title: t\nlogsource: windows\n") == []
+    # Category casing / padding is normalised rather than silently missed.
+    assert ocsf_classes_for_sigma("logsource:\n  category: ' Proxy '\n") == [
+        OCSFEventClass.HTTP_ACTIVITY
+    ]
 
 
 async def test_matcher_accepts_injected_manifests() -> None:

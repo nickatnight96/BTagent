@@ -10,6 +10,10 @@ suites):
   ``under_firing``) and *omits* healthy rules;
 * a proposal whose telemetry validation could not run surfaces as a telemetry
   gap, while one that ran somewhere does not;
+* the **persisted** DataSourceMatcher gap set (``data_source_gaps``, migration
+  0066) is the primary signal and names the real OCSF classes, while a row
+  predating the column still falls back to the older derived heuristic — the
+  NULL-vs-``[]`` distinction must not collapse into "covered";
 * verdict counts tally every kind across the run history;
 * next-best-actions are ordered worst-first and deep-link to a real route;
 * the empty org returns an honest empty payload rather than a broken one;
@@ -34,6 +38,7 @@ from btagent_backend.services.coverage_console_service import (
     build_coverage_console,
     classify_rule_state,
     classify_status,
+    classify_telemetry_gap,
     tally_verdicts,
 )
 
@@ -88,7 +93,16 @@ async def _seed_proposal(
     state: str = "proposed",
     validation: dict | None = None,
     pr_outcome: str = "proposed",
+    data_source_gaps: list[str] | None = None,
+    data_sources_required: list[str] | None = None,
 ) -> DetectionProposalRow:
+    """Seed one proposal row.
+
+    ``data_source_gaps`` defaults to ``None`` on purpose: that is a row written
+    before migration 0066 (the matcher never ran for it), which is what the
+    derived-fallback assertions need. Pass ``[]`` for "the matcher ran and found
+    nothing missing" — a different claim entirely.
+    """
     row = DetectionProposalRow(
         id=generate_id("dprop"),
         org_id=org_id,
@@ -101,6 +115,8 @@ async def _seed_proposal(
         state=state,
         validation=validation,
         pr_outcome=pr_outcome,
+        data_source_gaps=data_source_gaps,
+        data_sources_required=data_sources_required,
     )
     db.add(row)
     await db.flush()
@@ -341,6 +357,152 @@ async def test_console_flags_detections_unproven_against_telemetry(db_session):
     # A hard "the telemetry refused us" outranks "we never asked".
     assert console.telemetry_gaps[0].reason == "backends_errored"
     assert console.summary.telemetry_gaps == 2
+
+
+async def test_console_prefers_the_persisted_ocsf_gap_over_the_derived_reason(db_session):
+    org_id = await _make_org(db_session)
+    # A row whose stored DataSourceMatcher result says the telemetry it needs is
+    # emitted by nothing connected. It ALSO validated cleanly on one backend — so
+    # under the old derived-only heuristic it would not be a gap at all.
+    await _seed_proposal(
+        db_session,
+        org_id,
+        techniques=["T1114"],
+        validation={"backends": [{"backend": "splunk", "error": None, "hit_count": 2}]},
+        data_source_gaps=["email_activity"],
+        data_sources_required=["splunk"],
+    )
+
+    console = await build_coverage_console(db_session, org_id=org_id, now=_NOW)
+
+    gaps = {g.technique_id: g for g in console.telemetry_gaps}
+    assert set(gaps) == {"T1114"}
+    gap = gaps["T1114"]
+    # A rule that cannot fire is a gap even though a backend ran it — this is the
+    # whole reason the matcher output had to be persisted.
+    assert gap.reason == "ocsf_telemetry_gap"
+    assert gap.signal == "persisted"
+    # The real missing OCSF class is named, not merely implied.
+    assert gap.missing_ocsf_classes == ["email_activity"]
+    assert gap.data_sources_required == ["splunk"]
+    assert console.summary.telemetry_gaps == 1
+    assert console.summary.ocsf_telemetry_gaps == 1
+    # The action names the missing telemetry rather than only "unproven".
+    action = {a.id: a for a in console.next_best_actions}["nba_telemetry_gaps"]
+    assert "email_activity" in action.detail
+
+
+async def test_console_falls_back_to_the_derived_heuristic_for_legacy_rows(db_session):
+    org_id = await _make_org(db_session)
+    # Legacy row: data_source_gaps is NULL — the matcher never ran for it. The
+    # pre-#501 behaviour must survive verbatim for these.
+    await _seed_proposal(
+        db_session,
+        org_id,
+        techniques=["T1566"],
+        validation={"backends": [{"backend": "splunk", "error": "no such index"}]},
+    )
+    await _seed_proposal(db_session, org_id, techniques=["T1204"])
+    # A row the matcher DID run for and found nothing missing (``[]``, not NULL)
+    # is still subject to the derived checks — an empty gap set is not a licence
+    # to stop reporting "never proven".
+    await _seed_proposal(
+        db_session,
+        org_id,
+        techniques=["T1105"],
+        data_source_gaps=[],
+        data_sources_required=["splunk"],
+    )
+
+    console = await build_coverage_console(db_session, org_id=org_id, now=_NOW)
+
+    gaps = {g.technique_id: g for g in console.telemetry_gaps}
+    assert set(gaps) == {"T1566", "T1204", "T1105"}
+    assert gaps["T1566"].reason == "backends_errored"
+    assert gaps["T1204"].reason == "never_validated"
+    assert gaps["T1105"].reason == "never_validated"
+    # None of the three claims to be a measured OCSF gap.
+    assert {g.signal for g in console.telemetry_gaps} == {"derived"}
+    assert all(g.missing_ocsf_classes == [] for g in console.telemetry_gaps)
+    assert console.summary.ocsf_telemetry_gaps == 0
+    # A matched row still reports which connectors CAN feed it.
+    assert gaps["T1105"].data_sources_required == ["splunk"]
+
+
+async def test_persisted_ocsf_gap_outranks_the_derived_reasons_in_the_ordering(db_session):
+    org_id = await _make_org(db_session)
+    await _seed_proposal(db_session, org_id, techniques=["T1204"])
+    await _seed_proposal(
+        db_session,
+        org_id,
+        techniques=["T1566"],
+        validation={"backends": [{"backend": "splunk", "error": "auth failed"}]},
+    )
+    await _seed_proposal(
+        db_session,
+        org_id,
+        techniques=["T1114"],
+        data_source_gaps=["email_activity"],
+    )
+
+    console = await build_coverage_console(db_session, org_id=org_id, now=_NOW)
+
+    # Worst-first: cannot fire > no backend could run it > nobody has checked.
+    assert [g.reason for g in console.telemetry_gaps] == [
+        "ocsf_telemetry_gap",
+        "backends_errored",
+        "never_validated",
+    ]
+
+
+def test_a_gap_classification_never_turns_unknown_into_covered():
+    # NULL (matcher never ran) + never validated → still a derived gap.
+    assert classify_telemetry_gap(
+        persisted_gaps=None, validation=None, unavailable_backends=[], available_backends=[]
+    ) == ("never_validated", "derived")
+    # [] (matcher ran, nothing missing) is NOT by itself a gap...
+    assert (
+        classify_telemetry_gap(
+            persisted_gaps=[],
+            validation={"backends": [{"backend": "splunk"}]},
+            unavailable_backends=[],
+            available_backends=["splunk"],
+        )
+        is None
+    )
+    # ...but it does not suppress the derived checks either.
+    assert classify_telemetry_gap(
+        persisted_gaps=[], validation=None, unavailable_backends=[], available_backends=[]
+    ) == ("never_validated", "derived")
+    # A real missing class wins over a clean validation run.
+    assert classify_telemetry_gap(
+        persisted_gaps=["email_activity"],
+        validation={"backends": [{"backend": "splunk"}]},
+        unavailable_backends=[],
+        available_backends=["splunk"],
+    ) == ("ocsf_telemetry_gap", "persisted")
+
+
+async def test_persisted_gaps_are_org_scoped(db_session):
+    org_a = await _make_org(db_session)
+    org_b = await _make_org(db_session)
+    await _seed_proposal(
+        db_session,
+        org_a,
+        techniques=["T1114"],
+        data_source_gaps=["email_activity"],
+        data_sources_required=["splunk"],
+    )
+
+    console_a = await build_coverage_console(db_session, org_id=org_a, now=_NOW)
+    console_b = await build_coverage_console(db_session, org_id=org_b, now=_NOW)
+
+    assert [g.missing_ocsf_classes for g in console_a.telemetry_gaps] == [["email_activity"]]
+    assert console_a.summary.ocsf_telemetry_gaps == 1
+    # Org B must not learn anything about org A's telemetry posture.
+    assert console_b.telemetry_gaps == []
+    assert console_b.summary.ocsf_telemetry_gaps == 0
+    assert console_b.summary.telemetry_gaps == 0
 
 
 async def test_console_counts_verdicts_and_the_review_queue(db_session):
