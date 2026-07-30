@@ -10,6 +10,7 @@ import type {
   BehavioralOutlier,
   BehavioralOutlierListResponse,
   IntentLabel,
+  OutlierExplanation,
   PromoteOutlierRequest,
   PromoteOutlierResponse,
   SetIntentRequest,
@@ -38,6 +39,15 @@ export async function listOutliers(params?: {
 /** Fetch a single outlier by id. */
 export async function getOutlier(outlierId: string): Promise<BehavioralOutlier> {
   return api.get<BehavioralOutlier>(`${BASE}/outliers/${outlierId}`);
+}
+
+/**
+ * "Why is this an outlier?" — the anomalous event beside the entity's
+ * most-similar normal examples, the baseline it was scored against, and the
+ * signals the detector computed. Read-only and org-scoped server-side.
+ */
+export async function explainOutlier(outlierId: string): Promise<OutlierExplanation> {
+  return api.get<OutlierExplanation>(`${BASE}/outliers/${outlierId}/explain`);
 }
 
 // --------------------------------------------------------------------------- //
