@@ -1,6 +1,14 @@
 import { create } from "zustand";
 
-type ActivePanel = "chat" | "timeline" | "iocs" | "evidence" | "events";
+type ActivePanel =
+  | "chat"
+  | "timeline"
+  | "iocs"
+  | "evidence"
+  | "events"
+  // #117: the cloud IAM containment-proposal review lives in the investigation
+  // workspace, so it is one of the case tabs rather than a top-level route.
+  | "containment";
 
 interface UIState {
   sidebarOpen: boolean;

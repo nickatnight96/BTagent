@@ -197,29 +197,62 @@ export const WORKLOAD_KINDS_ORDERED: AgenticWorkloadKind[] = [
 /** All cloud providers in a stable row order for the matrix table. */
 export const CLOUD_PROVIDERS_ORDERED: CloudProvider[] = ["aws", "azure", "gcp"];
 
-// --------------------------------------------------------------------------- //
-// Cloud IAM containment proposal (#117 Phase C — mirrors RevocationProposal)
-// --------------------------------------------------------------------------- //
+// ---------------------------------------------------------------------------
+// Containment proposals (#117 Phase C bullet 2 — IAM/STS finding → IR)
+// ---------------------------------------------------------------------------
+//
+// Mirrors ``CloudContainmentAction`` / ``CloudContainmentProposal`` in
+// ``shared/btagent_shared/types/cloud_hunt.py``. The proposal is *inert data*
+// hanging off an Investigation: nothing in it can dispatch. The only thing that
+// can make it act is a human accepting it through
+// ``POST /cloud/investigations/{id}/containment-proposal/accept``, which routes
+// every action through the #106 containment execute service and inherits that
+// path's ``containment:execute`` RBAC scope, its explicit approved-flag second
+// gate, mock-by-default dispatch, the org never-touch principal safelist, and an
+// audit row on every execute AND every denial.
 
-export type CloudContainmentActionType = "revoke_role" | "freeze_access_key" | "detach_policy";
+/** The three cloud control-plane containment verbs this slice proposes. */
+export type CloudContainmentActionType =
+  | "revoke_role"
+  | "freeze_access_key"
+  | "detach_policy";
 
+/**
+ * Per-action lifecycle.
+ *
+ * ``proposed`` is inert. ``executed`` and ``denied`` are both written by the
+ * #106 execute path — and ``denied`` always has a hash-chained audit row behind
+ * it, which is why the UI renders it as a recorded guardrail outcome and never
+ * as a failed request.
+ */
 export type CloudContainmentActionStatus = "proposed" | "executed" | "denied";
 
+/** Lifecycle of the proposal attached to an investigation. */
 export type CloudContainmentProposalStatus = "proposed" | "accepted" | "rejected";
 
-/** One inert proposed action against one cloud IAM principal. */
+/** One proposed containment action against one cloud IAM principal. */
 export interface CloudContainmentAction {
+  /** Stable within the proposal (``cca_1``, ``cca_2``, …) — names a partial accept. */
   id: string;
   action_type: CloudContainmentActionType;
-  provider: string;
+  provider: CloudProvider;
+  /** The principal acted on; the value screened against the org safelist. */
   target: string;
-  rationale?: string;
+  /** Connector that would enforce it (``aws_iam`` / ``gcp_iam`` / ``azure_iam``). */
+  connector: string;
+  description: string;
+  /** Action-shaped evidence detail: reason, event_name, policy_name, trustees, … */
+  parameters: Record<string, unknown>;
   source_finding_ids: string[];
   status: CloudContainmentActionStatus;
+  /** Set once the action has been through the #106 execute path. */
+  outcome: string;
   audit_id: string | null;
+  /** Verbatim server reason — the safelist refusal text arrives here. */
+  message: string;
 }
 
-/** The proposal attached to an investigation on IAM/STS promotion. */
+/** Inert containment proposals seeded on promotion of IAM/STS findings. */
 export interface CloudContainmentProposal {
   actions: CloudContainmentAction[];
   rationale: string;
@@ -229,9 +262,26 @@ export interface CloudContainmentProposal {
   decision_rationale: string;
 }
 
-/** Accept/reject body — `approved` is the explicit HITL half of the gate. */
+/**
+ * Accept/reject body — ``approved`` is the explicit HITL half of the gate.
+ *
+ * Optional here because that is the wire contract (the backend defaults it to
+ * ``false``, so an omitted flag can never execute). Callers that *are* accepting
+ * should require it locally rather than letting it default — see
+ * ``@/api/cloudContainment``.
+ */
 export interface CloudContainmentDecisionRequest {
   approved?: boolean;
   rationale?: string;
   action_ids?: string[];
 }
+
+/** Display labels for the containment verbs. */
+export const CLOUD_CONTAINMENT_ACTION_LABELS: Record<
+  CloudContainmentActionType,
+  string
+> = {
+  revoke_role: "Revoke role sessions",
+  freeze_access_key: "Freeze access key",
+  detach_policy: "Detach policy",
+};

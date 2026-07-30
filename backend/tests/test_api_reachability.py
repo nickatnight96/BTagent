@@ -83,16 +83,26 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
-# Was empty as of the Agent Memory UI (#482). Two slices re-open it, each
-# shipping a backend loop ahead of its screen. Both are deliberately KNOWN_GAPS
-# and not NOT_BROWSER_CALLED: a browser *should* call these, so claiming
-# otherwise would be a lie. A hollow ``frontend/src/api`` client with no
-# component behind it would silence this check without making the capability
-# reachable — the exact failure mode this file exists to catch. The debt is
-# named instead; delete each line when its panel lands.
+# Was empty as of the Agent Memory UI (#482). One slice re-opens it, shipping a
+# backend loop ahead of its screen. It is deliberately KNOWN_GAPS and not
+# NOT_BROWSER_CALLED: a browser *should* call these, so claiming otherwise would
+# be a lie. A hollow ``frontend/src/api`` client with no component behind it
+# would silence this check without making the capability reachable — the exact
+# failure mode this file exists to catch. The debt is named instead; delete each
+# line when its panel lands.
 #
 # * #105 / UC-2.1 — the *pull* half of "STIX/TAXII feeds" is backend-complete
 #   (config store, RBAC-gated CRUD, scheduled poll sweep) with no admin screen.
+#
+# The #117 cloud IAM containment-proposal trio has left the list. Both of its
+# consumers now go through ONE client, ``frontend/src/api/cloudContainment.ts``:
+# the promotion-time ``CloudContainmentModal`` and the investigation workspace's
+# Containment tab (``components/workspace/CloudContainmentPanel.tsx``). Worth
+# noting for the next reader of this guard: the first version of that client used
+# a ``/cloud`` base with no ``/v1``, which this check accepted (the routers do
+# not carry ``/v1``, so the literal matched) while the browser got a 404 from
+# ``/api/cloud/...``. Path-shape matching cannot see that; only a real request
+# can.
 KNOWN_GAPS: dict[str, str] = {
     "GET /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
     "GET /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
