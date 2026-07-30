@@ -86,6 +86,7 @@ const BROKEN_RULE = {
   last_run_at: "2026-07-25T00:00:00Z",
 };
 
+/** The weaker, inferred kind: the rule may work, no backend could prove it. */
 const GAP = {
   technique_id: "T1566",
   name: "Phishing",
@@ -93,7 +94,26 @@ const GAP = {
   proposal_row_id: "dprop_1",
   title: "Detect phishing attachment",
   reason: "backends_errored",
+  signal: "derived",
+  missing_ocsf_classes: [],
+  data_sources_required: [],
   unavailable_backends: ["splunk", "sentinel"],
+  available_backends: [],
+  attack_data_sources: ["Application Log"],
+};
+
+/** The strong kind: the persisted matcher says nothing emits what it needs. */
+const OCSF_GAP = {
+  technique_id: "T1114",
+  name: "Email Collection",
+  proposal_id: "p2",
+  proposal_row_id: "dprop_2",
+  title: "Detect mailbox export",
+  reason: "ocsf_telemetry_gap",
+  signal: "persisted",
+  missing_ocsf_classes: ["email_activity"],
+  data_sources_required: ["splunk"],
+  unavailable_backends: [],
   available_backends: [],
   attack_data_sources: ["Application Log"],
 };
@@ -139,7 +159,8 @@ function payload(over: Record<string, unknown> = {}) {
       mapped_techniques: 4,
       unmapped_techniques: 596,
       broken_rules: 1,
-      telemetry_gaps: 1,
+      telemetry_gaps: 2,
+      ocsf_telemetry_gaps: 1,
       open_proposals: 2,
       proposals_awaiting_review: 1,
       prs_open: 1,
@@ -166,7 +187,7 @@ function payload(over: Record<string, unknown> = {}) {
     ],
     techniques,
     broken_rules: [BROKEN_RULE],
-    telemetry_gaps: [GAP],
+    telemetry_gaps: [OCSF_GAP, GAP],
     verdict_counts: {
       validated: 3,
       wrong_severity: 1,
@@ -254,6 +275,34 @@ describe("CoverageConsolePage", () => {
     expect(screen.getByTestId("broken-rule-state-rule_dead").textContent).toContain("errored");
     expect(screen.getByTestId("telemetry-gap-reason-T1566").textContent).toContain(
       "no backend could run it",
+    );
+  });
+
+  it("names the OCSF classes behind a measured gap and keeps it distinct from an inferred one", async () => {
+    renderPage(<CoverageConsolePage />);
+    await screen.findByTestId("telemetry-gaps-list");
+
+    // The whole point of persisting the matcher output: the panel says WHICH
+    // telemetry is missing, not just "something is unproven".
+    expect(screen.getByTestId("telemetry-gap-missing-ocsf-T1114").textContent).toContain(
+      "email_activity",
+    );
+    expect(screen.getByTestId("telemetry-gap-reason-T1114").textContent).toContain(
+      "no connected telemetry",
+    );
+
+    // A measured gap must never be presented as the same claim as an inferred
+    // one — that conflation is exactly the debt this panel carried.
+    expect(screen.getByTestId("telemetry-gap-signal-T1114").textContent).toContain("measured");
+    expect(screen.getByTestId("telemetry-gap-signal-T1566").textContent).toContain("inferred");
+    expect(screen.getByTestId("telemetry-gap-T1114").dataset.signal).toBe("persisted");
+    expect(screen.getByTestId("telemetry-gap-T1566").dataset.signal).toBe("derived");
+    // An inferred row has no OCSF class list to show — it does not know any.
+    expect(screen.queryByTestId("telemetry-gap-missing-ocsf-T1566")).toBeNull();
+
+    // The "cannot fire" count is the server's, not a client re-tally.
+    expect(screen.getByTestId("telemetry-gaps-measured-count").textContent).toContain(
+      "1 cannot fire",
     );
   });
 

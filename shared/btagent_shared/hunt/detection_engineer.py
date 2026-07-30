@@ -19,7 +19,12 @@ side-effectful step, graceful degradation when no model is available.
 * :class:`DataSourceMatcher` — reconciles a draft's required OCSF classes
   against connected connectors' manifest ``ocsf_emits``
   (``agents/btagent_agents/mcp/manifests.py``) and populates
-  :attr:`DetectionDraft.data_sources_required` + the coverage gaps.
+  :attr:`DetectionDraft.data_sources_required` + the coverage gaps. Its output
+  is **persisted** on ``detection_proposals`` (columns ``data_sources_required``
+  / ``data_source_gaps``, migration ``0066_proposal_ds_gaps``) so the Coverage
+  Console reports the real missing OCSF classes instead of inferring them;
+  :func:`ocsf_classes_for_sigma` lets the matcher run against a stored rule
+  body, not just a freshly drafted TTP.
 
 Design constraints
 ------------------
@@ -537,7 +542,48 @@ class RuleDrafter:
 
 def required_ocsf_classes(ttp: BehavioralTTP) -> list[OCSFEventClass]:
     """OCSF event classes a TTP's rule needs telemetry from (from its logsource)."""
-    return list(_OCSF_FOR_LOGSOURCE.get(ttp.logsource_category, []))
+    return ocsf_classes_for_logsource(ttp.logsource_category)
+
+
+def ocsf_classes_for_logsource(category: str) -> list[OCSFEventClass]:
+    """OCSF event classes a Sigma ``logsource.category`` needs telemetry from.
+
+    Unknown / empty categories return ``[]`` — "we cannot say", never a guess.
+    Callers must treat an empty result as *no claim* rather than as "needs
+    nothing", because an empty requirement set reconciles to zero gaps and would
+    otherwise read as proven coverage.
+    """
+    return list(_OCSF_FOR_LOGSOURCE.get((category or "").strip().lower(), []))
+
+
+def ocsf_classes_for_sigma(sigma_yaml: str) -> list[OCSFEventClass]:
+    """OCSF classes an *existing rule body* needs, read off its ``logsource``.
+
+    The counterpart to :func:`required_ocsf_classes` for a rule that already
+    exists rather than a TTP that is about to become one — e.g. a persisted
+    STIX-pipeline proposal, whose ``logsource.category`` the deterministic
+    pipeline picked from the same vocabulary this module maps. Lets the
+    :class:`DataSourceMatcher` reconcile a stored rule without re-deriving the
+    TTP behind it.
+
+    Returns ``[]`` for a body that does not parse, carries no ``logsource``, or
+    uses a category outside the mapping (Sigma's ``generic``, vendor-specific
+    categories) — again *no claim*, not "needs nothing".
+    """
+    try:
+        parsed = yaml.safe_load(sigma_yaml)
+    except yaml.YAMLError:
+        logger.debug("ocsf_classes_for_sigma: body does not parse as YAML")
+        return []
+    if not isinstance(parsed, dict):
+        return []
+    logsource = parsed.get("logsource")
+    if not isinstance(logsource, dict):
+        return []
+    category = logsource.get("category")
+    if not isinstance(category, str):
+        return []
+    return ocsf_classes_for_logsource(category)
 
 
 # ===========================================================================
@@ -701,5 +747,7 @@ __all__ = [
     "connector_ocsf_emits",
     "draft_detections_from_report",
     "draft_evidence_sha256",
+    "ocsf_classes_for_logsource",
+    "ocsf_classes_for_sigma",
     "required_ocsf_classes",
 ]
