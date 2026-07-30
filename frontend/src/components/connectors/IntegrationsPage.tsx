@@ -35,6 +35,7 @@ import {
   type CredentialVerification,
 } from "@/api/connectors";
 import { useAuthStore } from "@/stores/authStore";
+import { TaxiiFeedsPanel } from "./TaxiiFeedsPanel";
 import { UserRole } from "@/types/config";
 
 const TLP_VARIANT: Record<string, "destructive" | "high" | "medium" | "low"> = {
@@ -518,6 +519,10 @@ export function IntegrationsPage() {
                 onCredentialChanged={loadCredentials}
               />
             ))}
+
+          {/* #105 UC-2.1: TAXII feed subscriptions — self-effacing below
+              senior_analyst (taxii:view); managed by admins (taxii:manage). */}
+          <TaxiiFeedsPanel />
         </div>
       </div>
     </div>
