@@ -91,15 +91,7 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # reachable — the exact failure mode this file exists to catch. The debt is
 # named instead; delete each line when its panel lands.
 #
-# * #105 / UC-2.1 — the *pull* half of "STIX/TAXII feeds" is backend-complete
-#   (config store, RBAC-gated CRUD, scheduled poll sweep) with no admin screen.
-KNOWN_GAPS: dict[str, str] = {
-    "GET /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "GET /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "POST /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "PATCH /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "DELETE /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-}
+KNOWN_GAPS: dict[str, str] = {}
 
 
 # --------------------------------------------------------------------------- #
