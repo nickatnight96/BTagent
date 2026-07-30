@@ -47,7 +47,11 @@ export interface CreateTaxiiFeedRequest {
 
 export type UpdateTaxiiFeedRequest = Partial<CreateTaxiiFeedRequest>;
 
-const BASE = "/taxii/feeds";
+// ``client.ts`` prepends ``/api`` and the backend mounts every v1 route under
+// ``/api/v1``, so this base MUST carry the ``/v1``. Without it the panel asks
+// for ``/api/taxii/feeds`` and gets a 404 on every call — the #117/#515 defect,
+// found here by the hardened reachability guard (#482).
+const BASE = "/v1/taxii/feeds";
 
 export async function listTaxiiFeeds(): Promise<TaxiiFeedListResponse> {
   return api.get<TaxiiFeedListResponse>(`${BASE}`);
