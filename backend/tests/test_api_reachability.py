@@ -78,6 +78,13 @@ NOT_BROWSER_CALLED: dict[str, str] = {
     # security posture for an IR console. UAT exercises the endpoint
     # directly, so it is tested — it is just not *browser* capability.
     "POST /auth/refresh": "CLI/mobile token rotation; the SPA rides the cookie lifetime by design",
+    # E2E test-seed routes (api/v1/test_seed.py): called by Playwright over
+    # HTTP to stage stores that have no product write path (behavioral scan /
+    # pattern scan outputs). They 404 outside BTAGENT_ENV=test, so no browser
+    # in a real deployment can ever reach them — by design, not debt.
+    "POST /behavioral/test/entities": "E2E seed; 404s outside BTAGENT_ENV=test, Playwright-only",
+    "POST /behavioral/test/outliers": "E2E seed; 404s outside BTAGENT_ENV=test, Playwright-only",
+    "POST /pattern/test/proposals": "E2E seed; 404s outside BTAGENT_ENV=test, Playwright-only",
 }
 
 # Capability that exists server-side and cannot be reached from the product.
