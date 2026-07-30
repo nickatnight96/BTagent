@@ -269,7 +269,7 @@ export interface NoiseBaseline {
   under_firing_window_days?: number;
 }
 
-/** One builtin hunt pack + this org's install/enable state (GET /hunt/packs). */
+/** One hunt pack + this org's install/enable state (GET /hunt/packs). */
 export interface HuntPackCatalogEntry {
   /** Install key — the builtin pack name the runner loads. */
   pack_id: string;
@@ -279,6 +279,12 @@ export interface HuntPackCatalogEntry {
   version: string;
   description: string;
   rule_count: number;
+  /**
+   * "builtin" (shipped), "installed" (imported corpus), or "custom"
+   * (uploaded bundle — enabled by existence, managed in the custom-packs
+   * panel, not toggleable through PUT /hunt/packs).
+   */
+  source: "builtin" | "installed" | "custom";
   enabled: boolean;
   /** True when an explicit org row exists (vs. resolved from the defaults). */
   installed: boolean;

@@ -444,7 +444,16 @@ def _entry(
 
 
 async def pack_catalog(db: AsyncSession, *, org_id: str) -> HuntPackCatalogResponse:
-    """The catalog this org can run (builtin + imported) ⋈ its enable state."""
+    """The catalog this org can run (builtin + imported + custom) ⋈ enable state.
+
+    Uploaded bundle packs (``org_custom_packs``, #112 slice 2) run on every
+    sweep by existence, so they belong on the same screen as the packs they
+    run alongside — as ``source="custom"`` entries that always read enabled.
+    They are not toggleable through ``PUT /hunt/packs/{pack_id}`` (that would
+    404); their lifecycle is upload/delete in the custom-packs API.
+    """
+    from btagent_backend.services import org_custom_pack_service
+
     rows = {r.pack_id: r for r in await list_org_packs(db, org_id=org_id)}
     packs = list_packs(org_id)
     enabled_set = set(
@@ -453,9 +462,35 @@ async def pack_catalog(db: AsyncSession, *, org_id: str) -> HuntPackCatalogRespo
             known=tuple(p.pack_id for p in packs),
         )
     )
+    items = [_entry(p, rows.get(p.pack_id), enabled_set=enabled_set) for p in packs]
+
+    taken = {e.pack_id for e in items}
+    for custom in await org_custom_pack_service.list_packs(db, org_id=org_id):
+        if custom.pack_id in taken:  # defence in depth; the upload API refuses these
+            continue
+        items.append(
+            HuntPackCatalogEntry(
+                pack_id=custom.pack_id,
+                # A bundle row stores the manifest id itself — the id its
+                # sweep runs carry — so the two keys coincide.
+                manifest_pack_id=custom.pack_id,
+                name=custom.name,
+                version=custom.version,
+                description=custom.description or "",
+                rule_count=custom.rule_count,
+                source="custom",
+                enabled=True,
+                installed=True,
+                default_enabled=False,
+                installed_at=custom.created_at,
+                updated_at=custom.updated_at,
+                updated_by=custom.created_by,
+            )
+        )
+
     return HuntPackCatalogResponse(
-        items=[_entry(p, rows.get(p.pack_id), enabled_set=enabled_set) for p in packs],
-        total=len(packs),
+        items=items,
+        total=len(items),
         default_packs=list(DEFAULT_BUILTIN_PACKS),
     )
 

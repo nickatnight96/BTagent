@@ -60,6 +60,7 @@ function catalogEntry(
     version: "1.0.0",
     description: "",
     rule_count: 4,
+    source: "builtin",
     enabled: true,
     installed: false,
     default_enabled: true,
@@ -281,7 +282,47 @@ describe("buildInstalledPacks", () => {
       [],
     );
     expect(packs[0]!.install_key).toBeNull();
+    expect(packs[0]!.source).toBeNull();
     expect(packs[0]!.enabled).toBe(true);
+  });
+
+  it("carries the catalog source through so custom packs are distinguishable", () => {
+    const packs = buildInstalledPacks(
+      [run({ id: "a", pack_id: "hpack_custom1", pack_name: "Org Pack", rule_stats: {} })],
+      null,
+      [
+        catalogEntry({
+          pack_id: "hpack_custom1",
+          manifest_pack_id: "hpack_custom1",
+          name: "Org Pack",
+          source: "custom",
+          installed: true,
+          default_enabled: false,
+        }),
+      ],
+    );
+    expect(packs[0]!.source).toBe("custom");
+    // Custom packs are enabled by existence; the catalog says so.
+    expect(packs[0]!.enabled).toBe(true);
+    expect(packs[0]!.install_key).toBe("hpack_custom1");
+  });
+
+  it("lists an uploaded custom pack that has never run yet", () => {
+    const packs = buildInstalledPacks([], null, [
+      catalogEntry({
+        pack_id: "hpack_custom2",
+        manifest_pack_id: "hpack_custom2",
+        name: "Fresh Upload",
+        source: "custom",
+        installed: true,
+        default_enabled: false,
+        rule_count: 3,
+      }),
+    ]);
+    expect(packs.map((p) => p.pack_name)).toEqual(["Fresh Upload"]);
+    expect(packs[0]!.source).toBe("custom");
+    expect(packs[0]!.run_count).toBe(0);
+    expect(packs[0]!.rule_count).toBe(3);
   });
 });
 
