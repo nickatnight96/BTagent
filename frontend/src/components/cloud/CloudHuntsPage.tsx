@@ -21,10 +21,12 @@
  * - hunt:triage  → analyst role or above — suppress action.
  * - hunt:promote → senior_analyst or above — promote action.
  *
- * Polling: 30-second interval (same model as BehavioralHuntsPage).
+ * Live refresh: HUNT_FINDING_* WS events via the shared useLiveEventRefresh
+ * hook, with a 30-second polling safety net (same model as every other hunt
+ * page since the #116/#120 Phase C WS upgrade).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import {
   Cloud,
@@ -46,6 +48,8 @@ import {
   buildTamperGroups,
 } from "@/stores/cloudStore";
 import { useAuthStore } from "@/stores/authStore";
+import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
+import { HUNT_FINDING_EVENTS } from "@/components/hunt/HuntTriagePage";
 import { UserRole } from "@/types/config";
 import {
   acceptCloudContainmentProposal,
@@ -867,17 +871,16 @@ export function CloudHuntsPage() {
     void fetchFindings();
   }, [fetchFindings]);
 
-  // 30-second polling.
-  const scheduleRefetch = useCallback(() => {
-    void fetchFindings();
-  }, [fetchFindings]);
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  useEffect(() => {
-    pollTimerRef.current = setInterval(scheduleRefetch, POLL_INTERVAL_MS);
-    return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-  }, [scheduleRefetch]);
+  // Live refresh (#117 — the WS upgrade every other hunt page got in the
+  // #116/#120 Phase C pass): HUNT_FINDING_* events over the global WS client
+  // with the same 30 s polling safety net this page used to run bare.
+  useLiveEventRefresh(
+    useCallback(() => {
+      void fetchFindings();
+    }, [fetchFindings]),
+    HUNT_FINDING_EVENTS,
+    { pollIntervalMs: POLL_INTERVAL_MS },
+  );
 
   const shadowCount = findings.filter(
     (f) => (f.evidence as Record<string, unknown>)["shadow_workload"] === true,
