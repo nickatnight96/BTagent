@@ -131,6 +131,35 @@ async def ws_app():
     return _build_app()
 
 
+#: Frame types that are control-plane replies to a client command.
+_CONTROL_TYPES = frozenset({"subscribed", "unsubscribed", "error"})
+
+
+def _recv_control(ws, wanted: str, *, max_frames: int = 8) -> dict:
+    """Read frames until the ``wanted`` control reply arrives.
+
+    ``receive_json()`` returns the *next* frame, whatever it is — but the hub
+    may interleave a broadcast **data** event (e.g. a replayed
+    ``investigation_complete``) between a client command and its ack. Asserting
+    on the next frame therefore fails intermittently; this skips data events
+    instead.
+
+    An ``error`` frame is deliberately **never** skipped: if the server rejected
+    the command we want the test to fail loudly on that, not to keep reading
+    until something matches and mask a real bug.
+    """
+    seen: list[str] = []
+    for _ in range(max_frames):
+        frame = ws.receive_json()
+        ftype = frame.get("type")
+        seen.append(ftype)
+        if ftype == wanted:
+            return frame
+        if ftype in _CONTROL_TYPES:
+            raise AssertionError(f"expected control frame {wanted!r}, got {ftype!r} (saw {seen})")
+    raise AssertionError(f"no {wanted!r} frame within {max_frames} frames (saw {seen})")
+
+
 # ---------------------------------------------------------------------------
 # SUBSCRIBE (late, via /ws/events)
 # ---------------------------------------------------------------------------
@@ -249,9 +278,9 @@ async def test_unsubscribe_after_late_subscribe_gets_ack(ws_app):
     with TestClient(ws_app) as tc:
         with tc.websocket_connect(f"/ws/events?token={token}") as ws:
             ws.send_json({"type": "subscribe", "investigation_id": inv.id})
-            sub = ws.receive_json()
+            sub = _recv_control(ws, "subscribed")
             ws.send_json({"type": "unsubscribe", "investigation_id": inv.id})
-            unsub = ws.receive_json()
+            unsub = _recv_control(ws, "unsubscribed")
 
     assert sub["type"] == "subscribed"
     assert unsub["type"] == "unsubscribed"
