@@ -83,33 +83,22 @@ NOT_BROWSER_CALLED: dict[str, str] = {
 # Capability that exists server-side and cannot be reached from the product.
 # Each entry is debt. Delete the line when you wire it up — leaving it here
 # after the fact fails this test on purpose.
-# Was empty as of the Agent Memory UI (#482). One slice re-opens it, shipping a
-# backend loop ahead of its screen. It is deliberately KNOWN_GAPS and not
-# NOT_BROWSER_CALLED: a browser *should* call these, so claiming otherwise would
-# be a lie. A hollow ``frontend/src/api`` client with no component behind it
-# would silence this check without making the capability reachable — the exact
-# failure mode this file exists to catch. The debt is named instead; delete each
-# line when its panel lands.
+# Entries are deliberately KNOWN_GAPS rather than NOT_BROWSER_CALLED when a
+# browser *should* call the route — claiming otherwise would be a lie, and a
+# hollow ``frontend/src/api`` client with no component behind it would silence
+# this check without making the capability reachable (the exact failure mode
+# this file exists to catch). Name the debt instead; delete the line when the
+# screen lands.
 #
-# * #105 / UC-2.1 — the *pull* half of "STIX/TAXII feeds" is backend-complete
-#   (config store, RBAC-gated CRUD, scheduled poll sweep) with no admin screen.
-#
-# The #117 cloud IAM containment-proposal trio has left the list. Both of its
-# consumers now go through ONE client, ``frontend/src/api/cloudContainment.ts``:
-# the promotion-time ``CloudContainmentModal`` and the investigation workspace's
-# Containment tab (``components/workspace/CloudContainmentPanel.tsx``). Worth
-# noting for the next reader of this guard: the first version of that client used
-# a ``/cloud`` base with no ``/v1``, which this check accepted (the routers do
-# not carry ``/v1``, so the literal matched) while the browser got a 404 from
-# ``/api/cloud/...``. Path-shape matching cannot see that; only a real request
-# can.
-KNOWN_GAPS: dict[str, str] = {
-    "GET /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "GET /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "POST /taxii/feeds": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "PATCH /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-    "DELETE /taxii/feeds/{}": "#105 UC-2.1: no Settings → Integrations TAXII panel yet",
-}
+# **Known blind spot, learned the hard way (#117).** This guard matches route
+# *shapes*, and the routers it reads do not carry the ``/v1`` prefix the app is
+# actually mounted under. A client whose base was ``/cloud`` instead of
+# ``/v1/cloud`` therefore satisfied this check while every real browser request
+# 404'd on ``/api/cloud/...``. Path-shape matching cannot catch a wrong base
+# path — only a real request can. If you are adding a client here, verify the
+# base against ``frontend/src/api/client.ts`` (which prepends ``/api``), not
+# against this test passing.
+KNOWN_GAPS: dict[str, str] = {}
 
 
 # --------------------------------------------------------------------------- #

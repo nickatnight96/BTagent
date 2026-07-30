@@ -10,6 +10,10 @@ Three tables, org-scoped + indexed:
   has already decided (accepted / rejected) keeps its decision — only
   still-``proposed`` rows are refreshed (see
   :func:`btagent_backend.services.cti_detection_service.persist_proposals`).
+  Since ``0066_proposal_ds_gaps`` the row also carries the #113
+  ``DataSourceMatcher`` output — which connectors can supply the rule's
+  telemetry and which required OCSF classes nothing emits — so the Coverage
+  Console reads a stored fact instead of inferring one.
 * ``stix_bundles`` — the raw STIX 2.1 bundle behind a propose call, kept so a
   later request can re-run the pipeline by ``stix_bundle_id`` instead of
   re-uploading the bundle. Uniqueness is ``(org_id, bundle_id)``: re-importing
@@ -60,6 +64,20 @@ class DetectionProposalRow(Base):
     rationale: Mapped[str] = mapped_column(Text, default="")
     # ``ProposalState`` value (proposed / accepted / rejected / modified).
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="proposed")
+    # ---- DataSourceMatcher output (#113 matcher, persisted by #501).
+    # ``data_sources_required`` — JSONB list[str] of connected connector ids whose
+    # manifest ``ocsf_emits`` can supply the rule's telemetry.
+    # ``data_source_gaps`` — JSONB list[str] of OCSF event-class values that NO
+    # connected connector emits: the rule cannot fire, whatever the matrix says.
+    #
+    # NULL vs ``[]`` is load-bearing and must not be collapsed:
+    #   NULL — the matcher never ran for this row (it predates migration
+    #          0066_proposal_ds_gaps, or the connector registry / the rule's
+    #          logsource gave nothing honest to reconcile). Consumers fall back
+    #          to the validation-derived heuristic.
+    #   []   — the matcher ran and found nothing missing (a real "covered").
+    data_sources_required: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    data_source_gaps: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # Historical-telemetry validation outcome (#113 slice 2): serialised
     # RuleValidationResult (per-backend hit counts / errors + verdict).
     # None until POST /cti/proposals/{id}/validate runs.

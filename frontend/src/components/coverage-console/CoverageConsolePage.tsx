@@ -293,7 +293,10 @@ export function CoverageConsolePage() {
             {/* ---- Broken rules + telemetry gaps ---- */}
             <div className="grid gap-4 lg:grid-cols-2">
               <BrokenRulesPanel rules={console_.broken_rules} />
-              <TelemetryGapsPanel gaps={console_.telemetry_gaps} />
+              <TelemetryGapsPanel
+                gaps={console_.telemetry_gaps}
+                measuredCount={summary.ocsf_telemetry_gaps}
+              />
             </div>
           </>
         )}

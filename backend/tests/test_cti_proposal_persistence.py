@@ -7,12 +7,17 @@ End-to-end over the HTTP layer:
   duplicating; rows an analyst has decided keep their decision
 - GET /cti/proposals lists + filters; accept / reject record the decision
   (one-shot — 409 once decided), 404 masks unknown / cross-org rows
+- every written row carries the #113 ``DataSourceMatcher`` output
+  (``data_sources_required`` / ``data_source_gaps``, #501) so the Coverage
+  Console reads a stored fact instead of inferring one — including the cases
+  where the matcher must decline to make a claim and leave the columns NULL
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from btagent_shared.types.connector import OCSFEventClass
 from conftest import auth_header
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,6 +154,253 @@ async def test_decided_rows_survive_repropose(client, analyst_token, db_session:
     await db_session.refresh(row)
     assert row.state == "accepted"
     assert row.review_rationale == "good coverage"
+
+
+# --------------------------------------------------------------------------- #
+# DataSourceMatcher output is persisted (#501 — the Coverage Console's real signal)
+#
+# The strong assertions run against the service with a dedicated per-test org and
+# an explicit ``connected`` set: DEFAULT_ORG_ID's connector bindings are shared
+# state in this suite's session-scoped DB, so pinning exact connector lists
+# through HTTP would couple these tests to whatever else has run.
+# --------------------------------------------------------------------------- #
+
+
+_ALL_OCSF_VALUES = {c.value for c in OCSFEventClass}
+
+
+async def test_propose_persists_the_data_source_match(
+    client, analyst_token, db_session: AsyncSession
+):
+    bundle = _bundle("00d1")
+    await _propose(client, analyst_token, bundle)
+
+    rows = await _rows_for(db_session, bundle)
+    assert len(rows) == 2
+    for row in rows:
+        # NULL would mean "the matcher never ran" — the fallback marker. Every
+        # freshly persisted row must carry a real verdict instead.
+        assert row.data_sources_required is not None, "matcher output was not persisted"
+        assert row.data_source_gaps is not None
+        # Gaps are OCSF class *values*, never connector names or free text.
+        assert set(row.data_source_gaps) <= _ALL_OCSF_VALUES
+        # The rule needs telemetry, so it is either suppliable or a real gap —
+        # an all-empty match would be a silent "nothing required" claim.
+        assert row.data_sources_required or row.data_source_gaps
+
+    # And the API surfaces both, so the console is not the only consumer.
+    listing = await client.get(
+        "/api/v1/cti/proposals?page_size=200", headers=auth_header(analyst_token)
+    )
+    ids = {r.id for r in rows}
+    surfaced = [i for i in listing.json()["items"] if i["id"] in ids]
+    assert len(surfaced) == 2
+    assert all(isinstance(i["data_source_gaps"], list) for i in surfaced)
+    assert all(isinstance(i["data_sources_required"], list) for i in surfaced)
+
+
+async def _dedicated_org(db: AsyncSession) -> str:
+    from btagent_shared.utils.ids import generate_id
+
+    from btagent_backend.db.models import OrganizationRow
+
+    org_id = generate_id("org")
+    db.add(OrganizationRow(id=org_id, name=f"dsmatch-{org_id}"))
+    await db.flush()
+    return org_id
+
+
+def _email_proposals():
+    """Proposals from an email IOC — needs ``email_activity`` telemetry."""
+    from btagent_shared.hunt.cti_to_detection import process_stix_bundle
+
+    bundle = {
+        "type": "bundle",
+        "id": "bundle--eeee1111-2222-3333-4444-555555555555",
+        "objects": [
+            _indicator(
+                "eeee1111-9999-9999-9999-999999999999",
+                name="Phish sender",
+                pattern="[email-addr:value = 'attacker@evil.test']",
+                ttp="T1566.001",
+            )
+        ],
+    }
+    return process_stix_bundle(bundle).proposals
+
+
+async def test_persist_records_the_real_missing_ocsf_class(db_session: AsyncSession):
+    from btagent_backend.services.cti_detection_service import persist_proposals
+
+    org_id = await _dedicated_org(db_session)
+    proposals = _email_proposals()
+    # Splunk alone emits no email telemetry, so the rule genuinely cannot fire.
+    created, _, _ = await persist_proposals(
+        db_session, org_id=org_id, proposals=proposals, connected=["splunk"]
+    )
+    assert created == 1
+
+    row = (
+        await db_session.execute(
+            select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+        )
+    ).scalar_one()
+    assert row.data_source_gaps == ["email_activity"]
+    assert row.data_sources_required == []
+
+
+async def test_persist_records_no_gap_when_a_connector_supplies_the_telemetry(
+    db_session: AsyncSession,
+):
+    from btagent_backend.services.cti_detection_service import persist_proposals
+
+    org_id = await _dedicated_org(db_session)
+    await persist_proposals(
+        db_session,
+        org_id=org_id,
+        proposals=_email_proposals(),
+        connected=["splunk", "proofpoint"],
+    )
+
+    row = (
+        await db_session.execute(
+            select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+        )
+    ).scalar_one()
+    # An empty list is a real "nothing missing" — distinct from NULL.
+    assert row.data_source_gaps == []
+    assert row.data_sources_required == ["proofpoint"]
+
+
+async def test_persist_declines_to_claim_when_the_logsource_is_unmappable(
+    db_session: AsyncSession,
+):
+    """An unmappable rule leaves the columns NULL rather than inventing coverage.
+
+    Nothing required reconciles to zero gaps, which would read as "fully
+    covered". The honest answer is "we do not know", i.e. NULL — and the console
+    then uses the derived fallback for the row.
+    """
+    from btagent_backend.services.cti_detection_service import persist_proposals
+
+    org_id = await _dedicated_org(db_session)
+    proposals = _email_proposals()
+    # Strip the logsource the matcher keys on.
+    proposals[0] = proposals[0].model_copy(
+        update={
+            "sigma_yaml": "title: no logsource\ndetection:\n  sel:\n    a: 1\n  condition: sel\n"
+        }
+    )
+    await persist_proposals(db_session, org_id=org_id, proposals=proposals, connected=["splunk"])
+
+    row = (
+        await db_session.execute(
+            select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+        )
+    ).scalar_one()
+    assert row.data_source_gaps is None
+    assert row.data_sources_required is None
+
+
+async def test_repropose_refreshes_the_match_but_never_for_a_decided_row(
+    db_session: AsyncSession,
+):
+    from btagent_shared.types.detection_proposal import ProposalState
+
+    from btagent_backend.services.cti_detection_service import (
+        persist_proposals,
+        set_proposal_state,
+    )
+
+    org_id = await _dedicated_org(db_session)
+    proposals = _email_proposals()
+    await persist_proposals(db_session, org_id=org_id, proposals=proposals, connected=["splunk"])
+    row = (
+        await db_session.execute(
+            select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+        )
+    ).scalar_one()
+    assert row.data_source_gaps == ["email_activity"]
+
+    # Still ``proposed`` → onboarding Proofpoint closes the gap on re-propose.
+    await persist_proposals(
+        db_session, org_id=org_id, proposals=proposals, connected=["splunk", "proofpoint"]
+    )
+    await db_session.refresh(row)
+    assert row.data_source_gaps == []
+    assert row.data_sources_required == ["proofpoint"]
+
+    # Once decided, a re-import touches nothing at all — including the match.
+    await set_proposal_state(db_session, org_id=org_id, row_id=row.id, state=ProposalState.ACCEPTED)
+    _, _, unchanged = await persist_proposals(
+        db_session, org_id=org_id, proposals=proposals, connected=["splunk"]
+    )
+    assert unchanged == 1
+    await db_session.refresh(row)
+    assert row.data_source_gaps == []
+
+
+async def test_connected_connector_ids_is_org_scoped(db_session: AsyncSession):
+    from datetime import UTC, datetime
+
+    from btagent_shared.utils.ids import generate_id
+
+    from btagent_backend.db.models_connector import ConnectorCredentialRow
+    from btagent_backend.services.cti_detection_service import connected_connector_ids
+
+    org_a = await _dedicated_org(db_session)
+    org_b = await _dedicated_org(db_session)
+    now = datetime.now(UTC)
+    db_session.add(
+        ConnectorCredentialRow(
+            id=generate_id("ccred"),
+            org_id=org_a,
+            connector_name="proofpoint",
+            secret_ref="${env:PROOFPOINT_TOKEN}",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await db_session.flush()
+
+    assert await connected_connector_ids(db_session, org_id=org_a) == ["proofpoint"]
+    # Org B must not inherit org A's connectors — that would silently claim
+    # telemetry it does not have (or hide a gap it does).
+    assert await connected_connector_ids(db_session, org_id=org_b) is None
+
+
+async def test_persist_uses_the_org_own_bindings_when_none_are_passed(db_session: AsyncSession):
+    from datetime import UTC, datetime
+
+    from btagent_shared.utils.ids import generate_id
+
+    from btagent_backend.db.models_connector import ConnectorCredentialRow
+    from btagent_backend.services.cti_detection_service import persist_proposals
+
+    org_id = await _dedicated_org(db_session)
+    now = datetime.now(UTC)
+    db_session.add(
+        ConnectorCredentialRow(
+            id=generate_id("ccred"),
+            org_id=org_id,
+            connector_name="splunk",
+            secret_ref="${env:SPLUNK_TOKEN}",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await db_session.flush()
+
+    # No ``connected`` override: the org's own binding (splunk only) is used, so
+    # the email rule's gap is real for THIS tenant.
+    await persist_proposals(db_session, org_id=org_id, proposals=_email_proposals())
+
+    row = (
+        await db_session.execute(
+            select(DetectionProposalRow).where(DetectionProposalRow.org_id == org_id)
+        )
+    ).scalar_one()
+    assert row.data_source_gaps == ["email_activity"]
 
 
 # --------------------------------------------------------------------------- #

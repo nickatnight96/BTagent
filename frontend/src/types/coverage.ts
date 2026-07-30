@@ -56,14 +56,33 @@ export interface BrokenRule {
   last_run_at?: string | null;
 }
 
-/** A technique whose detection cannot be proven against current telemetry. */
+/**
+ * Why a technique's detection cannot fire — or cannot be proven — today.
+ *
+ * `ocsf_telemetry_gap` is the strong one: the persisted #113 DataSourceMatcher
+ * verdict says nothing the org has connected emits an OCSF class the rule needs,
+ * so the rule cannot fire at all. The other two are the pre-#501 heuristic
+ * derived from the stored validation blob — the rule *might* work, nobody has
+ * proven it. They must not be presented interchangeably.
+ */
+export type TelemetryGapReason = "ocsf_telemetry_gap" | "backends_errored" | "never_validated";
+
+/** Provenance of a gap row: a stored matcher result, or an inference. */
+export type TelemetryGapSignal = "persisted" | "derived";
+
+/** A technique whose detection cannot fire — or cannot be proven — today. */
 export interface TelemetryGap {
   technique_id: string;
   name?: string | null;
   proposal_id: string;
   proposal_row_id: string;
   title: string;
-  reason: "backends_errored" | "never_validated";
+  reason: TelemetryGapReason;
+  signal: TelemetryGapSignal;
+  /** OCSF classes NO connected connector emits. Non-empty only for `ocsf_telemetry_gap`. */
+  missing_ocsf_classes: string[];
+  /** Connectors the matcher found that can supply part of the rule's telemetry. */
+  data_sources_required: string[];
   unavailable_backends: string[];
   available_backends: string[];
   attack_data_sources: string[];
@@ -100,6 +119,8 @@ export interface CoverageSummary {
   unmapped_techniques: number;
   broken_rules: number;
   telemetry_gaps: number;
+  /** Subset of `telemetry_gaps` backed by the persisted matcher verdict. */
+  ocsf_telemetry_gaps: number;
   open_proposals: number;
   proposals_awaiting_review: number;
   prs_open: number;
