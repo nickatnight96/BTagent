@@ -55,6 +55,7 @@ below. Read it before treating a pass as proof the feature works.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Iterator
 from functools import lru_cache
 from pathlib import Path
 from typing import NamedTuple
@@ -348,6 +349,16 @@ def _mounted_routes() -> tuple[tuple[str, str, str], ...]:
     routes a product feature can live behind. ``/metrics``, ``/api/docs`` and
     the WebSocket endpoints are infrastructure, not capability, and are not
     part of the ratchet.
+
+    FastAPI ≥ 0.141 no longer flattens ``include_router`` children into the
+    parent's ``.routes``: each include appends a lazy wrapper that holds the
+    ``original_router`` plus an ``include_context.prefix`` (the includer's own
+    prefix + the explicit ``prefix=`` argument, already accumulated at include
+    time). A leaf's mounted path is therefore the sum of the context prefixes
+    down the include chain plus the leaf's own path — which already carries the
+    prefix of the ``APIRouter`` it was declared on. ``_walk`` handles both that
+    shape and the old flat one, so this guard doesn't care which side of the
+    drift CI resolves.
     """
     from btagent_backend.api.v1.router import health_router_root
     from btagent_backend.main import create_app
@@ -356,12 +367,22 @@ def _mounted_routes() -> tuple[tuple[str, str, str], ...]:
     root_paths = {r.path for r in health_router_root.routes}
     app = create_app()
 
+    def _walk(routes: Iterable[object], acc: str) -> Iterator[tuple[str, set[str]]]:
+        for route in routes:
+            path = getattr(route, "path", None)
+            methods = getattr(route, "methods", None)
+            if path and methods:
+                yield acc + path, methods
+                continue
+            # WebSocket routes and mounts have no methods; a lazy include
+            # wrapper has neither path nor methods but exposes the child.
+            inner = getattr(route, "original_router", None)
+            if inner is not None:
+                ctx = getattr(route, "include_context", None)
+                yield from _walk(inner.routes, acc + getattr(ctx, "prefix", ""))
+
     out: set[tuple[str, str, str]] = set()
-    for route in app.routes:
-        path = getattr(route, "path", None)
-        methods = getattr(route, "methods", None)
-        if not path or not methods:
-            continue  # WebSocket routes and mounts have no methods
+    for path, methods in _walk(app.routes, ""):
         if path.startswith(prefix + "/"):
             declared = path[len(prefix) :]
         elif path in root_paths:
