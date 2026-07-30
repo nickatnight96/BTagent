@@ -40,7 +40,12 @@ export async function expectNoA11yViolations(
   page: Page,
   options: A11yOptions = {},
 ): Promise<void> {
-  let builder = new AxeBuilder({ page }).withTags(SEVERITY_TAGS);
+  // @axe-core/playwright resolves its own playwright-core, whose ``Page``
+  // type lags the @playwright/test one — structurally compatible at runtime,
+  // nominally distinct to tsc. Cast at this one boundary.
+  let builder = new AxeBuilder({
+    page: page as unknown as ConstructorParameters<typeof AxeBuilder>[0]["page"],
+  }).withTags(SEVERITY_TAGS);
 
   if (!options.enableColorContrast) {
     builder = builder.disableRules(["color-contrast"]);

@@ -250,9 +250,18 @@ class TestA02CryptographicFailures:
         # and nothing sensitive — open-ended ``>=`` so future audit-fix
         # additions don't trip this contract.
         assert {"id", "username", "role"} <= set(data.keys())
-        full_text = json.dumps(data).lower()
+        # Field NAMES are swept in full — a ``password_hash`` / ``api_key``
+        # style field must never appear no matter what it holds.
+        for name in data:
+            for sensitive in ["password", "hash", "secret", "key", "token"]:
+                assert sensitive not in name.lower(), f"sensitive field name: {name}"
+        # VALUES are swept too, EXCLUDING the ULID ``id``: Crockford base32
+        # includes K/E/Y (and H/A/S), so a random user id can legitimately
+        # spell "key" or "hash" — that flaked this test in CI (#528) without
+        # any actual leak. Everything else in the body stays under the sweep.
+        value_text = json.dumps({k: v for k, v in data.items() if k != "id"}).lower()
         for sensitive in ["password", "hash", "secret", "key"]:
-            assert sensitive not in full_text
+            assert sensitive not in value_text
 
     def test_no_credentials_in_investigation_list(
         self, client: httpx.Client, admin_token: str

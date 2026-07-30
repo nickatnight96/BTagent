@@ -491,6 +491,40 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     return counts
 
 
+async def behavioral_benign_reeval_sweep(ctx: dict[str, Any]) -> dict[str, int]:
+    """Re-check historical benign verdicts against current baselines (#114 Phase B).
+
+    A benign verdict is a judgement about a moment ("this pattern is normal for
+    this entity"), but baselines are rebuilt on a cadence and an entity's normal
+    moves. This nightly pass re-scores every org's previously-benign outliers
+    against the entity's *latest* baseline and flags the entities whose benign
+    patterns have dropped out of it, so an analyst can re-review rather than
+    trusting a stale "we already cleared that".
+
+    Multi-tenant and best-effort, mirroring :func:`memory_consolidation_sweep`:
+    the service walks **every** org that has benign outliers (a hard-coded
+    ``DEFAULT_ORG_ID`` pass would permanently exclude every other tenant), and a
+    failure on one org — or one entity — is logged, counted in ``failures``, and
+    skipped rather than sinking the tick.
+
+    Non-destructive: nothing is re-labelled or deleted. The flag lands in the
+    entity's existing ``enrichment`` JSONB (no schema change) and clears itself
+    when the pattern reappears in the baseline.
+
+    Thin shell: the single commit lives here; all decisions are in
+    :mod:`btagent_backend.services.behavioral_service`.
+    """
+    from btagent_backend.services import behavioral_service
+
+    async with async_session_factory() as session:
+        result = await behavioral_service.reevaluate_benign_labels_all_orgs(session)
+        await session.commit()
+
+    counts = result.as_counts()
+    logger.info("behavioral_benign_reeval_sweep: %s", counts)
+    return counts
+
+
 async def compile_proposal_plan(ctx: dict[str, Any], plan_row_id: str) -> dict[str, str]:
     """Compile an accepted proposal's HuntInput into its HuntPlan (#120 Phase C).
 

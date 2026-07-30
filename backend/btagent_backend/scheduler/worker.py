@@ -19,6 +19,7 @@ from arq.connections import RedisSettings
 from btagent_backend.config import get_settings
 from btagent_backend.scheduler.jobs import (
     behavioral_baseline_sweep,
+    behavioral_benign_reeval_sweep,
     compile_proposal_plan,
     execute_hunt_plan,
     execute_workflow_run,
@@ -167,6 +168,7 @@ class WorkerSettings:
         scheduled_ndr_hunt_scan,
         weekly_pattern_scan,
         behavioral_baseline_sweep,
+        behavioral_benign_reeval_sweep,
         memory_consolidation_sweep,
         # #105 UC-2.1: poll every org's due TAXII 2.1 feeds and ingest their
         # objects through the existing STIX ingest path.
@@ -239,6 +241,19 @@ class WorkerSettings:
             behavioral_baseline_sweep,
             hour=_behavioral_cron_hours(),
             minute=0,
+            unique=True,
+        ),
+        # Behavioral Hunter benign-label re-evaluation (#114 Phase B): nightly
+        # re-check of historical benign verdicts against the current baselines,
+        # flagging entities whose "already cleared" patterns have drifted out of
+        # normal. Runs over already-stored rows (not connector-blocked) at 03:50
+        # UTC — after the memory consolidation pass and before the 06:30 noise
+        # digest, and off the baseline-sweep hours so a rebuild isn't half-done
+        # underneath it. ``unique=True`` — one tick across worker replicas.
+        cron(
+            behavioral_benign_reeval_sweep,
+            hour=3,
+            minute=50,
             unique=True,
         ),
         # #112 newly-noisy digest: daily diff of the noise baseline against

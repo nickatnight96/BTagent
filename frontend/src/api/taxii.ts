@@ -47,10 +47,11 @@ export interface CreateTaxiiFeedRequest {
 
 export type UpdateTaxiiFeedRequest = Partial<CreateTaxiiFeedRequest>;
 
-// ``client.ts`` prepends ``/api`` and the backend mounts every v1 route under
-// ``/api/v1``, so this base MUST carry the ``/v1``. Without it the panel asks
-// for ``/api/taxii/feeds`` and gets a 404 on every call — the #117/#515 defect,
-// found here by the hardened reachability guard (#482).
+// ``client.ts`` prepends only ``/api`` and the backend mounts every v1 route
+// under ``/api/v1``, so this base MUST carry the ``/v1``. It shipped as
+// "/taxii/feeds" (→ /api/taxii/feeds, 404, panel silently self-effaced; the
+// unit suite mocks this module) — fixed via the TAXII E2E spec (#527-era) and
+// now pinned by the hardened reachability guard (#482).
 const BASE = "/v1/taxii/feeds";
 
 export async function listTaxiiFeeds(): Promise<TaxiiFeedListResponse> {

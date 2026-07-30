@@ -44,17 +44,12 @@ interface SeedProposalPayload {
   state: string;
 }
 
-/**
- * Seed a pattern-hunt proposal via the test-helper endpoint.
- *
- * Returns ``null`` when the helper isn't wired (404) so the calling test can
- * ``test.skip()`` instead of proceeding with a fabricated id and timing out
- * on a proposal card that was never seeded. */
-async function seedProposal(page: Page, payload: SeedProposalPayload): Promise<string | null> {
+/** Seed a pattern-hunt proposal via the env-gated test-seed route (upserts
+ * on org/cluster_id; only exists when the backend runs BTAGENT_ENV=test). */
+async function seedProposal(page: Page, payload: SeedProposalPayload): Promise<string> {
   const resp = await page.request.post("/api/v1/pattern/test/proposals", {
     data: payload,
   });
-  if (resp.status() === 404) return null;
   expect(
     resp.ok(),
     `seedProposal failed: ${resp.status()} ${await resp.text()}`,
@@ -88,9 +83,7 @@ test.describe("Pattern Insights page", () => {
     const now = Date.now();
     const runTag = `pi-e2e-${now}`;
 
-    // Seed a proposal. If the test-seed helpers aren't wired (404),
-    // skip this seeded assertion rather than waiting on a card that won't
-    // render and timing the test out.
+    // Seed a proposal through the env-gated test-seed route.
     const proposalId = await seedProposal(seniorPage, {
       cluster_id: `cl_${runTag}`,
       score: 0.82,
@@ -109,7 +102,6 @@ test.describe("Pattern Insights page", () => {
       rationale: `Cross-inv pattern ${runTag}: T1059.001 seen in 3 closed investigations.`,
       state: "proposed",
     });
-    test.skip(proposalId === null, "pattern test-seed endpoints not wired");
 
     await seniorPage.goto("/pattern-insights");
     await seniorPage
@@ -150,7 +142,6 @@ test.describe("Pattern Insights page", () => {
       rationale: `Expand test ${runTag}`,
       state: "proposed",
     });
-    test.skip(proposalId === null, "pattern test-seed endpoints not wired");
 
     await seniorPage.goto("/pattern-insights");
     await seniorPage

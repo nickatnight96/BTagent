@@ -386,3 +386,51 @@ class ShadowAgentRegistryRow(Base):
         Index("idx_shadow_registry_org_resource", "org_id", "resource_key", unique=True),
         Index("idx_shadow_registry_org_status", "org_id", "status"),
     )
+
+
+class OrgCustomPackRow(Base):
+    """An org-authored hunt pack uploaded as a bundle (#112 slice 2).
+
+    Unlike :class:`OrgHuntPackRow` (enable state over *builtin* packs), this
+    row IS the pack: the verbatim ``pack.yaml`` text plus the rule files, as
+    validated by the engine's ``load_pack_from_bundle`` at upload time. The
+    scheduled sweep re-loads the bundle through that same loader on every run,
+    so a row that persists is a row that runs. ``pack_id`` is the manifest's
+    (possibly derived) ``hpack_…`` id — the identity ``hunt_pack_runs.pack_id``
+    and the noise baseline correlate on — unique per org so re-uploading the
+    same versioned pack updates in place rather than duplicating history.
+
+    Uploaded packs are enabled by existence in this slice: delete removes the
+    pack from the sweep; there is no separate disable state to drift.
+    """
+
+    __tablename__ = "org_custom_packs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # The loaded HuntPack.id (manifest id or the deterministic hpack_ hash).
+    pack_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    manifest_yaml: Mapped[str] = mapped_column(Text, nullable=False)
+    # {rule filename -> raw Sigma YAML}, exactly as uploaded/validated.
+    rule_files: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    rule_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("idx_org_custom_packs_org", "org_id"),
+        # Re-uploading the same pack identity updates in place.
+        Index("idx_org_custom_packs_org_pack", "org_id", "pack_id", unique=True),
+    )

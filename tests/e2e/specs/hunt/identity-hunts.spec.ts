@@ -7,11 +7,12 @@
  *
  * Seeding strategy
  * ----------------
- * Identity findings are standard HuntFindings with domain=identity.  This
- * spec attempts to seed via the existing hunt test-helper endpoint
- * ``POST /api/v1/hunt/test/findings`` (if it's wired).  If the helper returns
- * 404 (not wired in this environment) the relevant assertions are skipped
- * gracefully — the page-structure and RBAC tests still run.
+ * Identity findings are standard HuntFindings with domain=identity, seeded
+ * through the REAL ingest route ``POST /api/v1/hunt/findings`` (hunt:create
+ * is analyst+, so every persona fixture may call it) — the same route
+ * ``hunt-triage.spec.ts`` seeds through. A dedicated ``/hunt/test/...``
+ * helper was never wired, and skipping on its 404 silently benched these
+ * assertions in every environment.
  *
  * Per-run unique IDs
  * ------------------
@@ -42,19 +43,12 @@ interface SeedFindingPayload {
   evidence?: Record<string, unknown>;
 }
 
-/**
- * Seed an identity HuntFinding via the hunt test-helper endpoint.
- *
- * Returns ``null`` when the helper isn't wired (404) so calling tests can
- * ``test.skip()`` instead of waiting on a card that will never render.
- *
- * Pattern mirrors ``behavioral-hunts.spec.ts`` (merged #211).
- */
+/** Seed an identity HuntFinding via the real ingest route (clusters on insert). */
 async function seedIdentityFinding(
   page: Page,
   payload: SeedFindingPayload,
-): Promise<string | null> {
-  const resp = await page.request.post("/api/v1/hunt/test/findings", {
+): Promise<string> {
+  const resp = await page.request.post("/api/v1/hunt/findings", {
     data: {
       confidence: 0.8,
       technique_ids: [],
@@ -63,7 +57,6 @@ async function seedIdentityFinding(
       ...payload,
     },
   });
-  if (resp.status() === 404) return null;
   expect(
     resp.ok(),
     `seedIdentityFinding failed: ${resp.status()} ${await resp.text()}`,
@@ -108,7 +101,7 @@ test.describe("Identity Hunts page", () => {
     const runTag = `ih-e2e-${now}`;
     const principalId = `alice-${runTag}@corp.test`;
 
-    const findingId = await seedIdentityFinding(seniorPage, {
+    await seedIdentityFinding(seniorPage, {
       title: `Token replay detected — ${runTag}`,
       severity: "high",
       domain: "identity",
@@ -123,7 +116,6 @@ test.describe("Identity Hunts page", () => {
         provider: "okta",
       },
     });
-    test.skip(findingId === null, "hunt test-seed endpoint not wired");
 
     await seniorPage.goto("/identity-hunts");
     await seniorPage
@@ -146,7 +138,7 @@ test.describe("Identity Hunts page", () => {
     const runTag = `ih-timeline-${now}`;
     const principalId = `bob-${runTag}@corp.test`;
 
-    const findingId = await seedIdentityFinding(seniorPage, {
+    await seedIdentityFinding(seniorPage, {
       title: `MFA fatigue — ${runTag}`,
       severity: "medium",
       domain: "identity",
@@ -161,7 +153,6 @@ test.describe("Identity Hunts page", () => {
         provider: "entra",
       },
     });
-    test.skip(findingId === null, "hunt test-seed endpoint not wired");
 
     await seniorPage.goto("/identity-hunts");
     await seniorPage
@@ -187,7 +178,7 @@ test.describe("Identity Hunts page", () => {
     const runTag = `ih-consent-${now}`;
     const principalId = `svc-${runTag}@corp.test`;
 
-    const findingId = await seedIdentityFinding(seniorPage, {
+    await seedIdentityFinding(seniorPage, {
       title: `OAuth consent grant — ${runTag}`,
       severity: "high",
       domain: "identity",
@@ -203,7 +194,6 @@ test.describe("Identity Hunts page", () => {
         provider: "entra",
       },
     });
-    test.skip(findingId === null, "hunt test-seed endpoint not wired");
 
     await seniorPage.goto("/identity-hunts");
     await seniorPage
@@ -225,7 +215,7 @@ test.describe("Identity Hunts page", () => {
     const runTag = `ih-grant-${now}`;
     const principalId = `user-${runTag}@corp.test`;
 
-    const findingId = await seedIdentityFinding(seniorPage, {
+    await seedIdentityFinding(seniorPage, {
       title: `Dormant app reactivation — ${runTag}`,
       severity: "high",
       domain: "identity",
@@ -242,7 +232,6 @@ test.describe("Identity Hunts page", () => {
         previously_revoked: true,
       },
     });
-    test.skip(findingId === null, "hunt test-seed endpoint not wired");
 
     await seniorPage.goto("/identity-hunts");
     await seniorPage

@@ -40,16 +40,12 @@ interface SeedOutlierPayload {
   raw_event_excerpt?: string;
 }
 
-/** Seed a behavioral entity via the test-helper endpoint.
- *
- * Returns ``null`` when the helper isn't wired (404) so the calling test can
- * ``test.skip()`` instead of proceeding with a fabricated id and timing out on
- * a ``behavioral-entity-card`` that was never seeded. */
-async function seedEntity(page: Page, payload: SeedEntityPayload): Promise<string | null> {
+/** Seed a behavioral entity via the env-gated test-seed route (upserts on
+ * org/kind/canonical_id; only exists when the backend runs BTAGENT_ENV=test). */
+async function seedEntity(page: Page, payload: SeedEntityPayload): Promise<string> {
   const resp = await page.request.post("/api/v1/behavioral/test/entities", {
     data: { enrichment: {}, ...payload },
   });
-  if (resp.status() === 404) return null;
   expect(
     resp.ok(),
     `seedEntity failed: ${resp.status()} ${await resp.text()}`,
@@ -57,13 +53,11 @@ async function seedEntity(page: Page, payload: SeedEntityPayload): Promise<strin
   return ((await resp.json()) as { id: string }).id;
 }
 
-/** Seed a behavioral outlier via the test-helper endpoint. Returns ``null``
- * when the helper isn't wired (404). */
-async function seedOutlier(page: Page, payload: SeedOutlierPayload): Promise<string | null> {
+/** Seed a behavioral outlier onto a seeded entity via the test-seed route. */
+async function seedOutlier(page: Page, payload: SeedOutlierPayload): Promise<string> {
   const resp = await page.request.post("/api/v1/behavioral/test/outliers", {
     data: { raw_event_excerpt: "", ...payload },
   });
-  if (resp.status() === 404) return null;
   expect(
     resp.ok(),
     `seedOutlier failed: ${resp.status()} ${await resp.text()}`,
@@ -82,23 +76,19 @@ test.describe("Behavioral Hunts page", () => {
     const now = Date.now();
     const runTag = `bh-e2e-${now}`;
 
-    // Seed entity + outlier. If the test-seed helpers aren't wired (404),
-    // skip this seeded assertion rather than waiting on a card that won't
-    // render and timing the test out.
+    // Seed entity + outlier through the env-gated test-seed routes.
     const entityId = await seedEntity(seniorPage, {
       kind: "host",
       canonical_id: `dc01-${runTag}.corp`,
     });
-    test.skip(entityId === null, "behavioral test-seed endpoints not wired");
     const outlierId = await seedOutlier(seniorPage, {
-      entity_id: entityId!,
+      entity_id: entityId,
       profile_type: "cmdline_embedding",
       event_id: `evt_${runTag}_1`,
       cosine_distance: 0.85,
       frequency_rank: 0,
       raw_event_excerpt: `powershell.exe -enc ${runTag}AAAA`,
     });
-    test.skip(outlierId === null, "behavioral test-seed endpoints not wired");
 
     await seniorPage.goto("/behavioral");
     await seniorPage
@@ -134,16 +124,14 @@ test.describe("Behavioral Hunts page", () => {
       kind: "user",
       canonical_id: `svc-account-${runTag}`,
     });
-    test.skip(entityId === null, "behavioral test-seed endpoints not wired");
     const outlierId = await seedOutlier(seniorPage, {
-      entity_id: entityId!,
+      entity_id: entityId,
       profile_type: "cmdline_embedding",
       event_id: `evt_drill_${runTag}`,
       cosine_distance: 0.75,
       frequency_rank: 2,
       raw_event_excerpt: `net.exe localgroup administrators /add ${runTag}`,
     });
-    test.skip(outlierId === null, "behavioral test-seed endpoints not wired");
 
     await seniorPage.goto("/behavioral");
     await seniorPage

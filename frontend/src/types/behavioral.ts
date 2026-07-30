@@ -51,6 +51,8 @@ export interface BehavioralOutlier {
   entity_id: string;
   profile_type: ProfileType;
   event_id: string;
+  /** Pattern key the frequency floor matched on (``parent>child`` lineage). */
+  event_pattern_key: string | null;
   cosine_distance: number;
   frequency_rank: number;
   raw_event_excerpt: string;
@@ -80,6 +82,76 @@ export interface PromoteOutlierResponse {
 export interface BehavioralOutlierListResponse {
   items: BehavioralOutlier[];
   total: number;
+}
+
+// --------------------------------------------------------------------------- //
+// "Why is this an outlier?" — explainability payloads
+// --------------------------------------------------------------------------- //
+
+/** Where a "this is what normal looks like" example came from. */
+export type ExemplarSource = "entity_baseline" | "peer_baseline";
+
+/**
+ * One most-similar *normal* example shown beside an anomalous event.
+ *
+ * Carries only scores the backend computes: ``token_similarity`` (lexical token
+ * overlap with the outlier's pattern key — per-event embeddings are not
+ * retained, so baseline patterns cannot be ranked by cosine distance) for
+ * entity exemplars, and ``centroid_distance`` (the pgvector cosine distance
+ * between baseline centroids) for peer exemplars. Whichever does not apply is
+ * ``null`` and the UI must say so rather than substitute a number.
+ */
+export interface BaselineExemplar {
+  pattern_key: string;
+  source: ExemplarSource;
+  observation_count: number;
+  frequency_rank: number;
+  token_similarity: number | null;
+  centroid_distance: number | null;
+  entity_id: string | null;
+  entity_canonical_id: string | null;
+  profile_id: string | null;
+}
+
+/**
+ * A contributing signal behind a detection — or an honest "unavailable".
+ * ``available: false`` means the platform does not persist that signal per
+ * outlier (e.g. the run-time detection thresholds); ``value`` is then null and
+ * ``detail`` explains why.
+ */
+export interface ExplainSignal {
+  key: string;
+  label: string;
+  value: string | null;
+  detail: string;
+  available: boolean;
+}
+
+/** The baseline window an outlier was scored against. */
+export interface BaselineSummary {
+  profile_id: string;
+  profile_type: ProfileType;
+  sample_size: number;
+  pattern_count: number;
+  has_centroid: boolean;
+  window_start: string;
+  window_end: string;
+  computed_at: string;
+}
+
+/** Response of ``GET /behavioral/outliers/{id}/explain``. */
+export interface OutlierExplanation {
+  outlier: BehavioralOutlier;
+  entity_id: string;
+  entity_kind: EntityKind;
+  entity_canonical_id: string;
+  anomalous_event: string;
+  event_pattern_key: string | null;
+  baseline: BaselineSummary | null;
+  exemplars: BaselineExemplar[];
+  signals: ExplainSignal[];
+  /** Anything that could not be produced (no baseline, no centroid, …). */
+  notes: string[];
 }
 
 // --------------------------------------------------------------------------- //
