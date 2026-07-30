@@ -190,8 +190,14 @@ def _frontend_paths() -> tuple[set[str], set[str]]:
             (dynamic if truncated else exact).add(path)
 
     def _strip_v1(paths: set[str]) -> set[str]:
-        # The routers don't carry the /v1 the client sends.
-        return {p[len("/v1") :] or "/" for p in paths if p.startswith("/v1")} | paths
+        # The routers don't carry the /v1 the client sends — strip it before
+        # matching. ONLY /v1-prefixed literals count as consumers: the shared
+        # client prepends just "/api", so a correct browser request always
+        # carries "/v1", and a BASE const missing it (#516's "/taxii/feeds" →
+        # /api/taxii/feeds, 404) must read as *no consumer*, not as one. The
+        # previous union with the unstripped originals accepted exactly that
+        # broken shape — the "/v1/cloud" blind spot above, second occurrence.
+        return {p[len("/v1") :] or "/" for p in paths if p.startswith("/v1")}
 
     return _strip_v1(exact), _strip_v1(dynamic)
 
