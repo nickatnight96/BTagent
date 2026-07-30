@@ -89,6 +89,13 @@ export interface InstalledPack {
    * CTI-merged pack) — those cannot be toggled.
    */
   install_key: string | null;
+  /**
+   * Catalog source ("builtin" / "installed" / "custom"), or null for a pack
+   * with run history but no catalog entry. A "custom" pack is enabled by
+   * existence — its switch is inert and its lifecycle lives in the
+   * custom-packs panel.
+   */
+  source: HuntPackCatalogEntry["source"] | null;
   /** Whether the scheduled runner will run this pack for the org. */
   enabled: boolean;
   rule_count: number;
@@ -213,6 +220,7 @@ function catalogOnlyPack(entry: HuntPackCatalogEntry): InstalledPack {
     hit_volume_30d: build30dHitVolume([]),
     rules: [],
     install_key: entry.pack_id,
+    source: entry.source,
     enabled: entry.enabled,
     rule_count: entry.rule_count,
   };
@@ -268,6 +276,7 @@ export function buildInstalledPacks(
       hit_volume_30d: build30dHitVolume(packRuns),
       rules,
       install_key: entry?.pack_id ?? null,
+      source: entry?.source ?? null,
       // A pack with history but no catalog entry (ad-hoc CTI pack) is not
       // schedulable, so it reads as enabled rather than falsely "off".
       enabled: entry ? entry.enabled : true,

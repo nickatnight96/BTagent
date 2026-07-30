@@ -231,6 +231,69 @@ async def test_api_cross_org_delete_404s(client: AsyncClient, db_session: AsyncS
 
 
 # --------------------------------------------------------------------------- #
+# Catalog surfacing (#112 follow-up)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_uploaded_pack_appears_in_the_hunt_pack_catalog(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """An uploaded bundle runs on every sweep, so the catalog must say so.
+
+    The entry carries ``source="custom"``, reads enabled/installed by
+    existence, and its ``manifest_pack_id`` is the id the pack's sweep runs
+    record — the key the UI joins run history on. Deleting the bundle removes
+    the entry.
+    """
+    org = _make_org(db_session)
+    await db_session.flush()
+    _, senior = await _make_user(db_session, org_id=org.id, role="senior_analyst")
+
+    up = await client.post("/api/v1/hunt/packs/custom", json=BUNDLE, headers=_auth(senior))
+    assert up.status_code == 201, up.text
+    row_id = up.json()["id"]
+    pack_id = up.json()["pack_id"]
+
+    catalog = (await client.get("/api/v1/hunt/packs", headers=_auth(senior))).json()
+    entry = next((e for e in catalog["items"] if e["pack_id"] == pack_id), None)
+    assert entry is not None, f"custom pack {pack_id} missing from catalog"
+    assert entry["source"] == "custom"
+    assert entry["enabled"] is True
+    assert entry["installed"] is True
+    assert entry["default_enabled"] is False
+    assert entry["manifest_pack_id"] == pack_id
+    assert entry["rule_count"] == 1
+    assert catalog["total"] == len(catalog["items"])
+
+    # Custom packs are enabled by existence — the toggle API must refuse the
+    # id rather than persist a row the sweep would ignore.
+    put = await client.put(
+        f"/api/v1/hunt/packs/{pack_id}", json={"enabled": False}, headers=_auth(senior)
+    )
+    assert put.status_code == 404
+
+    await client.delete(f"/api/v1/hunt/packs/custom/{row_id}", headers=_auth(senior))
+    catalog_after = (await client.get("/api/v1/hunt/packs", headers=_auth(senior))).json()
+    assert all(e["pack_id"] != pack_id for e in catalog_after["items"])
+
+
+@pytest.mark.asyncio
+async def test_catalog_custom_entries_are_org_scoped(client: AsyncClient, db_session: AsyncSession):
+    org_a = _make_org(db_session)
+    org_b = _make_org(db_session)
+    await db_session.flush()
+    _, senior_a = await _make_user(db_session, org_id=org_a.id, role="senior_analyst")
+    _, senior_b = await _make_user(db_session, org_id=org_b.id, role="senior_analyst")
+
+    up = await client.post("/api/v1/hunt/packs/custom", json=BUNDLE, headers=_auth(senior_a))
+    pack_id = up.json()["pack_id"]
+
+    catalog_b = (await client.get("/api/v1/hunt/packs", headers=_auth(senior_b))).json()
+    assert all(e["pack_id"] != pack_id for e in catalog_b["items"])
+
+
+# --------------------------------------------------------------------------- #
 # Sweep integration
 # --------------------------------------------------------------------------- #
 

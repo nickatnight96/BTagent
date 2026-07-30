@@ -250,9 +250,12 @@ function PackCard({
     ? new Date(pack.last_run.started_at).toLocaleString()
     : "never";
   const ruleCount = pack.rules.length || pack.rule_count;
-  // A pack with run history but no catalog entry (ad-hoc CTI pack) is not
-  // schedulable, so its switch is inert.
-  const canToggle = canManage && pack.install_key !== null && !isToggling;
+  // Two inert-switch cases: an ad-hoc pack (run history, no catalog entry)
+  // is not schedulable at all; a "custom" uploaded bundle IS scheduled but is
+  // enabled by existence — its lifecycle is the custom-packs panel below, not
+  // the toggle API (which would 404 on its id).
+  const canToggle =
+    canManage && pack.install_key !== null && pack.source !== "custom" && !isToggling;
   return (
     <Card data-testid={`pack-card-${pack.pack_id}`} className={disabled ? "opacity-60" : ""}>
       <CardContent className="space-y-3 p-4">
@@ -264,6 +267,14 @@ function PackCard({
               <span className="rounded bg-muted/50 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
                 v{pack.pack_version || "?"}
               </span>
+              {pack.source === "custom" && (
+                <span
+                  className="rounded bg-primary/15 px-1.5 py-0.5 text-[11px] text-primary"
+                  data-testid={`pack-custom-badge-${pack.pack_id}`}
+                >
+                  custom
+                </span>
+              )}
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {ruleCount} rule{ruleCount === 1 ? "" : "s"} ·{" "}
@@ -280,9 +291,11 @@ function PackCard({
             title={
               pack.install_key === null
                 ? "Ad-hoc pack — not part of the scheduled catalog"
-                : canManage
-                  ? "Enable/disable this pack for your organization"
-                  : "Enable/disable requires senior_analyst or higher"
+                : pack.source === "custom"
+                  ? "Org custom pack — runs on every sweep while uploaded; manage it in the Custom packs panel"
+                  : canManage
+                    ? "Enable/disable this pack for your organization"
+                    : "Enable/disable requires senior_analyst or higher"
             }
           >
             {isToggling ? (
