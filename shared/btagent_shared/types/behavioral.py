@@ -106,6 +106,10 @@ class BehavioralOutlier(BaseModel):
     entity_id: str
     profile_type: ProfileType
     event_id: str = Field(..., min_length=1, max_length=200)
+    # The pattern key the frequency floor matched on (process lineage
+    # ``parent>child`` for the cmdline profile). Optional: rows written before
+    # the column existed carry ``None``.
+    event_pattern_key: str | None = Field(default=None, max_length=512)
     cosine_distance: float = Field(..., ge=0.0, le=2.0)
     # Rank in the entity's frequency map (1 = most common, 0 = absent).
     frequency_rank: int = Field(default=0, ge=0)
@@ -155,3 +159,107 @@ class BehavioralOutlierListResponse(BaseModel):
 
     items: list[BehavioralOutlier]
     total: int
+
+
+# --------------------------------------------------------------------------- #
+# "Why is this an outlier?" — explainability payloads (#114 Phase B)
+# --------------------------------------------------------------------------- #
+
+
+class ExemplarSource(StrEnum):
+    """Where a "this is what normal looks like" example came from."""
+
+    # A pattern from THIS entity's own latest baseline window.
+    ENTITY_BASELINE = "entity_baseline"
+    # The most common pattern of a peer entity whose baseline centroid is a
+    # pgvector nearest neighbour of this entity's — "entities that behave like
+    # this one consider this normal".
+    PEER_BASELINE = "peer_baseline"
+
+
+class BaselineExemplar(BaseModel):
+    """One "most-similar normal example" beside an anomalous event.
+
+    Only ever carries scores the backend actually computes:
+
+    * ``token_similarity`` — lexical token overlap with the outlier's pattern
+      key (``btagent_shared.hunt.behavioral.pattern_similarity``). Set for
+      entity-baseline exemplars; the per-event embedding is not retained, so
+      individual baseline patterns cannot be ranked by cosine distance.
+    * ``centroid_distance`` — the pgvector cosine distance between the peer's
+      baseline centroid and this entity's. Set for peer-baseline exemplars.
+
+    Whichever is not applicable stays ``None`` — the UI must say "unavailable"
+    rather than substitute a number.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pattern_key: str
+    source: ExemplarSource
+    # How many times the pattern was observed in the baseline window it came from.
+    observation_count: int = Field(default=0, ge=0)
+    # 1-indexed rank within that baseline's frequency map (0 = not ranked).
+    frequency_rank: int = Field(default=0, ge=0)
+    token_similarity: float | None = Field(default=None, ge=0.0, le=1.0)
+    centroid_distance: float | None = Field(default=None, ge=0.0, le=2.0)
+    # Populated for peer exemplars so the analyst knows whose normal this is.
+    entity_id: str | None = None
+    entity_canonical_id: str | None = None
+    profile_id: str | None = None
+
+
+class ExplainSignal(BaseModel):
+    """One contributing signal behind a detection, or an honest "unavailable".
+
+    ``available=False`` means the platform does not persist this signal per
+    outlier (e.g. the run-time detection thresholds); ``value`` is then ``None``
+    and ``detail`` explains why. Nothing here is a score the detector doesn't
+    already produce.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    label: str
+    value: str | None = None
+    detail: str
+    available: bool = True
+
+
+class BaselineSummary(BaseModel):
+    """The baseline window an outlier was scored against."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile_id: str
+    profile_type: ProfileType
+    sample_size: int = 0
+    pattern_count: int = 0
+    has_centroid: bool = False
+    window_start: datetime
+    window_end: datetime
+    computed_at: datetime
+
+
+class OutlierExplanation(BaseModel):
+    """Everything the UI needs to answer "why is this an outlier?".
+
+    The anomalous event, the entity's current baseline, the most-similar normal
+    examples, and the signals the detector computed — plus ``notes`` recording
+    anything that could not be produced (no baseline, no centroid, peer search
+    unavailable), so the page can say so instead of rendering a blank panel.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    outlier: BehavioralOutlier
+    entity_id: str
+    entity_kind: EntityKind
+    entity_canonical_id: str
+    anomalous_event: str = ""
+    event_pattern_key: str | None = None
+    baseline: BaselineSummary | None = None
+    exemplars: list[BaselineExemplar] = Field(default_factory=list)
+    signals: list[ExplainSignal] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)

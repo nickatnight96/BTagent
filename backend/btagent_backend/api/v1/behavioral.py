@@ -20,7 +20,7 @@ from btagent_shared.types.behavioral import (
     BehavioralOutlier,
     BehavioralOutlierListResponse,
     IntentLabel,
-    ProfileType,
+    OutlierExplanation,
     PromoteOutlierRequest,
     PromoteOutlierResponse,
     SetIntentRequest,
@@ -44,20 +44,9 @@ router = APIRouter(prefix="/behavioral", tags=["behavioral"])
 
 
 def _outlier_response(row: BehavioralOutlierRow) -> BehavioralOutlier:
-    return BehavioralOutlier(
-        id=row.id,
-        org_id=row.org_id,
-        entity_id=row.entity_id,
-        profile_type=ProfileType(row.profile_type),
-        event_id=row.event_id,
-        cosine_distance=row.cosine_distance,
-        frequency_rank=row.frequency_rank,
-        raw_event_excerpt=row.raw_event_excerpt or "",
-        intent_label=IntentLabel(row.intent_label) if row.intent_label else None,
-        intent_rationale=row.intent_rationale,
-        promoted_to_finding_id=row.promoted_to_finding_id,
-        created_at=row.created_at,
-    )
+    """Row → API contract. One converter, owned by the service, so the outlier
+    shape the explain view embeds is identical to the list/detail shape."""
+    return svc.to_outlier_model(row)
 
 
 async def _load_outlier_scoped(
@@ -109,6 +98,29 @@ async def get_outlier(
     user.require_permission("hunt:view")
     row = await _load_outlier_scoped(db, outlier_id, user)
     return _outlier_response(row)
+
+
+@router.get("/outliers/{outlier_id}/explain", response_model=OutlierExplanation)
+async def explain_outlier(
+    outlier_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Why is this an outlier? — the analyst-facing explanation (#114 Phase B).
+
+    Returns the anomalous event beside the entity's most-similar *normal*
+    examples (the entity's own baseline patterns, plus peer baselines found
+    through the pgvector nearest-neighbour path), the baseline window it was
+    scored against, and the signals the detector already computed. Read-only
+    and org-scoped through the same IDOR-safe loader as every other outlier
+    read, so the explain view can never widen what an analyst may see.
+    """
+    user.require_permission("hunt:view")
+    await _load_outlier_scoped(db, outlier_id, user)
+    try:
+        return await svc.explain_outlier(db, outlier_id=outlier_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.post("/outliers/{outlier_id}/intent", response_model=BehavioralOutlier)

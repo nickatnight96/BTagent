@@ -10,9 +10,18 @@
  *    (count × max_cosine_distance), each as an expandable card.
  * 3. Per-entity drilldown — outliers grouped by profile_type; each outlier row
  *    shows cosine_distance + frequency_rank + raw_event_excerpt (expandable).
- * 4. Inline triage panel — three intent buttons (benign / suspicious /
+ * 4. "Why is this an outlier?" explain view — the anomalous command beside the
+ *    entity's most-similar *normal* examples (plus peer baselines found through
+ *    the backend's pgvector nearest-neighbour path), the baseline window it was
+ *    scored against, and the signals the detector already computes (distance,
+ *    frequency rank, parent/child lineage). Loaded lazily per outlier. The
+ *    panel renders only values the backend produces: a signal the platform does
+ *    not persist (the run-time detection thresholds) is shown as explicitly
+ *    unavailable, and the backend's notes about what could not be produced are
+ *    surfaced verbatim rather than hidden behind an empty panel.
+ * 5. Inline triage panel — three intent buttons (benign / suspicious /
  *    malicious) + rationale textarea + Promote action.
- * 5. Empty state when no outliers exist.
+ * 6. Empty state when no outliers exist.
  *
  * RBAC
  * ----
@@ -38,6 +47,8 @@ import {
   CheckCircle2,
   AlertTriangle,
   XCircle,
+  HelpCircle,
+  Info,
 } from "lucide-react";
 import { useBehavioralStore, buildEntityDriftSummaries } from "@/stores/behavioralStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -49,9 +60,11 @@ import { Card, CardContent } from "@/components/ds/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ds/tabs";
 import { Textarea } from "@/components/ds/textarea";
 import type {
+  BaselineExemplar,
   BehavioralOutlier,
   EntityDriftSummary,
   IntentLabel,
+  OutlierExplanation,
   ProfileType,
 } from "@/types/behavioral";
 
@@ -165,6 +178,187 @@ function DriftScoreBar({
       <span className="text-[11px] text-slate-400 tabular-nums w-10 text-right">
         {score.toFixed(2)}
       </span>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- //
+// "Why is this an outlier?" explain panel
+// --------------------------------------------------------------------------- //
+
+const EXEMPLAR_SOURCE_LABELS: Record<BaselineExemplar["source"], string> = {
+  entity_baseline: "this entity's baseline",
+  peer_baseline: "a peer entity's baseline",
+};
+
+/**
+ * One "most-similar normal example" row.
+ *
+ * Shows only the score the backend actually computed for that exemplar:
+ * token overlap for a pattern from this entity's own baseline, centroid cosine
+ * distance for a peer baseline. The other is absent by construction, so it is
+ * simply not rendered — nothing is filled in with a made-up number.
+ */
+function ExemplarRow({ exemplar }: { exemplar: BaselineExemplar }) {
+  return (
+    <li
+      className="rounded border border-slate-700/50 bg-slate-900/40 px-2 py-1.5"
+      data-testid="behavioral-exemplar"
+      data-exemplar-source={exemplar.source}
+    >
+      <p className="font-mono text-[11px] text-emerald-300 break-all">
+        {exemplar.pattern_key}
+      </p>
+      <p className="mt-0.5 text-[10px] text-slate-500">
+        {EXEMPLAR_SOURCE_LABELS[exemplar.source]}
+        {exemplar.source === "peer_baseline" && exemplar.entity_canonical_id
+          ? ` · ${exemplar.entity_canonical_id}`
+          : ""}
+        {" · seen "}
+        {exemplar.observation_count}×
+        {exemplar.frequency_rank > 0 ? ` · rank ${exemplar.frequency_rank}` : ""}
+        {exemplar.token_similarity !== null
+          ? ` · token overlap ${exemplar.token_similarity.toFixed(2)}`
+          : ""}
+        {exemplar.centroid_distance !== null
+          ? ` · centroid distance ${exemplar.centroid_distance.toFixed(3)}`
+          : ""}
+      </p>
+    </li>
+  );
+}
+
+function ExplainPanel({
+  explanation,
+  isLoading,
+  error,
+}: {
+  explanation: OutlierExplanation | undefined;
+  isLoading: boolean;
+  error: string | undefined;
+}) {
+  if (isLoading && !explanation) {
+    return (
+      <div
+        className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground"
+        data-testid="behavioral-explain-loading"
+      >
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Loading explanation…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <p
+        className="mt-2 text-[11px] text-destructive"
+        role="alert"
+        data-testid="behavioral-explain-error"
+      >
+        {error}
+      </p>
+    );
+  }
+
+  if (!explanation) return null;
+
+  const { baseline, exemplars, signals, notes } = explanation;
+
+  return (
+    <div
+      className="mt-3 space-y-3 rounded-md border border-violet-500/20 bg-violet-500/5 p-3"
+      data-testid="behavioral-explain-panel"
+    >
+      {/* --- The anomalous event --- */}
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-300">
+          Anomalous activity
+        </p>
+        <pre
+          className="mt-1 max-h-40 overflow-x-auto whitespace-pre-wrap break-words rounded border border-rose-500/20 bg-slate-900/60 p-2 text-[11px] text-rose-200"
+          data-testid="behavioral-explain-anomalous"
+        >
+          {explanation.anomalous_event}
+        </pre>
+        <p className="mt-1 text-[10px] text-slate-500">
+          {explanation.entity_kind} · {explanation.entity_canonical_id}
+          {explanation.event_pattern_key ? ` · lineage ${explanation.event_pattern_key}` : ""}
+        </p>
+      </div>
+
+      {/* --- What normal looks like --- */}
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
+          What normal looks like here
+        </p>
+        {exemplars.length > 0 ? (
+          <ul className="mt-1 space-y-1" data-testid="behavioral-explain-exemplars">
+            {exemplars.map((e) => (
+              <ExemplarRow key={`${e.source}-${e.profile_id ?? ""}-${e.pattern_key}`} exemplar={e} />
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-[11px] text-slate-400" data-testid="behavioral-explain-no-exemplars">
+            No baseline examples are available for this entity.
+          </p>
+        )}
+      </div>
+
+      {/* --- Baseline the event was scored against --- */}
+      {baseline ? (
+        <p className="text-[10px] text-slate-500" data-testid="behavioral-explain-baseline">
+          Baseline: {baseline.sample_size} event
+          {baseline.sample_size === 1 ? "" : "s"} · {baseline.pattern_count} pattern
+          {baseline.pattern_count === 1 ? "" : "s"} · window ending{" "}
+          {new Date(baseline.window_end).toLocaleString()}
+          {baseline.has_centroid ? "" : " · no embedding centroid"}
+        </p>
+      ) : (
+        <p className="text-[10px] text-amber-400" data-testid="behavioral-explain-baseline">
+          This entity has no current baseline window for this profile type.
+        </p>
+      )}
+
+      {/* --- Contributing signals --- */}
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          Contributing signals
+        </p>
+        <dl className="mt-1 space-y-1" data-testid="behavioral-explain-signals">
+          {signals.map((s) => (
+            <div
+              key={s.key}
+              className="flex flex-wrap items-baseline gap-x-2"
+              data-testid="behavioral-explain-signal"
+              data-signal-key={s.key}
+              data-signal-available={s.available ? "true" : "false"}
+            >
+              <dt className="text-[11px] text-slate-400">{s.label}:</dt>
+              <dd
+                className={`text-[11px] font-medium ${
+                  s.available ? "text-slate-200" : "italic text-slate-500"
+                }`}
+              >
+                {s.available && s.value !== null ? s.value : "unavailable"}
+              </dd>
+              <dd className="basis-full text-[10px] text-slate-500">{s.detail}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      {/* --- Honest caveats from the backend --- */}
+      {notes.length > 0 && (
+        <ul className="space-y-0.5" data-testid="behavioral-explain-notes">
+          {notes.map((note) => (
+            <li key={note} className="flex items-start gap-1 text-[10px] text-slate-500">
+              <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>{note}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -351,6 +545,20 @@ function OutlierRow({
   onPromote: (outlierId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [showExplain, setShowExplain] = useState(false);
+
+  // Read the explain slice straight from the store rather than drilling it
+  // through the entity card — the panel is per-outlier and loaded lazily.
+  const explanation = useBehavioralStore((s) => s.explanations[outlier.id]);
+  const explainLoading = useBehavioralStore((s) => s.explainLoading[outlier.id] ?? false);
+  const explainError = useBehavioralStore((s) => s.explainErrors[outlier.id] || undefined);
+  const fetchExplanation = useBehavioralStore((s) => s.fetchExplanation);
+
+  function toggleExplain() {
+    const next = !showExplain;
+    setShowExplain(next);
+    if (next) void fetchExplanation(outlier.id);
+  }
 
   return (
     <div
@@ -418,6 +626,27 @@ function OutlierRow({
             <p className="mt-1.5 text-xs text-slate-400 italic">
               Rationale: {outlier.intent_rationale}
             </p>
+          )}
+
+          {/* Why is this an outlier? */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-2 h-7 px-2 text-xs text-violet-300 hover:bg-violet-500/10 hover:text-violet-200"
+            onClick={toggleExplain}
+            aria-expanded={showExplain}
+            data-testid="behavioral-explain-toggle"
+          >
+            <HelpCircle className="mr-1 h-3.5 w-3.5" />
+            {showExplain ? "Hide explanation" : "Why is this an outlier?"}
+          </Button>
+
+          {showExplain && (
+            <ExplainPanel
+              explanation={explanation}
+              isLoading={explainLoading}
+              error={explainError}
+            />
           )}
 
           <TriagePanel

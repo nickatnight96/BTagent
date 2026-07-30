@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { buildEntityDriftSummaries } from "@/stores/behavioralStore";
-import type { BehavioralOutlier } from "@/types/behavioral";
+import type { BehavioralOutlier, OutlierExplanation } from "@/types/behavioral";
 // NOTE: BehavioralOutlier is also used as an explicit parameter type annotation
 // inside test callbacks where TypeScript cannot infer it from the mock return
 // type (strict mode requires explicit annotations in those positions).
@@ -23,6 +23,7 @@ function outlier(
     org_id: "org_default",
     profile_type: "cmdline_embedding",
     event_id: `evt_${overrides.id}`,
+    event_pattern_key: null,
     cosine_distance: 0.5,
     frequency_rank: 3,
     raw_event_excerpt: "",
@@ -112,10 +113,12 @@ const mockListOutliers = vi.fn();
 const mockSetIntent = vi.fn();
 const mockFeedbackBenign = vi.fn();
 const mockPromoteOutlier = vi.fn();
+const mockExplainOutlier = vi.fn();
 
 vi.mock("@/api/behavioral", () => ({
   listOutliers: (...a: unknown[]) => mockListOutliers(...a),
   getOutlier: vi.fn(),
+  explainOutlier: (...a: unknown[]) => mockExplainOutlier(...a),
   setIntent: (...a: unknown[]) => mockSetIntent(...a),
   feedbackBenign: (...a: unknown[]) => mockFeedbackBenign(...a),
   promoteOutlier: (...a: unknown[]) => mockPromoteOutlier(...a),
@@ -136,6 +139,9 @@ beforeEach(() => {
     isLoading: false,
     isMutating: false,
     error: null,
+    explanations: {},
+    explainLoading: {},
+    explainErrors: {},
   });
 });
 
@@ -225,5 +231,98 @@ describe("useBehavioralStore.promote", () => {
     expect(findingId).toBe("hfnd_xyz");
     // Re-fetch should have been called.
     expect(mockListOutliers).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// "Why is this an outlier?" explain slice (#114 Phase B)
+// --------------------------------------------------------------------------- //
+
+function explanation(outlierId: string): OutlierExplanation {
+  return {
+    outlier: outlier({ id: outlierId, entity_id: "ent_1" }),
+    entity_id: "ent_1",
+    entity_kind: "host",
+    entity_canonical_id: "WS-1",
+    anomalous_event: "winword.exe>powershell.exe: powershell -enc <b64>",
+    event_pattern_key: "winword.exe>powershell.exe",
+    baseline: null,
+    exemplars: [
+      {
+        pattern_key: "explorer.exe>powershell.exe",
+        source: "entity_baseline",
+        observation_count: 3,
+        frequency_rank: 2,
+        token_similarity: 0.33,
+        centroid_distance: null,
+        entity_id: "ent_1",
+        entity_canonical_id: "WS-1",
+        profile_id: "bprof_1",
+      },
+    ],
+    signals: [],
+    notes: ["ranked by token overlap"],
+  };
+}
+
+describe("useBehavioralStore.fetchExplanation", () => {
+  it("caches the explanation per outlier id", async () => {
+    mockExplainOutlier.mockResolvedValueOnce(explanation("o1"));
+
+    await useBehavioralStore.getState().fetchExplanation("o1");
+
+    const state = useBehavioralStore.getState();
+    expect(state.explanations["o1"]?.entity_canonical_id).toBe("WS-1");
+    expect(state.explainLoading["o1"]).toBe(false);
+    expect(state.explainErrors["o1"]).toBe("");
+  });
+
+  it("does not refetch a cached explanation unless forced", async () => {
+    mockExplainOutlier.mockResolvedValue(explanation("o1"));
+
+    await useBehavioralStore.getState().fetchExplanation("o1");
+    await useBehavioralStore.getState().fetchExplanation("o1");
+    expect(mockExplainOutlier).toHaveBeenCalledTimes(1);
+
+    await useBehavioralStore.getState().fetchExplanation("o1", { force: true });
+    expect(mockExplainOutlier).toHaveBeenCalledTimes(2);
+  });
+
+  it("records a per-outlier error without touching the page-level error", async () => {
+    mockExplainOutlier.mockRejectedValueOnce(new Error("explain boom"));
+
+    await useBehavioralStore.getState().fetchExplanation("o1");
+
+    const state = useBehavioralStore.getState();
+    expect(state.explainErrors["o1"]).toBeTruthy();
+    expect(state.explanations["o1"]).toBeUndefined();
+    expect(state.error).toBeNull();
+  });
+
+  it("drops the cached explanation when the outlier is triaged", async () => {
+    mockExplainOutlier.mockResolvedValueOnce(explanation("o1"));
+    await useBehavioralStore.getState().fetchExplanation("o1");
+    expect(useBehavioralStore.getState().explanations["o1"]).toBeDefined();
+
+    const updated = {
+      ...outlier({ id: "o1", entity_id: "ent_1" }),
+      intent_label: "benign" as const,
+    };
+    mockSetIntent.mockResolvedValueOnce(updated);
+    await useBehavioralStore
+      .getState()
+      .triageOutlier("o1", { intent_label: "benign", rationale: "known admin task" });
+
+    expect(useBehavioralStore.getState().explanations["o1"]).toBeUndefined();
+  });
+
+  it("drops the cached explanation when the pattern is folded into the baseline", async () => {
+    mockExplainOutlier.mockResolvedValueOnce(explanation("o1"));
+    await useBehavioralStore.getState().fetchExplanation("o1");
+
+    mockFeedbackBenign.mockResolvedValueOnce(outlier({ id: "o1", entity_id: "ent_1" }));
+    await useBehavioralStore.getState().feedbackBenign("o1");
+
+    expect(useBehavioralStore.getState().explanations["o1"]).toBeUndefined();
   });
 });

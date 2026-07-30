@@ -8,6 +8,7 @@
 import { create } from "zustand";
 import { ApiError } from "@/api/client";
 import {
+  explainOutlier,
   feedbackBenign,
   listOutliers,
   promoteOutlier,
@@ -17,6 +18,7 @@ import type {
   BehavioralOutlier,
   EntityDriftSummary,
   IntentLabel,
+  OutlierExplanation,
   PromoteOutlierRequest,
   SetIntentRequest,
 } from "@/types/behavioral";
@@ -103,6 +105,15 @@ interface BehavioralState {
   isMutating: boolean;
   error: string | null;
 
+  /**
+   * "Why is this an outlier?" panels, keyed by outlier id. Fetched lazily —
+   * the explain call is per-outlier, so it only fires when an analyst opens
+   * the panel, and the result is cached until the next explicit refresh.
+   */
+  explanations: Record<string, OutlierExplanation>;
+  explainLoading: Record<string, boolean>;
+  explainErrors: Record<string, string>;
+
   /** Hydrate the outlier list from the backend. */
   fetchOutliers: (opts?: { page?: number }) => Promise<void>;
   setIntentFilter: (filter: IntentFilter) => void;
@@ -118,6 +129,13 @@ interface BehavioralState {
   feedbackBenign: (outlierId: string) => Promise<void>;
   /** Promote an outlier to a HuntFinding; returns the new finding_id. */
   promote: (outlierId: string, body: PromoteOutlierRequest) => Promise<string>;
+
+  /**
+   * Load the explain payload for one outlier. Idempotent: a cached
+   * explanation is reused unless ``force`` is set (e.g. after triage folds a
+   * pattern back into the baseline, which changes what "normal" means).
+   */
+  fetchExplanation: (outlierId: string, opts?: { force?: boolean }) => Promise<void>;
 
   clearError: () => void;
 }
@@ -143,6 +161,23 @@ function mergeOutlier(
   return outliers.map((o) => (o.id === updated.id ? updated : o));
 }
 
+/**
+ * Drop one cached explanation.
+ *
+ * Triage changes what the explain panel would say — an intent verdict adds a
+ * signal, and folding a pattern back into the baseline changes what "normal"
+ * is — so a stale cached panel would contradict the row beside it.
+ */
+function dropExplanation(
+  explanations: Record<string, OutlierExplanation>,
+  outlierId: string,
+): Record<string, OutlierExplanation> {
+  if (!(outlierId in explanations)) return explanations;
+  const next = { ...explanations };
+  delete next[outlierId];
+  return next;
+}
+
 // --------------------------------------------------------------------------- //
 // Store
 // --------------------------------------------------------------------------- //
@@ -157,6 +192,10 @@ export const useBehavioralStore = create<BehavioralState>((set, get) => ({
   isLoading: false,
   isMutating: false,
   error: null,
+
+  explanations: {},
+  explainLoading: {},
+  explainErrors: {},
 
   fetchOutliers: async (opts) => {
     const { intentFilter, page: currentPage, pageSize } = get();
@@ -196,6 +235,7 @@ export const useBehavioralStore = create<BehavioralState>((set, get) => ({
       set((s) => ({
         isMutating: false,
         outliers: mergeOutlier(s.outliers, updated),
+        explanations: dropExplanation(s.explanations, outlierId),
       }));
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to set intent");
@@ -211,6 +251,9 @@ export const useBehavioralStore = create<BehavioralState>((set, get) => ({
       set((s) => ({
         isMutating: false,
         outliers: mergeOutlier(s.outliers, updated),
+        // The pattern just became part of the baseline — any cached "what
+        // normal looks like" panel for it is now wrong.
+        explanations: dropExplanation(s.explanations, outlierId),
       }));
     } catch (err) {
       const message = extractErrorMessage(err, "Failed to submit benign feedback");
@@ -231,6 +274,30 @@ export const useBehavioralStore = create<BehavioralState>((set, get) => ({
       const message = extractErrorMessage(err, "Failed to promote outlier");
       set({ isMutating: false, error: message });
       throw err;
+    }
+  },
+
+  fetchExplanation: async (outlierId, opts) => {
+    const { explanations, explainLoading } = get();
+    if (explainLoading[outlierId]) return;
+    if (!opts?.force && explanations[outlierId]) return;
+
+    set((s) => ({
+      explainLoading: { ...s.explainLoading, [outlierId]: true },
+      explainErrors: { ...s.explainErrors, [outlierId]: "" },
+    }));
+    try {
+      const explanation = await explainOutlier(outlierId);
+      set((s) => ({
+        explanations: { ...s.explanations, [outlierId]: explanation },
+        explainLoading: { ...s.explainLoading, [outlierId]: false },
+      }));
+    } catch (err) {
+      const message = extractErrorMessage(err, "Failed to load the explanation");
+      set((s) => ({
+        explainLoading: { ...s.explainLoading, [outlierId]: false },
+        explainErrors: { ...s.explainErrors, [outlierId]: message },
+      }));
     }
   },
 

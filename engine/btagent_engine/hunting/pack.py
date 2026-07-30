@@ -129,18 +129,17 @@ def extract_techniques(tags: list[Any]) -> list[str]:
     return techniques
 
 
-def parse_rule_file(path: Path) -> tuple[dict[str, Any], str]:
-    """Load one Sigma rule file -> (parsed mapping, raw yaml text)."""
-    raw = path.read_text(encoding="utf-8")
+def _parse_rule_source(filename: str, raw: str) -> dict[str, Any]:
+    """Parse one Sigma rule's YAML text -> mapping (filename is for errors)."""
     try:
         parsed = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
-        raise PackLoadError(f"rule file {path.name!r} is not valid YAML: {exc}") from exc
+        raise PackLoadError(f"rule file {filename!r} is not valid YAML: {exc}") from exc
     if not isinstance(parsed, dict):
-        raise PackLoadError(f"rule file {path.name!r} must contain a YAML mapping")
+        raise PackLoadError(f"rule file {filename!r} must contain a YAML mapping")
     if not str(parsed.get("title") or "").strip():
-        raise PackLoadError(f"rule file {path.name!r} has no 'title'")
-    return parsed, raw
+        raise PackLoadError(f"rule file {filename!r} has no 'title'")
+    return parsed
 
 
 def deterministic_id(prefix: str, *parts: str) -> str:
@@ -157,15 +156,33 @@ def deterministic_id(prefix: str, *parts: str) -> str:
     return f"{prefix}_{digest}"
 
 
-def rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPackRule:
-    """Build one :class:`HuntPackRule` from a Sigma rule file + pack.yaml metadata.
+def parse_rule_file(path: Path) -> tuple[dict[str, Any], str]:
+    """Load one Sigma rule *file* -> (parsed mapping, raw yaml text).
 
-    Public because the external-corpus importer
-    (:mod:`btagent_engine.hunting.corpus`) parses SigmaHQ rule files with the
-    *same* semantics as a pack directory — one parser, not two. Raises
-    :class:`PackLoadError` for an unparseable / titleless rule file.
+    A thin path-based wrapper over :func:`_parse_rule_source`, which is the
+    single parser. Public because the external-corpus importer
+    (:mod:`btagent_engine.hunting.corpus`) reads SigmaHQ rule files off disk
+    and must parse them with the *same* semantics as a pack directory —
+    one parser, not two.
     """
-    parsed, raw = parse_rule_file(path)
+    raw = path.read_text(encoding="utf-8")
+    return _parse_rule_source(path.name, raw), raw
+
+
+def rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPackRule:
+    """Build one :class:`HuntPackRule` from a Sigma rule *file* + pack.yaml metadata.
+
+    Path-based wrapper over :func:`_rule_from_source` for the corpus importer;
+    raises :class:`PackLoadError` for an unparseable / titleless rule file.
+    """
+    raw = path.read_text(encoding="utf-8")
+    return _rule_from_source(path.name, raw, meta, pack_id=pack_id)
+
+
+def _rule_from_source(
+    filename: str, raw: str, meta: dict[str, Any], *, pack_id: str
+) -> HuntPackRule:
+    parsed = _parse_rule_source(filename, raw)
 
     logsource_raw = parsed.get("logsource") or {}
     logsource = (
@@ -182,13 +199,13 @@ def rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPac
     level = str(parsed.get("level") or "").strip().lower()
 
     rule_id = str(parsed.get("id") or "").strip() or deterministic_id(
-        "hrule", pack_id, path.name, raw
+        "hrule", pack_id, filename, raw
     )
 
     return HuntPackRule(
         id=rule_id,
         title=str(parsed["title"]),
-        file=path.name,
+        file=filename,
         sigma_yaml=raw,
         logsource=logsource,
         mitre_techniques=list(techniques),
@@ -199,57 +216,42 @@ def rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPac
     )
 
 
-def load_pack(pack_dir: Path | str) -> HuntPack:
-    """Load a hunt pack from a ``pack.yaml`` + ``rules/*.yml`` directory.
+def _pack_from_sources(
+    manifest: dict[str, Any], rule_sources: dict[str, str], *, fallback_name: str
+) -> HuntPack:
+    """Assemble a validated :class:`HuntPack` from parsed manifest + rule text.
 
-    Raises :class:`PackLoadError` on a missing/malformed manifest, an
-    unparseable rule file, a ``rules:`` entry pointing at a file that does
-    not exist, or duplicate rule ids. Load-time strictness is deliberate:
-    a pack either loads whole or not at all — *transpile/execution* failures
-    are the per-rule, per-backend concern of the runner instead.
+    The single assembly path behind BOTH loaders (directory and in-memory
+    bundle), so an org-uploaded pack passes exactly the checks a builtin
+    does — same deterministic ids for the same content, same all-or-nothing
+    strictness, same error wording.
     """
-    pack_dir = Path(pack_dir)
-    manifest_path = pack_dir / "pack.yaml"
-    if not manifest_path.is_file():
-        raise PackLoadError(f"no pack.yaml in {pack_dir}")
-
-    try:
-        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise PackLoadError(f"pack.yaml is not valid YAML: {exc}") from exc
-    if not isinstance(manifest, dict):
-        raise PackLoadError("pack.yaml must contain a YAML mapping")
-
     meta_by_file: dict[str, dict[str, Any]] = {}
     for entry in manifest.get("rules") or []:
         if not isinstance(entry, dict) or not entry.get("file"):
             raise PackLoadError("each pack.yaml rules entry must be a mapping with a 'file' key")
         meta_by_file[str(entry["file"])] = entry
 
-    rules_dir = pack_dir / "rules"
-    rule_paths = sorted(
-        p
-        for p in ([] if not rules_dir.is_dir() else rules_dir.iterdir())
-        if p.suffix in (".yml", ".yaml") and p.is_file()
-    )
-    if not rule_paths:
-        raise PackLoadError(f"no rule files under {rules_dir}")
+    if not rule_sources:
+        raise PackLoadError("pack has no rule files")
 
-    missing = sorted(set(meta_by_file) - {p.name for p in rule_paths})
+    missing = sorted(set(meta_by_file) - set(rule_sources))
     if missing:
         raise PackLoadError(f"pack.yaml references missing rule files: {missing}")
 
     # Codex #198: derive the pack id from (name, version) when absent so
     # repeated loads of the same versioned pack produce the same id.
-    pack_name = str(manifest.get("name") or pack_dir.name)
+    pack_name = str(manifest.get("name") or fallback_name)
     pack_version = str(manifest.get("version") or "0.0.0")
     pack_id = str(manifest.get("id") or "").strip() or deterministic_id(
         "hpack", pack_name, pack_version
     )
 
     rules = [
-        rule_from_file(path, meta_by_file.get(path.name, {}), pack_id=pack_id)
-        for path in rule_paths
+        _rule_from_source(
+            filename, rule_sources[filename], meta_by_file.get(filename, {}), pack_id=pack_id
+        )
+        for filename in sorted(rule_sources)
     ]
 
     seen: set[str] = set()
@@ -267,6 +269,71 @@ def load_pack(pack_dir: Path | str) -> HuntPack:
         )
     except ValueError as exc:  # pydantic ValidationError is a ValueError
         raise PackLoadError(f"invalid pack manifest: {exc}") from exc
+
+
+def _parse_manifest(raw: str) -> dict[str, Any]:
+    try:
+        manifest = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise PackLoadError(f"pack.yaml is not valid YAML: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise PackLoadError("pack.yaml must contain a YAML mapping")
+    return manifest
+
+
+def load_pack(pack_dir: Path | str) -> HuntPack:
+    """Load a hunt pack from a ``pack.yaml`` + ``rules/*.yml`` directory.
+
+    Raises :class:`PackLoadError` on a missing/malformed manifest, an
+    unparseable rule file, a ``rules:`` entry pointing at a file that does
+    not exist, or duplicate rule ids. Load-time strictness is deliberate:
+    a pack either loads whole or not at all — *transpile/execution* failures
+    are the per-rule, per-backend concern of the runner instead.
+    """
+    pack_dir = Path(pack_dir)
+    manifest_path = pack_dir / "pack.yaml"
+    if not manifest_path.is_file():
+        raise PackLoadError(f"no pack.yaml in {pack_dir}")
+
+    manifest = _parse_manifest(manifest_path.read_text(encoding="utf-8"))
+
+    rules_dir = pack_dir / "rules"
+    rule_paths = sorted(
+        p
+        for p in ([] if not rules_dir.is_dir() else rules_dir.iterdir())
+        if p.suffix in (".yml", ".yaml") and p.is_file()
+    )
+    if not rule_paths:
+        raise PackLoadError(f"no rule files under {rules_dir}")
+
+    rule_sources = {p.name: p.read_text(encoding="utf-8") for p in rule_paths}
+    return _pack_from_sources(manifest, rule_sources, fallback_name=pack_dir.name)
+
+
+def load_pack_from_bundle(manifest_yaml: str, rule_files: dict[str, str]) -> HuntPack:
+    """Load a hunt pack from in-memory content — the org-custom-pack path (#112).
+
+    ``manifest_yaml`` is the pack.yaml text; ``rule_files`` maps rule filename
+    (as pack.yaml references it) to Sigma YAML text. Runs the exact validation
+    the directory loader runs — same deterministic pack/rule ids for the same
+    content, so a bundle round-tripped through a DB row keeps its identity —
+    with one addition: rule filenames are constrained to simple ``*.yml`` /
+    ``*.yaml`` names, since bundle filenames arrive from an upload rather than
+    a trusted directory listing.
+    """
+    for filename in rule_files:
+        if (
+            not filename
+            or "/" in filename
+            or "\\" in filename
+            or filename.startswith(".")
+            or not filename.endswith((".yml", ".yaml"))
+        ):
+            raise PackLoadError(
+                f"invalid rule filename {filename!r}: must be a plain .yml/.yaml name"
+            )
+    manifest = _parse_manifest(manifest_yaml)
+    return _pack_from_sources(manifest, dict(rule_files), fallback_name="uploaded_pack")
 
 
 def load_builtin_pack(name: str) -> HuntPack:

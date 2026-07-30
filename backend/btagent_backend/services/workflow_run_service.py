@@ -61,6 +61,7 @@ from btagent_engine.middleware import (
 # playbook steps (GH #389) that HITLMiddleware/ConnectorPolicy don't touch.
 from btagent_engine.middleware.hitl import HITLGateMiddleware
 from btagent_engine.node import NodeContext
+from btagent_engine.node.external import load_external_nodes
 from btagent_engine.runtime import (
     WorkflowExecutionError,
     WorkflowExecutor,
@@ -78,6 +79,13 @@ from btagent_backend.db.models_workflow import WorkflowRow, WorkflowRunRow, Work
 from btagent_backend.services import autonomy_service
 
 logger = logging.getLogger("btagent.services.workflow_run")
+
+# #101: community node packages join the registry here, alongside the builtin
+# imports above — same bootstrap site, so the palette, connector catalog and
+# executor all see them or none do. Loads NOTHING unless the operator has
+# allowlisted specific distributions in BTAGENT_EXTERNAL_NODE_PACKAGES; every
+# per-package failure is contained and logged by the loader itself.
+load_external_nodes()
 
 
 def _utcnow() -> datetime:

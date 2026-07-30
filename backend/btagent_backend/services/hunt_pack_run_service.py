@@ -88,7 +88,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.config import get_settings
 from btagent_backend.db.models import DEFAULT_ORG_ID
 from btagent_backend.db.models_hunt import HuntPackRunRow
-from btagent_backend.services import hunt_pack_store, hunt_triage_service
+from btagent_backend.services import hunt_pack_store, hunt_triage_service, org_custom_pack_service
 
 if TYPE_CHECKING:  # avoid importing the (pysigma-heavy) engine at module load
     from btagent_engine.hunting.runner import PackRunResult, RuleRunResult, SigmaHit
@@ -535,8 +535,16 @@ async def run_pack_and_ingest(
     from btagent_engine.node import NodeContext
 
     settings = get_settings()
+    # Org-custom packs (#112 slice 2) run alongside the builtin set: their
+    # sweep "name" is the stored pack_id, resolved to a bundle row below
+    # instead of a builtin directory. An explicit ``pack_names`` (ad-hoc /
+    # test runs) still bypasses both stores.
+    custom_by_pack_id: dict[str, object] = {}
     if pack_names is None:
         pack_names = await hunt_pack_store.enabled_pack_names(db, org_id=org_id)
+        custom_rows = await org_custom_pack_service.list_packs(db, org_id=org_id)
+        custom_by_pack_id = {r.pack_id: r for r in custom_rows}
+        pack_names = list(pack_names) + list(custom_by_pack_id)
     else:
         pack_names = list(pack_names)
     backends = list(backends or settings.hunt_scheduler_backends)
@@ -550,9 +558,18 @@ async def run_pack_and_ingest(
     for name in pack_names:
         run_row: HuntPackRunRow | None = None
         try:
-            # Installed (externally imported) packs first, then the builtins —
-            # an imported SigmaHQ corpus runs the exact same pipeline (#112).
-            pack = hunt_pack_store.load_pack_for_org(name, org_id=org_id)
+            # Three pack sources, most-specific first:
+            #   1. org custom packs stored as DB rows,
+            #   2. externally imported corpus packs installed on disk (#112),
+            #   3. the shipped builtins.
+            # ``load_pack_for_org`` covers (2) then (3), so an imported SigmaHQ
+            # corpus runs the exact same transpile → execute → ingest pipeline
+            # as a shipped pack.
+            custom_row = custom_by_pack_id.get(name)
+            if custom_row is not None:
+                pack = org_custom_pack_service.load_row_pack(custom_row)
+            else:
+                pack = hunt_pack_store.load_pack_for_org(name, org_id=org_id)
             # Resume the in-flight run for this pack if one survived a restart,
             # else open a fresh one. Either way we run against its stable id.
             run_row = await _find_resumable_run(db, org_id=org_id, pack_id=pack.id)

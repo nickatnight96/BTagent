@@ -184,3 +184,47 @@ export async function listPackRuns(params?: {
   const qs = search.toString();
   return api.get<HuntPackRunListResponse>(`${BASE}/pack-runs${qs ? `?${qs}` : ""}`);
 }
+
+// --------------------------------------------------------------------------- //
+// Org-custom pack bundles (#112 slice 2)
+// --------------------------------------------------------------------------- //
+
+export interface CustomPack {
+  id: string;
+  pack_id: string;
+  name: string;
+  version: string;
+  description: string;
+  rule_count: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomPackListResponse {
+  items: CustomPack[];
+  total: number;
+}
+
+/** The caller's org's uploaded packs — all of them run on the sweep. */
+export async function listCustomPacks(): Promise<CustomPackListResponse> {
+  return api.get<CustomPackListResponse>(`${BASE}/packs/custom`);
+}
+
+/**
+ * Validate and store a pack bundle (pack.yaml text + rule files by name).
+ * Validation is the engine loader server-side; a 422 carries its exact
+ * complaint. Same-identity re-uploads update in place. RBAC huntpack:manage.
+ */
+export async function uploadCustomPack(body: {
+  manifest_yaml: string;
+  rule_files: Record<string, string>;
+}): Promise<CustomPack> {
+  return api.post<CustomPack>(`${BASE}/packs/custom`, body);
+}
+
+/** Remove an uploaded pack; it stops running on the next sweep. */
+export async function deleteCustomPack(rowId: string): Promise<void> {
+  await api.delete(`${BASE}/packs/custom/${encodeURIComponent(rowId)}`);
+}
+

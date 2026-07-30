@@ -27,6 +27,7 @@ from btagent_engine.hunting.pack import (
     PackLoadError,
     load_builtin_pack,
     load_pack,
+    load_pack_from_bundle,
 )
 from btagent_engine.hunting.runner import (
     BackendRunResult,
@@ -66,6 +67,7 @@ __all__ = [
     "iter_sigma_rule_files",
     "load_builtin_pack",
     "load_pack",
+    "load_pack_from_bundle",
     "run_pack",
     "transpile",
     "transpile_coverage",

@@ -33,6 +33,7 @@ from btagent_backend.api.v1.response_plan import router as response_plan_router
 from btagent_backend.api.v1.saml import router as saml_router
 from btagent_backend.api.v1.sso import router as sso_router
 from btagent_backend.api.v1.taxii_feeds import router as taxii_feeds_router
+from btagent_backend.api.v1.test_seed import router as test_seed_router
 from btagent_backend.api.v1.tlp_policies import router as tlp_policies_router
 from btagent_backend.api.v1.triage import router as triage_router
 from btagent_backend.api.v1.validation import router as validation_router
@@ -75,6 +76,10 @@ api_v1_router.include_router(validation_router)
 api_v1_router.include_router(notifications_router)
 api_v1_router.include_router(handover_router)
 api_v1_router.include_router(taxii_feeds_router)
+# E2E-only seed routes: every route in this router 404s outside
+# BTAGENT_ENV=test, so including it unconditionally adds nothing probeable
+# to dev/staging/prod (see the module docstring for the full posture).
+api_v1_router.include_router(test_seed_router)
 
 # Health at root level (no /api/v1 prefix)
 health_router_root = health_router
