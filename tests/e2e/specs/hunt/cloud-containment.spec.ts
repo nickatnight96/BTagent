@@ -18,7 +18,8 @@
  *    audit id, unselected ones stay proposed (partial accept).
  *
  * Seeding mirrors ``cloud-hunts.spec.ts``: per-run unique IDs/ARNs so shards
- * never collide, and the skip-on-404 pattern for the test-seed endpoint.
+ * never collide, through the real ``POST /api/v1/hunt/findings`` ingest route
+ * (hunt:create is analyst+).
  */
 
 import { test, expect } from "../../fixtures/auth";
@@ -39,15 +40,14 @@ interface StsChainSeed {
  * proposal: revoke-role for each traversed hop, never the high-value target
  * itself (revoking the destination role is the outage, not the containment).
  *
- * Returns ``null`` when the test-seed endpoint is not wired (HTTP 404).
  */
-async function seedStsChainFinding(page: Page, runTag: string): Promise<StsChainSeed | null> {
+async function seedStsChainFinding(page: Page, runTag: string): Promise<StsChainSeed> {
   const accountId = `9876${String(Date.now()).slice(-8)}`;
   const hopA = `arn:aws:iam::${accountId}:role/PivotA-${runTag}`;
   const hopB = `arn:aws:iam::${accountId}:role/PivotB-${runTag}`;
   const highValueTarget = `arn:aws:iam::${accountId}:role/BillingAdmin-${runTag}`;
 
-  const resp = await page.request.post("/api/v1/hunt/test/findings", {
+  const resp = await page.request.post("/api/v1/hunt/findings", {
     data: {
       source: "cloud",
       domain: "cloud",
@@ -70,7 +70,6 @@ async function seedStsChainFinding(page: Page, runTag: string): Promise<StsChain
       },
     },
   });
-  if (resp.status() === 404) return null;
   expect(
     resp.ok(),
     `seedStsChainFinding failed: ${resp.status()} ${await resp.text()}`,
@@ -111,8 +110,7 @@ test.describe("Cloud containment proposal modal", () => {
     seniorPage,
   }) => {
     const seed = await seedStsChainFinding(seniorPage, `cc-senior-${Date.now()}`);
-    test.skip(seed === null, "cloud finding test-seed endpoint not wired");
-    const { findingId, hops, highValueTarget } = seed as StsChainSeed;
+    const { findingId, hops, highValueTarget } = seed;
 
     await promoteToContainmentModal(seniorPage, findingId);
 
@@ -145,8 +143,7 @@ test.describe("Cloud containment proposal modal", () => {
     adminPage,
   }) => {
     const seed = await seedStsChainFinding(adminPage, `cc-admin-${Date.now()}`);
-    test.skip(seed === null, "cloud finding test-seed endpoint not wired");
-    const { findingId, hops } = seed as StsChainSeed;
+    const { findingId, hops } = seed;
 
     await promoteToContainmentModal(adminPage, findingId);
 
@@ -194,7 +191,7 @@ test.describe("Cloud containment proposal modal", () => {
     // Guards handlePromoteConfirm's 404 branch: a finding class that attaches
     // no proposal must never block the promote behind a missing modal.
     const runTag = `cc-plain-${Date.now()}`;
-    const resp = await seniorPage.request.post("/api/v1/hunt/test/findings", {
+    const resp = await seniorPage.request.post("/api/v1/hunt/findings", {
       data: {
         source: "cloud",
         domain: "cloud",
@@ -212,7 +209,6 @@ test.describe("Cloud containment proposal modal", () => {
         },
       },
     });
-    test.skip(resp.status() === 404, "cloud finding test-seed endpoint not wired");
     expect(resp.ok(), `seed failed: ${resp.status()} ${await resp.text()}`).toBeTruthy();
     const findingId = ((await resp.json()) as { id: string }).id;
 
