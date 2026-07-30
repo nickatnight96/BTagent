@@ -1,7 +1,7 @@
 /**
  * Cloud Hunts E2E spec (#117 Phase B).
  *
- * Seeds cloud hunt findings via the test-helper endpoint and verifies the
+ * Seeds cloud hunt findings via the real ingest route and verifies the
  * Cloud Hunts page (/cloud-hunts) renders them in the correct views:
  *  - Control-plane event timeline
  *  - IAM role-graph (nested list)
@@ -16,12 +16,13 @@
  * Every seeded record carries a per-invocation ``runTag`` so parallel test
  * shards don't share state or interfere with one another.
  *
- * skip-on-404 pattern
- * -------------------
- * All test-seed helpers return ``null`` on HTTP 404 (endpoint not yet wired).
- * Tests call ``test.skip()`` in that case rather than timing out on a card
- * that was never rendered. This mirrors the ``behavioral-hunts.spec.ts``
- * pattern merged in #211.
+ * Seeding
+ * -------
+ * Findings are seeded through the REAL ingest route ``POST
+ * /api/v1/hunt/findings`` (hunt:create is analyst+), the same route
+ * ``hunt-triage.spec.ts`` uses. The former ``/hunt/test/findings`` helper was
+ * never wired, and the skip-on-404 pattern silently benched every seeded
+ * assertion in this file in every environment.
  *
  * RBAC coverage
  * -------------
@@ -43,17 +44,12 @@ interface SeedCloudFindingPayload {
   evidence?: Record<string, unknown>;
 }
 
-/**
- * Seed a cloud hunt finding via the test-helper endpoint.
- *
- * Returns ``null`` when the helper endpoint is not wired (HTTP 404), in which
- * case the calling test should call ``test.skip()``.
- */
+/** Seed a cloud HuntFinding via the real ingest route (clusters on insert). */
 async function seedCloudFinding(
   page: Page,
   payload: SeedCloudFindingPayload,
-): Promise<string | null> {
-  const resp = await page.request.post("/api/v1/hunt/test/findings", {
+): Promise<string> {
+  const resp = await page.request.post("/api/v1/hunt/findings", {
     data: {
       source: "cloud",
       domain: "cloud",
@@ -67,7 +63,6 @@ async function seedCloudFinding(
       ...payload,
     },
   });
-  if (resp.status() === 404) return null;
   expect(
     resp.ok(),
     `seedCloudFinding failed: ${resp.status()} ${await resp.text()}`,
@@ -114,7 +109,7 @@ test.describe("Cloud Hunts page", () => {
     const runTag = `ch-tl-${now}`;
     const accountId = `123456${String(now).slice(-6)}`;
 
-    const findingId = await seedCloudFinding(seniorPage, {
+    await seedCloudFinding(seniorPage, {
       title: `CloudTrail AssumeRole ${runTag}`,
       severity: "high",
       technique_ids: ["T1078.004"],
@@ -125,7 +120,6 @@ test.describe("Cloud Hunts page", () => {
         target_arn: `arn:aws:iam::${accountId}:role/VictimRole-${runTag}`,
       },
     });
-    test.skip(findingId === null, "cloud finding test-seed endpoint not wired");
 
     await seniorPage.goto("/cloud-hunts");
     await seniorPage
@@ -152,7 +146,7 @@ test.describe("Cloud Hunts page", () => {
     const runTag = `ch-iam-${now}`;
     const accountId = `234567${String(now).slice(-6)}`;
 
-    const findingId = await seedCloudFinding(seniorPage, {
+    await seedCloudFinding(seniorPage, {
       title: `IAM AssumeRole chain ${runTag}`,
       severity: "critical",
       evidence: {
@@ -165,7 +159,6 @@ test.describe("Cloud Hunts page", () => {
         ],
       },
     });
-    test.skip(findingId === null, "cloud finding test-seed endpoint not wired");
 
     await seniorPage.goto("/cloud-hunts");
     await seniorPage
@@ -199,7 +192,7 @@ test.describe("Cloud Hunts page", () => {
     const now = Date.now();
     const runTag = `ch-shad-${now}`;
 
-    const findingId = await seedCloudFinding(seniorPage, {
+    await seedCloudFinding(seniorPage, {
       title: `Shadow AgentCore workload ${runTag}`,
       severity: "high",
       evidence: {
@@ -209,7 +202,6 @@ test.describe("Cloud Hunts page", () => {
         risk_score: 0.85,
       },
     });
-    test.skip(findingId === null, "cloud finding test-seed endpoint not wired");
 
     await seniorPage.goto("/cloud-hunts");
     await seniorPage
@@ -239,7 +231,7 @@ test.describe("Cloud Hunts page", () => {
     const now = Date.now();
     const runTag = `ch-tamp-${now}`;
 
-    const findingId = await seedCloudFinding(seniorPage, {
+    await seedCloudFinding(seniorPage, {
       title: `CloudTrail log delete ${runTag}`,
       severity: "critical",
       evidence: {
@@ -247,7 +239,6 @@ test.describe("Cloud Hunts page", () => {
         technique_family: "Defense Evasion",
       },
     });
-    test.skip(findingId === null, "cloud finding test-seed endpoint not wired");
 
     await seniorPage.goto("/cloud-hunts");
     await seniorPage
@@ -274,11 +265,10 @@ test.describe("Cloud Hunts page", () => {
     const now = Date.now();
     const runTag = `ch-rbac-senior-${now}`;
 
-    const findingId = await seedCloudFinding(seniorPage, {
+    await seedCloudFinding(seniorPage, {
       title: `Promote test finding ${runTag}`,
       evidence: { provider: "azure", account_id: `sub-${runTag}` },
     });
-    test.skip(findingId === null, "cloud finding test-seed endpoint not wired");
 
     await seniorPage.goto("/cloud-hunts");
     await seniorPage
