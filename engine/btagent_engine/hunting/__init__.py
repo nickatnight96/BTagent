@@ -10,6 +10,16 @@ job: it converts ``SigmaHit`` -> ``HuntFinding`` via
 ``hunt_triage_service.ingest_findings``.
 """
 
+from btagent_engine.hunting.corpus import (
+    BackendCoverage,
+    CorpusImport,
+    RuleSkip,
+    RuleTranspile,
+    import_sigma_corpus,
+    iter_sigma_rule_files,
+    transpile_coverage,
+    write_pack_dir,
+)
 from btagent_engine.hunting.pack import (
     BUILTIN_PACKS_DIR,
     HuntPack,
@@ -37,21 +47,29 @@ from btagent_engine.hunting.transpile import (
 
 __all__ = [
     "BUILTIN_PACKS_DIR",
+    "BackendCoverage",
     "BackendRunResult",
+    "CorpusImport",
     "HuntPack",
     "HuntPackRule",
     "PackLoadError",
     "PackRunResult",
     "RuleRunResult",
+    "RuleSkip",
+    "RuleTranspile",
     "SUPPORTED_BACKENDS",
     "SigmaBackendName",
     "SigmaHit",
     "SigmaHitEntity",
     "SigmaTranspileError",
     "UnsupportedSigmaRuleError",
+    "import_sigma_corpus",
+    "iter_sigma_rule_files",
     "load_builtin_pack",
     "load_pack",
     "load_pack_from_bundle",
     "run_pack",
     "transpile",
+    "transpile_coverage",
+    "write_pack_dir",
 ]

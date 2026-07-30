@@ -1,0 +1,27 @@
+title: MSBuild Spawned By A Script Interpreter
+id: 5c72d940-1ab8-4e63-9f05-6d8e2b3a7c41
+status: experimental
+description: |
+  Hunting rule: msbuild.exe launched by a scripting host, the classic
+  inline-task proxy-execution shape.
+references:
+  - https://attack.mitre.org/techniques/T1127/001/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.defense-evasion
+  - attack.t1127.001
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\msbuild.exe'
+    ParentImage|endswith:
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\powershell.exe'
+  condition: selection
+falsepositives:
+  - Build automation driven from PowerShell
+level: high

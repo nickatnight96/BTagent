@@ -1,0 +1,24 @@
+title: Whoami Execution For Local Discovery
+id: 4b6c0e1a-2d8f-4c9b-8a27-9f1e6c3d40b2
+status: test
+description: |
+  Detects execution of whoami.exe. Routine for administrators, but a reliable
+  early beacon of hands-on-keyboard discovery on a server.
+references:
+  - https://attack.mitre.org/techniques/T1033/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.discovery
+  - attack.t1033
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\whoami.exe'
+  condition: selection
+falsepositives:
+  - Administrative sessions
+  - Login scripts
+level: low

@@ -1,0 +1,25 @@
+title: Curl Piped Directly Into A Shell
+id: 6e0b41f9-9c2d-4a35-8b17-3d5f7a1c9e88
+status: test
+description: |
+  Detects the ``curl ... | sh`` install-script pattern, equally beloved by
+  developers and by droppers.
+references:
+  - https://attack.mitre.org/techniques/T1059/004/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.execution
+  - attack.t1059.004
+logsource:
+  category: process_creation
+  product: linux
+detection:
+  selection:
+    CommandLine|contains|all:
+      - 'curl '
+      - '| sh'
+  condition: selection
+falsepositives:
+  - Developer install scripts
+level: medium

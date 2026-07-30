@@ -1,0 +1,25 @@
+title: Run Key Persistence Written To Registry
+id: 3a58e6d7-7b21-4c8e-9d40-1f2c6b8e4a53
+status: test
+description: |
+  Detects a value written under a Run / RunOnce key, the most common userland
+  persistence primitive on Windows.
+references:
+  - https://attack.mitre.org/techniques/T1547/001/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.persistence
+  - attack.t1547.001
+logsource:
+  category: registry_set
+  product: windows
+detection:
+  selection:
+    TargetObject|contains:
+      - '\Software\Microsoft\Windows\CurrentVersion\Run\'
+      - '\Software\Microsoft\Windows\CurrentVersion\RunOnce\'
+  condition: selection
+falsepositives:
+  - Software installers
+level: medium

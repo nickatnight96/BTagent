@@ -1,0 +1,27 @@
+title: Suspicious MSDT Execution From Office Parent
+id: 9d3e77b4-51ac-4f0c-b6d2-8e5a1c9f2d77
+status: test
+description: |
+  Detects msdt.exe spawned by an Office application, the parent/child shape of
+  ms-msdt URI abuse.
+references:
+  - https://attack.mitre.org/techniques/T1218/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.defense-evasion
+  - attack.t1218
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Image|endswith: '\msdt.exe'
+    ParentImage|endswith:
+      - '\winword.exe'
+      - '\excel.exe'
+      - '\powerpnt.exe'
+  condition: selection
+falsepositives:
+  - Troubleshooting launched from an Office help link
+level: high

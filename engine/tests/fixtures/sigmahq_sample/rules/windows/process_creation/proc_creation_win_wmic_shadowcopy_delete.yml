@@ -1,0 +1,27 @@
+title: Shadow Copy Deletion Via WMIC
+id: 1f0a55c8-8e37-4f6a-bd41-5a3d9e2b7c04
+status: stable
+description: |
+  Detects deletion of volume shadow copies through wmic.exe — a near-universal
+  ransomware precursor.
+references:
+  - https://attack.mitre.org/techniques/T1490/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.impact
+  - attack.t1490
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection_img:
+    Image|endswith: '\wmic.exe'
+  selection_cli:
+    CommandLine|contains|all:
+      - 'shadowcopy'
+      - 'delete'
+  condition: all of selection_*
+falsepositives:
+  - Backup software maintenance windows
+level: critical

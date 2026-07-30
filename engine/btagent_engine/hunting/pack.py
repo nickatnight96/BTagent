@@ -142,7 +142,7 @@ def _parse_rule_source(filename: str, raw: str) -> dict[str, Any]:
     return parsed
 
 
-def _deterministic_id(prefix: str, *parts: str) -> str:
+def deterministic_id(prefix: str, *parts: str) -> str:
     """Derive a stable ID from input parts.
 
     Codex #198: when pack.yaml or a rule omits an explicit ``id``, the old
@@ -154,6 +154,29 @@ def _deterministic_id(prefix: str, *parts: str) -> str:
     """
     digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:24]
     return f"{prefix}_{digest}"
+
+
+def parse_rule_file(path: Path) -> tuple[dict[str, Any], str]:
+    """Load one Sigma rule *file* -> (parsed mapping, raw yaml text).
+
+    A thin path-based wrapper over :func:`_parse_rule_source`, which is the
+    single parser. Public because the external-corpus importer
+    (:mod:`btagent_engine.hunting.corpus`) reads SigmaHQ rule files off disk
+    and must parse them with the *same* semantics as a pack directory —
+    one parser, not two.
+    """
+    raw = path.read_text(encoding="utf-8")
+    return _parse_rule_source(path.name, raw), raw
+
+
+def rule_from_file(path: Path, meta: dict[str, Any], *, pack_id: str) -> HuntPackRule:
+    """Build one :class:`HuntPackRule` from a Sigma rule *file* + pack.yaml metadata.
+
+    Path-based wrapper over :func:`_rule_from_source` for the corpus importer;
+    raises :class:`PackLoadError` for an unparseable / titleless rule file.
+    """
+    raw = path.read_text(encoding="utf-8")
+    return _rule_from_source(path.name, raw, meta, pack_id=pack_id)
 
 
 def _rule_from_source(
@@ -175,7 +198,7 @@ def _rule_from_source(
 
     level = str(parsed.get("level") or "").strip().lower()
 
-    rule_id = str(parsed.get("id") or "").strip() or _deterministic_id(
+    rule_id = str(parsed.get("id") or "").strip() or deterministic_id(
         "hrule", pack_id, filename, raw
     )
 
@@ -220,7 +243,7 @@ def _pack_from_sources(
     # repeated loads of the same versioned pack produce the same id.
     pack_name = str(manifest.get("name") or fallback_name)
     pack_version = str(manifest.get("version") or "0.0.0")
-    pack_id = str(manifest.get("id") or "").strip() or _deterministic_id(
+    pack_id = str(manifest.get("id") or "").strip() or deterministic_id(
         "hpack", pack_name, pack_version
     )
 

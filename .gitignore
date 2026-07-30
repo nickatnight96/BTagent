@@ -63,6 +63,10 @@ playwright-report/
 *.db
 *.sqlite3
 
+# Hunt packs imported from an external Sigma corpus (#112). Anchored: this is
+# the default BTAGENT_HUNT_PACK_INSTALL_DIR, operator-local state, never source.
+/data/hunt_packs/
+
 # Terraform
 *.tfstate
 *.tfstate.*

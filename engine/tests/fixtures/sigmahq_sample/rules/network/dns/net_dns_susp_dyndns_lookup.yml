@@ -1,0 +1,25 @@
+title: DNS Query To Dynamic DNS Provider
+id: 8f14c3a5-4d97-4b60-a2e8-7c5b1d9f6a20
+status: experimental
+description: |
+  Detects DNS lookups for dynamic-DNS domains frequently used as cheap C2
+  rendezvous points.
+references:
+  - https://attack.mitre.org/techniques/T1071/004/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.command-and-control
+  - attack.t1071.004
+logsource:
+  category: dns
+detection:
+  selection:
+    query|endswith:
+      - '.duckdns.org'
+      - '.no-ip.org'
+      - '.hopto.org'
+  condition: selection
+falsepositives:
+  - Home-lab equipment reachable over dynamic DNS
+level: low

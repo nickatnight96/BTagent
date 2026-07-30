@@ -514,11 +514,13 @@ async def run_pack_and_ingest(
 
     Org-aware: ingests into ``org_id`` and — when ``pack_names`` is not given —
     runs exactly the packs that org has **enabled** in the per-org pack store
-    (:func:`hunt_pack_store.enabled_pack_names`). An org with no rows falls
-    back to the builtin default set, so behaviour for existing orgs is
-    unchanged. An explicit ``pack_names`` (ad-hoc / test runs) bypasses the
-    store. One history row per pack; a failure running a single pack is
-    captured as a ``failed`` history row and does not abort the rest.
+    (:func:`hunt_pack_store.enabled_pack_names`), resolving each name through
+    :func:`hunt_pack_store.load_pack_for_org` so an externally imported corpus
+    (#112 ``bt huntpack install``) runs alongside the shipped packs. An org
+    with no rows falls back to the builtin default set, so behaviour for
+    existing orgs is unchanged. An explicit ``pack_names`` (ad-hoc / test runs)
+    bypasses the store. One history row per pack; a failure running a single
+    pack is captured as a ``failed`` history row and does not abort the rest.
 
     Resume-aware (#112): before running a pack it looks for the newest
     in-flight (``running``) run for ``(org_id, pack)`` — the remnant of a
@@ -529,7 +531,6 @@ async def run_pack_and_ingest(
     process restart; the arq job wrapper still owns the final commit.
     """
     # Lazy: the engine pulls pysigma, only present in the worker image.
-    from btagent_engine.hunting.pack import load_builtin_pack
     from btagent_engine.hunting.runner import run_pack
     from btagent_engine.node import NodeContext
 
@@ -557,11 +558,18 @@ async def run_pack_and_ingest(
     for name in pack_names:
         run_row: HuntPackRunRow | None = None
         try:
+            # Three pack sources, most-specific first:
+            #   1. org custom packs stored as DB rows,
+            #   2. externally imported corpus packs installed on disk (#112),
+            #   3. the shipped builtins.
+            # ``load_pack_for_org`` covers (2) then (3), so an imported SigmaHQ
+            # corpus runs the exact same transpile → execute → ingest pipeline
+            # as a shipped pack.
             custom_row = custom_by_pack_id.get(name)
             if custom_row is not None:
                 pack = org_custom_pack_service.load_row_pack(custom_row)
             else:
-                pack = load_builtin_pack(name)
+                pack = hunt_pack_store.load_pack_for_org(name, org_id=org_id)
             # Resume the in-flight run for this pack if one survived a restart,
             # else open a fresh one. Either way we run against its stable id.
             run_row = await _find_resumable_run(db, org_id=org_id, pack_id=pack.id)

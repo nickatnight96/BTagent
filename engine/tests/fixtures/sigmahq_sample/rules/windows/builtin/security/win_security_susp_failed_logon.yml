@@ -1,0 +1,25 @@
+title: Failed Network Logon Burst Candidate
+id: c41d9b02-6e58-4a71-9f36-0b7c2e5d8a19
+status: stable
+description: |
+  Detects failed network (type 3) logons in the Security channel — the raw
+  candidate signal behind password-spray clustering.
+references:
+  - https://attack.mitre.org/techniques/T1110/003/
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.credential-access
+  - attack.t1110.003
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4625
+    LogonType: 3
+  condition: selection
+falsepositives:
+  - Stale service credentials
+  - Users with expired passwords on mapped drives
+level: medium

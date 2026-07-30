@@ -1,0 +1,23 @@
+# Deliberately unsupported fixture: the deprecated Sigma pipe-aggregation
+# syntax. The YAML parses and the rule is a legitimate community artifact, but
+# no connected backend can express it -> skipped at the ``transpile`` stage.
+title: Failed Logon Count Threshold (Pipe Aggregation)
+id: 0a0a0a0a-0000-4000-8000-000000000003
+status: deprecated
+description: |
+  Uses the legacy ``| count() by ... > N`` aggregation that pySigma no longer
+  supports on any of the four connected backends.
+author: Vendored SigmaHQ-style sample (BTagent test fixture)
+date: 2026-01-12
+tags:
+  - attack.credential-access
+  - attack.t1110
+logsource:
+  product: windows
+  service: security
+detection:
+  selection:
+    EventID: 4625
+  timeframe: 30m
+  condition: selection | count(TargetUserName) by IpAddress > 30
+level: medium
