@@ -2,11 +2,15 @@
 
 import logging
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from btagent_backend.config import get_settings
+from btagent_backend.config import Settings, get_settings
+
+if TYPE_CHECKING:
+    from btagent_agents.llm.client import LiteLLMClient
 from btagent_backend.middleware.request_id import RequestIDMiddleware
 from btagent_backend.middleware.security_headers import SecurityHeadersMiddleware
 from btagent_backend.observability import metrics_endpoint, setup_logging, setup_otel, shutdown_otel
@@ -14,6 +18,27 @@ from btagent_backend.services.task_manager import TaskManager
 from btagent_backend.ws import WebSocketHub, init_ws_routes, ws_router
 
 logger = logging.getLogger("btagent.main")
+
+
+def build_live_llm_client(settings: Settings) -> "LiteLLMClient":
+    """Build the LiteLLM-backed chat client from configuration (#506).
+
+    Split out of :func:`lifespan` so the *threading* of the local-model
+    settings is testable without booting the app. Before #506 the client was
+    constructed with no arguments, which silently pinned chat completions to
+    ``localhost:11434`` (the router's hardcoded default) and offered no way to
+    guarantee local-only routing -- both of which an air-gapped operator sets
+    via ``BTAGENT_OLLAMA_BASE_URL`` / ``BTAGENT_LOCAL_LLM_ONLY``.
+
+    Reading the values off ``settings`` rather than ``os.getenv`` means a value
+    supplied through ``.env`` (which pydantic-settings loads) is honoured too.
+    """
+    from btagent_agents.llm.client import LiteLLMClient
+
+    return LiteLLMClient(
+        ollama_base_url=settings.ollama_base_url,
+        local_only=settings.local_llm_only,
+    )
 
 
 @asynccontextmanager
@@ -55,11 +80,14 @@ async def lifespan(app: FastAPI):
     # or empty value keeps mock mode on, so a misconfig never causes egress.
     if os.getenv("BTAGENT_MOCK_LLM", "true").strip().lower() == "false":
         try:
-            from btagent_agents.llm.client import LiteLLMClient
             from btagent_engine.llm import set_llm_client
 
-            set_llm_client(LiteLLMClient())
-            logger.info("Live LLM client registered (LiteLLM router)")
+            set_llm_client(build_live_llm_client(settings))
+            logger.info(
+                "Live LLM client registered (LiteLLM router; ollama_base_url=%s local_only=%s)",
+                settings.ollama_base_url,
+                settings.local_llm_only,
+            )
         except Exception:  # noqa: BLE001 - never let LLM wiring block startup
             logger.exception("Failed to register live LLM client; nodes will raise on dispatch")
 

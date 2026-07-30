@@ -496,7 +496,18 @@ class Settings(BaseSettings):
     embedding_provider: str = "openai"  # openai | ollama
     embedding_model: str = "text-embedding-3-small"
     openai_api_key: str = ""
+    # Local model server. Consumed by the embedding service AND (since #506) by
+    # the chat-completion path: ``main.py`` threads it into the LiteLLM router,
+    # which previously hardcoded ``localhost:11434`` for chat.
     ollama_base_url: str = "http://localhost:11434"
+
+    # Air-gap / sovereign posture (#506, #98 Bet 4). ``true`` restricts LLM
+    # routing to local providers (ollama / vllm) and makes the router FAIL
+    # CLOSED: a request whose TLP level authorises no local provider raises
+    # ``RoutingError`` instead of resolving to a hosted provider. Default OFF,
+    # so connected deployments keep today's static-preference routing; without
+    # it, "no cloud egress" is only a property of not having credentials.
+    local_llm_only: bool = False
 
     # Rate limiting
     rate_limit_enabled: bool = True

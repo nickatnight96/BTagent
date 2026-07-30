@@ -10,11 +10,29 @@ Uses LiteLLM via LangChain's ChatLiteLLM wrapper for a unified interface.
 ``ChatLiteLLM`` ships in the standalone ``langchain-litellm`` package; the
 old ``langchain_community.chat_models`` home was removed in
 langchain-community 0.4.2 (that package is being sunset).
+
+Air-gap knobs (#506). Two constructor arguments decide whether an offline
+install actually stays offline, and both fall back to the ``BTAGENT_``
+environment when the caller passes nothing:
+
+* ``ollama_base_url`` -- where chat completions are sent when the resolved
+  provider is Ollama. Defaults from ``BTAGENT_OLLAMA_BASE_URL`` so the
+  zero-argument construction sites (``LiteLLMClient``,
+  ``engine_runner.run_workflow_template``) honour an operator's setting
+  instead of silently targeting ``localhost``. The backend passes the value
+  from its ``Settings`` object explicitly, which also picks up ``.env``.
+* ``local_only`` -- restricts resolution to :data:`LOCAL_PROVIDERS` and
+  **fails closed**: when no local provider is allowed at the requested TLP
+  level, :meth:`TLPAwareLLMRouter.resolve` raises :class:`RoutingError`
+  rather than falling through to a hosted provider. Defaults from
+  ``BTAGENT_LOCAL_LLM_ONLY`` and is OFF unless explicitly set, so the
+  connected-deployment behaviour is unchanged.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from btagent_shared.types.config import TLP, ModelProvider, ModelTier
@@ -22,6 +40,49 @@ from langchain_core.language_models import BaseChatModel
 from langchain_litellm import ChatLiteLLM
 
 logger = logging.getLogger("btagent.llm.router")
+
+#: Fallback when neither the caller nor ``BTAGENT_OLLAMA_BASE_URL`` says where
+#: the local model server lives.
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+
+#: Providers that serve models from inside the deployment boundary. ``"vllm"``
+#: is deliberately a bare string: it is not a :class:`ModelProvider` member
+#: yet, and naming it here means the local allow-list is already correct the
+#: day one is added rather than quietly excluding it. Membership tests work
+#: either way because ``ModelProvider`` is a ``StrEnum``.
+LOCAL_PROVIDERS: frozenset[str] = frozenset({ModelProvider.OLLAMA, "vllm"})
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSEY = frozenset({"", "0", "false", "no", "off"})
+
+
+def _env_ollama_base_url() -> str:
+    """Resolve the Ollama base URL from the environment."""
+    return os.getenv("BTAGENT_OLLAMA_BASE_URL", "").strip() or DEFAULT_OLLAMA_BASE_URL
+
+
+def _env_local_only() -> bool:
+    """Read ``BTAGENT_LOCAL_LLM_ONLY``; anything unset/unparsable means OFF.
+
+    Defaulting to OFF keeps existing (connected) deployments on today's
+    behaviour, and the restriction only ever *narrows* routing -- so a value
+    this function cannot parse leaves a working, permissive system rather than
+    a half-configured one. That is quiet, though, which is the failure mode an
+    enclave operator can least afford, so an unrecognised value is logged as a
+    warning. (The backend does not rely on this path at all: it passes
+    ``Settings.local_llm_only``, and pydantic rejects a malformed boolean at
+    startup.)
+    """
+    raw = os.getenv("BTAGENT_LOCAL_LLM_ONLY", "").strip().lower()
+    if raw in _TRUTHY:
+        return True
+    if raw not in _FALSEY:
+        logger.warning(
+            "BTAGENT_LOCAL_LLM_ONLY=%r is not a recognised boolean; treating local-LLM-only "
+            "mode as DISABLED. Set it to 'true' to restrict routing to local providers.",
+            raw,
+        )
+    return False
 
 
 class RoutingError(Exception):
@@ -39,6 +100,10 @@ class TLPAwareLLMRouter:
     The router enforces that data classified at a given TLP level is only sent to
     providers authorized for that level. Within the set of allowed providers, it
     selects the model matching the requested capability tier.
+
+    With ``local_only=True`` the allowed set is additionally intersected with
+    :data:`LOCAL_PROVIDERS`, which turns "no cloud egress" from a property of
+    *not having credentials* into an explicit, testable setting.
     """
 
     # Which providers are allowed at each TLP level (ordered by preference)
@@ -103,17 +168,41 @@ class TLPAwareLLMRouter:
         *,
         default_temperature: float = 0.1,
         default_max_tokens: int = 4096,
-        ollama_base_url: str = "http://localhost:11434",
+        ollama_base_url: str | None = None,
+        local_only: bool | None = None,
         litellm_kwargs: dict[str, Any] | None = None,
     ) -> None:
         self._default_temperature = default_temperature
         self._default_max_tokens = default_max_tokens
-        self._ollama_base_url = ollama_base_url
+        # ``None`` (not a hardcoded localhost default) so an unset argument
+        # means "ask the environment" rather than "override the operator".
+        self._ollama_base_url = ollama_base_url or _env_ollama_base_url()
+        self._local_only = _env_local_only() if local_only is None else local_only
         self._litellm_kwargs = litellm_kwargs or {}
 
+    @property
+    def ollama_base_url(self) -> str:
+        """Base URL chat completions use when the resolved provider is Ollama."""
+        return self._ollama_base_url
+
+    @property
+    def local_only(self) -> bool:
+        """Whether resolution is restricted to :data:`LOCAL_PROVIDERS`."""
+        return self._local_only
+
     def get_allowed_providers(self, tlp: TLP) -> list[str]:
-        """Return the ordered list of providers allowed for a TLP level."""
-        return list(self.TLP_ROUTING.get(tlp, []))
+        """Return the ordered list of providers allowed for a TLP level.
+
+        Under ``local_only`` the TLP allow-list is intersected with
+        :data:`LOCAL_PROVIDERS`. Filtering here rather than inside
+        :meth:`resolve` keeps one source of truth, so
+        :meth:`validate_routing` (used by external callers to pre-check a
+        provider) rejects hosted providers under local-only too.
+        """
+        allowed = list(self.TLP_ROUTING.get(tlp, []))
+        if self._local_only:
+            allowed = [p for p in allowed if p in LOCAL_PROVIDERS]
+        return allowed
 
     def get_model_id(self, tier: ModelTier, provider: str) -> str | None:
         """Look up the model ID for a given tier and provider.
@@ -122,6 +211,17 @@ class TLPAwareLLMRouter:
         """
         tier_models = self.MODEL_TIERS.get(tier, {})
         return tier_models.get(provider)
+
+    def _local_only_refusal(self, unrestricted: list[str]) -> str:
+        """Explain a local-only refusal in terms an operator can act on."""
+        return (
+            "local-LLM-only mode is enabled (BTAGENT_LOCAL_LLM_ONLY=true) and no local "
+            f"provider ({', '.join(sorted(LOCAL_PROVIDERS))}) is authorised at this TLP "
+            "level, so the request is refused rather than routed to a hosted provider. "
+            f"Providers allowed at this level without the restriction: "
+            f"{', '.join(sorted(unrestricted))}. Classify this work at a TLP level that "
+            "permits a local provider, or turn the restriction off."
+        )
 
     def resolve(
         self,
@@ -140,10 +240,16 @@ class TLPAwareLLMRouter:
             Tuple of (provider, model_id).
 
         Raises:
-            RoutingError: If no compatible provider/model can be found.
+            RoutingError: If no compatible provider/model can be found. Under
+                ``local_only`` this is the fail-closed path: a TLP level whose
+                allow-list contains no local provider raises here instead of
+                resolving to a hosted one.
         """
+        unrestricted = list(self.TLP_ROUTING.get(tlp, []))
         allowed = self.get_allowed_providers(tlp)
         if not allowed:
+            if self._local_only and unrestricted:
+                raise RoutingError(tlp, tier, self._local_only_refusal(unrestricted))
             raise RoutingError(tlp, tier, "No providers allowed for this TLP level")
 
         # Try preferred provider first if it's in the allowed list
@@ -170,11 +276,10 @@ class TLPAwareLLMRouter:
                     )
                     return provider, model_id
 
-        raise RoutingError(
-            tlp,
-            tier,
-            f"No model found for tier={tier} among allowed providers: {allowed}",
-        )
+        detail = f"No model found for tier={tier} among allowed providers: {allowed}"
+        if self._local_only:
+            detail += " (local-LLM-only mode is enabled; hosted providers were excluded)"
+        raise RoutingError(tlp, tier, detail)
 
     def get_llm(
         self,
@@ -228,11 +333,12 @@ class TLPAwareLLMRouter:
         )
 
         logger.info(
-            "Routed LLM: TLP=%s tier=%s -> provider=%s model=%s",
+            "Routed LLM: TLP=%s tier=%s -> provider=%s model=%s (local_only=%s)",
             tlp.value,
             tier.value,
             provider,
             model_id,
+            self._local_only,
         )
 
         return llm

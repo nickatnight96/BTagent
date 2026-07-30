@@ -10,6 +10,17 @@ Wiring: the host process (backend/agents bootstrap) constructs one of
 these and registers it via ``btagent_engine.llm.set_llm_client(...)``.
 Until then the engine falls back to its deterministic mock path, so
 demos + tests run with no API keys.
+
+Local-model configuration (#506). This class used to build
+``TLPAwareLLMRouter()`` with no arguments, which pinned chat completions to
+the router's hardcoded ``localhost:11434`` -- so an air-gapped operator's
+``BTAGENT_OLLAMA_BASE_URL`` reached the *embedding* service but not this
+path. The base URL and the local-only restriction are now constructor
+arguments; the backend's lifespan
+(``backend/btagent_backend/main.py``) passes both from its ``Settings``
+object, and when a caller passes neither the router falls back to the same
+``BTAGENT_`` environment variables. Callers that already hold a configured
+router keep passing it and are unaffected.
 """
 
 from __future__ import annotations
@@ -27,8 +38,34 @@ logger = logging.getLogger("btagent.llm.client")
 class LiteLLMClient:
     """Concrete LLMClient: routes by (TLP, tier) and calls via LiteLLM."""
 
-    def __init__(self, router: TLPAwareLLMRouter | None = None) -> None:
-        self._router = router or TLPAwareLLMRouter()
+    def __init__(
+        self,
+        router: TLPAwareLLMRouter | None = None,
+        *,
+        ollama_base_url: str | None = None,
+        local_only: bool | None = None,
+    ) -> None:
+        """Build a client, optionally over a caller-supplied router.
+
+        Args:
+            router: Pre-configured router. When given, the two settings below
+                are ignored -- the caller already owns that configuration.
+            ollama_base_url: Where chat completions go when the resolved
+                provider is Ollama. ``None`` defers to
+                ``BTAGENT_OLLAMA_BASE_URL``.
+            local_only: Restrict resolution to local providers and fail closed
+                when none is authorised. ``None`` defers to
+                ``BTAGENT_LOCAL_LLM_ONLY`` (OFF unless set).
+        """
+        self._router = router or TLPAwareLLMRouter(
+            ollama_base_url=ollama_base_url,
+            local_only=local_only,
+        )
+
+    @property
+    def router(self) -> TLPAwareLLMRouter:
+        """The router this client dispatches through (read-only)."""
+        return self._router
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         from langchain_core.messages import (

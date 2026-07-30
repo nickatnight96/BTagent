@@ -58,7 +58,7 @@ import socket
 
 import pytest
 import pytest_asyncio
-from btagent_shared.types.config import TLP
+from btagent_shared.types.config import TLP, ModelTier
 from btagent_shared.utils.ids import generate_id
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -407,3 +407,45 @@ async def test_llm_call_makes_no_outbound_calls(sovereign_posture):
 
     guard.assert_no_egress()
     assert out.text.startswith("[mock-llm]")
+
+
+# --------------------------------------------------------------------------- #
+# 6. Local-LLM-only posture (#506)
+# --------------------------------------------------------------------------- #
+
+
+def test_local_llm_only_posture_never_resolves_a_hosted_provider():
+    """``BTAGENT_LOCAL_LLM_ONLY=true`` keeps *every* TLP level off the cloud.
+
+    The mock-LLM posture above passes because nothing dials out at all. This
+    covers the *next* posture an enclave adopts — ``BTAGENT_MOCK_LLM=false``
+    with a local model server — where the old static-preference routing would
+    have resolved a GREEN request to Anthropic. ``Settings`` is built directly
+    (rather than via the env) so the assertion is about the wiring the lifespan
+    uses, and only ``resolve`` runs inside the guard: it is the decision that
+    must never name a hosted provider.
+    """
+    from btagent_agents.llm.router import LOCAL_PROVIDERS, RoutingError
+
+    from btagent_backend.config import Settings
+    from btagent_backend.main import build_live_llm_client
+
+    router = build_live_llm_client(
+        Settings(local_llm_only=True, ollama_base_url="http://localhost:11434")
+    ).router
+    assert router.local_only is True
+
+    refused: list[TLP] = []
+    with EgressGuard() as guard:
+        for tlp in TLP:
+            try:
+                provider, _ = router.resolve(tlp, ModelTier.STANDARD)
+            except RoutingError:
+                refused.append(tlp)  # fail closed: refused, not downgraded
+                continue
+            assert provider in LOCAL_PROVIDERS, f"{tlp} resolved to hosted provider {provider}"
+
+    guard.assert_no_egress()
+    # TLP.AMBER authorises no local provider, so it must be one of the refusals
+    # rather than a silent hosted fallback.
+    assert TLP.AMBER in refused

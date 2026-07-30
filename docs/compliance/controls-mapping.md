@@ -111,6 +111,7 @@ regression suite exists precisely because that has happened before.
 | Org overlay | `assert_org_policy_allows_egress()` — runs *after* the baseline and acts **only** on a policy decision of `allowed=False`. `ALLOW` and `DOWNGRADE_THEN_ALLOW` policies are deliberately inert at runtime, because honouring them would *widen* a default-deny gate |
 | Observability | Violations emit a `tlp.violation_attempt` event carrying the matched policy id (`shared/btagent_shared/security/tlp_policy.py`), surfaced over WebSocket via `backend/btagent_backend/services/tlp_alert_sink.py` |
 | Model routing | `TLPAwareLLMRouter.TLP_ROUTING` (`agents/btagent_agents/llm/router.py`) — TLP:RED routes to a local Ollama model **only**; AMBER_STRICT to Ollama or Bedrock |
+| Local-only routing | `BTAGENT_LOCAL_LLM_ONLY=true` intersects every TLP row with the local providers and raises `RoutingError` when a level authorises none — the guarantee is a setting, not the absence of credentials (default off) |
 | Regression cover | `backend/tests/test_tlp_egress.py`, `test_tlp_org_policy_enforcement.py`, `test_ws_tlp_egress.py`, `test_tlp_alert_sink.py` |
 
 **Cross-reference:** NIST AC-4, AC-16, SC-7 · ISO/IEC 42001 A.7 (data), A.9.2 (responsible use)
@@ -257,6 +258,7 @@ attestation (Sigstore, in-toto, SLSA provenance) is implemented.
 |---|---|
 | Untrusted content fenced before reaching a model | `<external-data>` wrapping, e.g. `shared/btagent_shared/hunt/detection_engineer.py` |
 | TLP-aware model routing (RED → local only) | `agents/btagent_agents/llm/router.py` — `TLPAwareLLMRouter.resolve()` |
+| Local-providers-only switch, fail-closed | `agents/btagent_agents/llm/router.py` — `local_only` / `BTAGENT_LOCAL_LLM_ONLY`, threaded from `Settings` in `backend/btagent_backend/main.py` |
 | Per-workflow prompt/token budget | `engine/btagent_engine/middleware/prompt_budget.py` — `PromptBudgetMiddleware`, `PromptBudgetExceeded` |
 | Evidence chain over agent steps | `engine/btagent_engine/middleware/evidence_chain.py` |
 | Scope enforcement on agent actions | `engine/btagent_engine/middleware/scope.py` |
