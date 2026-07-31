@@ -223,3 +223,69 @@ async def seed_pattern_proposal(
     db.add(row)
     await db.flush()
     return SeedIdResponse(id=row.id)
+
+
+# --------------------------------------------------------------------------- #
+# Investigations (#103 demo-scenario UAT)
+# --------------------------------------------------------------------------- #
+
+
+class SeedInvestigationRequest(BaseModel):
+    """Create an investigation row with a caller-chosen id.
+
+    The product create route mints its own ULID, but the report plugin's
+    case-data source is still the fixed-id mock store (#109 gap), so an
+    end-to-end reporting demo needs a DB row whose id matches a mock-store
+    case (e.g. ``inv_mock_001``) to pass the route's org-scope check. Only
+    this test-gated route may choose an id; it upserts on (org, id).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(..., min_length=4, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    title: str = Field(..., min_length=1, max_length=500)
+    description: str = Field(default="", max_length=20000)
+    severity: str = Field(default="medium", max_length=20)
+    status_value: str = Field(default="investigating", max_length=50, alias="status")
+
+
+@router.post(
+    "/investigations/test/seed",
+    response_model=SeedIdResponse,
+    status_code=201,
+    dependencies=[Depends(_require_test_env)],
+)
+async def seed_investigation(
+    body: SeedInvestigationRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+) -> SeedIdResponse:
+    """Get-or-create an investigation with an explicit id (test env only)."""
+    user.require_permission("investigation:create")
+
+    from btagent_backend.db.models import InvestigationRow
+
+    existing = (
+        await db.execute(
+            select(InvestigationRow).where(
+                InvestigationRow.id == body.id,
+                InvestigationRow.org_id == user.org_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return SeedIdResponse(id=existing.id)
+
+    row = InvestigationRow(
+        id=body.id,
+        org_id=user.org_id,
+        title=body.title,
+        description=body.description,
+        status=body.status_value,
+        severity=body.severity,
+        tlp_level="green",
+        assigned_to=user.id,
+    )
+    db.add(row)
+    await db.flush()
+    return SeedIdResponse(id=row.id)

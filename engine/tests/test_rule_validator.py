@@ -91,3 +91,29 @@ def test_verdict_clean_when_no_hits_and_not_all_errors() -> None:
         ],
     )
     assert result.verdict == "clean"
+
+
+# A rule the kusto (sentinel) pipeline refuses with its own exception type
+# (InvalidHashAlgorithmError — not SigmaTranspileError/ValueError): the
+# ``Hashes`` field carries a bare digest with no algorithm prefix. Found by
+# the #103 demo-2 UAT: validating a hash IOC proposal 500'd the API instead
+# of degrading to that backend's error.
+_HASH_RULE = """\
+title: Dropped binary hash sighting
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  selection:
+    Hashes|contains: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+  condition: selection
+level: high
+"""
+
+
+async def test_pipeline_specific_exception_degrades_to_backend_error() -> None:
+    result = await validate_rule(_HASH_RULE, ["splunk", "sentinel"], _ctx())
+    by_name = {b.backend: b for b in result.backends}
+    # The kusto pipeline's refusal is that backend's error, not a raised 500.
+    assert by_name["sentinel"].error is not None
+    assert "transpile failed" in by_name["sentinel"].error

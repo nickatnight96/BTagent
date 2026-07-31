@@ -28,7 +28,6 @@ from btagent_engine.hunting.plan_runner import _BACKEND_ADAPTERS
 from btagent_engine.hunting.transpile import (
     SUPPORTED_BACKENDS,
     SigmaBackendName,
-    SigmaTranspileError,
     transpile,
 )
 from btagent_engine.node import NodeContext
@@ -114,7 +113,13 @@ async def validate_rule(
             continue
         try:
             query = transpile(sigma_yaml, name)  # type: ignore[arg-type]
-        except (SigmaTranspileError, ValueError) as exc:
+        except Exception as exc:
+            # Broad on purpose: pySigma backend pipelines raise their own
+            # exception types past SigmaTranspileError/ValueError (e.g. the
+            # kusto pipeline's InvalidHashAlgorithmError on a Hashes field
+            # shape it rejects). One backend refusing the rule is a
+            # per-backend "error" verdict, never a 500 for the whole
+            # validation — same rationale as the execution catch below.
             result.backends.append(
                 BackendValidation(backend=name, error=f"transpile failed: {exc}")
             )

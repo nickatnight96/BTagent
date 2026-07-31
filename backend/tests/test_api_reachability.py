@@ -114,6 +114,7 @@ NOT_BROWSER_CALLED: dict[str, str] = {
     "POST /behavioral/test/entities": "E2E seed; 404s outside BTAGENT_ENV=test, Playwright-only",
     "POST /behavioral/test/outliers": "E2E seed; 404s outside BTAGENT_ENV=test, Playwright-only",
     "POST /pattern/test/proposals": "E2E seed; 404s outside BTAGENT_ENV=test, Playwright-only",
+    "POST /investigations/test/seed": "UAT/E2E seed; 404s outside BTAGENT_ENV=test, test-only",
 }
 
 # Capability that exists server-side and cannot be reached from the product.
