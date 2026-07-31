@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.auth.scoping import assert_can_access_investigation
 from btagent_backend.db.models import InvestigationRow
+from btagent_backend.services import chat_history_service
 from btagent_backend.services.task_manager import TaskManager
 
 # AUTH-B1: roles allowed to see every investigation in their org. Plain
@@ -361,9 +362,39 @@ async def chat(
     assert_can_access_investigation(user, inv, write=True)
 
     await task_manager.send_message(investigation_id, body.message, user.id)
+    # Transcript persistence (#482 debt): the route is the only place a user
+    # message enters the system, so this is where it becomes replayable.
+    await chat_history_service.record_user_message(
+        db, investigation_id=investigation_id, content=body.message, user_id=user.id
+    )
     logger.info(
         "Chat message forwarded for investigation %s from user %s",
         investigation_id,
         user.id,
     )
     return {"status": "sent", "investigation_id": investigation_id, "message": body.message}
+
+
+@router.get("/{investigation_id}/history")
+async def history(
+    investigation_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """The investigation's chat transcript, oldest first (#482 debt).
+
+    ``agentStore.loadHistory`` has requested this on every workspace open
+    since Phase 1; until the transcript store landed it 404'd and the client
+    swallowed it, so chat history silently never restored. Returns a bare
+    ``ChatMessage[]`` array — the shape that client has always expected.
+    """
+    user.require_permission("investigation:view")
+    result = await db.execute(
+        select(InvestigationRow).where(InvestigationRow.id == investigation_id)
+    )
+    inv = result.scalar_one_or_none()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Investigation not found")
+    assert_can_access_investigation(user, inv)
+
+    return await chat_history_service.get_history(db, investigation_id=investigation_id)

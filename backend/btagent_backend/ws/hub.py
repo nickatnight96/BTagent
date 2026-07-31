@@ -76,6 +76,9 @@ class WebSocketHub:
         self._redis: Redis | None = None
         self._pubsub_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        # Strong refs to in-flight transcript writes (asyncio only holds weak
+        # refs to tasks; without this a persist could be GC'd mid-write).
+        self._persist_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -358,6 +361,19 @@ class WebSocketHub:
 
         if self._should_drop_for_tlp(envelope, where=f"dispatch({channel})"):
             return
+
+        # Transcript persistence (#482 debt): the agent's finalized answer
+        # only ever crosses the backend here, so this chokepoint is where it
+        # becomes replayable via GET /investigations/{id}/history. Restricted
+        # to the investigation-channel copy (publish() also sends the global
+        # copy) and fire-and-forget: a failed insert logs inside the service
+        # and must never stall live delivery.
+        if envelope.type == EventType.OUTPUT and channel != global_channel():
+            from btagent_backend.services import chat_history_service
+
+            task = asyncio.create_task(chat_history_service.persist_assistant_output(envelope))
+            self._persist_tasks.add(task)
+            task.add_done_callback(self._persist_tasks.discard)
 
         critical = is_critical(envelope)
 
