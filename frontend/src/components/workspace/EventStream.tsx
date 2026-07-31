@@ -42,7 +42,7 @@ function getEventIcon(type: EventType): React.ReactNode {
       return <Shield className="w-3.5 h-3.5 text-amber-400" />;
     case EventType.CONTAINMENT_EXECUTED:
       return <Shield className="w-3.5 h-3.5 text-green-400" />;
-    case EventType.HITL_REQUESTED:
+    case EventType.HITL_CHECKPOINT:
       return <AlertCircle className="w-3.5 h-3.5 text-purple-400" />;
     case EventType.STATUS_CHANGED:
       return <Box className="w-3.5 h-3.5 text-blue-400" />;
@@ -74,7 +74,7 @@ function getEventLabel(event: AgentEvent): string {
       return `Containment proposed: ${(data.action_type as string) ?? ""} on ${(data.target as string) ?? ""}`;
     case EventType.CONTAINMENT_EXECUTED:
       return `Containment executed: ${(data.action_type as string) ?? ""}`;
-    case EventType.HITL_REQUESTED:
+    case EventType.HITL_CHECKPOINT:
       return `Approval required: ${(data.prompt as string) ?? ""}`;
     case EventType.STATUS_CHANGED:
       return `Status: ${(data.old_status as string) ?? ""} -> ${(data.new_status as string) ?? ""}`;
@@ -101,7 +101,7 @@ function EventRow({ event }: { event: AgentEvent }) {
     event.type === EventType.TOOL_ERROR ||
     event.type === EventType.ERROR;
 
-  const isHITL = event.type === EventType.HITL_REQUESTED;
+  const isHITL = event.type === EventType.HITL_CHECKPOINT;
 
   return (
     <div

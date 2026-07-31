@@ -15,12 +15,22 @@ export enum EventType {
   CONTAINMENT_PROPOSED = "containment_proposed",
   CONTAINMENT_EXECUTED = "containment_executed",
 
-  // Chat / streaming
+  // Chat / streaming. Wire names come from the agents-side emitter
+  // (shared/btagent_shared/types/events.py): OUTPUT_CHUNK carries
+  // ``data.text`` per token, OUTPUT is the finalized answer from
+  // ``on_llm_end`` — there is no "message_complete" on the wire (that name
+  // was never emitted by anything; streaming finalization was dead until
+  // this was aligned).
   OUTPUT_CHUNK = "output_chunk",
-  MESSAGE_COMPLETE = "message_complete",
+  OUTPUT = "output",
 
-  // HITL
-  HITL_REQUESTED = "hitl_requested",
+  // Cost / token accounting (prompt-budget hook).
+  TOKEN_USAGE = "token_usage",
+
+  // HITL. The checkpoint event's wire name is "hitl_checkpoint"
+  // (EventType.HITL_CHECKPOINT in shared) — "hitl_requested" was a
+  // frontend-only name no emitter ever used.
+  HITL_CHECKPOINT = "hitl_checkpoint",
   HITL_RESPONSE = "hitl_response",
   HITL_TIMEOUT = "hitl_timeout",
 

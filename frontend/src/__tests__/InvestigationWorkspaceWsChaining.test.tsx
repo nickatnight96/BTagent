@@ -61,6 +61,7 @@ vi.mock("@/components/layout/Header", () => ({
 
 import { useTlpViolationAlerts } from "@/components/governance/TlpViolationAlerts";
 import { InvestigationWorkspace } from "@/components/workspace/InvestigationWorkspace";
+import { useAgentStore } from "@/stores/agentStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useInvestigationStore } from "@/stores/investigationStore";
 
@@ -143,5 +144,99 @@ describe("InvestigationWorkspace WS handler chaining (GH #390)", () => {
     });
 
     expect(toastError).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// Live event contract — the payloads the agents-side hooks actually emit
+// --------------------------------------------------------------------------- //
+
+function agentEvent(
+  type: EventType,
+  data: Record<string, unknown>,
+  id = "evt_stream_1",
+): AgentEvent {
+  return {
+    id,
+    type,
+    investigation_id: "inv_1",
+    timestamp: "2026-07-31T00:00:00Z",
+    data,
+  };
+}
+
+describe("InvestigationWorkspace applies the emitted event contract", () => {
+  beforeEach(() => {
+    useAgentStore.setState({
+      messages: [],
+      pendingCheckpoints: [],
+      isStreaming: false,
+      streamingContent: "",
+      investigationId: "inv_1",
+    });
+  });
+
+  it("streams output_chunk data.text and finalizes on output data.text", () => {
+    renderWorkspace();
+
+    // event_emitter_hook.on_llm_new_token → { text, index }.
+    act(() => {
+      fakeWs.onEvent(agentEvent(EventType.OUTPUT_CHUNK, { text: "Two ", index: 1 }));
+      fakeWs.onEvent(agentEvent(EventType.OUTPUT_CHUNK, { text: "IPs.", index: 2 }));
+    });
+    expect(useAgentStore.getState().streamingContent).toBe("Two IPs.");
+
+    // event_emitter_hook.on_llm_end → { text, run_id }.
+    act(() => {
+      fakeWs.onEvent(
+        agentEvent(EventType.OUTPUT, { text: "Two IPs.", run_id: "r1" }, "evt_final"),
+      );
+    });
+
+    const state = useAgentStore.getState();
+    expect(state.streamingContent).toBe("");
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toMatchObject({
+      id: "evt_final",
+      role: "assistant",
+      content: "Two IPs.",
+    });
+  });
+
+  it("adds a pending checkpoint from a hitl_checkpoint event", () => {
+    renderWorkspace();
+
+    // hitl_hook → { checkpoint_id, tool_name, tool_input, message, ... }.
+    act(() => {
+      fakeWs.onEvent(
+        agentEvent(EventType.HITL_CHECKPOINT, {
+          checkpoint_id: "cp_1",
+          tool_name: "cs_isolate_host",
+          tool_input: '{"host": "web-01"}',
+          message: "Tool 'cs_isolate_host' requires human approval before execution.",
+        }),
+      );
+    });
+
+    const checkpoints = useAgentStore.getState().pendingCheckpoints;
+    expect(checkpoints).toHaveLength(1);
+    expect(checkpoints[0]).toMatchObject({
+      id: "cp_1",
+      investigation_id: "inv_1",
+      prompt: "Tool 'cs_isolate_host' requires human approval before execution.",
+    });
+  });
+
+  it("ignores streaming events for other investigations", () => {
+    renderWorkspace();
+
+    act(() => {
+      fakeWs.onEvent({
+        ...agentEvent(EventType.OUTPUT_CHUNK, { text: "leak", index: 1 }),
+        investigation_id: "inv_other",
+      });
+    });
+
+    expect(useAgentStore.getState().streamingContent).toBe("");
   });
 });
