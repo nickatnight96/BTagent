@@ -98,17 +98,19 @@ export function InvestigationWorkspace() {
       // Push to event store
       eventStore.pushEvent(event);
 
-      // Handle specific event types
+      // Handle specific event types. Payload keys follow the agents-side
+      // emitters (event_emitter_hook / prompt_budget_hook / hitl_hook) —
+      // the hub forwards the envelope verbatim, there is no translation
+      // layer in between.
       switch (event.type) {
         case EventType.OUTPUT_CHUNK:
-          appendStreamChunk((event.data.chunk as string) ?? "");
+          // on_llm_new_token → { text, index }
+          appendStreamChunk((event.data.text as string) ?? "");
           break;
 
-        case EventType.MESSAGE_COMPLETE:
-          finalizeStreamMessage(
-            (event.data.message_id as string) ?? event.id,
-            (event.data.content as string) ?? "",
-          );
+        case EventType.OUTPUT:
+          // on_llm_end → { text, run_id }: the finalized assistant answer.
+          finalizeStreamMessage(event.id, (event.data.text as string) ?? "");
           break;
 
         case EventType.STATUS_CHANGED:
@@ -120,19 +122,38 @@ export function InvestigationWorkspace() {
           break;
 
         case EventType.COST_UPDATE:
+          // prompt_budget_hook → { call_cost_usd, total_cost_usd, ... } — no
+          // token fields here; keep the count TOKEN_USAGE last reported.
           updateCost(
             id,
-            (event.data.cost_usd as number) ?? 0,
-            (event.data.token_count as number) ?? 0,
+            (event.data.total_cost_usd as number) ?? 0,
+            useInvestigationStore.getState().currentInvestigation
+              ?.token_count ?? 0,
           );
           break;
 
-        case EventType.HITL_REQUESTED:
+        case EventType.TOKEN_USAGE:
+          // prompt_budget_hook → { total_input_tokens, total_output_tokens,
+          // ... } — no total cost here; keep the cost COST_UPDATE last set.
+          updateCost(
+            id,
+            useInvestigationStore.getState().currentInvestigation?.cost_usd ??
+              0,
+            ((event.data.total_input_tokens as number) ?? 0) +
+              ((event.data.total_output_tokens as number) ?? 0),
+          );
+          break;
+
+        case EventType.HITL_CHECKPOINT:
+          // hitl_hook → { checkpoint_id, tool_name, tool_input, message, ... }
           addCheckpoint({
             id: (event.data.checkpoint_id as string) ?? event.id,
             investigation_id: id,
-            action: event.data.action as ContainmentAction,
-            prompt: (event.data.prompt as string) ?? "Approval required",
+            action: event.data.action as ContainmentAction | undefined,
+            prompt:
+              (event.data.message as string) ??
+              (event.data.prompt as string) ??
+              "Approval required",
             timestamp: event.timestamp,
             timeout_seconds: (event.data.timeout_seconds as number) ?? 300,
           });
