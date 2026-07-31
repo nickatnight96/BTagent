@@ -137,15 +137,8 @@ KNOWN_GAPS: dict[str, str] = {}
 # test blessing it. It is for a client that names capability the backend does
 # not have, where the fix is a backend route and therefore a separate change.
 CALLS_WITHOUT_A_ROUTE: dict[str, str] = {
-    # Found by this rewrite (#482). ``agentStore.loadHistory`` calls it on every
-    # investigation open and swallows the failure ("History may not exist yet
-    # for new investigations"), so the chat transcript silently never restores.
-    # The endpoint was never built: investigations.py has /chat but no /history.
-    # Fixing it means adding a backend route, not editing the client.
-    "/api/v1/investigations/{}/history": (
-        "no such backend route; agentStore.loadHistory catches the 404 and "
-        "shows an empty transcript"
-    ),
+    # (Empty since the /investigations/{id}/history route landed, paying the
+    # debt this rewrite (#482) found. May it stay empty.)
 }
 
 # --------------------------------------------------------------------------- #
