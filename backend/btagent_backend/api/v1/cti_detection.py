@@ -472,7 +472,10 @@ class ProposalValidateRequest(BaseModel):
         default=None,
         description="Backend names to validate against; omit for all supported.",
     )
-    lookback_hours: int = Field(default=24 * 30, ge=1, le=24 * 365)
+    # 90 days by default (#113): CTI-derived rules describe campaigns, and a
+    # 30-day window misses slower-recurring tradecraft — a "clean" verdict
+    # over 30d is weaker evidence than the analyst reading it assumes.
+    lookback_hours: int = Field(default=24 * 90, ge=1, le=24 * 365)
 
 
 def _mock_connectors_mode() -> bool:

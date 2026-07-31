@@ -554,6 +554,17 @@ async def test_validate_stores_verdict_on_row(
     assert row["validation"]["verdict"] == validation["verdict"]
 
 
+def test_validate_lookback_defaults_to_90_days():
+    """#113: CTI rules describe campaigns; a 30-day default under-validates.
+
+    Pinned at the schema so a silent revert to the old 30-day window fails
+    here rather than quietly weakening every "clean" verdict.
+    """
+    from btagent_backend.api.v1.cti_detection import ProposalValidateRequest
+
+    assert ProposalValidateRequest().lookback_hours == 24 * 90
+
+
 async def test_validate_unknown_row_is_404(client, analyst_token, monkeypatch):
     monkeypatch.setenv("BTAGENT_MOCK_CONNECTORS", "true")
     resp = await client.post(
