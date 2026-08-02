@@ -293,6 +293,13 @@ class HuntPackRun(BaseModel):
     findings_created: int = 0
     status: str = "completed"
     error: str | None = None
+    # E7 coverage honesty: True when a rules-per-sweep cap or the per-run
+    # deadline stopped the sweep before every enabled rule ran, with
+    # ``rules_not_run`` naming what was skipped. Status alone cannot express
+    # this — a truncated run still lands ``completed``, so without these a
+    # partial sweep reads as a full one.
+    truncated: bool = False
+    rules_not_run: list[str] = Field(default_factory=list)
     started_at: datetime
     completed_at: datetime | None = None
 

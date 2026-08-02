@@ -341,6 +341,16 @@ export interface HuntPackRun {
   findings_created: number;
   status: string;
   error: string | null;
+  /**
+   * E7: the rules-per-sweep cap or the per-run deadline stopped this sweep
+   * before every enabled rule ran. A truncated run still lands ``completed``,
+   * so status alone cannot express it — without this flag a partial sweep is
+   * indistinguishable from a full one, and "0 hits" reads as "nothing there"
+   * rather than "we did not look".
+   */
+  truncated: boolean;
+  /** Rule ids the run never got to (empty unless ``truncated``). */
+  rules_not_run: string[];
   started_at: string;
   completed_at: string | null;
 }

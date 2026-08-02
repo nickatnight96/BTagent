@@ -222,6 +222,14 @@ class HuntPackRunRow(Base):
     # work. Empty ``{}`` on a legacy row / a run that never checkpointed.
     # Migration 0055_huntpack_resume.
     progress: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # E7 coverage honesty (migration 0069). The runner enforces a
+    # rules-per-sweep cap and a per-run deadline; when either stops a run
+    # early it sets ``PackRunResult.truncated`` and lists the rules it never
+    # got to. Persisting both is the point of the signal: without it a capped
+    # sweep is indistinguishable from a clean full one in the history, and an
+    # analyst reads "0 hits" as "nothing there" rather than "we didn't look".
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    rules_not_run: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )
