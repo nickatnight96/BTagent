@@ -27,6 +27,10 @@ POSTGRES_DB=btagent
 BTAGENT_DATABASE_URL=postgresql+asyncpg://btagent:${POSTGRES_PASSWORD}@postgres:5432/btagent
 
 # Redis (enable authentication)
+# Both lines are required and they must agree: the compose `redis` service
+# starts with `--requirepass $REDIS_PASSWORD` when the variable is non-empty
+# (and starts open when it is), while BTAGENT_REDIS_URL is what the backend
+# and the arq scheduler dial. Setting only one of the two is an auth error.
 REDIS_PASSWORD=$(openssl rand -hex 24)
 BTAGENT_REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
 
@@ -59,6 +63,45 @@ BTAGENT_MOCK_CONNECTORS=false
 > **Warning:** Never commit `.env.production` to version control. The `.gitignore` already excludes `.env` files.
 
 ### 2. SSL/TLS Configuration
+
+> **The compose `nginx` service is HTTP-only out of the box.**
+> `infra/nginx/nginx.conf` ships a single `listen 80` server block, so the
+> compose file publishes `8080:80` and **no** 443 mapping — a published 8443
+> that nothing listens on is worse than no port at all. Everything in this
+> section is the opt-in work to change that; do all three steps or none.
+
+#### Enabling TLS on the compose nginx
+
+1. **Get a certificate** into `infra/nginx/ssl/` (already mounted read-only at
+   `/etc/nginx/ssl`). Option A or B below, or for a local-production smoke test
+   a self-signed pair:
+
+   ```bash
+   mkdir -p infra/nginx/ssl
+   openssl req -x509 -newkey rsa:4096 -nodes -days 365 \
+     -keyout infra/nginx/ssl/key.pem -out infra/nginx/ssl/cert.pem \
+     -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+   ```
+
+   Browsers will warn on a self-signed cert; that is expected, and it is not a
+   substitute for a real certificate in a real deployment.
+
+2. **Add the 443 server block** to `infra/nginx/nginx.conf` (see step 3 below
+   for the block). nginx refuses to start if `ssl_certificate` points at a file
+   that does not exist, which is why step 1 comes first.
+
+3. **Re-add the port mapping** to the `nginx` service in
+   `infra/docker-compose.yml` (and `infra/docker-compose.airgap.yml` if you run
+   that stack):
+
+   ```yaml
+       ports:
+         - "8080:80"
+         - "8443:443"
+   ```
+
+Then `docker compose -f infra/docker-compose.yml up -d nginx` and verify with
+`curl -k https://localhost:8443/health`.
 
 #### Option A: Let's Encrypt (recommended)
 
@@ -139,8 +182,26 @@ Set up automated PostgreSQL backups:
 
 ```bash
 docker compose -f infra/docker-compose.yml --env-file infra/.env.production up -d
-make db-migrate
 ```
+
+**No separate migration step.** The compose file runs two one-shot services to
+completion before `backend` and `scheduler` are allowed to start
+(`depends_on: condition: service_completed_successfully`):
+
+| Service | Command | Closes |
+|---------|---------|--------|
+| `migrate` | `sh -c "cd backend && alembic upgrade head"` | the backend booting against an empty schema and reporting `/health` OK until the first login fails on a missing `users` table |
+| `init-storage` | `bt init-storage` | `/health/ready` reporting `s3: down`, and every evidence upload failing, because nobody ever created the bucket |
+
+Both are idempotent, run on every `up`, and use the backend image, so an
+upgrade migrates before the new code serves traffic. Check them with:
+
+```bash
+docker compose -f infra/docker-compose.yml logs migrate init-storage
+```
+
+`make db-migrate` still exists for host-side/dev use (it runs alembic from a
+local virtualenv); it is no longer a required deploy step.
 
 > **Do not run `make db-seed` in production.** It also inserts a sample
 > investigation and demo users (`analyst1`, `senior1`) with random,
@@ -148,32 +209,70 @@ make db-migrate
 
 #### Bootstrap the admin user
 
-The first admin account is created from the `BTAGENT_SEED_ADMIN_PASSWORD`
-environment variable. Pick a strong value and run the bootstrap target; the
-password is never printed to logs:
+This is the **only** manual step between `up` and a usable system. The first
+admin account is created from `BTAGENT_SEED_ADMIN_PASSWORD`, and `bt` is a
+console script inside the backend image, so this works with nothing but the
+running stack — no repository, no virtualenv:
 
 ```bash
-export BTAGENT_SEED_ADMIN_PASSWORD="$(openssl rand -base64 24)"   # store this securely
-make db-reset-admin
+docker compose -f infra/docker-compose.yml \
+  exec -e BTAGENT_SEED_ADMIN_PASSWORD="$(openssl rand -base64 24)" \
+  backend bt create-admin
 ```
 
-This command is idempotent: it creates the `admin` user if missing, otherwise
-resets its password — so it doubles as the **password-reset / recovery path**.
-You can target a different user or pass the password explicitly:
+Capture the password you generate *before* running the command (it is never
+printed, by design, and there is no way to read it back afterwards).
+
+`bt create-admin` is idempotent: it creates the `admin` user if missing,
+otherwise resets its password — so it doubles as the **password-reset /
+recovery path**. Re-run it with a new value to rotate. Options:
 
 ```bash
-python infra/scripts/reset-admin-password.py --username admin --password 'NEW_STRONG_PASSWORD'
+# All of these run inside the container, i.e. after
+#   docker compose -f infra/docker-compose.yml exec backend <cmd>
+
+# a different account, or an explicit password (beware shell history)
+bt create-admin --username soc-lead --password 'NEW_STRONG_PASSWORD'
+
+# machine-readable; the payload never contains the password
+bt --json create-admin
+
+# from a Makefile on the host, which wraps the exec for you
+# make create-admin BTAGENT_SEED_ADMIN_PASSWORD="$(openssl rand -base64 24)"
 ```
 
 > If `BTAGENT_SEED_ADMIN_PASSWORD` is unset (and no `--password` is given) in a
-> non-test environment, the command fails loudly rather than creating an
-> account with an unrecoverable random password.
+> non-test environment, the command exits 1 rather than creating an account
+> with an unrecoverable random password.
+
+On a host checkout with a virtualenv, `make db-reset-admin`
+(`infra/scripts/reset-admin-password.py`) does the same thing through the same
+code path. It cannot be used in a container-only or air-gapped install, which
+is why `bt create-admin` is the documented path.
 
 ### 6. Verify
 
 ```bash
-curl -k https://btagent.example.com/health
+# liveness — always 200 while the process is up
+curl -sf http://localhost:8000/health
+
+# readiness — 503 until DB, Redis and the S3 bucket all answer
+curl -sf http://localhost:8000/health/ready
+# {"status":"ready","checks":{"db":"ok","redis":"ok","s3":"ok"}}
+
+# the UI, through the compose nginx
+curl -sf http://localhost:8080/ | head -5
+
+# log in with the password you just set
+curl -sf -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"<the password>"}'
 ```
+
+`docker compose ps` should show `postgres`, `redis`, `minio`, `backend` and
+`scheduler` healthy, and `migrate` / `init-storage` as `Exited (0)`. An
+`Exited` code other than 0 on either one-shot means the stack never finished
+bootstrapping — read its logs before anything else.
 
 ---
 
@@ -608,11 +707,14 @@ mc mirror minio/btagent-evidence backup/btagent-evidence
 # Pull new images
 docker compose -f infra/docker-compose.yml pull
 
-# Run migrations first
-make db-migrate
+# Migrate. `up migrate` runs the one-shot to completion against the NEW image;
+# do this before restarting the app so new code never meets an old schema.
+docker compose -f infra/docker-compose.yml up migrate init-storage
 
-# Restart with zero downtime (one service at a time)
+# Restart with zero downtime (one service at a time).
+# --no-deps is what makes this step skip the one-shots you just ran.
 docker compose -f infra/docker-compose.yml up -d --no-deps backend
+docker compose -f infra/docker-compose.yml up -d --no-deps scheduler
 docker compose -f infra/docker-compose.yml up -d --no-deps frontend
 ```
 

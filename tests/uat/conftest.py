@@ -16,7 +16,33 @@ call inside the test body.
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+
+@pytest.fixture(scope="session")
+def webhook_headers() -> dict[str, str]:
+    """Auth header for webhook ingest endpoints.
+
+    Webhook auth used to fall back to ``BTAGENT_JWT_SECRET`` when no webhook
+    secret was configured, and this suite relied on that fallback. The fallback
+    *was* GH #372 — it made the JWT signing key a second, weaker credential —
+    so it is gone in every environment, and the UAT stack must now provision
+    ``BTAGENT_WEBHOOK_SECRET`` explicitly (distinct from the JWT secret).
+
+    Fails loudly rather than defaulting: a silent default here is what let the
+    original weakness survive a passing test suite.
+    """
+    secret = os.environ.get("BTAGENT_WEBHOOK_SECRET")
+    if not secret:
+        pytest.fail(
+            "BTAGENT_WEBHOOK_SECRET must be set for the UAT webhook tests, and must "
+            "match the value the running backend was started with. It must differ "
+            "from BTAGENT_JWT_SECRET.",
+            pytrace=False,
+        )
+    return {"X-Webhook-Secret": secret}
 
 
 @pytest.fixture(autouse=True)

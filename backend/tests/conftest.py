@@ -12,6 +12,7 @@ import sys
 import types
 from datetime import UTC, datetime
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import JSON, event
@@ -134,6 +135,37 @@ def _enable_sqlite_fk(dbapi_conn, connection_record):
 # ============================================================================
 # Phase 3 — Fixtures
 # ============================================================================
+
+# --- Rate limiter isolation ---
+
+
+@pytest.fixture(autouse=True)
+def _isolate_rate_limiter():
+    """Give every test a fresh rate-limit budget.
+
+    P1.2 registered ``RateLimiterMiddleware`` in ``create_app``, so from that
+    point on it runs in the unit suite too — which is the point: a limiter that
+    is never exercised in CI is a limiter nobody notices has been unregistered
+    (it was, for the app's whole life). But ``rate_limit_state`` is a MODULE-LEVEL
+    singleton keyed by client IP, and every ASGI-transport request in the suite
+    arrives from the same ``127.0.0.1``. Without this reset the suite would
+    share one 30-request anonymous bucket across ~1500 tests and start handing
+    out 429s at an arbitrary point that shifts with test ordering.
+
+    Resetting per test keeps the middleware genuinely in the request path
+    (ordering, 429 shape and header behaviour are all exercised) while making
+    each test's budget independent of what ran before it. Tests that assert
+    throttling simply spend their own budget.
+
+    Autouse and unconditional so a new test file cannot forget it; the reset is
+    a dict ``clear()``, so the cost is nil.
+    """
+    from btagent_backend.middleware.rate_limiter import rate_limit_state
+
+    rate_limit_state.reset()
+    yield
+    rate_limit_state.reset()
+
 
 # --- Database setup / teardown ---
 

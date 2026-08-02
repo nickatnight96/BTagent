@@ -335,7 +335,10 @@ const POLL_INTERVAL_MS = 30_000;
 /** The finding-lifecycle events every hunt surface refreshes on. */
 export const HUNT_FINDING_EVENTS = [
   EventType.HUNT_FINDING_CREATED,
-  EventType.HUNT_FINDING_UPDATED,
+  // The backend event is `hunt_finding_triaged`; the frontend enum used to
+  // spell it `hunt_finding_updated`, which nothing ever emitted — so triage
+  // decisions never triggered a live refresh.
+  EventType.HUNT_FINDING_TRIAGED,
   EventType.HUNT_FINDING_SUPPRESSED,
   EventType.HUNT_FINDING_PROMOTED,
 ] as const;

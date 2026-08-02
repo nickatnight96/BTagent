@@ -148,8 +148,11 @@ def create_app() -> FastAPI:
         description="Defensive Cyber Security AI Agent — Incident Response & Threat Hunting",
         version="0.1.0",
         lifespan=lifespan,
-        docs_url="/api/docs" if settings.env != "prod" else None,
-        redoc_url="/api/redoc" if settings.env != "prod" else None,
+        # P1.6: gate on ``is_production`` rather than ``env != "prod"`` — every
+        # Helm values file spells the environment ``production``, so the literal
+        # comparison left the interactive API explorer served on real installs.
+        docs_url=None if settings.is_production else "/api/docs",
+        redoc_url=None if settings.is_production else "/api/redoc",
     )
 
     # AUTH-C1: cookie auth requires ``allow_credentials=True``, which in turn
@@ -180,6 +183,44 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(CommitBeforeResponseMiddleware)
+
+    # Per-role sliding-window rate limiter (P1.2). It was written, unit-tested
+    # and never registered, so every deployed BTagent had *no* request throttle
+    # at all — unlimited password guesses against ``POST /auth/login`` and
+    # unlimited TOTP guesses against ``POST /auth/mfa/verify``, whose own
+    # docstring claims "the global per-IP rate limiter (anonymous bucket)
+    # throttles brute-force attempts".
+    #
+    # ORDERING. Starlette's ``add_middleware`` PREPENDS, so the last-added
+    # layer is the outermost. Registering here — after the commit layer, before
+    # CORS — yields this request path:
+    #
+    #     SecurityHeaders → RequestID → CORS → RateLimiter → Commit → routes
+    #
+    # which is the placement we want on three counts:
+    #   * INSIDE CORS, so a 429 still carries the CORS headers the browser
+    #     needs to read it (outside CORS, the SPA would see an opaque network
+    #     error instead of "rate limited"), and so preflight OPTIONS requests
+    #     — short-circuited by CORSMiddleware — never consume quota;
+    #   * OUTSIDE the commit layer and above routing, so a throttled request is
+    #     rejected before route resolution, dependency injection or any DB
+    #     session is opened — the point of a limiter is to shed load cheaply;
+    #   * inside RequestID, so a rejected request is still traceable by its
+    #     ``X-Request-ID``.
+    #
+    # Gated on ``rate_limit_enabled`` at registration so switching it off costs
+    # nothing at runtime; ``RateLimiterMiddleware.dispatch`` re-checks the flag
+    # as well, which keeps a runtime toggle honest for anyone constructing the
+    # app directly.
+    if settings.rate_limit_enabled:
+        from btagent_backend.middleware.rate_limiter import RateLimiterMiddleware
+
+        app.add_middleware(RateLimiterMiddleware)
+    else:
+        logger.warning(
+            "Rate limiting is DISABLED (BTAGENT_RATE_LIMIT_ENABLED=false); "
+            "login and MFA endpoints have no brute-force throttle."
+        )
 
     # CORS
     app.add_middleware(

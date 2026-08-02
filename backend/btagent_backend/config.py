@@ -3,10 +3,29 @@
 import logging
 from functools import lru_cache
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _config_logger = logging.getLogger("btagent.config")
+
+# Canonical environment name → the spellings operators actually write.
+#
+# P1.6: the security gates in this codebase compare ``env`` against the literal
+# ``"prod"`` (CORS allowlist enforcement here, docs disable in ``main.py``, HSTS
+# in ``middleware/security_headers.py``, legacy-no-jti rejection in
+# ``auth/middleware.py``). But every shipped deployment artifact spells it
+# ``production`` (``infra/helm/btagent/values.yaml``, ``values-production.yaml``,
+# ``values-airgap.yaml``, ``infra/.env.airgap.example``), so on a real Helm
+# install all four gates silently no-opped — the *hardest* class of security
+# bug, because nothing fails and nothing logs. Rather than fix four call sites
+# and hope the fifth never gets written, we normalise the value once, here, and
+# expose ``Settings.is_production`` as the single thing the gates ask.
+#
+# Only ``production`` is aliased. ``development``/``testing`` are deliberately
+# NOT aliased to ``dev``/``test``: an unrecognised value falls through to the
+# STRICT posture (it is not in any ``("dev", "test")`` carve-out), so a typo
+# fails safe. Aliasing them would turn a typo into a relaxed posture.
+_ENV_ALIASES: dict[str, str] = {"production": "prod"}
 
 _INSECURE_JWT_DEFAULTS = frozenset(
     {
@@ -136,10 +155,45 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="BTAGENT_", env_file=".env")
 
-    # Environment
-    env: str = "dev"  # dev | staging | prod
+    # Environment. Canonical values: dev | test | staging | prod.
+    # ``production`` is accepted as a synonym for ``prod`` and normalised to it
+    # (see ``_normalize_env`` / ``_ENV_ALIASES``); comparison is case-insensitive.
+    env: str = "dev"
     debug: bool = False
     log_level: str = "info"
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def _normalize_env(cls, value: object) -> object:
+        """Canonicalise ``BTAGENT_ENV`` so the prod gates cannot be bypassed by spelling.
+
+        P1.6: four separate security gates key off ``env == "prod"`` while every
+        shipped Helm values file and ``.env.airgap.example`` sets
+        ``BTAGENT_ENV=production`` — so on those deployments the gates silently
+        did nothing. Normalising at parse time (rather than at each comparison)
+        means a *future* gate written as ``env == "prod"`` is correct by
+        construction. Runs ``mode="before"`` so every later ``model_validator``
+        (JWT / webhook / S3 / CORS) already sees the canonical value.
+
+        Casing and surrounding whitespace are also normalised: ``BTAGENT_ENV=Prod``
+        would otherwise be another silent no-op of the same shape.
+        """
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        return _ENV_ALIASES.get(normalized, normalized)
+
+    @property
+    def is_production(self) -> bool:
+        """True when this process is running a production posture.
+
+        The single predicate every prod-only enforcement gate should ask, so
+        the accepted spellings live in exactly one place (``_ENV_ALIASES``).
+        A ``property`` rather than a field: it is derived, and ``Settings``
+        fields are enumerated as operator-settable env knobs by
+        ``services/config_catalog.py``.
+        """
+        return self.env == "prod"
 
     # Database
     database_url: str = "postgresql+asyncpg://btagent:btagent@localhost:5432/btagent"
@@ -173,14 +227,36 @@ class Settings(BaseSettings):
     #
     # CI / test-mode safety: defaults to ``None`` and the validator below does
     # NOT fail when it is unset in dev/test — ``Settings(env="test")`` must
-    # construct fine so the suite boots. The webhook auth path resolves the
-    # effective secret lazily (see ``api/v1/webhooks.py::_verify_secret``):
-    #   * if ``webhook_secret`` is set, it is used verbatim;
-    #   * else, in dev/test ONLY, it falls back to ``jwt_secret`` (with a
-    #     warning) so existing webhook tests round-trip without extra config;
-    #   * else (unset outside dev/test) the webhook endpoints deny with 401 —
-    #     a clear misconfiguration rather than a silent JWT-key reuse.
+    # construct fine so the suite boots. Webhook ingestion is opt-in, so an
+    # unset secret is a *disabled feature*, not a broken app.
+    #
+    # P1.1: there is NO fallback. ``api/v1/webhooks.py::_verify_secret`` uses
+    # this value verbatim when set and denies with 401 in EVERY environment
+    # when it is unset. The earlier dev/test carve-out (fall back to
+    # ``jwt_secret`` "for convenience") re-entered the exact #372 bug class it
+    # was written to fix: a dev box reachable on the network authenticated
+    # webhooks against the JWT signing key, and the shipped ``infra/.env``
+    # runs ``BTAGENT_ENV=dev``. A carve-out that reproduces the vulnerability
+    # in the environment people actually run is not a carve-out.
     webhook_secret: str | None = None
+
+    @field_validator("webhook_secret", mode="before")
+    @classmethod
+    def _blank_webhook_secret_is_unset(cls, value: object) -> object:
+        """Treat a blank ``BTAGENT_WEBHOOK_SECRET`` as unset rather than as "".
+
+        ``infra/.env.example`` ships the key present but empty (that is how an
+        operator says "webhook ingestion off"), and an env file cannot express
+        ``None`` — it yields ``""``. Without this, ``""`` would read as
+        *configured*: the startup "not set" warning would never fire and
+        ``_verify_secret`` would log a confusing mismatch instead of the
+        actionable "BTAGENT_WEBHOOK_SECRET is not configured". Both states must
+        deny (they do — an empty ``provided`` header is rejected first), but
+        they must also *report* the same thing.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     # MFA (opt-in TOTP, #144). ``mfa_issuer`` labels the authenticator entry.
     # ``mfa_secret_enc_key`` is the Fernet key used to encrypt TOTP secrets at
@@ -277,8 +353,8 @@ class Settings(BaseSettings):
             _config_logger.warning(
                 "BTAGENT_WEBHOOK_SECRET is not set. Webhook ingestion endpoints "
                 "will reject all requests (401) until a dedicated secret is "
-                "configured — the JWT signing key is never used as a fallback "
-                "outside dev/test."
+                "configured — there is no fallback to the JWT signing key in "
+                "any environment (P1.1)."
             )
             return self
         if self.webhook_secret == self.jwt_secret:
@@ -301,16 +377,50 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_s3_credentials(self) -> "Settings":
-        """SEC-P2-002 FIX: Reject default S3 credentials in non-dev environments."""
-        if self.env not in ("dev", "test") and self.s3_access_key == "minioadmin":
+        """SEC-P2-002 FIX: Reject default S3 credentials in non-dev environments.
+
+        P1.1: BOTH halves of the credential pair are checked. The original
+        validator only looked at ``s3_access_key``, so an operator who rotated
+        the access key but left ``BTAGENT_S3_SECRET_KEY=minioadmin`` (the
+        MinIO default shipped in ``infra/.env.example`` and the compose file)
+        booted clean while the evidence bucket — which holds the chain-of-
+        custody artifacts — was still protected by a publicly-known password.
+        Half a rotated credential pair is not a rotated credential.
+        """
+        if self.env in ("dev", "test"):
+            return self
+        if self.s3_access_key == "minioadmin":
             raise ValueError(
                 "CRITICAL: BTAGENT_S3_ACCESS_KEY is set to 'minioadmin'. "
+                "Configure real S3/MinIO credentials for non-dev environments."
+            )
+        if self.s3_secret_key == "minioadmin":
+            raise ValueError(
+                "CRITICAL: BTAGENT_S3_SECRET_KEY is set to 'minioadmin'. "
                 "Configure real S3/MinIO credentials for non-dev environments."
             )
         return self
 
     # CORS
     cors_origins: list[str] = list(_DEV_CORS_ORIGINS)
+
+    # P1.6 escape hatch for the single-box deployment. The prod CORS validator
+    # below rejects any ``localhost``/``127.0.0.1`` origin, on the (correct, in
+    # the multi-host case) assumption that a localhost origin means the operator
+    # never configured the allowlist. But a one-box docker-compose install is a
+    # legitimate production topology in which the analyst's browser genuinely
+    # sits on the same machine and the SPA origin genuinely IS
+    # ``http://localhost:8080`` — there is no other origin to name.
+    #
+    # Setting this to ``true`` is a DELIBERATE operator statement that the
+    # loopback origin is the real one. It is NOT a default relaxation: the
+    # default stays ``false``, the flag must be set by hand, and it only
+    # unlocks the localhost check — the empty-allowlist and ``*``-wildcard
+    # rejections still apply, and the allowlist still has to be written out
+    # explicitly. Setting it on a multi-host deployment re-opens the hole it
+    # was carved out of, so the validator logs a warning every time it fires.
+    # Env var: ``BTAGENT_ALLOW_LOCAL_ORIGINS``.
+    allow_local_origins: bool = False
 
     @model_validator(mode="after")
     def _validate_cors_origins(self) -> "Settings":
@@ -322,10 +432,17 @@ class Settings(BaseSettings):
         localhost origin — any of which would either disable the cookie-auth
         ``allow_credentials`` flow or expose the API to untrusted browsers.
 
+        The localhost rejection has one documented escape hatch,
+        ``BTAGENT_ALLOW_LOCAL_ORIGINS=true`` (P1.6), for the one-box compose
+        deployment whose real SPA origin is ``http://localhost:8080``. Without
+        it, a single-machine install could not run a true production posture at
+        all — it had to lie about ``BTAGENT_ENV`` and thereby also lose HSTS,
+        the docs disable, and legacy-token rejection.
+
         Dev/test stay permissive: they keep the localhost defaults untouched,
         so ``BTAGENT_ENV=test`` (CI) and ``BTAGENT_ENV=dev`` start normally.
         """
-        if self.env != "prod":
+        if not self.is_production:
             return self
 
         origins = self.cors_origins
@@ -341,11 +458,24 @@ class Settings(BaseSettings):
                 "wildcard CORS is incompatible with cookie auth "
                 "(allow_credentials=True) and exposes the API to any origin."
             )
-        if any("localhost" in o or "127.0.0.1" in o for o in origins):
+        local = [o for o in origins if "localhost" in o or "127.0.0.1" in o]
+        if local and not self.allow_local_origins:
             raise ValueError(
                 "CRITICAL: BTAGENT_CORS_ORIGINS still lists a localhost origin "
                 "in prod — set it to your real frontend origin(s), e.g. "
-                '["https://btagent.example.com"].'
+                '["https://btagent.example.com"]. If this really is a '
+                "single-machine deployment whose browser origin is the "
+                "loopback address, opt in deliberately with "
+                "BTAGENT_ALLOW_LOCAL_ORIGINS=true."
+            )
+        if local:
+            _config_logger.warning(
+                "BTAGENT_ALLOW_LOCAL_ORIGINS=true: permitting loopback CORS "
+                "origin(s) %s in prod. This is only correct for a "
+                "single-machine deployment where the browser runs on the same "
+                "host; on any multi-host deployment, remove the flag and set "
+                "BTAGENT_CORS_ORIGINS to the real frontend origin(s).",
+                local,
             )
         return self
 
@@ -522,6 +652,11 @@ class Settings(BaseSettings):
     # Observability
     otel_enabled: bool = False
     otel_endpoint: str = "http://localhost:4317"
+    # B13: bearer token gating the Prometheus /metrics scrape. When set, the
+    # endpoint requires ``Authorization: Bearer <token>``; when unset it stays
+    # open (dev/compose default) — the internal metrics were reachable by
+    # anyone who could hit the directly-published :8000.
+    metrics_token: str = ""
     langfuse_enabled: bool = False
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

@@ -36,10 +36,21 @@ services:
 
   redis:
     image: ${IMAGE_REDIS:?set IMAGE_REDIS to a digest-pinned ref}
+    # Auth is opt-in: set REDIS_PASSWORD in .env.airgap (plus a matching
+    # BTAGENT_REDIS_URL=redis://:<pw>@redis:6379) to start with --requirepass.
+    command:
+      - sh
+      - -c
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD"; else exec redis-server; fi'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD-SHELL
+        # `redis-cli ping` exits 0 even on a NOAUTH error, so grep the reply.
+        - 'if [ -n "$$REDIS_PASSWORD" ]; then redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi'
       interval: 5s
       timeout: 3s
       retries: 5
@@ -79,6 +90,43 @@ services:
     networks:
       - btagent-net
 
+  # ── One-shot init (must complete before the app starts) ─
+  # Same image as the backend, so this adds nothing to the transfer bundle.
+  migrate:
+    image: ${IMAGE_BACKEND:?set IMAGE_BACKEND to a digest-pinned ref}
+    # alembic.ini and migrations/ are at /app/backend (WORKDIR is /app), so
+    # alembic must run from there — `exec backend alembic upgrade head` fails.
+    command: ["sh", "-c", "cd backend && alembic upgrade head"]
+    env_file:
+      - .env.airgap
+    environment:
+      BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      BTAGENT_REDIS_URL: ${BTAGENT_REDIS_URL:-redis://redis:6379}
+      BTAGENT_S3_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - btagent-net
+
+  init-storage:
+    image: ${IMAGE_BACKEND:?set IMAGE_BACKEND to a digest-pinned ref}
+    # Creates BTAGENT_S3_BUCKET, which /health/ready head_buckets and every
+    # evidence upload needs. In an enclave there is no console session to go
+    # make it by hand, so this has to happen automatically.
+    command: ["bt", "init-storage"]
+    env_file:
+      - .env.airgap
+    environment:
+      BTAGENT_S3_ENDPOINT: http://minio:9000
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - btagent-net
+
   # ── Application ────────────────────────────────────────
   backend:
     image: ${IMAGE_BACKEND:?set IMAGE_BACKEND to a digest-pinned ref}
@@ -88,13 +136,17 @@ services:
       - .env.airgap
     environment:
       BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      BTAGENT_REDIS_URL: redis://redis:6379
+      BTAGENT_REDIS_URL: ${BTAGENT_REDIS_URL:-redis://redis:6379}
       BTAGENT_S3_ENDPOINT: http://minio:9000
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      init-storage:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/health'); r.raise_for_status()"]
       interval: 10s
@@ -111,13 +163,25 @@ services:
       - .env.airgap
     environment:
       BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      BTAGENT_REDIS_URL: redis://redis:6379
+      BTAGENT_REDIS_URL: ${BTAGENT_REDIS_URL:-redis://redis:6379}
       BTAGENT_S3_ENDPOINT: http://minio:9000
+    # The image HEALTHCHECK curls :8000, which an arq worker does not serve, so
+    # without this override a healthy scheduler always reads "unhealthy".
+    healthcheck:
+      test: ["CMD", "arq", "--check", "btagent_backend.scheduler.worker.WorkerSettings"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      init-storage:
+        condition: service_completed_successfully
     networks:
       - btagent-net
 
@@ -134,7 +198,10 @@ services:
     image: ${IMAGE_NGINX:?set IMAGE_NGINX to a digest-pinned ref}
     ports:
       - "8080:80"
-      - "8443:443"
+      # No 443 mapping: nginx/nginx.conf ships an HTTP server block only, so
+      # the published port answered nothing. Add the 443 server block per
+      # docs/DEPLOYMENT.md ("Enabling TLS on the compose nginx") and re-add
+      # `- "8443:443"` here at the same time.
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       # TLS material issued by the enclave CA — public ACME is unreachable.

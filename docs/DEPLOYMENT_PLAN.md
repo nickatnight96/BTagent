@@ -9,8 +9,10 @@ remaining feature work. It has two halves:
 2. **Remaining roadmap** — the production-hardening and feature work
    (`docs/ROADMAP.md` v0.4 → Phase 6) that constitutes "the rest" of what ships.
 
-Each blocker is scoped to be ownable as a single follow-up PR. This document is
-a plan only — it makes no code, workflow, Helm, or Dockerfile changes itself.
+Each blocker is scoped to be ownable as a single follow-up PR. This document
+started life as a plan only; blockers that have since been fixed are marked
+**RESOLVED** with a pointer to the code that closed them, so the status here
+matches the tree rather than the moment it was written.
 
 > Issue references (`#NN`) come from [`ROADMAP.md`](ROADMAP.md) and
 > [`PHASE6_THREAT_HUNTING_PLAN.md`](PHASE6_THREAT_HUNTING_PLAN.md), which cite
@@ -18,21 +20,33 @@ a plan only — it makes no code, workflow, Helm, or Dockerfile changes itself.
 
 ---
 
-## Why the current deploy path breaks
+## Status at a glance
 
-The chart, Terraform, and deploy workflows all exist and read as complete — but
-following the documented release path (`git tag v* → deploy-prod.yml`) hits four
-independent failures:
+| Blocker | Severity | Status |
+|---------|----------|--------|
+| B1 — backend image missing engine + agents | Critical | **RESOLVED** — `Dockerfile.backend` installs all four packages in dependency order |
+| B2 — nothing builds version-tagged images | Critical | **RESOLVED** — `.github/workflows/release.yml` builds + pushes semver-tagged images on `v*` |
+| B3 — no migration runs on deploy | Critical | **RESOLVED** — Helm `templates/migrate-job.yaml` (pre-install/pre-upgrade hook) *and* a `migrate` one-shot in both compose files |
+| B4 — chart has no scheduler Deployment | High | **RESOLVED** — scheduler Deployment in `templates/deployment.yaml`, gated on `scheduler.enabled` |
+| B5 — no admin bootstrap path | High | **RESOLVED** — `bt create-admin` inside the image, plus `make db-reset-admin` on a host |
+| B6 — staging is manual-only | Medium | **OPEN** — needs a staging cluster + `KUBE_CONFIG_STAGING` |
+| B7 — hardening documented, not default | Medium | **PARTIAL** — security headers and the CORS start-up assertion now ship by default; TLS termination is still manual |
+
+## Why the deploy path used to break
+
+The chart, Terraform, and deploy workflows all existed and read as complete —
+but following the documented release path (`git tag v* → deploy-prod.yml`) hit
+four independent failures. All four are now closed; the diagram is kept as the
+record of what was wrong and what each fix has to keep true.
 
 ```mermaid
 flowchart TD
     tag["git tag v1.0.0 → deploy-prod.yml"] --> val["validate job:<br/>docker manifest inspect btagent-*:v1.0.0"]
-    val -->|"B2: nothing builds :v* tags<br/>(ci.yml tags type=sha only, gated on a repo var)"| fail1["FAILS — image not found"]
-    val -.->|"if images existed"| deploy["helm upgrade --atomic"]
+    val -->|"B2 FIXED: release.yml builds<br/>semver-tagged images on v* tags"| deploy["helm upgrade --atomic"]
     deploy --> pod["backend / scheduler pods start"]
-    pod -->|"B1: Dockerfile.backend never installs<br/>engine + agents (backend imports both)"| fail2["CRASHES on import"]
-    deploy -->|"B3: no alembic upgrade in chart or workflow"| fail3["boots against unmigrated DB"]
-    deploy -->|"B4: chart has no scheduler Deployment"| fail4["arq cron jobs never run in K8s"]
+    pod -->|"B1 FIXED: image installs<br/>shared → engine → agents → backend"| ok1["imports resolve"]
+    deploy -->|"B3 FIXED: pre-install migrate Job<br/>(compose: migrate one-shot)"| ok2["schema is at head first"]
+    deploy -->|"B4 FIXED: scheduler Deployment<br/>in the chart"| ok3["arq cron jobs run"]
 ```
 
 ---
@@ -43,7 +57,13 @@ Severity legend: **Critical** = deploy fails or app crashes · **High** =
 deploys but a core capability is silently dead or operators are locked out ·
 **Medium** = operational / hardening gap.
 
-### B1 — Production backend image is missing the agent engine *(Critical)*
+### B1 — Production backend image is missing the agent engine *(Critical)* — **RESOLVED**
+
+> **Fixed.** `infra/docker/Dockerfile.backend` now copies and installs all four
+> workspace packages in dependency order (`shared → engine → agents →
+> backend`), each with its source COPY'd before its editable install. A single
+> shared image still backs both `backend` and `scheduler`. The description
+> below is the original diagnosis.
 
 **Symptom.** The backend (and scheduler) container crashes on first import of
 any code path that touches the agent engine.
@@ -87,7 +107,12 @@ increase from the LangGraph/LiteLLM/pysigma dependency tree.
 **Verify.** `docker build -f infra/docker/Dockerfile.backend -t btagent-backend:test .`
 then `docker run --rm btagent-backend:test python -c "import btagent_backend, btagent_agents, btagent_engine"`.
 
-### B2 — Nothing builds version-tagged images for production *(Critical)*
+### B2 — Nothing builds version-tagged images for production *(Critical)* — **RESOLVED**
+
+> **Fixed** via option (a): `.github/workflows/release.yml` triggers on `v*`
+> tags and builds + pushes semver-tagged backend and frontend images, ordered
+> before the deploy, so `deploy-prod.yml`'s `docker manifest inspect` finds the
+> artifact it validates.
 
 **Symptom.** `deploy-prod.yml` fails immediately at the `validate` job with
 "image not found" for the tag being released.
@@ -115,7 +140,19 @@ matches what was pushed.
 **Verify.** Push a throwaway `v0.0.0-rc1` tag to a fork; confirm the build runs
 and `docker manifest inspect` in `validate` passes.
 
-### B3 — No database migration runs on deploy *(Critical)*
+### B3 — No database migration runs on deploy *(Critical)* — **RESOLVED**
+
+> **Fixed on both deploy paths.**
+> *Kubernetes:* `infra/helm/btagent/templates/migrate-job.yaml` — a
+> `pre-install,pre-upgrade` hook Job at `hook-weight: 5` running
+> `sh -c "cd backend && alembic upgrade head"`.
+> *Docker Compose:* a `migrate` one-shot service in both
+> `infra/docker-compose.yml` and `infra/docker-compose.airgap.yml`, which
+> `backend` and `scheduler` depend on with
+> `condition: service_completed_successfully`. Migration is therefore no longer
+> an easily-skipped runbook step on compose — it cannot be skipped at all.
+> `cd backend` is load-bearing in both: the image WORKDIR is `/app` but
+> `alembic.ini` lives at `/app/backend`.
 
 **Symptom.** A fresh cluster boots the backend against an empty/unmigrated
 schema; existing clusters run new code against an old schema.
@@ -137,7 +174,14 @@ in the deploy runbook (it is currently easy to skip).
 **Verify.** `helm template ... | grep -A30 'kind: Job'` shows the hook;
 a clean-namespace `helm install` brings the schema up before pods go Ready.
 
-### B4 — Helm chart has no scheduler/worker Deployment *(High)*
+### B4 — Helm chart has no scheduler/worker Deployment *(High)* — **RESOLVED**
+
+> **Fixed.** `infra/helm/btagent/templates/deployment.yaml` renders a scheduler
+> Deployment (gated on `scheduler.enabled`, same image as the backend,
+> `command: ["arq", "btagent_backend.scheduler.worker.WorkerSettings"]`, same
+> config/secret `envFrom`). The compose scheduler now also gets a healthcheck
+> that actually applies to a worker (`arq --check`) instead of inheriting the
+> image's HTTP one.
 
 **Symptom.** In Kubernetes, all scheduled/background work silently never runs:
 Phase 6 scheduled hunts (#112), behavioral baseline builds (#114), and the
@@ -156,7 +200,16 @@ leader-election note) so cron jobs don't double-fire.
 **Verify.** `helm template` renders the scheduler Deployment; in a test cluster
 `kubectl logs deploy/btagent-scheduler` shows arq registering its cron jobs.
 
-### B5 — No admin bootstrap path; `make db-seed` locks you out *(High)*
+### B5 — No admin bootstrap path; `make db-seed` locks you out *(High)* — **RESOLVED**
+
+> **Fixed.** `bt create-admin` (`backend/btagent_backend/cli/admin.py`) is an
+> idempotent create-or-reset that reads `BTAGENT_SEED_ADMIN_PASSWORD`, never
+> prints it, and exits 1 outside test mode when it is unset. It ships **inside
+> the backend image**, so it is the bootstrap path for container-only and
+> air-gapped installs where `infra/scripts/reset-admin-password.py` (host repo
+> + virtualenv) cannot run; that script now delegates to the same function so
+> the two cannot diverge. `DEPLOYMENT.md` no longer recommends `make db-seed`
+> for production.
 
 **Symptom.** After a prod `make db-seed`, no one can log in — the admin password
 is random and never surfaced.
@@ -268,11 +321,13 @@ Phase 5                 enterprise
 
 ### Definition of Done — first production deploy
 
-- [ ] **B1** Backend image imports `btagent_agents` + `btagent_engine` (and runs).
-- [ ] **B2** Tagging `vX.Y.Z` builds + pushes versioned backend/frontend images.
-- [ ] **B3** `helm install/upgrade` runs `alembic upgrade head` before rollout.
-- [ ] **B4** Scheduler Deployment runs in-cluster; arq cron jobs register.
-- [ ] **B5** Admin can log in via a documented, non-leaking bootstrap.
+- [x] **B1** Backend image imports `btagent_agents` + `btagent_engine` (and runs).
+- [x] **B2** Tagging `vX.Y.Z` builds + pushes versioned backend/frontend images.
+- [x] **B3** `helm install/upgrade` runs `alembic upgrade head` before rollout;
+      `docker compose up` does the same via the `migrate` one-shot.
+- [x] **B4** Scheduler Deployment runs in-cluster; arq cron jobs register.
+- [x] **B5** Admin can log in via a documented, non-leaking bootstrap
+      (`bt create-admin`).
 - [ ] **B6** Staging cluster wired; merges to `main` deploy to staging.
 - [ ] **B7** Prod nginx (HSTS/CSP), restricted CORS, external-secrets in place.
 - [ ] `BTAGENT_MOCK_CONNECTORS=false` with at least one real connector (#100 P0).
@@ -286,8 +341,8 @@ Phase 5                 enterprise
 |---------|--------------|
 | B1 | `docker build -f infra/docker/Dockerfile.backend .` then `docker run --rm <img> python -c "import btagent_backend, btagent_agents, btagent_engine"`. |
 | B2 | Push `v0.0.0-rc1` to a fork; confirm build runs and `deploy-prod.yml` `validate` (`docker manifest inspect`) passes. |
-| B3 | `helm template infra/helm/btagent \| grep -A30 'kind: Job'`; clean-namespace install brings schema up before pods Ready. |
-| B4 | `helm template` renders the scheduler Deployment; `kubectl logs deploy/btagent-scheduler` shows arq cron registration. |
-| B5 | `BTAGENT_SEED_ADMIN_PASSWORD=… python infra/scripts/seed-data.py`; log in with that password. |
+| B3 | `helm template infra/helm/btagent \| grep -A30 'kind: Job'`; clean-namespace install brings schema up before pods Ready. On compose: `docker compose -f infra/docker-compose.yml up -d` then `docker compose ps -a` shows `migrate` `Exited (0)` before `backend` started. |
+| B4 | `helm template` renders the scheduler Deployment; `kubectl logs deploy/btagent-scheduler` shows arq cron registration. On compose: `docker compose ps` shows `scheduler` healthy. |
+| B5 | `docker compose exec -e BTAGENT_SEED_ADMIN_PASSWORD=… backend bt create-admin`, then `POST /api/v1/auth/login` with that password returns 200. Running it with the variable unset must exit 1. |
 | B6 | Merge to `main` triggers `deploy-staging.yml`; staging smoke test green. |
 | B7 | `curl -I https://<host>` shows HSTS/CSP/X-Frame-Options; cross-origin request from a non-allowed origin is rejected. |

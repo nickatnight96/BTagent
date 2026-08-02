@@ -154,7 +154,30 @@ Seed data created (test mode — deterministic credentials):
   Senior user:   senior1 / senior1
 ```
 
-In any other environment (`BTAGENT_ENV=dev`, `staging`, `prod`) the script generates random passwords and prints them to stdout — **copy them from the terminal immediately, they are not stored anywhere else.**
+In any other environment (`BTAGENT_ENV=dev`, `staging`, `prod`) the script does
+**not** print any password (SEC-002 — an earlier version did, and this guide
+used to tell you to copy them off the terminal):
+
+- The **admin** password comes from `BTAGENT_SEED_ADMIN_PASSWORD`. If that is
+  unset the script fails loudly rather than minting a password nobody can
+  recover.
+- The **sample** users (`analyst1`, `senior1`) get random, unrecoverable
+  passwords. They are demo fixtures and are not meant to log in outside test
+  mode.
+
+So outside `BTAGENT_ENV=test`, the way to get a login is the bootstrap command,
+which is idempotent and doubles as password recovery:
+
+```bash
+# host checkout with a virtualenv
+BTAGENT_SEED_ADMIN_PASSWORD='...' make db-reset-admin
+
+# or inside a running container / the compose stack (no repo needed)
+docker compose -f infra/docker-compose.yml \
+  exec -e BTAGENT_SEED_ADMIN_PASSWORD='...' backend bt create-admin
+```
+
+See [`DEPLOYMENT.md`](DEPLOYMENT.md) for the production version of this step.
 
 ## 7. Start the Backend
 

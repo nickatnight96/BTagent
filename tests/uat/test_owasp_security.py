@@ -334,19 +334,13 @@ class TestA03Injection:
         )
         assert resp.status_code in (200, 422)
 
-    def test_command_injection_in_webhook(self, client: httpx.Client):
+    def test_command_injection_in_webhook(
+        self, client: httpx.Client, webhook_headers: dict[str, str]
+    ):
         """A03-04: Command injection in webhook payload is safely stored."""
         resp = client.post(
             "/api/v1/webhooks/splunk",
-            headers={
-                # ``_verify_secret`` falls back to ``settings.jwt_secret``
-                # when ``settings.webhook_secret`` is unset (the test env's
-                # default). Match the rest of the suite (test_sprint2_uat
-                # uses the same pattern).
-                "X-Webhook-Secret": os.environ.get(
-                    "BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION"
-                ),
-            },
+            headers=webhook_headers,
             json={
                 "search_name": "; cat /etc/passwd",
                 "severity": "high",

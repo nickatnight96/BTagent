@@ -1,83 +1,70 @@
-export enum EventType {
-  // Agent lifecycle
-  AGENT_STARTED = "agent_started",
-  AGENT_COMPLETED = "agent_completed",
-  AGENT_ERROR = "agent_error",
+/**
+ * WebSocket event types — the browser side of the wire contract.
+ *
+ * `EventType` / `EventEnvelope` / `ClientMessageType` / `ServerMessageType` are
+ * NOT declared here: they are re-exported from `events.generated.ts`, which
+ * mirrors `shared/btagent_shared/types/events.py` and
+ * `backend/btagent_backend/ws/protocol.py` and is regenerated from the live
+ * Python types (see backend/tests/test_ws_contract.py). Adding a hand-written
+ * member here is exactly how the two sides drifted apart before — the frontend
+ * enum grew `hitl_requested` / `message_complete` / `status_changed` /
+ * `timeline_entry` / `hunt_finding_updated`, none of which any Python enum
+ * member has ever emitted, and every handler for them was dead code.
+ *
+ * `AgentEvent` below is the app-facing view. It stays deliberately close to the
+ * wire shape — `envelopeToEvent` is now an identity-ish narrowing, not a
+ * renaming — so a future field addition can't silently decode to `undefined`.
+ */
 
-  // Tool events
-  TOOL_START = "tool_start",
-  TOOL_END = "tool_end",
-  TOOL_ERROR = "tool_error",
+export {
+  EventType,
+  ClientMessageType,
+  ServerMessageType,
+} from "./events.generated";
+export type { EventEnvelope, ClientMessage } from "./events.generated";
 
-  // Investigation events
-  IOC_DISCOVERED = "ioc_discovered",
-  TIMELINE_ENTRY = "timeline_entry",
-  CONTAINMENT_PROPOSED = "containment_proposed",
-  CONTAINMENT_EXECUTED = "containment_executed",
+import type { EventType as EventTypeT, EventEnvelope } from "./events.generated";
 
-  // Chat / streaming. Wire names come from the agents-side emitter
-  // (shared/btagent_shared/types/events.py): OUTPUT_CHUNK carries
-  // ``data.text`` per token, OUTPUT is the finalized answer from
-  // ``on_llm_end`` — there is no "message_complete" on the wire (that name
-  // was never emitted by anything; streaming finalization was dead until
-  // this was aligned).
-  OUTPUT_CHUNK = "output_chunk",
-  OUTPUT = "output",
-
-  // Cost / token accounting (prompt-budget hook).
-  TOKEN_USAGE = "token_usage",
-
-  // HITL. The checkpoint event's wire name is "hitl_checkpoint"
-  // (EventType.HITL_CHECKPOINT in shared) — "hitl_requested" was a
-  // frontend-only name no emitter ever used.
-  HITL_CHECKPOINT = "hitl_checkpoint",
-  HITL_RESPONSE = "hitl_response",
-  HITL_TIMEOUT = "hitl_timeout",
-
-  // Status changes
-  STATUS_CHANGED = "status_changed",
-  COST_UPDATE = "cost_update",
-
-  // System
-  HEARTBEAT = "heartbeat",
-  ERROR = "error",
-
-  // Hunt triage (Phase 6 #119)
-  HUNT_FINDING_CREATED = "hunt_finding_created",
-  HUNT_FINDING_UPDATED = "hunt_finding_updated",
-  HUNT_FINDING_SUPPRESSED = "hunt_finding_suppressed",
-  HUNT_FINDING_PROMOTED = "hunt_finding_promoted",
-
-  // Behavioral Hunter (#114) — a baseline deviation was detected. Payload is
-  // entity/score metadata only; the page refetches through the RBAC-scoped API.
-  BEHAVIORAL_OUTLIER_DETECTED = "behavioral_outlier_detected",
-
-  // Governance / classification (EPIC-7 UC-7.2) — real-time egress-block alert
-  TLP_VIOLATION_ATTEMPT = "tlp.violation_attempt",
-}
-
+/** An event as consumed by stores/components. */
 export interface AgentEvent {
   id: string;
-  type: EventType;
+  type: EventTypeT;
   investigation_id: string;
   timestamp: string;
   data: Record<string, unknown>;
+  parent_id?: string | null;
+  trace_id?: string | null;
 }
 
-export interface EventEnvelope {
-  event_id: string;
-  event_type: EventType;
-  investigation_id: string;
-  timestamp: string;
-  payload: Record<string, unknown>;
-}
-
+/**
+ * Narrow a raw wire envelope to an `AgentEvent`.
+ *
+ * The wire keys are the unaliased Python attribute names — `id`, `type`,
+ * `data`. This function previously read `event_id` / `event_type` / `payload`,
+ * which do not exist on the wire, so EVERY field decoded to `undefined`.
+ */
 export function envelopeToEvent(envelope: EventEnvelope): AgentEvent {
   return {
-    id: envelope.event_id,
-    type: envelope.event_type,
+    id: envelope.id,
+    type: envelope.type,
     investigation_id: envelope.investigation_id,
     timestamp: envelope.timestamp,
-    data: envelope.payload,
+    data: envelope.data ?? {},
+    parent_id: envelope.parent_id ?? null,
+    trace_id: envelope.trace_id ?? null,
   };
+}
+
+/**
+ * True when a decoded frame is a real `EventEnvelope` rather than a
+ * protocol-level `ServerMessage` (`{type, data}`).
+ *
+ * Needed because `EventType.NOTIFICATION` and `ServerMessageType.NOTIFICATION`
+ * share the literal `"notification"`: only the envelope carries `id` and
+ * `investigation_id`.
+ */
+export function isEventEnvelope(value: unknown): value is EventEnvelope {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.id === "string" && typeof v.investigation_id === "string";
 }

@@ -1,5 +1,7 @@
 # Dev overrides — hot reload for backend, skip frontend/nginx Docker builds
-version: "3.9"
+#
+# The base file's `migrate` / `init-storage` one-shots still run here, so the
+# hot-reload stack bootstraps its own schema and bucket too.
 
 services:
   backend:

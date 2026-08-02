@@ -59,8 +59,13 @@ export function InvestigationWorkspace() {
   const { currentInvestigation, updateStatus, updateCost } =
     useInvestigationStore();
   const { activePanel, setActivePanel } = useUIStore();
-  const { appendStreamChunk, finalizeStreamMessage, addCheckpoint } =
-    useAgentStore();
+  const {
+    appendStreamChunk,
+    finalizeStreamMessage,
+    finalizeStreamIfActive,
+    addCheckpoint,
+    resolveCheckpoint,
+  } = useAgentStore();
   // Phase C2: tokens are httpOnly cookies. We gate WS connection on the
   // presence of a hydrated user (the proxy for "session valid"); the
   // browser attaches the auth cookie on the upgrade handshake automatically.
@@ -73,79 +78,113 @@ export function InvestigationWorkspace() {
     }
   }, [id]);
 
-  // Connect WebSocket for real-time events
+  // Real-time events for THIS investigation.
+  //
+  // The socket itself is owned by the Layout shell (see `useWebSocketSession`)
+  // and lives for the whole authenticated session — this effect only (a)
+  // subscribes the connection to this investigation's channel and (b)
+  // registers a handler on the client's multi-subscriber registration list.
+  //
+  // (a) is not optional: the hub delivers non-global channels ONLY to clients
+  // that sent a `subscribe` frame, and `RedisEmitter` publishes agent events
+  // ONLY to `btagent:events:{investigation_id}`. Without the subscribe, the
+  // workspace receives no agent events at all.
   useEffect(() => {
     if (!id || !user) return;
 
     const wsClient = getWSClient();
     const eventStore = useEventStore.getState();
 
-    // Chain the shared onEvent handler rather than clobbering it (GH #390).
-    // The singleton WS client exposes a single `onEvent` slot; other
-    // consumers — TlpViolationAlerts (mounted once in the persistent Layout
-    // shell) and useLiveEventRefresh — register via the same contract: save
-    // the previous handler, call it FIRST, and restore it on cleanup. A bare
-    // overwrite here would permanently silence them for the session.
-    const prev = wsClient.onEvent;
-    wsClient.onEvent = (event) => {
-      // Forward to previously-registered subscribers first and
-      // unconditionally: our investigation-id guard must gate only OUR
-      // logic, never drop events destined for other consumers.
-      prev?.(event);
+    const unsubscribeChannel = wsClient.subscribeToInvestigation(id);
 
+    const unsubscribeEvents = wsClient.onEvent((event) => {
+      // Our investigation-id guard gates only OUR logic; other subscribers
+      // are dispatched to independently by the client.
       if (event.investigation_id !== id) return;
 
       // Push to event store
       eventStore.pushEvent(event);
 
-      // Handle specific event types. Payload keys follow the agents-side
-      // emitters (event_emitter_hook / prompt_budget_hook / hitl_hook) —
-      // the hub forwards the envelope verbatim, there is no translation
-      // layer in between.
+      // Event types and payload keys below are the REAL ones emitted by the
+      // Python side (shared/btagent_shared/types/events.py + the agent hooks).
+      // The previous set — message_complete / status_changed / hitl_requested,
+      // reading data.chunk / data.content / data.cost_usd — matched nothing on
+      // the wire and was dead code.
       switch (event.type) {
+        // Agent hooks emit OUTPUT_CHUNK with `text` (+ `index`), not `chunk`.
         case EventType.OUTPUT_CHUNK:
-          // on_llm_new_token → { text, index }
           appendStreamChunk((event.data.text as string) ?? "");
           break;
 
-        case EventType.OUTPUT:
-          // on_llm_end → { text, run_id }: the finalized assistant answer.
-          finalizeStreamMessage(event.id, (event.data.text as string) ?? "");
-          break;
-
-        case EventType.STATUS_CHANGED:
-          updateStatus(
-            id,
-            (event.data.new_status as InvestigationStatus) ??
-              InvestigationStatus.RUNNING,
+        // Final reassembled output — protocol.OutputComplete carries
+        // `full_text`. OUTPUT is the engine adapter's reasoning-end event and
+        // carries `text`; both end the stream.
+        case EventType.OUTPUT_COMPLETE:
+          finalizeStreamMessage(
+            (event.data.message_id as string) ?? event.id,
+            (event.data.full_text as string) ?? (event.data.text as string) ?? "",
           );
           break;
 
+        case EventType.OUTPUT:
+          finalizeStreamMessage(event.id, (event.data.text as string) ?? "");
+          break;
+
+        // There is no `status_changed` event; status moves via the
+        // investigation lifecycle events and AGENT_STATUS.
+        case EventType.INVESTIGATION_COMPLETE:
+          updateStatus(
+            id,
+            (event.data.final_status as InvestigationStatus) ??
+              InvestigationStatus.COMPLETED,
+          );
+          finalizeStreamIfActive();
+          break;
+
+        case EventType.INVESTIGATION_FAILED:
+          updateStatus(id, InvestigationStatus.FAILED);
+          finalizeStreamIfActive();
+          break;
+
+        case EventType.INVESTIGATION_PAUSED:
+          updateStatus(id, InvestigationStatus.PAUSED);
+          break;
+
+        case EventType.INVESTIGATION_RESUMED:
+          updateStatus(id, InvestigationStatus.RUNNING);
+          break;
+
+        case EventType.AGENT_STATUS:
+          if (typeof event.data.status === "string") {
+            updateStatus(id, event.data.status as InvestigationStatus);
+          }
+          break;
+
+        // PromptBudgetHook emits COST_UPDATE with `total_cost_usd`, and
+        // TOKEN_USAGE with the token counters — there is no `cost_usd` /
+        // `token_count` pair on either.
         case EventType.COST_UPDATE:
-          // prompt_budget_hook → { call_cost_usd, total_cost_usd, ... } — no
-          // token fields here; keep the count TOKEN_USAGE last reported.
           updateCost(
             id,
-            (event.data.total_cost_usd as number) ?? 0,
-            useInvestigationStore.getState().currentInvestigation
-              ?.token_count ?? 0,
+            (event.data.total_cost_usd as number) ??
+              (event.data.call_cost_usd as number) ??
+              0,
+            (event.data.total_tokens as number) ?? 0,
           );
           break;
 
         case EventType.TOKEN_USAGE:
-          // prompt_budget_hook → { total_input_tokens, total_output_tokens,
-          // ... } — no total cost here; keep the cost COST_UPDATE last set.
           updateCost(
             id,
-            useInvestigationStore.getState().currentInvestigation?.cost_usd ??
-              0,
+            (event.data.total_cost_usd as number) ?? 0,
             ((event.data.total_input_tokens as number) ?? 0) +
               ((event.data.total_output_tokens as number) ?? 0),
           );
           break;
 
+        // The backend event is `hitl_checkpoint`, and HITLHook's payload uses
+        // `message` / `tool_name` — not `prompt` / `action` / `timeout_seconds`.
         case EventType.HITL_CHECKPOINT:
-          // hitl_hook → { checkpoint_id, tool_name, tool_input, message, ... }
           addCheckpoint({
             id: (event.data.checkpoint_id as string) ?? event.id,
             investigation_id: id,
@@ -158,31 +197,36 @@ export function InvestigationWorkspace() {
             timeout_seconds: (event.data.timeout_seconds as number) ?? 300,
           });
           break;
+
+        // The engine resolved / timed out the checkpoint on its own: drop the
+        // card so it can't sit pending forever.
+        case EventType.HITL_RESPONSE:
+        case EventType.HITL_TIMEOUT:
+          resolveCheckpoint(
+            (event.data.checkpoint_id as string) ?? event.id,
+          );
+          break;
+
+        case EventType.ERROR:
+          finalizeStreamIfActive();
+          break;
       }
-    };
-
-    wsClient.onConnect = () => {
-      console.log("[WS] Connected for investigation:", id);
-    };
-
-    if (!wsClient.isConnected) {
-      // Cookies authenticate the upgrade — no token argument needed.
-      wsClient.connect();
-    }
+    });
 
     return () => {
-      // Restore the previous handler (NOT a no-op) so chained subscribers
-      // installed before us keep receiving events after we unmount.
-      wsClient.onEvent = prev;
+      unsubscribeEvents();
+      unsubscribeChannel();
     };
   }, [
     id,
     user,
     appendStreamChunk,
     finalizeStreamMessage,
+    finalizeStreamIfActive,
     updateStatus,
     updateCost,
     addCheckpoint,
+    resolveCheckpoint,
   ]);
 
   const handlePause = useCallback(async () => {

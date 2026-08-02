@@ -31,7 +31,24 @@ docker compose -f infra/docker-compose.yml up -d
 make up
 ```
 
-Services started: PostgreSQL, Redis, MinIO, Ollama, Backend, Frontend, Nginx.
+Services started: PostgreSQL, Redis, MinIO, Ollama, **migrate**, **init-storage**, Backend, Scheduler, Frontend, Nginx.
+
+`migrate` and `init-storage` are one-shots that must exit 0 before `backend`
+and `scheduler` are allowed to start (`depends_on:
+condition: service_completed_successfully`):
+
+| One-shot | Command | Without it |
+|----------|---------|-----------|
+| `migrate` | `sh -c "cd backend && alembic upgrade head"` | the backend serves a HEALTHY `/health` against an empty database and dies on the first login with a missing `users` table |
+| `init-storage` | `bt init-storage` | `/health/ready` reports `s3: down` and every evidence upload fails, because nothing ever created the bucket |
+
+Both are idempotent and re-run on every `up`. After the stack is up, create the
+first admin — the only manual step:
+
+```bash
+docker compose -f infra/docker-compose.yml \
+  exec -e BTAGENT_SEED_ADMIN_PASSWORD='...' backend bt create-admin
+```
 
 ### Dev Mode
 
@@ -108,6 +125,11 @@ POSTGRES_DB=btagent            # Database name
 
 Handles real-time event routing from agent hooks to WebSocket clients via pub/sub channels (`btagent:events:{investigation_id}`). Also backs the sliding-window rate limiter.
 
+**Authentication is opt-in.** Set `REDIS_PASSWORD` in the env file and the
+service starts with `--requirepass`; leave it unset and it starts open (what
+`make dev` and the host-side uvicorn expect). Set `BTAGENT_REDIS_URL=redis://:<pw>@redis:6379`
+to match — the two must agree or the backend and scheduler get auth errors.
+
 ### MinIO
 
 | Property | Value |
@@ -119,6 +141,11 @@ Handles real-time event routing from agent hooks to WebSocket clients via pub/su
 Stores forensic evidence artifacts (files, screenshots, memory dumps) with SHA-256 integrity hashes. Compatible with any S3-compatible storage in production.
 
 **Console:** Access the MinIO web console at `http://localhost:9001` (default credentials: `minioadmin`/`minioadmin`).
+
+**Bucket creation** is handled by the `init-storage` one-shot (`bt init-storage`),
+which reads the same `BTAGENT_S3_*` settings `/health/ready` probes — so the
+bucket that gets created is by construction the bucket that gets checked. It is
+no longer something to create by hand in the console.
 
 ### Ollama
 
@@ -139,10 +166,19 @@ docker compose -f infra/docker-compose.yml exec ollama ollama pull llama3.3
 | Property | Value |
 |----------|-------|
 | Image | `nginx:alpine` |
-| Ports | 8080 (HTTP), 8443 (HTTPS) |
-| Purpose | Reverse proxy, TLS termination, static file serving |
+| Ports | 8080 (HTTP) |
+| Purpose | Reverse proxy, static file serving |
 
-Routes traffic to the frontend and backend services. Configuration at `infra/nginx/nginx.conf`. TLS certificates (for HTTPS) are mounted from `infra/nginx/ssl/`.
+Routes traffic to the frontend and backend services. Configuration at `infra/nginx/nginx.conf`.
+
+**HTTP only by default.** `nginx.conf` ships a single `listen 80` server block,
+so no 443 port is published — an exposed 8443 that nothing listened on was
+worse than no port at all. `infra/nginx/ssl/` is still mounted at
+`/etc/nginx/ssl` (empty) so enabling TLS is only: drop in a cert, add the 443
+server block, re-add the `8443:443` mapping. Full runbook, including a
+self-signed cert for local production, in
+[`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) → "Enabling TLS on the compose
+nginx".
 
 ### Observability Services
 

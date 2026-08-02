@@ -18,9 +18,21 @@ vi.mock("@/api/notifications", () => ({
 }));
 
 // Stable fake WS client so the bell can register its onNotification handler.
-const fakeWSClient: { onNotification: (n: unknown) => void } = {
-  onNotification: () => {},
+// `onNotification` is a REGISTRATION method returning an unsubscribe handle
+// (the client uses a multi-subscriber list, not a single mutable slot), so the
+// test drives delivery through `emitNotification`.
+const notificationListeners = new Set<(n: unknown) => void>();
+const fakeWSClient = {
+  onNotification(handler: (n: unknown) => void): () => void {
+    notificationListeners.add(handler);
+    return () => {
+      notificationListeners.delete(handler);
+    };
+  },
 };
+function emitNotification(n: unknown): void {
+  for (const fn of [...notificationListeners]) fn(n);
+}
 
 vi.mock("@/api/ws", () => ({
   getWSClient: () => fakeWSClient,
@@ -256,7 +268,7 @@ describe("NotificationBell", () => {
 
     // Simulate the hub pushing a per-user notification over the socket.
     await act(async () => {
-      fakeWSClient.onNotification({ id: "ntf_live", title: "Live", read: false });
+      emitNotification({ id: "ntf_live", title: "Live", read: false });
     });
 
     await waitFor(() =>

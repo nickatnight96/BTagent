@@ -140,6 +140,16 @@ class WebSocketHub:
         async with self._lock:
             user_conns = self._user_connections.setdefault(user.id, [])
             if len(user_conns) >= self._max_per_user:
+                # B12: accept THEN close so the 4029 close code actually
+                # reaches the client. Closing before accept() makes Starlette
+                # reject the handshake with HTTP 403, which clients surface as
+                # a generic 1006 — indistinguishable from a network drop, so
+                # they reconnect-storm instead of backing off. Mirrors
+                # ws/access.close_with_access_denied.
+                try:
+                    await ws.accept()
+                except Exception:
+                    pass
                 await ws.close(
                     code=4029,
                     reason=f"Connection limit ({self._max_per_user}) exceeded",
@@ -307,9 +317,14 @@ class WebSocketHub:
         assert self._redis is not None
         pubsub = self._redis.pubsub()
 
-        # Subscribe to the global channel at startup
+        # One pattern covers BOTH the per-investigation channels and the
+        # global channel: ``btagent:events:*`` matches ``btagent:events:global``
+        # too. Adding an explicit ``subscribe(global_channel())`` on top of the
+        # pattern (as this used to) makes Redis deliver every global publish
+        # twice — once as a ``pmessage``, once as a ``message`` — so each global
+        # event reached /ws/events clients twice (duplicate TLP toasts, doubled
+        # unread counts). Do NOT re-add the explicit subscribe.
         await pubsub.psubscribe(f"{investigation_channel('*')}")
-        await pubsub.subscribe(global_channel())
         # Per-user in-app notifications (NotificationService.send_inapp) —
         # forwarded to that user's connections only.
         await pubsub.psubscribe(f"{notification_channel('*')}")
@@ -389,14 +404,33 @@ class WebSocketHub:
             event_org_id = None
 
         if channel == global_channel():
+            # ``publish()`` writes every envelope to BOTH the investigation
+            # channel and the global channel. A client on /ws/events that has
+            # explicitly subscribed to this investigation therefore sits in
+            # ``_global_clients`` *and* ``_investigation_clients[inv]`` and
+            # would receive the same envelope twice. The investigation channel
+            # is the authoritative delivery for those clients (it is also the
+            # only one ``RedisEmitter`` publishes to), so skip them here.
             async with self._lock:
-                targets = list(self._global_clients)
+                targets = [
+                    c
+                    for c in self._global_clients
+                    if envelope.investigation_id not in c.subscriptions
+                ]
+            # B11: the global channel fans out to every tenant, so an
+            # unattributed event (no ``data.org_id``) must FAIL CLOSED here —
+            # else a TLP violation raised outside any org context leaks onto
+            # every tenant's stream. The investigation channel keeps the
+            # lenient no-op (its clients were access-checked to that
+            # investigation's org at subscribe time).
+            strict_org_filter = True
         else:
             async with self._lock:
                 targets = list(self._investigation_clients.get(channel, set()))
+            strict_org_filter = False
 
         for client in targets:
-            if not self._client_passes_org_filter(client, event_org_id):
+            if not self._client_passes_org_filter(client, event_org_id, strict=strict_org_filter):
                 logger.debug(
                     "Dropping cross-org event for client user=%s client_org=%s event_org=%s",
                     client.user.id,
@@ -407,15 +441,24 @@ class WebSocketHub:
             await self._enqueue(client, raw_json, critical=critical)
 
     @staticmethod
-    def _client_passes_org_filter(client: ConnectedClient, event_org_id: str | None) -> bool:
+    def _client_passes_org_filter(
+        client: ConnectedClient, event_org_id: str | None, *, strict: bool = False
+    ) -> bool:
         """Return True if the event may be delivered to this client.
 
-        Conservative: when either side is missing org info we deliver the
-        event (same-org no-op). The primary security gate is the connect-time
-        access check; this is a defence-in-depth filter for any leaked
-        cross-org event that ever lands on a shared channel.
+        On a per-investigation channel (``strict=False``) we stay conservative:
+        a missing org on either side delivers the event, since the connect-time
+        access check already scoped the client to that investigation's org.
+
+        On the global channel (``strict=True``) an event with no ``org_id``
+        must NOT reach an org-scoped client (B11) — an unattributed event
+        (e.g. a TLP violation raised outside org context) would otherwise fan
+        out to every tenant. A client with no org (e.g. a cross-org admin
+        stream) still receives it.
         """
-        if client.org_id is None or event_org_id is None:
+        if event_org_id is None:
+            return not (strict and client.org_id is not None)
+        if client.org_id is None:
             return True
         return client.org_id == event_org_id
 

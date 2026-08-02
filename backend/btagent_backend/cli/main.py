@@ -27,14 +27,27 @@ from btagent_backend.cli import huntpack
 
 _EPILOG = """\
 examples:
+  bt create-admin                       # bootstrap the first admin (see below)
+  bt init-storage                       # create the evidence bucket if missing
   bt huntpack list
   bt huntpack install ~/sigma --name "SigmaHQ core" --version 2026.07
   bt huntpack enable sigmahq_core
   bt huntpack disable windows_baseline --org org_01HZY...
 
-The target org resolves as: --org, then $BTAGENT_ORG_ID, then the default org.
-Every command prints which org it acted on.
+bt create-admin reads the password from $BTAGENT_SEED_ADMIN_PASSWORD (it is
+never printed) and fails loudly if that is unset outside test mode. It is
+idempotent, so it doubles as the password-recovery path:
+
+  docker compose exec -e BTAGENT_SEED_ADMIN_PASSWORD='...' backend bt create-admin
+
+For huntpack, the target org resolves as: --org, then $BTAGENT_ORG_ID, then the
+default org. Every command prints which org it acted on.
 """
+
+#: Command groups that need no database session. ``_run`` skips building an
+#: engine for these so ``bt init-storage`` still works when Postgres is down —
+#: which is exactly when an operator is likely to be running it.
+_NO_SESSION_GROUPS = frozenset({"init-storage"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,6 +60,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     sub = parser.add_subparsers(dest="group", required=True)
+
+    admin = sub.add_parser(
+        "create-admin",
+        help="create or reset the admin user (idempotent bootstrap / recovery)",
+        description=(
+            "Create the admin user if it does not exist, otherwise reset its password. "
+            "The password comes from $BTAGENT_SEED_ADMIN_PASSWORD unless --password is "
+            "given; outside test mode an unset variable is a hard failure rather than an "
+            "unrecoverable random password. The password is never printed."
+        ),
+    )
+    admin.add_argument("--username", default="admin", help="account to create/reset (admin)")
+    admin.add_argument(
+        "--password",
+        default=None,
+        help="password to set; prefer $BTAGENT_SEED_ADMIN_PASSWORD so it stays out of shell history",
+    )
+    admin.add_argument(
+        "--role", default="admin", help="role assigned when CREATING the user (default: admin)"
+    )
+
+    sub.add_parser(
+        "init-storage",
+        help="create the S3/MinIO evidence bucket if it does not exist",
+        description=(
+            "Idempotently create the bucket named by BTAGENT_S3_BUCKET at BTAGENT_S3_ENDPOINT "
+            "— the same bucket GET /health/ready probes with head_bucket. Needs no database."
+        ),
+    )
 
     hp = sub.add_parser("huntpack", help="hunt-pack catalog: list / install / enable / disable")
     hp.add_argument("--org", default=None, help="target organization id (default: $BTAGENT_ORG_ID)")
@@ -100,7 +142,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def dispatch(args: argparse.Namespace, db: Any) -> huntpack.CommandResult:
-    """Run one parsed command against an open session."""
+    """Run one parsed command. ``db`` is an open session, or None for
+    :data:`_NO_SESSION_GROUPS` commands."""
+    if args.group == "create-admin":
+        from btagent_backend.cli import admin
+
+        return await admin.cmd_create_admin(
+            db,
+            username=args.username,
+            password=args.password,
+            role=args.role,
+        )
+
+    if args.group == "init-storage":
+        from btagent_backend.cli import storage
+
+        return await storage.cmd_init_storage()
+
     if args.group != "huntpack":  # pragma: no cover - argparse rejects earlier
         return huntpack.CommandResult(exit_code=2, lines=[f"unknown command group: {args.group}"])
 
@@ -150,6 +208,9 @@ def render(result: huntpack.CommandResult, *, as_json: bool) -> str:
 
 async def _run(args: argparse.Namespace) -> huntpack.CommandResult:
     """Open a session, run the command, commit on success."""
+    if args.group in _NO_SESSION_GROUPS:
+        return await dispatch(args, None)
+
     # Imported here (not at module import) so ``bt --help`` never builds a DB
     # engine, and so the test suite's engine interception is always in place
     # before the real module would be touched.

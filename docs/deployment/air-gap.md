@@ -129,15 +129,40 @@ cp .env.airgap.example .env.airgap
 docker compose -f docker-compose.airgap.yml --env-file .env.airgap up -d
 ```
 
-Then run migrations and bootstrap the first admin:
+`up` is self-bootstrapping. Two one-shot services run to completion before the
+backend or scheduler start, and both use the *same* `IMAGE_BACKEND` ref, so
+they add nothing to the transfer bundle:
+
+| Service | Command | Why |
+|---------|---------|-----|
+| `migrate` | `sh -c "cd backend && alembic upgrade head"` | schema — the backend otherwise boots against an empty database and reports healthy until the first login |
+| `init-storage` | `bt init-storage` | creates `BTAGENT_S3_BUCKET` in MinIO, which `/health/ready` probes and every evidence upload needs |
+
+> `cd backend` is not optional: the image's WORKDIR is `/app` but `alembic.ini`
+> and `migrations/` live at `/app/backend`. A plain
+> `exec backend alembic upgrade head` fails with "No config file 'alembic.ini'
+> found" — an earlier revision of this guide documented exactly that broken
+> command.
+
+Only the first admin is left to do, and it runs from inside the image — there
+is no repository and no virtualenv in the enclave, so the host script
+(`infra/scripts/reset-admin-password.py`) is not an option here:
 
 ```bash
 docker compose -f docker-compose.airgap.yml --env-file .env.airgap \
-  exec backend alembic upgrade head
+  exec -e BTAGENT_SEED_ADMIN_PASSWORD='<strong-password>' backend bt create-admin
+```
 
-# The admin password comes from BTAGENT_SEED_ADMIN_PASSWORD; outside test mode
-# the seed refuses to invent one rather than minting an unrecoverable secret.
-# See backend/btagent_backend/auth/bootstrap.py.
+`bt create-admin` is idempotent (create if missing, otherwise reset the
+password), never prints the password, and refuses to run outside test mode when
+`BTAGENT_SEED_ADMIN_PASSWORD` is unset rather than minting an unrecoverable
+secret. See `backend/btagent_backend/auth/bootstrap.py`. It is also the
+password-recovery path: run it again with a new value.
+
+Verify the stack agrees:
+
+```bash
+curl -sf localhost:8000/health/ready    # {"status":"ready","checks":{"db":"ok","redis":"ok","s3":"ok"}}
 ```
 
 Compose networks do not confine the host, and this stack publishes ports, so

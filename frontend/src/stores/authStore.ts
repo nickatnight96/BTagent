@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { resetWSClient } from "@/api/ws";
 import type { User } from "@/types/config";
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
@@ -159,6 +160,11 @@ export const useAuthStore = create<AuthState>()(
         // Clear local state immediately so any concurrent renders see a
         // logged-out store, then ask the backend to clear the cookies.
         set({ user: null, error: null, mfaRequired: false });
+        // Tear the socket down BEFORE the network round-trip. The WS is
+        // authenticated by the cookie presented at upgrade time, so without
+        // this it keeps streaming user A's events after logout — and a user B
+        // signing in on the same tab rides A's connection and A's org context.
+        resetWSClient();
         try {
           await fetch(`${BASE_URL}/v1/auth/logout`, {
             method: "POST",
@@ -174,6 +180,9 @@ export const useAuthStore = create<AuthState>()(
         // — see ``AuthStoreSlice.clearLocalUser`` for why we don't
         // round-trip ``/auth/logout`` from the API client.
         set({ user: null, error: null, mfaRequired: false });
+        // Same reasoning as ``logout``: a dead cookie must not leave a live,
+        // previously-authenticated socket streaming into the page.
+        resetWSClient();
       },
 
       fetchMe: async (): Promise<boolean> => {
@@ -216,3 +225,7 @@ export const useAuthStore = create<AuthState>()(
  */
 export const useIsAuthenticated = () =>
   useAuthStore((state) => state.user !== null);
+
+/** True while the initial session probe (`fetchMe`) is still in flight. */
+export const useIsBootstrapping = () =>
+  useAuthStore((state) => state.isBootstrapping);

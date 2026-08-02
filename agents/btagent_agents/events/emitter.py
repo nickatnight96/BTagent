@@ -31,6 +31,21 @@ class RedisEmitter:
     to ``btagent:events:*`` via pattern-subscribe and fans messages out to the
     analyst's browser.
 
+    Delivery requires a browser-side ``subscribe``
+    ---------------------------------------------
+    Events published here land ONLY on ``btagent:events:{investigation_id}``,
+    never on ``btagent:events:global``. The hub delivers a non-global channel
+    exclusively to clients that sent a ``{"type": "subscribe",
+    "investigation_id": ...}`` frame (``ws/routes.py``), so a browser sitting on
+    the global ``/ws/events`` stream sees *nothing* from this emitter until it
+    subscribes. The frontend does that on workspace open
+    (``WebSocketClient.subscribeToInvestigation``).
+
+    Do NOT "fix" a missing-events report by also publishing to the global
+    channel: the global stream has no per-investigation access check (only the
+    coarse per-client org filter), so that would hand every connected analyst
+    the event stream of every investigation in their org.
+
     Usage::
 
         emitter = RedisEmitter("inv_01HX...", "redis://localhost:6379/0")

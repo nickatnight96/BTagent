@@ -1,18 +1,30 @@
 /**
  * Unit tests for the real-time TLP-violation alerter (EPIC-7 UC-7.2).
  *
- * The global WS client is mocked with a mutable ``onEvent`` slot (the same
- * surface the real client exposes), and ``sonner``'s ``toast`` is stubbed so we
- * can assert the error toast fires with the humanised block message.
+ * The global WS client is mocked with the SAME registration-list surface the
+ * real client exposes: `onEvent(handler)` registers and returns an unsubscribe
+ * handle. `sonner`'s `toast` is stubbed so we can assert the error toast fires
+ * with the humanised block message.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { EventType } from "@/types/events";
 import type { AgentEvent } from "@/types/events";
 
-const fakeWs: { onEvent: (ev: AgentEvent) => void } = {
-  onEvent: () => {},
+type Handler = (ev: AgentEvent) => void;
+
+const listeners = new Set<Handler>();
+const fakeWs = {
+  onEvent(handler: Handler): () => void {
+    listeners.add(handler);
+    return () => {
+      listeners.delete(handler);
+    };
+  },
 };
+function emit(ev: AgentEvent): void {
+  for (const fn of [...listeners]) fn(ev);
+}
 
 vi.mock("@/api/ws", () => ({
   getWSClient: () => fakeWs,
@@ -36,7 +48,7 @@ function violationEvent(data: Record<string, unknown>): AgentEvent {
 }
 
 beforeEach(() => {
-  fakeWs.onEvent = () => {};
+  listeners.clear();
   toastError.mockReset();
 });
 
@@ -49,7 +61,7 @@ describe("useTlpViolationAlerts", () => {
     renderHook(() => useTlpViolationAlerts());
 
     act(() => {
-      fakeWs.onEvent(
+      emit(
         violationEvent({
           tlp: "red",
           egress_kind: "cloud_llm",
@@ -71,7 +83,7 @@ describe("useTlpViolationAlerts", () => {
     renderHook(() => useTlpViolationAlerts());
 
     act(() => {
-      fakeWs.onEvent(violationEvent({}));
+      emit(violationEvent({}));
     });
 
     expect(toastError).toHaveBeenCalledWith(
@@ -84,7 +96,7 @@ describe("useTlpViolationAlerts", () => {
     renderHook(() => useTlpViolationAlerts());
 
     act(() => {
-      fakeWs.onEvent({
+      emit({
         ...violationEvent({}),
         type: EventType.HUNT_FINDING_CREATED,
       });
@@ -93,24 +105,32 @@ describe("useTlpViolationAlerts", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("chains the previous onEvent so other consumers keep working", () => {
-    const previous = vi.fn();
-    fakeWs.onEvent = previous;
+  it("coexists with other subscribers instead of replacing them", () => {
+    const other = vi.fn();
+    fakeWs.onEvent(other);
     renderHook(() => useTlpViolationAlerts());
 
     act(() => {
-      fakeWs.onEvent(violationEvent({ tlp: "red" }));
+      emit(violationEvent({ tlp: "red" }));
     });
 
-    expect(previous).toHaveBeenCalledTimes(1);
+    expect(other).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledTimes(1);
   });
 
-  it("restores the previous onEvent on unmount", () => {
-    const previous = vi.fn();
-    fakeWs.onEvent = previous;
+  it("deregisters only its own handler on unmount", () => {
+    const other = vi.fn();
+    fakeWs.onEvent(other);
     const { unmount } = renderHook(() => useTlpViolationAlerts());
-    expect(fakeWs.onEvent).not.toBe(previous);
+    expect(listeners.size).toBe(2);
+
     unmount();
-    expect(fakeWs.onEvent).toBe(previous);
+
+    expect(listeners.size).toBe(1);
+    act(() => {
+      emit(violationEvent({ tlp: "red" }));
+    });
+    expect(other).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
   });
 });
