@@ -60,6 +60,7 @@ unpacks it, then points ``bt huntpack install`` at the path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -101,13 +102,17 @@ _RULE_SUFFIXES = (".yml", ".yaml")
 # that could escape the install root.
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
+# Filename budget for a flattened rule file. Generous enough to keep real
+# SigmaHQ paths readable, well inside every filesystem's per-name limit.
+_RULE_SLUG_MAX = 120
+
 SkipStage = Literal["parse", "transpile", "duplicate"]
 
 
-def slugify(value: str, *, fallback: str = "pack") -> str:
+def slugify(value: str, *, fallback: str = "pack", max_length: int = 64) -> str:
     """``"SigmaHQ core rules"`` -> ``"sigmahq_core_rules"`` (safe as a dir name)."""
     slug = _SLUG_RE.sub("_", value.strip().lower()).strip("_")
-    return (slug or fallback)[:64]
+    return (slug or fallback)[:max_length]
 
 
 class RuleSkip(BaseModel):
@@ -165,7 +170,16 @@ class CorpusImport(BaseModel):
 
     pack: HuntPack
     source: str = Field(..., description="Corpus root the rules were read from.")
-    scanned: int = Field(0, description="Rule files found under the root.")
+    scanned: int = Field(0, description="Rule files actually processed (after any cap).")
+    found: int = Field(0, description="Rule files discovered under the root, before the cap.")
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "E7: True when ``max_rules`` capped the import so files beyond the "
+            "cap were never processed — the operator sees an explicit signal "
+            "instead of mistaking a capped install for the whole corpus."
+        ),
+    )
     backends: list[str] = Field(default_factory=list)
     skipped: list[RuleSkip] = Field(default_factory=list)
     transpiled: list[RuleTranspile] = Field(
@@ -227,9 +241,22 @@ def _rule_slug(rel: Path) -> str:
     The imported pack is a *flat* ``rules/`` directory, so the nested corpus
     path is folded into the filename; that keeps two same-named rules from
     different categories from colliding.
+
+    Folding alone is not enough: real SigmaHQ paths routinely exceed any
+    filename budget (``rules_windows_process_creation_`` alone is 31
+    characters), and a plain truncation silently maps distinct rules onto one
+    filename — the second then overwrites the first at install time. So when
+    the slug has to be shortened we append a digest of the *full* relative
+    path, which keeps the name readable while making a collision require a
+    SHA-256 prefix collision rather than a shared filename prefix.
     """
     stem = "_".join([*rel.parts[:-1], rel.stem])
-    return f"{slugify(stem, fallback='rule')[:120]}.yml"
+    slug = slugify(stem, fallback="rule", max_length=_RULE_SLUG_MAX)
+    full = slugify(stem, fallback="rule", max_length=len(stem) + 1)
+    if slug != full:
+        digest = hashlib.sha256(rel.as_posix().encode("utf-8")).hexdigest()[:12]
+        slug = f"{slug[: _RULE_SLUG_MAX - len(digest) - 1]}_{digest}"
+    return f"{slug}.yml"
 
 
 def transpile_coverage(
@@ -282,7 +309,7 @@ def import_sigma_corpus(
     pack_id: str | None = None,
     backends: Sequence[str] = SUPPORTED_BACKENDS,
     check_transpile: bool = True,
-    max_rules: int | None = None,
+    max_rules: int | None = 2000,
     transpile_fn: Any = None,
 ) -> CorpusImport:
     """Import a SigmaHQ-layout rule tree as a :class:`HuntPack`.
@@ -295,11 +322,28 @@ def import_sigma_corpus(
     ``check_transpile=False`` imports parse-only (no pySigma cost); the
     resulting :attr:`CorpusImport.transpiled` is then empty and no rule is
     skipped for transpile reasons.
+
+    E7: ``max_rules`` caps the import (default 2000) so a runaway multi-thousand
+    rule corpus can't produce a pack whose scheduled sweep never finishes on a
+    single machine. When the cap truncates, :attr:`CorpusImport.truncated` is
+    set and ``found`` still reports the full discovered count — a capped install
+    is never silently reported as the whole corpus. Pass ``max_rules=None`` to
+    import everything.
     """
     root = Path(root)
-    paths = iter_sigma_rule_files(root)
-    if max_rules is not None:
-        paths = paths[:max_rules]
+    all_paths = iter_sigma_rule_files(root)
+    found = len(all_paths)
+    truncated = max_rules is not None and found > max_rules
+    paths = all_paths[:max_rules] if max_rules is not None else all_paths
+    if truncated:
+        logger.warning(
+            "sigma corpus import capped at max_rules=%d of %d files found under %s; "
+            "%d rules not imported (pass max_rules=None to import all)",
+            max_rules,
+            found,
+            root,
+            found - max_rules,
+        )
 
     pack_name = (name or root.name or "sigma-corpus")[:200]
     resolved_pack_id = (pack_id or deterministic_id("hpack", pack_name, version))[:200]
@@ -373,6 +417,8 @@ def import_sigma_corpus(
         pack=pack,
         source=str(root),
         scanned=len(paths),
+        found=found,
+        truncated=truncated,
         backends=[str(b) for b in backends],
         skipped=skipped,
         transpiled=reports,
@@ -431,7 +477,9 @@ def install_report(result: CorpusImport) -> dict[str, Any]:
         "version": result.pack.version,
         "source": result.source,
         "imported_at": datetime.now(UTC).isoformat(),
+        "found": result.found,
         "scanned": result.scanned,
+        "truncated": result.truncated,
         "installed": result.installed,
         "skipped_count": len(result.skipped),
         "skip_reasons": result.skip_reasons(),
@@ -467,8 +515,19 @@ def write_pack_dir(result: CorpusImport, dest: Path | str, *, overwrite: bool = 
 
     rules_dir = dest / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
+    written: set[str] = set()
     for rule in result.pack.rules:
-        (rules_dir / str(rule.file)).write_text(rule.sigma_yaml, encoding="utf-8")
+        name = str(rule.file)
+        # A filename collision here would silently drop a rule while the import
+        # still reported it as installed — an invisible loss of detection
+        # coverage. Refuse the install instead.
+        if name in written:
+            raise PackLoadError(
+                f"refusing to install: two rules resolve to the same file name {name!r}. "
+                "This indicates a rule-slug collision; report it as a bug."
+            )
+        written.add(name)
+        (rules_dir / name).write_text(rule.sigma_yaml, encoding="utf-8")
 
     (dest / "pack.yaml").write_text(
         yaml.safe_dump(_manifest(result), sort_keys=False, allow_unicode=True),
@@ -479,8 +538,19 @@ def write_pack_dir(result: CorpusImport, dest: Path | str, *, overwrite: bool = 
         encoding="utf-8",
     )
 
-    # Round-trip: an install that the pack loader cannot read is a failed install.
-    load_pack(dest)
+    # Round-trip: an install that the pack loader cannot read is a failed
+    # install. Compare rule *ids*, not filenames — the manifest keys entries by
+    # file name, so a name-level check cannot see two rules folded onto one
+    # file and would pass while a rule was silently lost.
+    loaded = load_pack(dest)
+    expected_ids = {r.id for r in result.pack.rules}
+    loaded_ids = {r.id for r in loaded.rules}
+    if loaded_ids != expected_ids:
+        missing = sorted(expected_ids - loaded_ids)
+        raise PackLoadError(
+            f"install verification failed: {len(result.pack.rules)} rules were written "
+            f"but {len(loaded.rules)} loaded back. Missing rule ids: {missing[:10]}"
+        )
     return dest
 
 
