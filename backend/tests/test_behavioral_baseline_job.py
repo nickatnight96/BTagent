@@ -180,8 +180,13 @@ async def test_baseline_sweep_builds_baselines_when_enabled(monkeypatch, db_sess
     get_settings.cache_clear()
     try:
         result = await jobs.behavioral_baseline_sweep({})
-        # The mock-first CrowdStrike telemetry spans two hosts.
-        assert result["baselines_built"] == 2
+        # B8: the sweep is multi-tenant — the mock-first CrowdStrike telemetry
+        # spans two hosts, rebuilt once per org in the (shared-DB) org table.
+        from btagent_backend.db.models import OrganizationRow
+
+        org_count = len((await db_session.execute(select(OrganizationRow.id))).all())
+        assert org_count >= 1
+        assert result["baselines_built"] == 2 * org_count
 
         # A baseline landed for a mock host entity in the default org.
         prof = (

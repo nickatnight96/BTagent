@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from "react-router";
-import { useIsAuthenticated } from "@/stores/authStore";
+import { useIsAuthenticated, useIsBootstrapping } from "@/stores/authStore";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -7,7 +7,15 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const isAuthenticated = useIsAuthenticated();
+  const isBootstrapping = useIsBootstrapping();
   const location = useLocation();
+
+  // F13: on a hard refresh a valid-cookie user starts with user=null until
+  // fetchMe() resolves. Redirecting during that window bounced authenticated
+  // users to /login. Hold the route until the initial session probe settles.
+  if (isBootstrapping) {
+    return null;
+  }
 
   if (!isAuthenticated) {
     // Preserve the deep-link target as a ``?redirect=`` query param so

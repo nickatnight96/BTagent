@@ -166,6 +166,15 @@ async def create_investigation(
     except Exception:
         logger.exception("Failed to recall agent memory for investigation %s", inv.id)
 
+    # B7: commit BEFORE starting the agent. The background task (and the
+    # sync failure path in start_investigation) writes status through its OWN
+    # session — with the row only flushed on the request session, that UPDATE
+    # matched zero rows, so a build failure's FAILED status was always lost
+    # and the case sat "pending" with no error. Committing here makes the row
+    # visible to every other session; expire_on_commit=False keeps ``inv``
+    # readable for the response below.
+    await db.commit()
+
     # Start the agent via TaskManager (fire-and-forget; the task runs in the
     # background and updates the DB status as it progresses).
     await task_manager.start_investigation(inv.id, config)

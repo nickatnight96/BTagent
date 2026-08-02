@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router";
 import { Brain, Loader2, Plus, Search, Sparkles, Trash2, X } from "lucide-react";
 import {
   MEMORY_KINDS,
@@ -113,10 +114,19 @@ export function AgentMemoryPanel() {
   const [forgetting, setForgetting] = useState(false);
   const [forgetError, setForgetError] = useState<string | null>(null);
 
+  // F13: debounce the subject filter so a recall fires once the user pauses,
+  // not on every keystroke (the semantic `query` is already gated behind a
+  // submit). load() keys on the debounced value, not the raw input.
+  const [debouncedSubject, setDebouncedSubject] = useState("");
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedSubject(subjectFilter), 300);
+    return () => window.clearTimeout(handle);
+  }, [subjectFilter]);
+
   const load = useCallback(async () => {
     try {
       const resp = await recallMemories({
-        subject: subjectFilter.trim() || undefined,
+        subject: debouncedSubject.trim() || undefined,
         kind: kindFilter || undefined,
         query: query.trim() || undefined,
         limit: 50,
@@ -128,7 +138,7 @@ export function AgentMemoryPanel() {
       // analyst+, so a 403 means the whole page is out of reach anyway.
       setMemories(null);
     }
-  }, [subjectFilter, kindFilter, query]);
+  }, [debouncedSubject, kindFilter, query]);
 
   useEffect(() => {
     void load();
@@ -450,13 +460,15 @@ export function AgentMemoryPanel() {
                       <span key={`${m.id}-src-${s.raw}`}>
                         {i > 0 && ", "}
                         {s.investigationId ? (
-                          <a
+                          // F13: client-side navigation — a raw <a href> forced
+                          // a full-page reload out of the SPA.
+                          <Link
                             className="text-blue-400 hover:underline"
-                            href={`/investigations/${s.investigationId}`}
+                            to={`/investigations/${s.investigationId}`}
                             data-testid={`agent-memory-source-link-${m.id}`}
                           >
                             {s.raw}
-                          </a>
+                          </Link>
                         ) : (
                           s.raw
                         )}

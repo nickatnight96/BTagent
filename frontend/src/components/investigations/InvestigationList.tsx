@@ -8,6 +8,8 @@ import {
 } from "lucide-react";
 import { getDashboardLayout } from "@/api/dashboard";
 import { useInvestigationStore } from "@/stores/investigationStore";
+import { useLiveEventRefresh } from "@/hooks/useLiveEventRefresh";
+import { EventType } from "@/types/events";
 import { InvestigationStatus } from "@/types/config";
 import type { DashboardLayout, DashboardLayoutResponse } from "@/types/dashboard";
 import { Header } from "@/components/layout/Header";
@@ -18,6 +20,15 @@ import { InvestigationCard } from "./InvestigationCard";
 import { HandoverCard } from "./HandoverCard";
 import { LayoutSettings } from "./LayoutSettings";
 import { NewInvestigationModal } from "./NewInvestigationModal";
+
+// Investigation-lifecycle events that should refresh the board (F11).
+const INVESTIGATION_LIFECYCLE_EVENTS = [
+  EventType.INVESTIGATION_INIT,
+  EventType.INVESTIGATION_COMPLETE,
+  EventType.INVESTIGATION_FAILED,
+  EventType.INVESTIGATION_PAUSED,
+  EventType.INVESTIGATION_RESUMED,
+] as const;
 
 const statusFilters: { label: string; value: string }[] = [
   { label: "All", value: "" },
@@ -92,6 +103,12 @@ export function InvestigationList() {
       search: searchQuery || undefined,
     });
   }, [fetchInvestigations, statusFilter, searchQuery]);
+
+  // F11: the SOC landing board had no refresh path at all (no poll, no live
+  // hook). Reuse the shared live-refresh hook the hunt pages already use — it
+  // refetches on any investigation-lifecycle event and keeps a 30 s polling
+  // safety net when the WS is unavailable, so the board can't silently stale.
+  useLiveEventRefresh(handleRefresh, INVESTIGATION_LIFECYCLE_EVENTS);
 
   const filteredInvestigations = investigations.filter((inv) => {
     if (statusFilter && inv.status !== statusFilter) return false;

@@ -1,4 +1,13 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
+
+// A 401 means the cookie that authenticated the WebSocket upgrade is dead, so
+// the socket must be torn down with the session (GH: `resetWSClient` used to
+// have zero call sites).
+const resetWSClient = vi.fn();
+vi.mock("@/api/ws", () => ({
+  resetWSClient: () => resetWSClient(),
+}));
+
 import {
   api,
   ApiError,
@@ -16,6 +25,7 @@ describe("api client — Phase C2 cookie auth", () => {
   let unauthSpy: Spy;
 
   beforeEach(() => {
+    resetWSClient.mockReset();
     logoutSpy = vi.fn() as unknown as Spy;
     clearLocalUserSpy = vi.fn() as unknown as Spy;
     unauthSpy = vi.fn() as unknown as Spy;
@@ -78,6 +88,20 @@ describe("api client — Phase C2 cookie auth", () => {
     expect(clearLocalUserSpy).toHaveBeenCalledTimes(1);
     expect(logoutSpy).not.toHaveBeenCalled();
     expect(unauthSpy).toHaveBeenCalledTimes(1);
+    // ...and the now-unauthenticated socket is torn down.
+    expect(resetWSClient).toHaveBeenCalled();
+  });
+
+  it("still tears the WebSocket down when the auth-store accessor throws", async () => {
+    setAuthStoreAccessor(() => {
+      throw new Error("accessor not configured");
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 401 }),
+    );
+
+    await expect(api.get("/v1/anything")).rejects.toBeInstanceOf(ApiError);
+    expect(resetWSClient).toHaveBeenCalled();
   });
 
   it("does NOT trigger the unauthenticated handler when skipAuth is set", async () => {
@@ -91,5 +115,36 @@ describe("api client — Phase C2 cookie auth", () => {
     expect(logoutSpy).not.toHaveBeenCalled();
     expect(clearLocalUserSpy).not.toHaveBeenCalled();
     expect(unauthSpy).not.toHaveBeenCalled();
+    expect(resetWSClient).not.toHaveBeenCalled();
+  });
+
+  it("F8: a non-JSON error body yields ApiError, not a stream-read TypeError", async () => {
+    // A gateway HTML 502 is the realistic case: reading it as JSON fails, and
+    // the old .text() fallback threw 'body stream already read'.
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("<html><body>502 Bad Gateway</body></html>", {
+        status: 502,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+
+    const err = (await api.get("/v1/thing").catch((e) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(502);
+    // The raw HTML text is preserved as the body, not swallowed.
+    expect(String(err.body)).toContain("502 Bad Gateway");
+  });
+
+  it("F8: a JSON error body is still parsed into an object", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "nope" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const err = (await api.get("/v1/thing").catch((e) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.body).toEqual({ detail: "nope" });
   });
 });

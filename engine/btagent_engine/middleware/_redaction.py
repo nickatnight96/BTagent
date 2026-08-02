@@ -26,6 +26,13 @@ from typing import Final
 
 _BEARER_RE: Final = re.compile(r"Bearer\s+[A-Za-z0-9._\-]{20,}")
 
+# E10: HTTP Basic auth header — ``Authorization: Basic <base64(user:pass)>``.
+# The declarative runner emits exactly this for ``auth.style=basic``; the
+# base64 blob decodes straight back to the credential, so it must be scrubbed
+# from any logged request line. (The URL-embedded ``user:pass@`` form is
+# handled separately by ``_BASIC_AUTH_URL_RE``.)
+_BASIC_AUTH_HEADER_RE: Final = re.compile(r"Basic\s+[A-Za-z0-9+/]{8,}={0,2}")
+
 _GENERIC_KEY_RE: Final = re.compile(
     r"(?i)(?P<k>api[_-]?key|apikey|secret|token|password|passwd|pwd)"
     r"(?P<sep>\s*[:=]\s*)"
@@ -98,6 +105,7 @@ def redact_secrets(text: str) -> str:
 
     # Specific patterns first (low false-positive risk).
     text = _BEARER_RE.sub("[REDACTED:bearer_token]", text)
+    text = _BASIC_AUTH_HEADER_RE.sub("Basic [REDACTED:basic_auth]", text)
     text = _redact_aws_pair(text)
     text = _SLACK_RE.sub("[REDACTED:slack_token]", text)
     text = _GITHUB_RE.sub("[REDACTED:github_token]", text)

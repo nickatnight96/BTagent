@@ -142,9 +142,33 @@ def evaluate_condition(expression: str, context: dict[str, Any]) -> Any:
         raise ConditionEvaluationError(
             f"Condition syntax error: {exc.msg}", expression=expression
         ) from exc
+    except (RecursionError, MemoryError, ValueError) as exc:
+        # E5: the CPython parser itself raises on pathologically nested input
+        # (``RecursionError``/``MemoryError``) or a NUL byte (``ValueError``)
+        # before the visitor ever runs. Keep these inside the single-error
+        # contract so the executor's ``except ConditionEvaluationError`` holds.
+        raise ConditionEvaluationError(
+            "Condition expression is too complex to parse", expression=expression
+        ) from exc
 
     evaluator = _Evaluator(context, expression)
-    return evaluator.visit(tree.body)
+    try:
+        return evaluator.visit(tree.body)
+    except ConditionEvaluationError:
+        raise
+    except RecursionError as exc:
+        # E5: a deeply nested expression blows the interpreter stack inside
+        # the visitor; without this wrap it escaped the documented
+        # single-error contract and crashed the executor's error handling.
+        raise ConditionEvaluationError(
+            "Condition expression is nested too deeply",
+            expression=expression,
+        ) from exc
+    except MemoryError as exc:
+        raise ConditionEvaluationError(
+            "Condition expression exhausted memory during evaluation",
+            expression=expression,
+        ) from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -349,6 +373,16 @@ class _Evaluator:
             raise ConditionEvaluationError(
                 "Sequence repetition (str/list/tuple * int) is not allowed in "
                 "conditions (potential memory exhaustion)",
+                expression=self._expression,
+            )
+        # E5: printf-style formatting is the ``%`` sibling of the same DoS
+        # family -- ``'%50000000d' % 1`` allocates 50 MB in one expression and
+        # a bigger width is an instant OOM. ``%`` stays allowed for numeric
+        # modulo only; a string/bytes left operand means formatting.
+        if isinstance(node.op, ast.Mod) and isinstance(left, (str, bytes, bytearray)):
+            raise ConditionEvaluationError(
+                "printf-style string formatting (str % ...) is not allowed in "
+                "conditions (potential memory exhaustion); % is numeric modulo only",
                 expression=self._expression,
             )
         try:

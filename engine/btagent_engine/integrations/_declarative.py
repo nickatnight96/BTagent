@@ -59,6 +59,26 @@ from btagent_engine.middleware._redaction import redact_secrets
 
 logger = logging.getLogger("btagent.engine.integrations.declarative")
 
+
+def _timeout_exc_types() -> tuple[type[BaseException], ...]:
+    """Timeout exception types to treat as retryable timeouts (E6).
+
+    Always the builtin ``TimeoutError``; also ``httpx.TimeoutException`` when
+    httpx is installed (the live sender raises it, and it is NOT a subclass of
+    the builtin, so without this a live timeout ignored ``retry_on_timeout``).
+    """
+    types: tuple[type[BaseException], ...] = (TimeoutError,)
+    try:
+        import httpx
+
+        types = (*types, httpx.TimeoutException)
+    except Exception:  # pragma: no cover - httpx always present in practice
+        pass
+    return types
+
+
+_TIMEOUT_EXC = _timeout_exc_types()
+
 #: Placeholder credential used in mock mode when the real reference does
 #: not resolve. Mock runs must never require a live secret.
 MOCK_CREDENTIAL = "mock-credential-not-a-real-secret"
@@ -364,6 +384,30 @@ class DeclarativeConnector:
         first_body: Any = None
         extra_query: dict[str, Any] = {}
         pages = 0
+        truncated = False
+
+        # E12: the pagination control params live in the same query namespace as
+        # a capability's declared query params. A collision would let a declared
+        # param silently overwrite (or be overwritten by) the paginator's
+        # cursor/page/offset/limit — a hard-to-see correctness bug. Refuse it.
+        if pagination.style is not PaginationStyle.NONE:
+            declared_query = {p.name for p in spec.params_at(ParamLocation.QUERY)}
+            control_params = {
+                str(p)
+                for p in (
+                    pagination.cursor_param,
+                    pagination.page_param,
+                    pagination.offset_param,
+                    pagination.limit_param,
+                )
+                if p
+            }
+            clash = declared_query & control_params
+            if clash:
+                raise ConnectorConfigError(
+                    f"{self._manifest.name}.{capability_id}: pagination control "
+                    f"param(s) {sorted(clash)} collide with declared query params"
+                )
 
         if pagination.style is PaginationStyle.PAGE:
             extra_query[str(pagination.page_param)] = pagination.start_page
@@ -404,6 +448,21 @@ class DeclarativeConnector:
                 page_items = []
 
             if pages >= pagination.max_pages:
+                # E8: we stopped at the page cap, not at the end of the data.
+                # Determine whether a further page existed so the caller isn't
+                # handed a silently-partial result set that looks complete.
+                if pagination.style is PaginationStyle.CURSOR:
+                    truncated = bool(extract_path(response.json_body, str(pagination.cursor_path)))
+                else:
+                    truncated = bool(page_items)
+                if truncated:
+                    logger.warning(
+                        "declarative call %s.%s hit the page cap (max_pages=%d); "
+                        "result truncated — more data was available",
+                        self._manifest.name,
+                        capability_id,
+                        pagination.max_pages,
+                    )
                 break
 
             if pagination.style is PaginationStyle.CURSOR:
@@ -427,6 +486,11 @@ class DeclarativeConnector:
         mapped = spec.response.apply(first_body)
         if pagination.style is not PaginationStyle.NONE:
             mapped[pagination.items_key] = collected
+            # E8: only surface the marker when the result really is partial, so
+            # a complete result keeps its clean shape and a truncated one can't
+            # be mistaken for complete.
+            if truncated:
+                mapped.setdefault("_pagination", {})["truncated"] = True
         return mapped
 
     async def _send_with_retry(
@@ -458,7 +522,12 @@ class DeclarativeConnector:
             try:
                 result = sender(request)
                 response = await result if inspect.isawaitable(result) else result
-            except TimeoutError as exc:
+            except _TIMEOUT_EXC as exc:
+                # E6: ``httpx.TimeoutException`` is NOT a subclass of the builtin
+                # ``TimeoutError``, so a live timeout used to fall through to the
+                # retry-everything branch below — silently ignoring
+                # ``retry_on_timeout=False`` and duplicating non-idempotent POSTs.
+                # ``_TIMEOUT_EXC`` includes httpx's timeout type when installed.
                 last_error = exc
                 if not retry.retry_on_timeout or attempt == retry.max_attempts:
                     raise ConnectorTransportError(

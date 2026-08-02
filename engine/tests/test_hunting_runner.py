@@ -451,3 +451,40 @@ async def test_elastic_query_carries_lookback_timestamp_filter(monkeypatch):
         "range" in f and f["range"].get("@timestamp", {}).get("gte") == "now-24h" for f in filters
     ), f"expected @timestamp gte now-24h in filters; got {filters!r}"
     assert captured["size"] == 50
+
+
+# --------------------------------------------------------------------------- #
+# E7: rules-per-sweep cap + per-run deadline, with an explicit truncated signal
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_run_pack_caps_rules_and_signals_truncation():
+    rules = [_spray_rule(id=f"rule_{i}") for i in range(5)]
+    result = await run_pack(_pack(rules), ["splunk"], _ctx(), max_rules=2)
+
+    assert result.truncated is True
+    # Only the first 2 rules ran; the other 3 are named, not silently dropped.
+    assert len(result.rule_results) == 2
+    assert result.rules_not_run == ["rule_2", "rule_3", "rule_4"]
+
+
+@pytest.mark.asyncio
+async def test_run_pack_uncapped_runs_every_rule():
+    rules = [_spray_rule(id=f"rule_{i}") for i in range(5)]
+    result = await run_pack(_pack(rules), ["splunk"], _ctx(), max_rules=None)
+
+    assert result.truncated is False
+    assert len(result.rule_results) == 5
+    assert result.rules_not_run == []
+
+
+@pytest.mark.asyncio
+async def test_run_pack_deadline_truncates():
+    rules = [_spray_rule(id=f"rule_{i}") for i in range(3)]
+    # A deadline already in the past stops before the first rule runs.
+    result = await run_pack(_pack(rules), ["splunk"], _ctx(), deadline_seconds=-1.0)
+
+    assert result.truncated is True
+    assert result.rule_results == []
+    assert result.rules_not_run == ["rule_0", "rule_1", "rule_2"]

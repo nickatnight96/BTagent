@@ -306,13 +306,34 @@ class _Scrubber:
 # ---------------------------------------------------------------------------
 
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
+
+
+def _is_link_local_or_metadata(hostname: str) -> bool:
+    """True if ``hostname`` is a link-local IP (incl. the cloud metadata IP).
+
+    ``169.254.169.254`` (and the IPv6 ``fe80::/10`` range) is the classic SSRF
+    target — a poisoned feed URL pointed there reads cloud instance
+    credentials. Non-IP hostnames return False (DNS is not resolved here).
+    """
+    host = hostname.strip("[]")
+    try:
+        import ipaddress
+
+        return ipaddress.ip_address(host).is_link_local
+    except ValueError:
+        return False
+
+
 def normalize_server_url(server_url: str) -> str:
     """Validate + canonicalise a TAXII api-root URL.
 
-    Rejects anything that is not ``http(s)``, and refuses URLs carrying
-    embedded credentials (``https://user:pass@host/``) — credentials belong in
-    the secret backend behind a ``${secret:...}`` reference, never in a stored
-    config string. Returns the URL without its trailing slash.
+    Mirrors the sibling ``RoutingSpec`` policy (E11): rejects non-``http(s)``
+    schemes and embedded credentials, and additionally requires **https** for
+    any non-loopback host (plaintext http is only allowed to localhost) and
+    refuses **link-local** IPs — ``169.254.169.254`` is the cloud-metadata SSRF
+    target, and a poisoned feed URL is attacker-influenced input reflected into
+    an API-readable ``last_error``. Returns the URL without its trailing slash.
     """
     raw = (server_url or "").strip()
     if not raw:
@@ -326,6 +347,19 @@ def normalize_server_url(server_url: str) -> str:
         raise TaxiiConfigError(
             "server_url must not embed credentials; put them in Vault/AWS/env and "
             "reference them with ${secret:...}"
+        )
+    hostname = parts.hostname or ""
+    # Link-local is the more specific (SSRF) reason — check it before the
+    # scheme rule so it wins regardless of http/https.
+    if _is_link_local_or_metadata(hostname):
+        raise TaxiiConfigError(
+            f"server_url host {hostname!r} is a link-local address "
+            "(SSRF / cloud-metadata target) and is not allowed"
+        )
+    if parts.scheme == "http" and hostname not in _LOOPBACK_HOSTS:
+        raise TaxiiConfigError(
+            f"server_url {raw!r} is plaintext http; only loopback hosts may skip TLS. "
+            "Use https:// for remote TAXII servers."
         )
     return raw.rstrip("/")
 

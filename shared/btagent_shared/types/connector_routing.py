@@ -41,7 +41,7 @@ from __future__ import annotations
 import re
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -547,13 +547,22 @@ class RoutingSpec(BaseModel):
     # -------------------------------------------------------------- #
 
     def render_path(self, values: dict[str, Any]) -> str:
-        """Substitute ``{token}`` path params. Raises on a missing token."""
+        """Substitute ``{token}`` path params, URL-encoding each value (E3).
+
+        Path values reach here from attacker-influenced sources (IOC values
+        pulled from TAXII feeds / report text). Interpolating them raw let a
+        value like ``x/../../../users/me`` normalize to a different endpoint,
+        and a bare ``?`` opened an undeclared query string. Every value is
+        percent-encoded with **no safe characters** — ``/``, ``.``, ``?``, ``#``
+        and ``%`` are all escaped — so a path param can only ever be a single
+        opaque segment, never restructure the URL. Raises on a missing token.
+        """
 
         def _sub(match: re.Match[str]) -> str:
             token = match.group(1)
             if token not in values or values[token] is None:
                 raise KeyError(token)
-            return str(values[token])
+            return quote(str(values[token]), safe="")
 
         return _PATH_TOKEN_RE.sub(_sub, self.path)
 

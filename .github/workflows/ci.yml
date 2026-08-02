@@ -893,11 +893,73 @@ jobs:
         # zero type errors same as the Type check step above.
         run: npm run build:strict
 
+  # ── Compose-stack smoke test (P4.8) ──────────────────────
+  # The single highest-leverage guard against the cross-cutting failure mode:
+  # a green unit suite coexisting with a stack that can't start or serve a
+  # request. Builds the real images, brings the compose stack up from a clean
+  # slate, and asserts migrate -> /health/ready -> admin bootstrap -> login
+  # through nginx -> open an investigation -> engine+agents in the image (B1).
+  # This is the only job that would have caught F1-F3 (WS contract) and B2
+  # (unregistered rate limiter) before they shipped.
+  compose-smoke:
+    name: Compose Smoke Test
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run the compose smoke test
+        run: infra/scripts/smoke-test.sh
+
+  # ── Image vulnerability scan (P4.8) ──────────────────────
+  # Builds the backend image (no push) and scans it with Trivy on every PR, so
+  # a base-image or OS-package CVE is caught before the image ships — the
+  # build-images job only runs on main-push and only pushes.
+  image-scan:
+    name: Image Vuln Scan
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build backend image (local, no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          push: false
+          load: true
+          tags: btagent-backend:scan
+          cache-from: type=gha
+
+      - name: Scan the backend image with Trivy
+        # Runs the Trivy CLI from its official image rather than
+        # `aquasecurity/trivy-action`. The action is a thin wrapper that
+        # internally pins `aquasecurity/setup-trivy`, and that pin has been
+        # yanked upstream: trivy-action@v0.30.0 requires setup-trivy@v0.2.2,
+        # which no longer exists (setup-trivy ships v0.2.6/v0.3.x), so every
+        # run died during action resolution without scanning anything. A
+        # nested pin we don't control can be deleted out from under us at any
+        # time; a container tag can't. Same gate, same flags — this is also
+        # how the scan was verified locally.
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.58.1 image \
+              --format table \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              btagent-backend:scan
+
   # ── Build & Push Docker Images ───────────────────────────
   build-images:
     name: Build & Push Images
     runs-on: ubuntu-latest
-    needs: [lint, backend-tests, frontend, e2e]
+    needs: [lint, backend-tests, frontend, e2e, compose-smoke]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_IMAGE_BUILD == 'true'
     permissions:
       contents: read

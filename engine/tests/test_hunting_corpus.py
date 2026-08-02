@@ -315,3 +315,44 @@ def test_slugify_produces_a_safe_directory_name():
     assert slugify("SigmaHQ core rules 2026.07") == "sigmahq_core_rules_2026_07"
     assert slugify("../../etc/passwd") == "etc_passwd"
     assert slugify("") == "pack"
+
+
+# --------------------------------------------------------------------------- #
+# E7: install cap with an explicit truncated signal
+# --------------------------------------------------------------------------- #
+
+
+def _write_valid_rule(path, rule_id: str) -> None:
+    path.write_text(
+        "title: Cap Probe\n"
+        f"id: {rule_id}\n"
+        "logsource:\n  category: process_creation\n  product: windows\n"
+        "detection:\n  sel:\n    Image|endswith: '\\\\x.exe'\n  condition: sel\n"
+        "level: low\n",
+        encoding="utf-8",
+    )
+
+
+def test_import_caps_at_max_rules_and_signals_truncation(tmp_path):
+    for i in range(5):
+        _write_valid_rule(tmp_path / f"r{i}.yml", f"00000000-0000-4000-8000-00000000000{i}")
+
+    result = import_sigma_corpus(
+        tmp_path, name="Capped", version="1.0.0", check_transpile=False, max_rules=2
+    )
+    assert result.truncated is True
+    assert result.found == 5
+    assert result.scanned == 2
+    assert result.installed <= 2
+
+
+def test_import_uncapped_processes_every_file(tmp_path):
+    for i in range(5):
+        _write_valid_rule(tmp_path / f"r{i}.yml", f"00000000-0000-4000-8000-00000000000{i}")
+
+    result = import_sigma_corpus(
+        tmp_path, name="Uncapped", version="1.0.0", check_transpile=False, max_rules=None
+    )
+    assert result.truncated is False
+    assert result.found == 5
+    assert result.scanned == 5

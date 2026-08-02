@@ -26,7 +26,7 @@ import { ApiError } from "@/api/client";
 import { Button } from "@/components/ds/button";
 import { NativeSelect } from "@/components/ds/native-select";
 import { useAuthStore } from "@/stores/authStore";
-import { UserRole } from "@/types/config";
+import { UserRole, roleAtLeast } from "@/types/config";
 
 function errMessage(e: unknown, fallback: string): string {
   if (e instanceof ApiError) {
@@ -46,8 +46,10 @@ function statusTone(feed: TaxiiFeed): string {
 
 export function TaxiiFeedsPanel() {
   const role = useAuthStore((s) => s.user?.role);
-  const canView = role === UserRole.SENIOR_ANALYST || role === UserRole.ADMIN;
-  const canManage = role === UserRole.ADMIN;
+  // F10: hierarchical, matching the API's taxii:view (senior_analyst+) —
+  // incident_commander outranks senior_analyst and must see the panel too.
+  const canView = roleAtLeast(role, UserRole.SENIOR_ANALYST);
+  const canManage = roleAtLeast(role, UserRole.ADMIN);
 
   const [feeds, setFeeds] = useState<TaxiiFeed[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
