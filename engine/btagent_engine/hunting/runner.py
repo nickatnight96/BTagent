@@ -147,6 +147,16 @@ class PackRunResult(BaseModel):
     skipped_rule_ids: list[str] = Field(
         default_factory=list, description="Rules excluded because they are disabled in the pack."
     )
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "E7: True when a rules-per-sweep cap or a per-run deadline stopped "
+            "the run before every enabled rule executed. rules_not_run lists "
+            "what was skipped so the caller never mistakes a capped run for a "
+            "clean full sweep."
+        ),
+    )
+    rules_not_run: list[str] = Field(default_factory=list)
 
     @property
     def all_hits(self) -> list[SigmaHit]:
@@ -357,6 +367,8 @@ async def run_pack(
     lookback_hours: int = 24,
     max_hits_per_query: int = 100,
     run_id: str | None = None,
+    max_rules: int | None = 1000,
+    deadline_seconds: float | None = None,
 ) -> PackRunResult:
     """Run every enabled rule of ``pack`` on every requested backend.
 
@@ -371,6 +383,14 @@ async def run_pack(
     checkpointing loop passes the history row's run id so findings ingested
     before and after a restart correlate to one logical run. When omitted a
     fresh ``hrun_`` id is generated (the original behaviour).
+
+    E7: ``max_rules`` caps how many enabled rules run per sweep (default 1000)
+    and ``deadline_seconds`` bounds wall-clock; a full SigmaHQ corpus (2–3k
+    rules × backends) otherwise issues >10k sequential queries and a single
+    local machine's tick never finishes inside its interval. When either bound
+    stops the run early, ``result.truncated`` is set and ``rules_not_run``
+    lists the skipped rule ids — a capped run is never silently reported as a
+    clean full sweep. Pass ``max_rules=None`` to disable the cap.
     """
     unknown = [b for b in backends if b not in SUPPORTED_BACKENDS]
     if unknown:
@@ -389,7 +409,29 @@ async def run_pack(
         skipped_rule_ids=[r.id for r in pack.rules if not r.enabled],
     )
 
-    for rule in pack.enabled_rules:
+    enabled = pack.enabled_rules
+    deadline_at = (
+        result.started_at.timestamp() + deadline_seconds if deadline_seconds is not None else None
+    )
+
+    for index, rule in enumerate(enabled):
+        # E7: stop — and record what was skipped — when a bound is hit, so the
+        # caller can tell a capped run from a clean full sweep.
+        over_rule_cap = max_rules is not None and index >= max_rules
+        over_deadline = deadline_at is not None and datetime.now(UTC).timestamp() >= deadline_at
+        if over_rule_cap or over_deadline:
+            result.truncated = True
+            result.rules_not_run = [r.id for r in enabled[index:]]
+            logger.warning(
+                "hunt pack %s run truncated after %d/%d rules (%s); %d rules not run",
+                pack.id,
+                index,
+                len(enabled),
+                "rule cap" if over_rule_cap else "deadline",
+                len(result.rules_not_run),
+            )
+            break
+
         rule_result = RuleRunResult(rule_id=rule.id, rule_title=rule.title)
         for backend in result.backends:
             rule_result.backend_results.append(

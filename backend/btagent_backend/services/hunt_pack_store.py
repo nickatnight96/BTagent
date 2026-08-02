@@ -518,7 +518,10 @@ async def install_corpus_pack(
     description: str = "",
     backends: Sequence[str] | None = None,
     check_transpile: bool = True,
-    max_rules: int | None = None,
+    # E7: default the install cap here too (not just in the engine) so this
+    # service path can't be the one that produces an uncapped multi-thousand
+    # rule pack. Callers pass an explicit int to raise it, or None to disable.
+    max_rules: int | None = 2000,
     enable: bool = True,
     overwrite: bool = False,
     updated_by: str | None = None,
