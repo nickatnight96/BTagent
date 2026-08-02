@@ -77,6 +77,16 @@ describe("TaxiiFeedsPanel", () => {
     expect(screen.queryByTestId("taxii-feed-toggle-feed_1")).not.toBeInTheDocument();
   });
 
+  it("F10: incident commander outranks senior analyst and sees the panel", async () => {
+    // taxii:view is senior_analyst+; incident_commander is above it in the
+    // RBAC hierarchy, so the panel must render (an equality gate hid it).
+    mockRole.mockReturnValue("incident_commander");
+    render(<TaxiiFeedsPanel />);
+    expect(await screen.findByTestId("taxii-feeds-list")).toBeInTheDocument();
+    // Still no admin-only management controls.
+    expect(screen.queryByTestId("taxii-feed-form")).not.toBeInTheDocument();
+  });
+
   it("admin creates a feed with a secret reference", async () => {
     mockRole.mockReturnValue("admin");
     createTaxiiFeed.mockResolvedValue(feed({ id: "feed_2" }));

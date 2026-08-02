@@ -34,6 +34,26 @@ export enum UserRole {
   VIEWER = "viewer",
 }
 
+// Role ranks mirroring backend ROLE_HIERARCHY (auth/rbac.py). A permission
+// gated at role R is held by every role of equal-or-higher rank — checking
+// role-equality on the frontend (F10) wrongly excluded incident_commander
+// from senior_analyst-gated surfaces like the TAXII panel.
+const ROLE_RANK: Record<string, number> = {
+  [UserRole.VIEWER]: -1,
+  [UserRole.ANALYST]: 0,
+  [UserRole.SENIOR_ANALYST]: 1,
+  [UserRole.INCIDENT_COMMANDER]: 2,
+  [UserRole.ADMIN]: 3,
+};
+
+/** True when `role` ranks at or above `minimum` in the RBAC hierarchy. */
+export function roleAtLeast(role: string | null | undefined, minimum: UserRole): boolean {
+  if (!role) return false;
+  const have = ROLE_RANK[role];
+  const need = ROLE_RANK[minimum];
+  return have !== undefined && need !== undefined && have >= need;
+}
+
 export interface User {
   id: string;
   username: string;

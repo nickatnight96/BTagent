@@ -11,7 +11,22 @@
  * blank.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render as rtlRender,
+  screen,
+  fireEvent,
+  waitFor,
+  type RenderOptions,
+} from "@testing-library/react";
+import { MemoryRouter } from "react-router";
+
+// The panel renders router <Link>s for memory sources (F13), so every render
+// needs a router context. Shadow `render` so call sites stay unchanged.
+const render = (ui: React.ReactElement, options?: RenderOptions) =>
+  rtlRender(ui, {
+    wrapper: ({ children }) => <MemoryRouter>{children}</MemoryRouter>,
+    ...options,
+  });
 
 const recallMemories = vi.fn();
 const recordMemory = vi.fn();
