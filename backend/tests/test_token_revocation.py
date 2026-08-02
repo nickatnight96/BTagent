@@ -41,7 +41,7 @@ def _isolated_revocation_store():
     _reset_for_tests()
     # Force the in-memory fallback so tests don't reach a real Redis instance
     # if one happens to be running in the dev container.
-    revocation._redis_unavailable = True
+    revocation._redis_retry_at = float("inf")
     yield
     _reset_for_tests()
 

@@ -56,7 +56,7 @@ from btagent_backend.db.models import DEFAULT_ORG_ID, Base, InvestigationRow, Us
 @pytest.fixture(autouse=True)
 def _isolated_revocation_store():
     _reset_for_tests()
-    revocation._redis_unavailable = True
+    revocation._redis_retry_at = float("inf")
     yield
     _reset_for_tests()
 

@@ -46,26 +46,55 @@ def _user_epoch_key(user_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Redis client (lazy, shared)
+# Redis client (lazy, shared, retry-with-backoff)
 # ---------------------------------------------------------------------------
 
 _redis_client: Redis | None = None
-_redis_unavailable: bool = False
+# B4: a failed connect schedules a *re-probe*, never a permanent latch. Before
+# this, one Redis blip at first touch meant the process ran on process-local
+# memory until restart — previously-revoked jtis worked again and force-logout
+# stopped propagating across workers. ``inf`` (set by test fixtures) still
+# forces the in-memory fallback unconditionally.
+_redis_retry_at: float = 0.0
+_redis_backoff: float = 0.0
+
+_BACKOFF_INITIAL_SECONDS = 1.0
+_BACKOFF_MAX_SECONDS = 30.0
 
 
-async def _get_redis() -> Redis | None:
-    """Return a shared Redis client, or None if Redis is unreachable.
+def _schedule_retry(exc: Exception) -> None:
+    """Record a connect failure and schedule the next probe (capped backoff)."""
+    global _redis_retry_at, _redis_backoff
+    _redis_backoff = min(
+        max(_redis_backoff * 2, _BACKOFF_INITIAL_SECONDS),
+        _BACKOFF_MAX_SECONDS,
+    )
+    _redis_retry_at = time.time() + _redis_backoff
+    logger.warning(
+        "Redis unavailable for token revocation (%s); using in-memory store, retrying in %.0fs",
+        exc,
+        _redis_backoff,
+    )
 
-    Mirrors the graceful-degradation pattern used by ``security/rate_limiter``
-    and ``services/notification_service`` — never raises, just returns None so
-    callers can fall back to in-memory storage.
+
+async def _get_redis(*, force_probe: bool = False) -> Redis | None:
+    """Return a shared Redis client, or None while Redis is unreachable.
+
+    Never raises — callers fall back to in-memory storage. Unlike the
+    rate-limiter's session-long degradation, revocation re-probes on a capped
+    exponential backoff: fail-open on a security control must self-heal.
+    ``force_probe`` (used by the readiness check) bypasses the backoff window
+    so an operator-triggered probe reflects — and actively restores — the
+    current state. A test-pinned window (``inf``) is never bypassed.
     """
-    global _redis_client, _redis_unavailable
+    global _redis_client, _redis_retry_at, _redis_backoff
 
-    if _redis_unavailable:
-        return None
     if _redis_client is not None:
         return _redis_client
+    if _redis_retry_at == float("inf"):
+        return None
+    if time.time() < _redis_retry_at and not force_probe:
+        return None
 
     try:
         from redis.asyncio import Redis
@@ -75,14 +104,26 @@ async def _get_redis() -> Redis | None:
         # Probe so we don't pay the failure cost on every call.
         await client.ping()
         _redis_client = client
+        _redis_retry_at = 0.0
+        _redis_backoff = 0.0
         return client
     except Exception as exc:
-        logger.warning(
-            "Redis unavailable for token revocation (%s); falling back to in-memory store",
-            exc,
-        )
-        _redis_unavailable = True
+        _schedule_retry(exc)
         return None
+
+
+def is_degraded() -> bool:
+    """True while revocation is running on the process-local fallback.
+
+    Surfaced on ``/health/ready`` (B4) so a fail-open revocation list is an
+    operator-visible condition, not a lone log line.
+    """
+    return _redis_client is None and _redis_retry_at > 0.0
+
+
+async def check_health() -> bool:
+    """Readiness hook: probe (and thereby heal) the revocation Redis link."""
+    return await _get_redis(force_probe=True) is not None
 
 
 async def close_redis() -> None:
@@ -91,9 +132,10 @@ async def close_redis() -> None:
     Idempotent and never raises — safe to call from the FastAPI lifespan even
     when Redis was never opened or already failed.
     """
-    global _redis_client, _redis_unavailable
+    global _redis_client, _redis_retry_at, _redis_backoff
     client, _redis_client = _redis_client, None
-    _redis_unavailable = False
+    _redis_retry_at = 0.0
+    _redis_backoff = 0.0
     if client is not None:
         try:
             await client.aclose()
@@ -306,11 +348,13 @@ def _reset_for_tests() -> None:
     """Reset both the Redis client cache and the in-memory store.
 
     Tests that monkeypatch the Redis client or want a clean slate between
-    cases should call this in a fixture.
+    cases should call this in a fixture. To force the in-memory fallback for
+    a test, set ``_redis_retry_at = float("inf")`` after calling this.
     """
-    global _redis_client, _redis_unavailable
+    global _redis_client, _redis_retry_at, _redis_backoff
     _redis_client = None
-    _redis_unavailable = False
+    _redis_retry_at = 0.0
+    _redis_backoff = 0.0
     _local_revoked.clear()
     _local_revoked_families.clear()
     _local_user_epoch.clear()
