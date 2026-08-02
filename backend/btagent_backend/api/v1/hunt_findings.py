@@ -94,6 +94,8 @@ def _pack_run_response(row: HuntPackRunRow) -> HuntPackRun:
         findings_created=row.findings_created,
         status=row.status,
         error=row.error,
+        truncated=bool(row.truncated),
+        rules_not_run=list(row.rules_not_run or []),
         started_at=row.started_at,
         completed_at=row.completed_at,
     )

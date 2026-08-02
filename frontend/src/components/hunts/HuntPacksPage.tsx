@@ -116,6 +116,31 @@ function RunStatusBadge({ status }: { status: string }) {
   );
 }
 
+/**
+ * E7: the last sweep was stopped early by the rules-per-sweep cap or the
+ * per-run deadline.
+ *
+ * A truncated run still reports ``completed``, so the status badge alone reads
+ * as a clean sweep. That is the misreading worth preventing: "0 hits" on a
+ * capped run means "we did not look at every rule", not "nothing is there".
+ */
+function PartialSweepBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="flex items-center gap-1 rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-300"
+      data-testid="run-truncated-badge"
+      title={
+        count > 0
+          ? `Stopped early by the rule cap or run deadline — ${count} rule${count === 1 ? "" : "s"} never ran. Hit counts do not cover the whole pack.`
+          : "Stopped early by the rule cap or run deadline. Hit counts do not cover the whole pack."
+      }
+    >
+      <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+      partial sweep{count > 0 ? ` (${count} not run)` : ""}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Sparkline — inline SVG, no external chart dep (CSP-safe).
 // ---------------------------------------------------------------------------
@@ -314,6 +339,9 @@ function PackCard({
             <Activity className="h-3.5 w-3.5" />
             last run: <span className="text-foreground">{lastRunAt}</span>
             {pack.last_run && <RunStatusBadge status={pack.last_run.status} />}
+            {pack.last_run?.truncated && (
+              <PartialSweepBadge count={pack.last_run.rules_not_run?.length ?? 0} />
+            )}
           </div>
           <div className="text-primary">
             <Sparkline points={pack.hit_volume_30d} />

@@ -213,6 +213,33 @@ async def test_persist_pack_run_records_derived_status(db_session):
     assert row.status == "completed_with_errors"
 
 
+async def test_persist_pack_run_carries_truncation(db_session):
+    """E7: a capped sweep must be distinguishable from a clean full one.
+
+    The runner sets ``truncated`` + ``rules_not_run`` when the rules-per-sweep
+    cap or the per-run deadline stops it early. A truncated run still lands
+    ``completed``, so if these don't reach the row nothing downstream can tell
+    "we looked everywhere and found nothing" from "we stopped looking".
+    """
+    res = _result(("r1", [("splunk", None)]))
+    res.truncated = True
+    res.rules_not_run = ["r2", "r3"]
+
+    row, _created = await prs.persist_pack_run(db_session, org_id=DEFAULT_ORG_ID, result=res)
+
+    assert row.truncated is True
+    assert row.rules_not_run == ["r2", "r3"]
+    # Status is unchanged by truncation — which is exactly why the flag exists.
+    assert row.status == "completed"
+
+
+async def test_persist_pack_run_defaults_to_not_truncated(db_session):
+    res = _result(("r1", [("splunk", None)]))
+    row, _created = await prs.persist_pack_run(db_session, org_id=DEFAULT_ORG_ID, result=res)
+    assert row.truncated is False
+    assert row.rules_not_run == []
+
+
 # --------------------------------------------------------------------------- #
 # Resume-from-checkpoint (#112 — "survives worker restart")
 # --------------------------------------------------------------------------- #
@@ -594,6 +621,25 @@ async def test_pack_runs_lists_org_scoped(client, analyst_token, db_session):
     assert data["total"] >= 1
     assert all(item["org_id"] == DEFAULT_ORG_ID for item in data["items"])
     assert data["items"][0]["rule_stats"]
+
+
+async def test_pack_runs_exposes_truncation(client, analyst_token, db_session):
+    """The coverage verdict has to survive all the way to the browser (E7)."""
+    row = await _seed_run(db_session, truncated=True, rules_not_run=["r9", "r10"])
+
+    resp = await client.get("/api/v1/hunt/pack-runs", headers=auth_header(analyst_token))
+    assert resp.status_code == 200, resp.text
+    item = next(i for i in resp.json()["items"] if i["id"] == row.id)
+    assert item["truncated"] is True
+    assert item["rules_not_run"] == ["r9", "r10"]
+
+
+async def test_pack_runs_untruncated_run_reads_as_full_sweep(client, analyst_token, db_session):
+    row = await _seed_run(db_session)
+    resp = await client.get("/api/v1/hunt/pack-runs", headers=auth_header(analyst_token))
+    item = next(i for i in resp.json()["items"] if i["id"] == row.id)
+    assert item["truncated"] is False
+    assert item["rules_not_run"] == []
 
 
 async def test_pack_runs_excludes_other_orgs(client, analyst_token, db_session):

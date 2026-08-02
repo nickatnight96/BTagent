@@ -42,6 +42,8 @@ function run(overrides: Partial<HuntPackRun> & { id: string }): HuntPackRun {
     findings_created: 0,
     status: "completed",
     error: null,
+    truncated: false,
+    rules_not_run: [],
     started_at: "2026-07-27T10:00:00Z",
     completed_at: "2026-07-27T10:00:05Z",
     ...overrides,
@@ -284,6 +286,28 @@ describe("buildInstalledPacks", () => {
     expect(packs[0]!.install_key).toBeNull();
     expect(packs[0]!.source).toBeNull();
     expect(packs[0]!.enabled).toBe(true);
+  });
+
+  it("surfaces the newest run's truncation on last_run (E7)", () => {
+    // Newest-first: the capped run is the one the card reports on, and its
+    // zero hit_count must not be readable as a clean full sweep.
+    const packs = buildInstalledPacks(
+      [
+        run({
+          id: "new",
+          pack_id: "hpack_win",
+          started_at: "2026-07-28T10:00:00Z",
+          truncated: true,
+          rules_not_run: ["r7", "r8", "r9"],
+          hit_count: 0,
+        }),
+        run({ id: "old", pack_id: "hpack_win", started_at: "2026-07-27T10:00:00Z" }),
+      ],
+      null,
+      [],
+    );
+    expect(packs[0]!.last_run?.truncated).toBe(true);
+    expect(packs[0]!.last_run?.rules_not_run).toEqual(["r7", "r8", "r9"]);
   });
 
   it("carries the catalog source through so custom packs are distinguishable", () => {

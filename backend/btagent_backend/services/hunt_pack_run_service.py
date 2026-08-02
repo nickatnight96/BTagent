@@ -373,6 +373,12 @@ async def persist_pack_run(
     run_row.status = status if status is not None else _derive_run_status(result)
     run_row.error = error
     run_row.completed_at = result.completed_at
+    # E7: carry the runner's coverage verdict onto the history row. A run the
+    # rules-per-sweep cap or the per-run deadline stopped early is NOT a clean
+    # sweep, and the difference is invisible from hit counts alone — a capped
+    # run that found nothing looks exactly like a full run that found nothing.
+    run_row.truncated = bool(result.truncated)
+    run_row.rules_not_run = list(result.rules_not_run)
     await db.flush()
     if checkpoint:
         await db.commit()
