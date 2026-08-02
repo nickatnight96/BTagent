@@ -13,6 +13,7 @@ yet (no per-job Redis state), but keep the signature so jobs can later read
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -22,6 +23,40 @@ from btagent_backend.db.models import DEFAULT_ORG_ID
 from btagent_backend.services import hunt_triage_service
 
 logger = logging.getLogger("btagent.scheduler.jobs")
+
+
+async def _all_org_ids(session: Any) -> list[str]:
+    """Every organization id — the sweep universe for multi-tenant crons (B8)."""
+    from sqlalchemy import select as _select
+
+    from btagent_backend.db.models import OrganizationRow
+
+    return [org_id for (org_id,) in (await session.execute(_select(OrganizationRow.id))).all()]
+
+
+async def _run_per_org(
+    session: Any,
+    job_name: str,
+    org_ids: list[str],
+    work: Callable[[str], Awaitable[None]],
+) -> int:
+    """Run ``work(org_id)`` per org with isolation (B8/B9).
+
+    Commit after each org so one org's failure rolls back only its own work —
+    a single post-loop commit meant one malformed run discarded every
+    previously processed org's rows and re-notified from stale state next
+    tick. Returns the failure count; a failing org is logged and skipped.
+    """
+    failures = 0
+    for org_id in org_ids:
+        try:
+            await work(org_id)
+            await session.commit()
+        except Exception:
+            logger.exception("%s: org %s failed — rolled back, continuing", job_name, org_id)
+            await session.rollback()
+            failures += 1
+    return failures
 
 
 async def stale_suppression_sweep(ctx: dict[str, Any]) -> dict[str, int]:
@@ -132,10 +167,13 @@ async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
     into a ``HuntFinding`` (so active suppressions apply pre-insert), and
     records a pack-run history row per pack.
 
-    Org scope: the cron still sweeps the **default org**; which packs it runs
-    for that org now comes from ``org_hunt_packs`` via
-    :func:`hunt_pack_store.enabled_pack_names`, falling back to
-    ``hunt_pack_store.DEFAULT_BUILTIN_PACKS`` when the org has no rows.
+    Org scope (B8): the cron sweeps **every** org — the pack store resolves
+    per-org, so a hard-coded default-org run meant a non-default tenant's
+    uploaded packs and toggles never executed while the UI reported a posture
+    the runner didn't implement. Which packs run per org comes from
+    ``org_hunt_packs`` via :func:`hunt_pack_store.enabled_pack_names`, falling
+    back to ``hunt_pack_store.DEFAULT_BUILTIN_PACKS`` when the org has no rows.
+    Per-org isolation: one org's failure is logged and skipped.
 
     Overlap guard: registered with arq's ``unique=True`` cron (a Redis lock on
     the scheduled instant), so a slow run can't be double-started by another
@@ -159,22 +197,27 @@ async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
     # Lazy import: the engine pulls pysigma, only present in the worker image.
     from btagent_backend.services import hunt_pack_run_service
 
+    counts = {"packs_run": 0, "findings_created": 0, "hits": 0, "failed_packs": 0}
     async with async_session_factory() as session:
-        run_rows = await hunt_pack_run_service.run_pack_and_ingest(
-            session,
-            org_id=DEFAULT_ORG_ID,
-            lookback_hours=settings.hunt_scheduler_lookback_hours,
-            max_hits_per_query=settings.hunt_scheduler_max_hits_per_query,
-        )
-        await session.commit()
+        org_ids = await _all_org_ids(session)
 
-    counts = {
-        "packs_run": len(run_rows),
-        "findings_created": sum(r.findings_created for r in run_rows),
-        "hits": sum(r.hit_count for r in run_rows),
-        "failed_packs": sum(1 for r in run_rows if r.status == "failed"),
-    }
-    logger.info("scheduled_hunt_pack_run: %s", counts)
+        async def _work(org_id: str) -> None:
+            run_rows = await hunt_pack_run_service.run_pack_and_ingest(
+                session,
+                org_id=org_id,
+                lookback_hours=settings.hunt_scheduler_lookback_hours,
+                max_hits_per_query=settings.hunt_scheduler_max_hits_per_query,
+            )
+            counts["packs_run"] += len(run_rows)
+            counts["findings_created"] += sum(r.findings_created for r in run_rows)
+            counts["hits"] += sum(r.hit_count for r in run_rows)
+            counts["failed_packs"] += sum(1 for r in run_rows if r.status == "failed")
+
+        failed_orgs = await _run_per_org(session, "scheduled_hunt_pack_run", org_ids, _work)
+
+    logger.info(
+        "scheduled_hunt_pack_run: %s (orgs=%d failed_orgs=%d)", counts, len(org_ids), failed_orgs
+    )
     return counts
 
 
@@ -190,9 +233,8 @@ async def scheduled_email_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
     Gate: ``email_hunt_schedule_enabled`` derives from ``mock_connectors`` — the
     email connectors are mock-first, so with mocks off the live gather refuses
     per-tool and would land zero findings. One warning per tick surfaces the
-    misconfig rather than spamming. Org scope: v1 ingests into the default org.
-    The thin shell owns the single commit; the logic is in
-    :mod:`email_hunt_run_service`.
+    misconfig rather than spamming. Org scope (B8): sweeps every org with
+    per-org isolation. The logic is in :mod:`email_hunt_run_service`.
     """
     settings = get_settings()
 
@@ -209,18 +251,22 @@ async def scheduled_email_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
     start = (now - timedelta(hours=settings.email_hunt_lookback_hours)).isoformat()
     end = now.isoformat()
 
+    counts = {"total_incidents": 0, "findings_created": 0, "findings_emitted": 0}
     async with async_session_factory() as session:
-        summary = await email_hunt_run_service.run_email_hunt_and_ingest(
-            session, org_id=DEFAULT_ORG_ID, start=start, end=end
-        )
-        await session.commit()
+        org_ids = await _all_org_ids(session)
 
-    counts = {
-        "total_incidents": int(summary["total_incidents"]),
-        "findings_created": int(summary["findings_created"]),
-        "findings_emitted": int(summary["findings_emitted"]),
-    }
-    logger.info("scheduled_email_hunt_scan: %s", counts)
+        async def _work(org_id: str) -> None:
+            summary = await email_hunt_run_service.run_email_hunt_and_ingest(
+                session, org_id=org_id, start=start, end=end
+            )
+            for key in counts:
+                counts[key] += int(summary[key])
+
+        failed_orgs = await _run_per_org(session, "scheduled_email_hunt_scan", org_ids, _work)
+
+    logger.info(
+        "scheduled_email_hunt_scan: %s (orgs=%d failed_orgs=%d)", counts, len(org_ids), failed_orgs
+    )
     return counts
 
 
@@ -237,9 +283,8 @@ async def scheduled_deception_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
     Gate: ``deception_hunt_schedule_enabled`` derives from ``mock_connectors``
     — the Canary connector is mock-first, so with mocks off the live gather
     refuses and would land zero findings. One warning per tick surfaces the
-    misconfig rather than spamming. Org scope: v1 ingests into the default org.
-    The thin shell owns the single commit; the logic is in
-    :mod:`deception_hunt_run_service`.
+    misconfig rather than spamming. Org scope (B8): sweeps every org with
+    per-org isolation. The logic is in :mod:`deception_hunt_run_service`.
     """
     settings = get_settings()
 
@@ -252,18 +297,25 @@ async def scheduled_deception_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
 
     from btagent_backend.services import deception_hunt_run_service
 
+    counts = {"total_incidents": 0, "findings_created": 0, "findings_emitted": 0}
     async with async_session_factory() as session:
-        summary = await deception_hunt_run_service.run_deception_hunt_and_ingest(
-            session, org_id=DEFAULT_ORG_ID
-        )
-        await session.commit()
+        org_ids = await _all_org_ids(session)
 
-    counts = {
-        "total_incidents": int(summary["total_incidents"]),
-        "findings_created": int(summary["findings_created"]),
-        "findings_emitted": int(summary["findings_emitted"]),
-    }
-    logger.info("scheduled_deception_hunt_scan: %s", counts)
+        async def _work(org_id: str) -> None:
+            summary = await deception_hunt_run_service.run_deception_hunt_and_ingest(
+                session, org_id=org_id
+            )
+            for key in counts:
+                counts[key] += int(summary[key])
+
+        failed_orgs = await _run_per_org(session, "scheduled_deception_hunt_scan", org_ids, _work)
+
+    logger.info(
+        "scheduled_deception_hunt_scan: %s (orgs=%d failed_orgs=%d)",
+        counts,
+        len(org_ids),
+        failed_orgs,
+    )
     return counts
 
 
@@ -280,8 +332,8 @@ async def scheduled_ndr_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
     Gate: ``ndr_hunt_schedule_enabled`` derives from ``mock_connectors`` — the
     Vectra connector is mock-first, so with mocks off the live gather refuses
     and would land zero findings. One warning per tick surfaces the misconfig
-    rather than spamming. Org scope: v1 ingests into the default org. The thin
-    shell owns the single commit; the logic is in :mod:`ndr_hunt_run_service`.
+    rather than spamming. Org scope (B8): sweeps every org with per-org
+    isolation. The logic is in :mod:`ndr_hunt_run_service`.
     """
     settings = get_settings()
 
@@ -294,16 +346,20 @@ async def scheduled_ndr_hunt_scan(ctx: dict[str, Any]) -> dict[str, int]:
 
     from btagent_backend.services import ndr_hunt_run_service
 
+    counts = {"total_hosts": 0, "findings_created": 0, "findings_emitted": 0}
     async with async_session_factory() as session:
-        summary = await ndr_hunt_run_service.run_ndr_hunt_and_ingest(session, org_id=DEFAULT_ORG_ID)
-        await session.commit()
+        org_ids = await _all_org_ids(session)
 
-    counts = {
-        "total_hosts": int(summary["total_hosts"]),
-        "findings_created": int(summary["findings_created"]),
-        "findings_emitted": int(summary["findings_emitted"]),
-    }
-    logger.info("scheduled_ndr_hunt_scan: %s", counts)
+        async def _work(org_id: str) -> None:
+            summary = await ndr_hunt_run_service.run_ndr_hunt_and_ingest(session, org_id=org_id)
+            for key in counts:
+                counts[key] += int(summary[key])
+
+        failed_orgs = await _run_per_org(session, "scheduled_ndr_hunt_scan", org_ids, _work)
+
+    logger.info(
+        "scheduled_ndr_hunt_scan: %s (orgs=%d failed_orgs=%d)", counts, len(org_ids), failed_orgs
+    )
     return counts
 
 
@@ -442,8 +498,9 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
       warning per tick rather than fabricating data. An operator who has wired
       a live EDR feed forces it on via ``BTAGENT_BEHAVIORAL_SCHEDULE_ENABLED=true``.
 
-    Org scope: v1 rebuilds baselines for the **default org** (mirrors the other
-    scheduled hunt jobs — there is no per-org EDR binding yet).
+    Org scope (B8): rebuilds baselines for **every** org with per-org
+    isolation (there is still no per-org EDR binding — every org sees the
+    same mock-first CrowdStrike connector until #100 credentials land).
 
     Returns the sweep counts so they show up in arq's job result + our logs.
     """
@@ -458,19 +515,27 @@ async def behavioral_baseline_sweep(ctx: dict[str, Any]) -> dict[str, int]:
             session,
             stale_after=timedelta(days=settings.behavioral_stale_after_days),
         )
+        # Commit the archival stamps on their own so a rebuild failure below
+        # can never roll them back.
+        await session.commit()
+
         if settings.behavioral_schedule_enabled:
             # Lazy import: the rebuild path pulls the agents MCP stack.
             from btagent_backend.services import behavioral_ingest_service
 
-            summary = await behavioral_ingest_service.rebuild_baselines_from_edr(
-                session,
-                org_id=DEFAULT_ORG_ID,
-                lookback_days=settings.behavioral_stale_after_days,
-            )
-            baselines_built = summary["baselines_built"]
-        # The single commit lives here — it persists both the archival stamps
-        # and the rebuild half's new entity/profile rows.
-        await session.commit()
+            built = {"n": 0}
+
+            async def _work(org_id: str) -> None:
+                summary = await behavioral_ingest_service.rebuild_baselines_from_edr(
+                    session,
+                    org_id=org_id,
+                    lookback_days=settings.behavioral_stale_after_days,
+                )
+                built["n"] += summary["baselines_built"]
+
+            org_ids = await _all_org_ids(session)
+            await _run_per_org(session, "behavioral_baseline_sweep", org_ids, _work)
+            baselines_built = built["n"]
 
     if not settings.behavioral_schedule_enabled:
         # No live EDR telemetry feed is wired, so there is no event source to
@@ -620,12 +685,18 @@ async def noise_digest_sweep(ctx: dict[str, Any]) -> dict[str, int]:
                 await session.execute(_select(HuntPackRunRow.org_id).distinct())
             ).all()
         ]
-        for org_id in org_ids:
+
+        # B9: per-org isolation with a per-org commit — the old single
+        # post-loop commit meant one malformed pack run rolled back every
+        # previously processed org's digest state and re-notified from stale
+        # state next tick.
+        async def _work(org_id: str) -> None:
             result = await run_noise_digest(session, org_id=org_id, redis=ctx.get("redis"))
             totals["orgs"] += 1
             for key in ("noisy", "new", "notified", "under_firing"):
                 totals[key] += result.get(key, 0)
-        await session.commit()
+
+        await _run_per_org(session, "noise_digest_sweep", org_ids, _work)
     logger.info(
         "noise_digest_sweep: orgs=%d noisy=%d new=%d notified=%d under_firing=%d",
         totals["orgs"],
@@ -655,11 +726,14 @@ async def shift_handover_digest(ctx: dict[str, Any]) -> dict[str, int]:
         org_ids = [
             org_id for (org_id,) in (await session.execute(_select(OrganizationRow.id))).all()
         ]
-        for org_id in org_ids:
+
+        # B9: per-org isolation with a per-org commit (see noise_digest_sweep).
+        async def _work(org_id: str) -> None:
             created = await notify_shift_handover(session, org_id=org_id, redis=ctx.get("redis"))
             totals["orgs"] += 1
             totals["notified"] += len(created)
-        await session.commit()
+
+        await _run_per_org(session, "shift_handover_digest", org_ids, _work)
     logger.info("shift_handover_digest: orgs=%d notified=%d", totals["orgs"], totals["notified"])
     return totals
 
