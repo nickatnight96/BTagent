@@ -54,6 +54,7 @@ from btagent_engine.middleware import (
     EvidenceRecord,
     HITLMiddleware,
     Middleware,
+    OCSFNormalizerMiddleware,
 )
 
 # HITLGateMiddleware is not re-exported from the middleware package __init__,
@@ -275,6 +276,10 @@ def _build_middleware_chain(
     # any non-gate node.
     chain.append(HITLGateMiddleware())
     chain.append(ConnectorPolicyMiddleware(active_tlp=active_tlp))
+    # E4: declared-vs-actual OCSF contract check. Must sit after
+    # ConnectorPolicyMiddleware (it reads the capability id that middleware
+    # stamps on the context); no-op for nodes without a manifest.
+    chain.append(OCSFNormalizerMiddleware())
     chain.append(EvidenceChainMiddleware(records=evidence_records))
     return chain
 

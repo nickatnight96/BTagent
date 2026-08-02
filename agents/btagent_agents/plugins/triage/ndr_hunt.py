@@ -87,6 +87,11 @@ async def run_ndr_hunt_over_connector(server: Any, *, limit: int = 200) -> NdrHu
     crash the caller. The connector is mock-first, so this is safe in CI.
     """
     try:
+        # A3: manifest gate at the vertical's only I/O boundary; a policy
+        # refusal degrades to an empty hunt, same as a connector outage.
+        from btagent_agents.mcp.policy import guard_dispatch
+
+        guard_dispatch("vectra_list_detections")
         envelope = await server.vectra_list_detections(limit=limit)
     except Exception as exc:  # noqa: BLE001 - a connector outage must not crash the hunt
         logger.warning("ndr hunt: vectra_list_detections failed (%s) — empty hunt", exc)

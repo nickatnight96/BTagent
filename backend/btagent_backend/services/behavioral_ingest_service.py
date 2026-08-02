@@ -350,6 +350,11 @@ async def rebuild_baselines_from_edr(
     window_end = now or datetime.now(UTC)
     window_start = window_end - timedelta(days=lookback_days)
 
+    # A3: manifest gate at the direct dispatch site (raises on refusal — the
+    # scheduler job's per-org error isolation owns the failure).
+    from btagent_agents.mcp.policy import guard_dispatch
+
+    guard_dispatch("cs_process_telemetry")
     payload = await connector.cs_process_telemetry(lookback_days=lookback_days)
     raw_events = payload.get("events", []) if isinstance(payload, dict) else []
 

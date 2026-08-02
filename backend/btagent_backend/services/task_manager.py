@@ -144,6 +144,27 @@ def _command_channel(investigation_id: str) -> str:
     return f"{COMMAND_CHANNEL_PREFIX}:{investigation_id}"
 
 
+def _graph_invoke_config(graph: Any, callbacks: list[Any], investigation_id: str) -> dict[str, Any]:
+    """Build the LangGraph invoke config for one investigation run.
+
+    A5: the compiled graph carries the operator-set step budget as a
+    ``max_steps`` attribute, but LangGraph only enforces what's passed as
+    ``recursion_limit`` at invoke time — before this helper the attribute was
+    computed and discarded, so the library default (25) silently governed and
+    configured budgets (up *or* down) were ignored.
+    """
+    config: dict[str, Any] = {
+        "callbacks": callbacks,
+        "configurable": {
+            "thread_id": investigation_id,
+        },
+    }
+    max_steps = getattr(graph, "max_steps", None)
+    if isinstance(max_steps, int) and max_steps > 0:
+        config["recursion_limit"] = max_steps
+    return config
+
+
 async def _default_record_close_memories(
     investigation_id: str, final_state: dict[str, Any]
 ) -> None:
@@ -537,12 +558,7 @@ class TaskManager:
             )
 
             # 5. Invoke the graph.
-            graph_config: dict[str, Any] = {
-                "callbacks": callbacks,
-                "configurable": {
-                    "thread_id": investigation_id,
-                },
-            }
+            graph_config = _graph_invoke_config(graph, callbacks, investigation_id)
 
             logger.info(
                 "Invoking graph for investigation %s with %d callbacks",

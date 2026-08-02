@@ -168,6 +168,46 @@ class PolicyVerdict:
         }
 
 
+class MCPPolicyRefused(RuntimeError):
+    """A manifest policy verdict refused this dispatch (A3).
+
+    Raised by :func:`guard_dispatch` so *direct* dispatch sites — the backend
+    services that import MCP server classes and call their tools without going
+    through ``mcp_router_tool`` — enforce the same manifest policy the router
+    path does. Callers that need the structured verdict (e.g. to write an
+    audited denial) read ``.verdict``.
+    """
+
+    def __init__(self, verdict: PolicyVerdict) -> None:
+        super().__init__(verdict.reason)
+        self.verdict = verdict
+
+
+def guard_dispatch(
+    tool_name: str,
+    *,
+    active_tlp: TLP | None = None,
+    hitl_approved: bool | None = None,
+) -> PolicyVerdict:
+    """Enforce the manifest policy at a direct dispatch site, or raise.
+
+    A3: production dispatch imports MCP server classes directly, so the
+    router-only :func:`evaluate_tool_call` gate never ran — TLP-egress and
+    HITL declarations in ``manifests.py`` were documentation. Every direct
+    call site invokes this immediately before calling the server method.
+
+    ``hitl_approved`` is server-side state only: pass ``True`` exactly when
+    the call site sits *behind* its own human approval chain (containment's
+    approve→execute double-gate, the detection-PR ship endpoint that follows
+    per-proposal analyst acceptance). It must never be derived from model
+    output (#374).
+    """
+    verdict = evaluate_tool_call(tool_name, active_tlp=active_tlp, hitl_approved=hitl_approved)
+    if not verdict.allowed:
+        raise MCPPolicyRefused(verdict)
+    return verdict
+
+
 def _find_capability(tool_name: str):
     for server_id, manifest in MANIFESTS.items():
         cap = manifest.capability(tool_name)

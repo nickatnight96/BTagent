@@ -66,6 +66,7 @@ from btagent_engine.middleware import (
     HITLMiddleware,
     InvestigationScope,
     Middleware,
+    OCSFNormalizerMiddleware,
     PromptBudgetMiddleware,
     ScopeEnforcementMiddleware,
 )
@@ -160,6 +161,11 @@ def build_middleware_chain(
     # containment node the token scan would miss (#377). No-op for nodes
     # without a manifest.
     chain.append(ConnectorPolicyMiddleware(active_tlp=tlp))
+
+    # E4: declared-vs-actual OCSF contract check. Must sit after
+    # ConnectorPolicyMiddleware (it reads the capability id that middleware
+    # stamps on the context); no-op for nodes without a manifest.
+    chain.append(OCSFNormalizerMiddleware())
 
     chain.append(LLMRouterMiddleware(model_to_provider=_resolve_provider_handle(llm_router, tlp)))
 

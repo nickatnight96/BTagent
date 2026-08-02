@@ -42,6 +42,7 @@ from btagent_shared.types.enums import Severity
 from btagent_shared.types.hunt_finding import RecordFindingRequest
 from pydantic import BaseModel, ConfigDict, Field
 
+from btagent_agents.mcp.policy import MCPPolicyRefused, guard_dispatch
 from btagent_agents.plugins.triage.tools.phishing_correlator import correlate_email_threats
 
 logger = logging.getLogger("btagent.hunt.email")
@@ -179,6 +180,19 @@ async def gather_email_envelopes(
             if method is None:
                 logger.warning(
                     "email hunt: connector %r missing expected tool %r", server_id, method_name
+                )
+                continue
+            # A3: manifest gate at the only I/O boundary of the email vertical.
+            # A refused stream (undeclared tool, TLP-blocked capability) is
+            # skipped fail-closed, same as a flaky provider.
+            try:
+                guard_dispatch(method_name)
+            except MCPPolicyRefused as refusal:
+                logger.warning(
+                    "email hunt: %s.%s refused by manifest policy (%s) — skipping that stream",
+                    server_id,
+                    method_name,
+                    refusal.verdict.status,
                 )
                 continue
             try:
