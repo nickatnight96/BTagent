@@ -75,6 +75,22 @@ async def metrics_endpoint(request: Request) -> Response:
     """Prometheus scrape endpoint.
 
     Mount this on the FastAPI app as ``app.add_route("/metrics", metrics_endpoint)``.
+
+    B13: when ``BTAGENT_METRICS_TOKEN`` is set, require a matching bearer token
+    — the endpoint is otherwise reachable by anyone who can hit the directly
+    published :8000. When unset it stays open (dev/compose default). Compared
+    with ``compare_digest`` to avoid a timing oracle on the token.
     """
+    from secrets import compare_digest
+
+    from btagent_backend.config import get_settings
+
+    token = get_settings().metrics_token
+    if token:
+        auth = request.headers.get("authorization", "")
+        presented = auth[7:] if auth.lower().startswith("bearer ") else ""
+        if not (presented and compare_digest(presented, token)):
+            return Response(status_code=401, content="unauthorized")
+
     body = generate_latest(REGISTRY)
     return Response(content=body, media_type="text/plain; version=0.0.4; charset=utf-8")
