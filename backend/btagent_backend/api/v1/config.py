@@ -448,7 +448,7 @@ async def get_retention_stats(
     """Get data retention statistics for the admin dashboard."""
     user.require_permission("config:view")
     svc = _get_retention_service()
-    stats = await svc.get_retention_stats(db)
+    stats = await svc.get_retention_stats(db, org_id=user.org_id)
     return RetentionStatsResponse(**stats)
 
 
@@ -467,9 +467,11 @@ async def run_retention_cleanup(
     user.require_permission("config:edit")
     svc = _get_retention_service()
 
-    events_result = await svc.archive_old_events(db)
-    inv_result = await svc.cleanup_old_investigations(db)
-    audit_result = await svc.verify_audit_retention(db)
+    # B6: a retention run is destructive and admin-of-*any*-org triggerable,
+    # so it must only touch the caller's own tenant.
+    events_result = await svc.archive_old_events(db, org_id=user.org_id)
+    inv_result = await svc.cleanup_old_investigations(db, org_id=user.org_id)
+    audit_result = await svc.verify_audit_retention(db, org_id=user.org_id)
 
     # A manual retention run irreversibly deletes events and archives
     # investigations, so the destructive action itself must be defensible on

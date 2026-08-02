@@ -22,6 +22,15 @@ class PlaybookRow(Base):
     __tablename__ = "playbooks"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # B5: playbook *definitions* are tenant-scoped, not just executions. The
+    # YAML embeds org-specific queries/hostnames, so list/get/update/deactivate
+    # must never cross orgs. Stamped from the authenticated caller on create.
+    org_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        default=DEFAULT_ORG_ID,
+    )
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     version: Mapped[str] = mapped_column(String(20), nullable=False, default="1.0")
     description: Mapped[str] = mapped_column(Text, default="")
@@ -41,6 +50,7 @@ class PlaybookRow(Base):
         Index("idx_playbooks_is_active", "is_active"),
         Index("idx_playbooks_trigger_type", "trigger_type"),
         Index("idx_playbooks_created_at", "created_at"),
+        Index("idx_playbooks_org_id", "org_id", "id"),
     )
 
 

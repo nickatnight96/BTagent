@@ -26,26 +26,37 @@ class DataRetentionService:
         self,
         db: AsyncSession,
         days: int | None = None,
+        *,
+        org_id: str,
     ) -> dict[str, Any]:
-        """Delete events older than N days.
+        """Delete the caller's org's events older than N days.
 
         In production, events would first be exported to S3/cold storage before
         deletion.  This implementation performs a direct delete suitable for
         dev/staging environments.
+
+        B6: events carry no org column of their own, so tenancy is resolved
+        through the owning investigation — an org-B admin's retention run must
+        never delete org A's events (irreversibly, and invisibly to org A's
+        ledger since the audit row stamps org B).
 
         Returns a summary dict with the count of deleted rows and cutoff date.
         """
         retention_days = days if days is not None else self.event_retention_days
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
-        # Count before deleting so we can report
-        count_result = await db.execute(
-            select(func.count(EventRow.id)).where(EventRow.timestamp < cutoff)
+        org_investigations = select(InvestigationRow.id).where(InvestigationRow.org_id == org_id)
+        scoped = (
+            EventRow.timestamp < cutoff,
+            EventRow.investigation_id.in_(org_investigations),
         )
+
+        # Count before deleting so we can report
+        count_result = await db.execute(select(func.count(EventRow.id)).where(*scoped))
         count = count_result.scalar() or 0
 
         if count > 0:
-            await db.execute(delete(EventRow).where(EventRow.timestamp < cutoff))
+            await db.execute(delete(EventRow).where(*scoped))
             logger.info(
                 "Deleted %d events older than %d days (cutoff=%s)",
                 count,
@@ -69,8 +80,10 @@ class DataRetentionService:
         self,
         db: AsyncSession,
         days: int | None = None,
+        *,
+        org_id: str,
     ) -> dict[str, Any]:
-        """Archive closed investigations older than N days.
+        """Archive the caller's org's closed investigations older than N days.
 
         Closed investigations are soft-archived by setting their status to
         'archived'.  Associated data (events, IOCs, etc.) remain intact but
@@ -84,6 +97,7 @@ class DataRetentionService:
         # Find candidates
         result = await db.execute(
             select(InvestigationRow.id).where(
+                InvestigationRow.org_id == org_id,
                 InvestigationRow.status.in_(_CLOSED_STATUSES),
                 InvestigationRow.closed_at.isnot(None),
                 InvestigationRow.closed_at < cutoff,
@@ -121,8 +135,10 @@ class DataRetentionService:
         self,
         db: AsyncSession,
         years: int | None = None,
+        *,
+        org_id: str,
     ) -> dict[str, Any]:
-        """Ensure audit logs are retained for the compliance period.
+        """Ensure the caller's org's audit logs cover the compliance period.
 
         This verifies that no audit logs have been deleted within the required
         retention window.  Audit logs are NEVER deleted — this check confirms
@@ -130,17 +146,26 @@ class DataRetentionService:
         """
         retention_years = years if years is not None else self.audit_retention_years
 
+        org_scope = AuditLogRow.org_id == org_id
+
         # Total audit entries
-        total_result = await db.execute(select(func.count(AuditLogRow.id)))
+        total_result = await db.execute(select(func.count(AuditLogRow.id)).where(org_scope))
         total_count = total_result.scalar() or 0
 
         # Earliest audit entry
-        earliest_result = await db.execute(select(func.min(AuditLogRow.timestamp)))
+        earliest_result = await db.execute(select(func.min(AuditLogRow.timestamp)).where(org_scope))
         earliest_ts = earliest_result.scalar()
 
         # Latest audit entry
-        latest_result = await db.execute(select(func.max(AuditLogRow.timestamp)))
+        latest_result = await db.execute(select(func.max(AuditLogRow.timestamp)).where(org_scope))
         latest_ts = latest_result.scalar()
+
+        # SQLite hands back naive datetimes even for timezone=True columns;
+        # normalize so the boundary comparison below can't TypeError.
+        if earliest_ts is not None and earliest_ts.tzinfo is None:
+            earliest_ts = earliest_ts.replace(tzinfo=UTC)
+        if latest_ts is not None and latest_ts.tzinfo is None:
+            latest_ts = latest_ts.replace(tzinfo=UTC)
 
         # Calculate compliance boundary
         compliance_boundary = datetime.now(UTC) - timedelta(days=retention_years * 365)
@@ -180,27 +205,40 @@ class DataRetentionService:
     async def get_retention_stats(
         self,
         db: AsyncSession,
+        *,
+        org_id: str,
     ) -> dict[str, Any]:
-        """Return retention statistics for the admin dashboard."""
+        """Return the caller's org's retention statistics for the dashboard."""
         now = datetime.now(UTC)
         event_cutoff = now - timedelta(days=self.event_retention_days)
 
+        org_investigations = select(InvestigationRow.id).where(InvestigationRow.org_id == org_id)
+        event_org_scope = EventRow.investigation_id.in_(org_investigations)
+
         # Total events
-        total_events_result = await db.execute(select(func.count(EventRow.id)))
+        total_events_result = await db.execute(
+            select(func.count(EventRow.id)).where(event_org_scope)
+        )
         total_events = total_events_result.scalar() or 0
 
         # Events eligible for cleanup
         stale_events_result = await db.execute(
-            select(func.count(EventRow.id)).where(EventRow.timestamp < event_cutoff)
+            select(func.count(EventRow.id)).where(
+                EventRow.timestamp < event_cutoff, event_org_scope
+            )
         )
         stale_events = stale_events_result.scalar() or 0
 
         # Total audit logs
-        audit_count_result = await db.execute(select(func.count(AuditLogRow.id)))
+        audit_count_result = await db.execute(
+            select(func.count(AuditLogRow.id)).where(AuditLogRow.org_id == org_id)
+        )
         audit_count = audit_count_result.scalar() or 0
 
         # Total investigations
-        total_inv_result = await db.execute(select(func.count(InvestigationRow.id)))
+        total_inv_result = await db.execute(
+            select(func.count(InvestigationRow.id)).where(InvestigationRow.org_id == org_id)
+        )
         total_investigations = total_inv_result.scalar() or 0
 
         # Closed investigations eligible for archival
@@ -208,6 +246,7 @@ class DataRetentionService:
         _CLOSED_STATUSES = ("closed", "cancelled", "remediated")
         archivable_result = await db.execute(
             select(func.count(InvestigationRow.id)).where(
+                InvestigationRow.org_id == org_id,
                 InvestigationRow.status.in_(_CLOSED_STATUSES),
                 InvestigationRow.closed_at.isnot(None),
                 InvestigationRow.closed_at < inv_cutoff,

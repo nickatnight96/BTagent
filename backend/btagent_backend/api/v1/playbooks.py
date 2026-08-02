@@ -188,7 +188,7 @@ async def list_playbooks(
     user.require_permission("playbook:view")
 
     rows, total = await _service.list_playbooks(
-        db, active_only=active_only, page=page, page_size=page_size
+        db, org_id=user.org_id, active_only=active_only, page=page, page_size=page_size
     )
 
     return PlaybookListResponse(
@@ -208,7 +208,7 @@ async def get_playbook(
     """Get playbook detail including YAML content."""
     user.require_permission("playbook:view")
 
-    row = await _service.get_playbook(db, playbook_id)
+    row = await _service.get_playbook(db, playbook_id, org_id=user.org_id)
     if not row:
         raise HTTPException(status_code=404, detail="Playbook not found")
 
@@ -232,6 +232,7 @@ async def create_playbook(
             db,
             name=body.name,
             yaml_str=body.yaml_content,
+            org_id=user.org_id,
             user_id=user.id,
         )
     except ValueError as exc:
@@ -254,7 +255,7 @@ async def update_playbook(
     user.require_permission("playbook:edit")
 
     try:
-        row = await _service.update_playbook(db, playbook_id, body.yaml_content)
+        row = await _service.update_playbook(db, playbook_id, body.yaml_content, org_id=user.org_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -279,7 +280,7 @@ async def delete_playbook(
     """Soft-delete (deactivate) a playbook."""
     user.require_permission("playbook:delete")
 
-    deleted = await _service.deactivate_playbook(db, playbook_id)
+    deleted = await _service.deactivate_playbook(db, playbook_id, org_id=user.org_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Playbook not found")
 

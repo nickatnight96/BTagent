@@ -1,4 +1,4 @@
-"""Cross-tenant scoping tests for playbook executions (#394).
+"""Cross-tenant scoping tests for playbook executions (#394) and definitions (B5).
 
 Playbook execution rows carry sensitive per-run data (``trigger_data``,
 ``step_results``, and a link to an ``investigation_id``). Before the fix the
@@ -80,10 +80,11 @@ async def _make_user(
     return user
 
 
-async def _make_playbook(db: AsyncSession) -> PlaybookRow:
+async def _make_playbook(db: AsyncSession, *, org_id: str = "org_default") -> PlaybookRow:
     pb = PlaybookRow(
         id=generate_id("pb"),
-        name="Shared Playbook",
+        org_id=org_id,
+        name="Scoped Playbook",
         version="1.0",
         description="",
         yaml_content=_MINIMAL_YAML,
@@ -211,11 +212,12 @@ async def test_execution_history_is_org_scoped(client: AsyncClient, scoping_setu
 async def test_execute_stamps_caller_org_id(
     client: AsyncClient, db_session: AsyncSession, scoping_setup
 ):
-    """A senior_analyst in org_b executing a shared playbook produces an
+    """A senior_analyst in org_b executing their own org's playbook produces an
     execution row stamped with org_b — not the default org."""
     senior_b = await _make_user(db_session, role="senior_analyst", org_id="org_b", label="sr_b")
+    pb_b = await _make_playbook(db_session, org_id="org_b")
     resp = await client.post(
-        f"/api/v1/playbooks/{scoping_setup['playbook'].id}/execute",
+        f"/api/v1/playbooks/{pb_b.id}/execute",
         headers=auth_header(_token(senior_b)),
         json={"trigger_data": {"k": "v"}},
     )
@@ -223,5 +225,114 @@ async def test_execute_stamps_caller_org_id(
     exec_id = resp.json()["id"]
 
     row = await db_session.get(PlaybookExecutionRow, exec_id)
+    assert row is not None
+    assert row.org_id == "org_b"
+
+
+# ---------------------------------------------------------------------------
+# B5: playbook *definitions* are org-scoped, not just executions.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cross_org_get_playbook_returns_404(client: AsyncClient, scoping_setup):
+    """An org-B analyst gets 404 for an org-A playbook definition — its YAML
+    (queries, hostnames) never crosses the tenant boundary."""
+    resp = await client.get(
+        f"/api/v1/playbooks/{scoping_setup['playbook'].id}",
+        headers=auth_header(_token(scoping_setup["org_b_user"])),
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_playbook_list_is_org_scoped(
+    client: AsyncClient, db_session: AsyncSession, scoping_setup
+):
+    """The catalog only lists the caller's org's definitions."""
+    pb_b = await _make_playbook(db_session, org_id="org_b")
+
+    resp_a = await client.get(
+        "/api/v1/playbooks",
+        headers=auth_header(_token(scoping_setup["org_a_user"])),
+    )
+    assert resp_a.status_code == 200
+    ids_a = {item["id"] for item in resp_a.json()["items"]}
+    assert scoping_setup["playbook"].id in ids_a
+    assert pb_b.id not in ids_a
+
+    resp_b = await client.get(
+        "/api/v1/playbooks",
+        headers=auth_header(_token(scoping_setup["org_b_user"])),
+    )
+    assert resp_b.status_code == 200
+    ids_b = {item["id"] for item in resp_b.json()["items"]}
+    assert pb_b.id in ids_b
+    assert scoping_setup["playbook"].id not in ids_b
+
+
+@pytest.mark.asyncio
+async def test_cross_org_update_playbook_returns_404(
+    client: AsyncClient, db_session: AsyncSession, scoping_setup
+):
+    """An org-B senior_analyst cannot rewrite an org-A playbook's YAML."""
+    senior_b = await _make_user(db_session, role="senior_analyst", org_id="org_b", label="sr_b2")
+    resp = await client.put(
+        f"/api/v1/playbooks/{scoping_setup['playbook'].id}",
+        headers=auth_header(_token(senior_b)),
+        json={"yaml_content": _MINIMAL_YAML},
+    )
+    assert resp.status_code == 404
+
+    row = await db_session.get(PlaybookRow, scoping_setup["playbook"].id)
+    assert row is not None
+    assert row.org_id == "org_default"
+
+
+@pytest.mark.asyncio
+async def test_cross_org_delete_playbook_returns_404(
+    client: AsyncClient, db_session: AsyncSession, scoping_setup
+):
+    """An org-B senior_analyst cannot deactivate an org-A playbook."""
+    senior_b = await _make_user(db_session, role="senior_analyst", org_id="org_b", label="sr_b3")
+    resp = await client.delete(
+        f"/api/v1/playbooks/{scoping_setup['playbook'].id}",
+        headers=auth_header(_token(senior_b)),
+    )
+    assert resp.status_code == 404
+
+    row = await db_session.get(PlaybookRow, scoping_setup["playbook"].id)
+    assert row is not None
+    assert row.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_cross_org_execute_playbook_is_refused(
+    client: AsyncClient, db_session: AsyncSession, scoping_setup
+):
+    """An org-B senior_analyst cannot execute an org-A playbook."""
+    senior_b = await _make_user(db_session, role="senior_analyst", org_id="org_b", label="sr_b4")
+    resp = await client.post(
+        f"/api/v1/playbooks/{scoping_setup['playbook'].id}/execute",
+        headers=auth_header(_token(senior_b)),
+        json={"trigger_data": {}},
+    )
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_playbook_stamps_caller_org_id(
+    client: AsyncClient, db_session: AsyncSession, scoping_setup
+):
+    """POST /playbooks stamps the definition with the caller's org."""
+    senior_b = await _make_user(db_session, role="senior_analyst", org_id="org_b", label="sr_b5")
+    resp = await client.post(
+        "/api/v1/playbooks",
+        headers=auth_header(_token(senior_b)),
+        json={"name": "Org B PB", "yaml_content": _MINIMAL_YAML},
+    )
+    assert resp.status_code == 201
+
+    row = await db_session.get(PlaybookRow, resp.json()["id"])
     assert row is not None
     assert row.org_id == "org_b"
