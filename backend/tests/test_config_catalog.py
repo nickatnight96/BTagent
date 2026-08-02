@@ -24,6 +24,7 @@ _MUST_REDACT = {
     "s3_secret_key",
     "s3_access_key",
     "mfa_secret_enc_key",
+    "slack_bot_token",
     "database_url",
     "redis_url",
     "oidc_providers",
@@ -51,6 +52,32 @@ def test_sensitive_values_are_redacted():
     assert entries["env"]["value"] == get_settings().env
     assert entries["access_token_ttl_minutes"]["sensitive"] is False
     assert entries["access_token_ttl_minutes"]["value"] == (get_settings().access_token_ttl_minutes)
+
+
+def test_every_credential_shaped_field_is_redacted():
+    """B3 drift lock: no future ``*_token``/``*secret*``-style knob can leak.
+
+    ``slack_bot_token`` leaked because the fragment list was curated by hand
+    and "token" was consciously omitted. This sweeps the *whole* Settings
+    model for credential-shaped names instead of pinning a fixed set, so the
+    next credential knob is redacted the day it's added or this test names it.
+    """
+    import re
+
+    credential_shape = re.compile(r"(secret|password|api_key|access_key|enc_key|_token$)")
+    entries = {e["field"]: e for e in deploy_time_entries(get_settings())}
+
+    for name, field in Settings.model_fields.items():
+        if field.annotation not in (str, str | None):
+            continue  # TTL ints etc. can't carry credential material
+        if not credential_shape.search(name):
+            continue
+        assert entries[name]["sensitive"] is True, (
+            f"Settings.{name} looks credential-shaped but GET /config/schema "
+            "would emit its value in plaintext — add it to the sensitive "
+            "fragments/suffixes in config_catalog.py"
+        )
+        assert entries[name]["value"] is None, name
 
 
 def test_runtime_surfaces_shape():
