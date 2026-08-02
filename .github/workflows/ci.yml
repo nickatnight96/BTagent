@@ -936,15 +936,24 @@ jobs:
           cache-from: type=gha
 
       - name: Scan the backend image with Trivy
-        uses: aquasecurity/trivy-action@v0.30.0
-        with:
-          image-ref: btagent-backend:scan
-          format: table
-          # Fail the job on fixable HIGH/CRITICAL findings only — an unfixable
-          # CVE with no upstream patch shouldn't red every PR until it's fixed.
-          exit-code: '1'
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
+        # Runs the Trivy CLI from its official image rather than
+        # `aquasecurity/trivy-action`. The action is a thin wrapper that
+        # internally pins `aquasecurity/setup-trivy`, and that pin has been
+        # yanked upstream: trivy-action@v0.30.0 requires setup-trivy@v0.2.2,
+        # which no longer exists (setup-trivy ships v0.2.6/v0.3.x), so every
+        # run died during action resolution without scanning anything. A
+        # nested pin we don't control can be deleted out from under us at any
+        # time; a container tag can't. Same gate, same flags — this is also
+        # how the scan was verified locally.
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.58.1 image \
+              --format table \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              btagent-backend:scan
 
   # ── Build & Push Docker Images ───────────────────────────
   build-images:
