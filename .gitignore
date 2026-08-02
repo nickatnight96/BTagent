@@ -89,3 +89,7 @@ tmp/
 .cache/
 .claude/worktrees/
 infra/.env.local
+
+# P4.8 handling: never commit — local-only secrets/vuln detail
+infra/.env.backup-pre-secret-rotation
+docs/PRODUCTION_READINESS_REVIEW_2026_07.md
