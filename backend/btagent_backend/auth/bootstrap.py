@@ -77,8 +77,11 @@ def resolve_admin_password(
         f"{ADMIN_PASSWORD_ENV} is not set. Refusing to create or reset the admin "
         "user with an unrecoverable random password in a non-test environment.\n"
         f"Set {ADMIN_PASSWORD_ENV} to a strong password (e.g. "
-        f"`export {ADMIN_PASSWORD_ENV}=$(openssl rand -base64 24)`) and re-run, "
-        "or use infra/scripts/reset-admin-password.py to (re)set it later."
+        f"`export {ADMIN_PASSWORD_ENV}=$(openssl rand -base64 24)`) and re-run.\n"
+        "In a container (compose / Kubernetes / air-gapped), the bootstrap path is:\n"
+        f"  docker compose exec -e {ADMIN_PASSWORD_ENV}='...' backend bt create-admin\n"
+        "On a host checkout with a virtualenv you can also use "
+        "infra/scripts/reset-admin-password.py."
     )
 
 

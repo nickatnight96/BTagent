@@ -1,4 +1,46 @@
-version: "3.9"
+# BTagent — local-production Docker Compose stack.
+#
+#   cd infra && cp .env.example .env   # then edit
+#   docker compose -f infra/docker-compose.yml up -d --build
+#
+# `up` is self-bootstrapping: two one-shot init services run to completion
+# before the backend or scheduler start —
+#
+#   migrate       alembic upgrade head            (schema)
+#   init-storage  bt init-storage                 (evidence bucket in MinIO)
+#
+# Without these the backend came up reporting HEALTHY against an empty
+# database and a missing bucket, then died on the first login with "relation
+# 'users' does not exist". `depends_on: condition: service_completed_successfully`
+# makes that state unreachable.
+#
+# After the stack is up, bootstrap the first admin (idempotent, never prints
+# the password):
+#
+#   docker compose -f infra/docker-compose.yml exec \
+#     -e BTAGENT_SEED_ADMIN_PASSWORD='...' backend bt create-admin
+
+# The backend image backs four services (backend, scheduler, and the two
+# one-shots). Anchors keep their build + env definitions from drifting apart.
+x-backend-build: &backend-build
+  build:
+    context: ..
+    dockerfile: infra/docker/Dockerfile.backend
+
+x-backend-env: &backend-env
+  BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-btagent}:${POSTGRES_PASSWORD:-btagent_dev_password}@postgres:5432/${POSTGRES_DB:-btagent}
+  # Overridable so the documented Redis-password setup actually takes effect:
+  # set REDIS_PASSWORD *and* BTAGENT_REDIS_URL=redis://:<pw>@redis:6379 in
+  # .env. Previously this line was hard-coded and silently overrode the
+  # env-file value, so following the deployment guide produced auth errors.
+  BTAGENT_REDIS_URL: ${BTAGENT_REDIS_URL:-redis://redis:6379}
+  BTAGENT_S3_ENDPOINT: http://minio:9000
+  # The code reads BTAGENT_OLLAMA_BASE_URL (config.Settings.ollama_base_url)
+  # for BOTH embeddings and the LiteLLM chat api_base; its default is
+  # http://localhost:11434, which inside this container is the container
+  # itself. OLLAMA_HOST is kept for the ollama SDK/CLI convention.
+  BTAGENT_OLLAMA_BASE_URL: http://ollama:11434
+  OLLAMA_HOST: http://ollama:11434
 
 services:
   # ── Infrastructure ─────────────────────────────────────
@@ -22,12 +64,27 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Auth is opt-in and driven by one variable. Set REDIS_PASSWORD in .env
+    # (plus a matching BTAGENT_REDIS_URL) and the server starts with
+    # --requirepass; leave it unset and it starts open, which is what the
+    # local `make dev` loop and the host-side uvicorn expect.
+    command:
+      - sh
+      - -c
+      - 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD"; else exec redis-server; fi'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
       - "6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD-SHELL
+        # `redis-cli ping` exits 0 even when the server answers "NOAUTH", so the
+        # reply is grepped rather than trusted to the exit code — otherwise a
+        # password-protected Redis reports healthy to everything that can't auth.
+        - 'if [ -n "$$REDIS_PASSWORD" ]; then redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi'
       interval: 5s
       timeout: 3s
       retries: 5
@@ -62,25 +119,60 @@ services:
     networks:
       - btagent-net
 
+  # ── One-shot init (must complete before the app starts) ─
+  migrate:
+    <<: *backend-build
+    # alembic.ini and migrations/ live at /app/backend in the image (WORKDIR
+    # is /app), so alembic has to run from there — the same command the Helm
+    # pre-install Job uses.
+    command: ["sh", "-c", "cd backend && alembic upgrade head"]
+    env_file:
+      - .env
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - btagent-net
+
+  init-storage:
+    <<: *backend-build
+    # Creates the BTAGENT_S3_BUCKET that /health/ready head_buckets and that
+    # every evidence upload writes to. Nothing else in the product ever
+    # created it. Idempotent; kept separate from `migrate` so a MinIO problem
+    # never reads as a migration failure.
+    command: ["bt", "init-storage"]
+    env_file:
+      - .env
+    environment:
+      <<: *backend-env
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - btagent-net
+
   # ── Application ────────────────────────────────────────
   backend:
-    build:
-      context: ..
-      dockerfile: infra/docker/Dockerfile.backend
+    <<: *backend-build
     ports:
       - "8000:8000"
     env_file:
       - .env
     environment:
-      BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-btagent}:${POSTGRES_PASSWORD:-btagent_dev_password}@postgres:5432/${POSTGRES_DB:-btagent}
-      BTAGENT_REDIS_URL: redis://redis:6379
-      BTAGENT_S3_ENDPOINT: http://minio:9000
-      OLLAMA_HOST: http://ollama:11434
+      <<: *backend-env
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      init-storage:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/health'); r.raise_for_status()"]
       interval: 10s
@@ -91,22 +183,33 @@ services:
       - btagent-net
 
   scheduler:
-    build:
-      context: ..
-      dockerfile: infra/docker/Dockerfile.backend
+    <<: *backend-build
     command: ["arq", "btagent_backend.scheduler.worker.WorkerSettings"]
     env_file:
       - .env
     environment:
-      BTAGENT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-btagent}:${POSTGRES_PASSWORD:-btagent_dev_password}@postgres:5432/${POSTGRES_DB:-btagent}
-      BTAGENT_REDIS_URL: redis://redis:6379
-      BTAGENT_S3_ENDPOINT: http://minio:9000
-      OLLAMA_HOST: http://ollama:11434
+      <<: *backend-env
+    # Overrides the image's HEALTHCHECK, which curls :8000 — a port the arq
+    # worker does not serve, so a perfectly healthy scheduler showed up as
+    # "unhealthy" in `docker compose ps` forever. `arq --check` reads the
+    # worker's own health key out of Redis instead. Note arq refreshes that key
+    # on its health_check_interval (default 1h), so this detects a dead worker
+    # slowly — but "slow and true" beats "fast and always wrong".
+    healthcheck:
+      test: ["CMD", "arq", "--check", "btagent_backend.scheduler.worker.WorkerSettings"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      init-storage:
+        condition: service_completed_successfully
     networks:
       - btagent-net
 
@@ -125,9 +228,13 @@ services:
     image: nginx:alpine
     ports:
       - "8080:80"
-      - "8443:443"
+      # No 443 mapping: nginx/nginx.conf has an HTTP server block only, so the
+      # port that used to be published here answered nothing. To terminate TLS
+      # here, follow "Enabling TLS on the compose nginx" in docs/DEPLOYMENT.md
+      # — it adds the 443 server block and this mapping back together.
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Mounted (empty by default) so the TLS runbook only has to drop certs in.
       - ./nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       - backend

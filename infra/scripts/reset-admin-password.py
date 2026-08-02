@@ -5,6 +5,15 @@ Unlike ``seed-data.py`` this does **not** seed sample data — it is the
 production-safe path for bootstrapping the first admin or recovering access
 after a prod seed.
 
+> **Prefer ``bt create-admin``.** This script needs the repository *and* a host
+> virtualenv that can import ``btagent_backend``; it is not copied into the
+> backend image, so it cannot bootstrap a container-only or air-gapped install.
+> ``bt create-admin`` ships inside the image and is the documented bootstrap
+> path (``docker compose exec backend bt create-admin``). This script is kept
+> for host/dev workflows and for ``make db-reset-admin``, and it delegates to
+> the same :func:`btagent_backend.cli.admin.create_or_reset_admin` so the two
+> can never diverge.
+
 Password source (in priority order):
   1. ``--password`` CLI argument, if given.
   2. ``BTAGENT_SEED_ADMIN_PASSWORD`` environment variable.
@@ -31,16 +40,13 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "backend"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "shared"))
 
-from sqlalchemy import select
 from btagent_backend.db.engine import async_session_factory
-from btagent_backend.db.models import UserRow
-from btagent_backend.auth.jwt import hash_password
 from btagent_backend.auth.bootstrap import (
     SeedPasswordError,
     is_test_mode,
     resolve_admin_password,
 )
-from btagent_shared.utils.ids import generate_id
+from btagent_backend.cli.admin import create_or_reset_admin
 
 
 async def reset_admin_password(
@@ -49,29 +55,14 @@ async def reset_admin_password(
     """Create the admin user if missing, otherwise reset its password.
 
     Idempotent: running it repeatedly converges on a user with the given
-    password and role.
+    password and role. The create-or-reset logic itself lives in
+    ``btagent_backend.cli.admin`` so this script and ``bt create-admin``
+    are the same code path.
     """
     async with async_session_factory() as session:
-        result = await session.execute(
-            select(UserRow).where(UserRow.username == username)
+        action = await create_or_reset_admin(
+            session, username=username, password=password, role=role
         )
-        user = result.scalar_one_or_none()
-
-        if user is None:
-            user = UserRow(
-                id=generate_id("usr"),
-                username=username,
-                email=f"{username}@btagent.local",
-                password_hash=hash_password(password),
-                role=role,
-            )
-            session.add(user)
-            action = "created"
-        else:
-            user.password_hash = hash_password(password)
-            # Keep an existing admin an admin; otherwise leave role untouched.
-            action = "reset"
-
         await session.commit()
 
     print(
