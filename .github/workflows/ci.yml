@@ -467,6 +467,10 @@ jobs:
       BTAGENT_ENV: test
       BTAGENT_JWT_SECRET: ci-test-secret-not-for-production
       BTAGENT_MOCK_CONNECTORS: "true"
+      # P1.2: the rate limiter is now REGISTERED, so the browser tests
+      # (which create investigations in a tight loop) would hit 429.
+      # Disable it for E2E — rate-limit behaviour is unit-tested separately.
+      BTAGENT_RATE_LIMIT_ENABLED: "false"
       # Seed-data.py uses BTAGENT_ENV=test to make passwords deterministic
       # (password === username) so the fixtures can log in without
       # leaking real secrets.
@@ -763,6 +767,12 @@ jobs:
       BTAGENT_ENV: test
       BTAGENT_JWT_SECRET: ci-test-secret-not-for-production
       BTAGENT_MOCK_CONNECTORS: "true"
+      # P1.1: the UAT webhook tests fail LOUDLY unless a webhook secret is
+      # provisioned that differs from the JWT secret (the old silent
+      # jwt_secret fallback was the #372 bug). P1.2: disable the now-
+      # registered rate limiter so the UAT burst does not hit 429.
+      BTAGENT_WEBHOOK_SECRET: ci-webhook-secret-distinct-from-jwt
+      BTAGENT_RATE_LIMIT_ENABLED: "false"
 
     steps:
       - uses: actions/checkout@v7
