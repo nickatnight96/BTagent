@@ -92,6 +92,11 @@ async def run_deception_hunt_over_connector(
     crash the caller. The connector is mock-first, so this is safe in CI.
     """
     try:
+        # A3: manifest gate at the vertical's only I/O boundary; a policy
+        # refusal degrades to an empty hunt, same as a connector outage.
+        from btagent_agents.mcp.policy import guard_dispatch
+
+        guard_dispatch("canary_list_incidents")
         envelope = await server.canary_list_incidents(limit=limit)
     except Exception as exc:  # noqa: BLE001 - a connector outage must not crash the hunt
         logger.warning("deception hunt: canary_list_incidents failed (%s) — empty hunt", exc)

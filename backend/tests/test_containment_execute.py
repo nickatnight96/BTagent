@@ -488,3 +488,73 @@ async def test_removal_requires_containment_execute_scope(
         f"/api/v1/containment/safelist/{entry['id']}", headers=auth_header(analyst_token)
     )
     assert resp.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# A7: the connector→class dispatch map must resolve at import time.
+# --------------------------------------------------------------------------- #
+
+
+def test_every_isolation_route_resolves():
+    """Each ``_ISOLATION_ROUTES`` entry names a real module, class and method.
+
+    The Cortex route shipped pointing at a nonexistent ``CortexMCPServer``
+    (actual: ``CortexXDRMCPServer``) — an *approved* isolation 500'd with an
+    AttributeError, the endpoint stayed uncontained, and no audit row was
+    written. A dangling name in this map must fail the suite, not the incident.
+    """
+    import importlib
+
+    from btagent_backend.services.containment_execute_service import _ISOLATION_ROUTES
+
+    for connector, (module, cls_name, method, _target_kwarg) in _ISOLATION_ROUTES.items():
+        cls = getattr(importlib.import_module(module), cls_name, None)
+        assert cls is not None, f"{connector}: {module}.{cls_name} does not exist"
+        assert callable(getattr(cls, method, None)), f"{connector}: {cls_name}.{method} missing"
+
+
+# --------------------------------------------------------------------------- #
+# A3: a manifest-policy refusal at dispatch is an audited denial, not a 500.
+# --------------------------------------------------------------------------- #
+
+
+async def test_policy_refused_dispatch_records_audited_denial(
+    client: AsyncClient, db_session, monkeypatch
+):
+    """An isolation route whose tool has no manifest capability is refused
+    fail-closed — 403 with a hash-chained CONTAINMENT denial row, never an
+    unaudited 500 (the A7 failure mode)."""
+    from btagent_backend.services import containment_execute_service as svc
+
+    monkeypatch.setitem(
+        svc._ISOLATION_ROUTES,
+        "crowdstrike",
+        (
+            "btagent_agents.mcp.servers.crowdstrike_mcp",
+            "CrowdStrikeMCPServer",
+            "cs_totally_undeclared_tool",
+            "hostname",
+        ),
+    )
+
+    org_id, user_id, token = await _seed_ic(db_session)
+    resp = await client.post(
+        "/api/v1/containment/execute/response-action",
+        json={
+            "action_id": "act_pol",
+            "action_type": "isolate_host",
+            "connector": "crowdstrike",
+            "target": "WS-JSMITH-PC",
+            "approved": True,
+        },
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 403, resp.text
+    assert "manifest policy" in resp.text.lower()
+
+    rows = await _audit_rows(db_session, org_id=org_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.category == "containment"
+    assert row.outcome == "denied"
+    assert row.details.get("policy_status") == "undeclared"

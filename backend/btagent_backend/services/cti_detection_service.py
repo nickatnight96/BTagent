@@ -829,8 +829,14 @@ async def compose_detection_pr(
 
     # Lazy import — the Git connector lives in the agents package (mock-first;
     # live mode raises NotImplementedError until the rollout PR).
+    from btagent_agents.mcp.policy import guard_dispatch
     from btagent_agents.mcp.servers.git_mcp import GitMCPServer
 
+    # A3: manifest gate at the direct dispatch site. The PR composer is a
+    # HITL-gated capability; ``hitl_approved=True`` because this function only
+    # ships proposals an analyst individually accepted/edited, invoked from an
+    # RBAC-gated route — the human decision has already happened, server-side.
+    guard_dispatch("git_open_detection_pr", hitl_approved=True)
     envelope = await GitMCPServer().git_open_detection_pr(
         branch, pr_title, _pr_body(ordered, final_yaml_by_row=final_yaml_by_row), files
     )

@@ -72,7 +72,7 @@ _ISOLATION_ROUTES: dict[str, tuple[str, str, str, str]] = {
     ),
     "cortex": (
         "btagent_agents.mcp.servers.cortex_mcp",
-        "CortexMCPServer",
+        "CortexXDRMCPServer",
         "cortex_isolate_endpoint",
         "endpoint_id",
     ),
@@ -99,7 +99,17 @@ async def _dispatch(action_type: str, connector: str, target: str) -> dict[str, 
     if action_type == "isolate_host" and connector in _ISOLATION_ROUTES:
         import importlib
 
+        from btagent_agents.mcp.policy import guard_dispatch
+
         module, cls_name, method, target_kwarg = _ISOLATION_ROUTES[connector]
+        # A3: enforce the manifest policy at this direct dispatch site — the
+        # router gate never sees these calls. ``hitl_approved=True`` because
+        # this function is only reachable through the backend approve→execute
+        # double-gate (RBAC + ``approved`` flag + safelist screen); the
+        # approval is server-side state, never model-supplied (#374). A
+        # refusal (undeclared tool, TLP-blocked capability) raises
+        # MCPPolicyRefused, which the callers record as an audited denial.
+        guard_dispatch(method, hitl_approved=True)
         server_cls = getattr(importlib.import_module(module), cls_name)
         server = server_cls(mock_mode=True)
         result = await getattr(server, method)(**{target_kwarg: target})
@@ -196,7 +206,24 @@ async def execute_response_action(
                 reason=f"Target is on the org {noun} safelist (collateral-outage guard).",
             )
 
-    tool_response = await _dispatch(action_type, connector, target)
+    from btagent_agents.mcp.policy import MCPPolicyRefused
+
+    try:
+        tool_response = await _dispatch(action_type, connector, target)
+    except MCPPolicyRefused as refusal:
+        # A3/A7 lesson: a dispatch-layer refusal must land on the ledger, not
+        # surface as an unaudited 500.
+        return await _record_denial(
+            db,
+            actor_id=actor_id,
+            org_id=org_id,
+            action=action,
+            resource=resource,
+            target=target,
+            tool=connector,
+            reason=f"Manifest policy refused dispatch: {refusal.verdict.reason}",
+            extra={"policy_status": refusal.verdict.status},
+        )
     outcome = _outcome_for(tool_response)
 
     audit = await AuditTrail(db).record(
@@ -464,8 +491,14 @@ async def _attach_change_record(
     try:
         # Only reached in mock mode — _dispatch() fails closed before this in
         # live mode — so the change link is always the mock SIR ledger here.
+        from btagent_agents.mcp.policy import guard_dispatch
         from btagent_agents.mcp.servers.servicenow_mcp import ServiceNowMCPServer
 
+        # A3: manifest gate at the direct dispatch site. Not HITL-gated (a
+        # ticket, not an action); a refusal is caught by the best-effort
+        # except below — the block already happened, only the change link is
+        # skipped and recorded as failed.
+        guard_dispatch("snow_create_security_incident")
         snow = ServiceNowMCPServer(mock_mode=_mock_connectors_enabled())
         response = await snow.snow_create_security_incident(
             short_description=f"Containment change: block {ioc_type} {ioc_value}",
