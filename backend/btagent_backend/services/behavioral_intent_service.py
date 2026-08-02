@@ -36,6 +36,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from btagent_shared.prompt_fence import wrap_external_data
 from btagent_shared.types.behavioral import IntentLabel
 
 from btagent_backend.db.models_behavioral import (
@@ -74,11 +75,11 @@ _VALID_LABELS = {label.value for label in IntentLabel}
 def _wrap_external_data(text: str) -> str:
     """Fence untrusted EDR telemetry for the prompt (CLAUDE.md requirement).
 
-    Matches ``engine/.../reasoning/_llm_json.wrap_external_data``; duplicated
-    here so the backend service doesn't reach across into the engine package
-    just for a one-line helper.
+    Delegates to ``btagent_shared.prompt_fence`` — the previous local copy
+    never received the GH #373 sentinel-neutralisation hardening, so a command
+    line containing a literal closing tag could break out of the fence.
     """
-    return f"<external-data>\n{text}\n</external-data>"
+    return wrap_external_data(text)
 
 
 def build_classification_prompt(

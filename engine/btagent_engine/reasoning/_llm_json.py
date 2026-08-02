@@ -26,37 +26,17 @@ import json
 import re
 from typing import Any
 
-# Matches an opening or closing ``<external-data>`` fence tag (case-insensitive,
-# tolerating stray inner whitespace) *inside* an untrusted payload so it can be
-# neutralised before the payload is fenced.
-_EXTERNAL_DATA_SENTINEL_RE = re.compile(r"<\s*/?\s*external-data\s*>", re.IGNORECASE)
-
-
-def _neutralize_sentinels(text: str) -> str:
-    """HTML-escape the angle brackets of any embedded ``<external-data>`` tag.
-
-    Turns ``</external-data>`` into ``&lt;/external-data&gt;`` so untrusted
-    payload content can never emit a *real* fence tag.
-    """
-    return _EXTERNAL_DATA_SENTINEL_RE.sub(
-        lambda m: m.group(0).replace("<", "&lt;").replace(">", "&gt;"), text
-    )
+from btagent_shared.prompt_fence import wrap_external_data as _shared_wrap
 
 
 def wrap_external_data(text: str) -> str:
     """Fence untrusted external text for LLM prompts (prompt-injection defense).
 
-    CLAUDE.md requires all external data in agent prompts to be wrapped in
-    ``<external-data>`` XML tags. Engine can't import the agents-tier helper
-    (zero-dep boundary), so the reasoning nodes share this one.
-
-    The payload is *untrusted*: a literal ``</external-data>`` embedded in it
-    would otherwise close the fence early and let the trailing text be read as
-    trusted instructions (GH #373, prompt-injection breakout). We therefore
-    neutralise any embedded opening/closing sentinel before interpolation, so
-    the only real fence tags in the output are the wrapper's own.
+    Re-exported from :mod:`btagent_shared.prompt_fence`, which is the single
+    implementation. Keeping a local copy is what let three newer call sites
+    ship without the GH #373 sentinel-neutralisation hardening.
     """
-    return f"<external-data>\n{_neutralize_sentinels(text)}\n</external-data>"
+    return _shared_wrap(text)
 
 
 async def call_llm_json(

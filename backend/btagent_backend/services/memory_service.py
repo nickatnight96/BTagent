@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from btagent_shared.prompt_fence import wrap_fenced
 from btagent_shared.security import tlp_rank
 from btagent_shared.types.config import TLP
 from btagent_shared.utils.ids import generate_id
@@ -500,18 +501,38 @@ def _format_memory_line(mem: AgentMemoryRow) -> str:
     return f"[{mem.kind}] {mem.subject}: {mem.content}{meta}"
 
 
+# Cap on the rendered memory block. Recall can return 20 memories of up to
+# 10k chars each; a 200KB block would crowd out the investigation itself on
+# a local model's context window.
+_MAX_MEMORY_PROMPT_CHARS = 8000
+
+
 def render_for_prompt(memories: list[AgentMemoryRow]) -> str:
     """Render recalled memories as a fenced ``<agent-memory>`` block.
 
     Mirrors ``org_profile.render_for_prompt``'s XML-fenced convention for
     external context in agent prompts. The content is untrusted recalled data,
     so it is wrapped (fenced) rather than interpolated as instructions.
+
+    Fencing alone is not enough here, and this block is the *most* dangerous
+    place in the system to get it wrong: close-time memories are derived from
+    IOC values and investigation titles, both attacker-influenceable, and a
+    recalled memory is injected into every subsequent investigation for the
+    org. An unneutralised ``</agent-memory>`` in a seeded alert title would
+    therefore become a standing instruction with org-wide persistence — so
+    embedded fence sentinels are neutralised via ``btagent_shared.prompt_fence``.
+
+    The block is also capped: recall returns up to 20 memories of up to 10k
+    characters each, and a 200KB prepended block would displace the actual
+    investigation on a local model's context window.
     """
     if not memories:
         body = "No agent memory recorded."
     else:
         body = "\n".join(_format_memory_line(m) for m in memories)
-    return f"<agent-memory>\n{body}\n</agent-memory>"
+        if len(body) > _MAX_MEMORY_PROMPT_CHARS:
+            body = body[:_MAX_MEMORY_PROMPT_CHARS] + "\n…(memory block truncated)"
+    return wrap_fenced(body, "agent-memory")
 
 
 # ---------------------------------------------------------------------------

@@ -45,6 +45,7 @@ from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime
 
 from btagent_shared.hunt.cloud import classify_workload, score_workload_risk
+from btagent_shared.prompt_fence import wrap_external_data
 from btagent_shared.types.agentic_hunt import (
     AgentCallEvent,
     AgentIdentity,
@@ -326,8 +327,12 @@ _VALID_JUDGE_CATEGORIES = {c.value for c in PromptInjectionCategory}
 
 
 def _wrap_external_data(text: str) -> str:
-    """Fence untrusted agent input for the judge prompt (CLAUDE.md requirement)."""
-    return f"<external-data>\n{text}\n</external-data>"
+    """Fence untrusted agent input for the judge prompt (CLAUDE.md requirement).
+
+    The judge's entire job is reading hostile text, so sentinel neutralisation
+    is load-bearing here — see ``btagent_shared.prompt_fence``.
+    """
+    return wrap_external_data(text)
 
 
 def build_injection_judge_prompt(text: str) -> tuple[str, str]:

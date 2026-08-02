@@ -26,6 +26,10 @@ from btagent_backend.config import Settings
 # ``access_token_ttl_minutes`` and non-credential names would false-positive.
 _SENSITIVE_FRAGMENTS = ("secret", "password", "api_key", "enc_key", "access_key")
 
+# B3: credential fields *ending* in "_token" (``slack_bot_token``) are secrets;
+# the suffix form keeps ``access_token_ttl_minutes``-style knobs visible.
+_SENSITIVE_SUFFIXES = ("_token",)
+
 # Fields whose *values* can embed credentials or per-provider secrets even
 # though the name alone doesn't say so (DSNs with userinfo, SSO provider
 # configs carrying client_secret).
@@ -121,6 +125,8 @@ RUNTIME_SURFACES: list[dict[str, Any]] = [
 
 def _is_sensitive(field_name: str) -> bool:
     if field_name in _SENSITIVE_FIELDS:
+        return True
+    if field_name.endswith(_SENSITIVE_SUFFIXES):
         return True
     return any(fragment in field_name for fragment in _SENSITIVE_FRAGMENTS)
 

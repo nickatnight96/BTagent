@@ -34,7 +34,6 @@ from btagent_shared.utils.ids import generate_id
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from btagent_backend.db.models import DEFAULT_ORG_ID
 from btagent_backend.db.models_playbook import PlaybookExecutionRow, PlaybookRow
 
 logger = logging.getLogger("btagent.services.playbook")
@@ -381,6 +380,7 @@ class PlaybookService:
         *,
         name: str,
         yaml_str: str,
+        org_id: str,
         user_id: str | None = None,
     ) -> PlaybookRow:
         """Validate and store a new playbook.
@@ -393,6 +393,9 @@ class PlaybookService:
             Display name for the playbook.
         yaml_str : str
             Raw YAML content.
+        org_id : str
+            Tenant the definition belongs to (B5). Required — a silent
+            default is how the executions gap survived a passing suite.
         user_id : str | None
             ID of the user creating the playbook.
 
@@ -410,6 +413,7 @@ class PlaybookService:
 
         row = PlaybookRow(
             id=generate_id("pb"),
+            org_id=org_id,
             name=name,
             version=definition.version,
             description=definition.description,
@@ -440,12 +444,20 @@ class PlaybookService:
         db: AsyncSession,
         playbook_id: str,
         yaml_str: str,
+        *,
+        org_id: str,
     ) -> PlaybookRow | None:
         """Validate and update an existing playbook's YAML.
 
-        Returns the updated row, or None if not found.
+        Returns the updated row, or None if not found in the caller's org
+        (cross-tenant ids 404 rather than 403 so existence doesn't leak).
         """
-        result = await db.execute(select(PlaybookRow).where(PlaybookRow.id == playbook_id))
+        result = await db.execute(
+            select(PlaybookRow).where(
+                PlaybookRow.id == playbook_id,
+                PlaybookRow.org_id == org_id,
+            )
+        )
         row = result.scalar_one_or_none()
         if row is None:
             return None
@@ -474,7 +486,8 @@ class PlaybookService:
         playbook_id: str,
         trigger_data: dict[str, Any] | None = None,
         investigation_id: str | None = None,
-        org_id: str = DEFAULT_ORG_ID,
+        *,
+        org_id: str,
     ) -> PlaybookExecutionRow:
         """Create an execution record and dispatch to TaskManager.
 
@@ -505,6 +518,7 @@ class PlaybookService:
         result = await db.execute(
             select(PlaybookRow).where(
                 PlaybookRow.id == playbook_id,
+                PlaybookRow.org_id == org_id,
                 PlaybookRow.is_active.is_(True),
             )
         )
@@ -630,16 +644,21 @@ class PlaybookService:
         self,
         db: AsyncSession,
         *,
+        org_id: str,
         active_only: bool = True,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[PlaybookRow], int]:
-        """List playbooks with optional active filter and pagination.
+        """List the caller's org's playbooks with optional active filter.
 
         Returns (rows, total_count).
         """
-        query = select(PlaybookRow).order_by(PlaybookRow.created_at.desc())
-        count_query = select(func.count(PlaybookRow.id))
+        query = (
+            select(PlaybookRow)
+            .where(PlaybookRow.org_id == org_id)
+            .order_by(PlaybookRow.created_at.desc())
+        )
+        count_query = select(func.count(PlaybookRow.id)).where(PlaybookRow.org_id == org_id)
 
         if active_only:
             query = query.where(PlaybookRow.is_active.is_(True))
@@ -658,21 +677,35 @@ class PlaybookService:
         self,
         db: AsyncSession,
         playbook_id: str,
+        *,
+        org_id: str,
     ) -> PlaybookRow | None:
-        """Fetch a single playbook by ID."""
-        result = await db.execute(select(PlaybookRow).where(PlaybookRow.id == playbook_id))
+        """Fetch a single playbook by ID, scoped to ``org_id``."""
+        result = await db.execute(
+            select(PlaybookRow).where(
+                PlaybookRow.id == playbook_id,
+                PlaybookRow.org_id == org_id,
+            )
+        )
         return result.scalar_one_or_none()
 
     async def deactivate_playbook(
         self,
         db: AsyncSession,
         playbook_id: str,
+        *,
+        org_id: str,
     ) -> bool:
-        """Soft-delete a playbook (set is_active=False).
+        """Soft-delete a playbook (set is_active=False), scoped to ``org_id``.
 
         Returns True if found and deactivated, False otherwise.
         """
-        result = await db.execute(select(PlaybookRow).where(PlaybookRow.id == playbook_id))
+        result = await db.execute(
+            select(PlaybookRow).where(
+                PlaybookRow.id == playbook_id,
+                PlaybookRow.org_id == org_id,
+            )
+        )
         row = result.scalar_one_or_none()
         if row is None:
             return False
@@ -689,7 +722,7 @@ class PlaybookService:
         db: AsyncSession,
         playbook_id: str,
         *,
-        org_id: str = DEFAULT_ORG_ID,
+        org_id: str,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[PlaybookExecutionRow], int]:
@@ -725,7 +758,7 @@ class PlaybookService:
         db: AsyncSession,
         execution_id: str,
         *,
-        org_id: str = DEFAULT_ORG_ID,
+        org_id: str,
     ) -> PlaybookExecutionRow | None:
         """Fetch a single execution by ID, scoped to ``org_id`` (#394).
 

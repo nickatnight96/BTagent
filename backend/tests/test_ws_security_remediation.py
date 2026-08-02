@@ -54,7 +54,7 @@ from btagent_backend.ws.protocol import BACKPRESSURE_QUEUE_LIMIT
 @pytest.fixture(autouse=True)
 def _isolated_revocation_store():
     _reset_for_tests()
-    revocation._redis_unavailable = True
+    revocation._redis_retry_at = float("inf")
     yield
     _reset_for_tests()
 

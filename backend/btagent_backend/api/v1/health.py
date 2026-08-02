@@ -116,15 +116,27 @@ async def _check_s3() -> bool:
     return True
 
 
+async def _check_revocation() -> bool:
+    """Return True if the token-revocation list is on Redis (not fail-open).
+
+    B4: a revocation list running on the in-memory fallback means revoked
+    tokens work again in other workers — an operator-visible readiness
+    condition. The probe also actively re-connects, so readiness doubles as
+    heal.
+    """
+    from btagent_backend.auth import revocation
+
+    return await revocation.check_health()
+
+
 async def _run_check(coro) -> bool:
     """Run a single dependency check with a bounded timeout.
 
-    Returns True on success, False on any failure (including timeout). Never
-    raises so one failing dependency cannot abort the others.
+    Returns the check's boolean result; False on any failure (including
+    timeout). Never raises so one failing dependency cannot abort the others.
     """
     try:
-        await asyncio.wait_for(coro, timeout=READINESS_CHECK_TIMEOUT_SECONDS)
-        return True
+        return bool(await asyncio.wait_for(coro, timeout=READINESS_CHECK_TIMEOUT_SECONDS))
     except Exception as exc:  # noqa: BLE001 — readiness must never raise
         logger.warning("readiness check failed: %s", exc)
         return False
@@ -140,18 +152,20 @@ async def readiness(response: Response) -> dict:
     check is independently bounded by ``READINESS_CHECK_TIMEOUT_SECONDS`` so the
     probe itself can never hang.
     """
-    db_ok, redis_ok, s3_ok = await asyncio.gather(
+    db_ok, redis_ok, s3_ok, revocation_ok = await asyncio.gather(
         _run_check(_check_db()),
         _run_check(_check_redis()),
         _run_check(_check_s3()),
+        _run_check(_check_revocation()),
     )
 
     checks = {
         "db": "ok" if db_ok else "down",
         "redis": "ok" if redis_ok else "down",
         "s3": "ok" if s3_ok else "down",
+        "revocation": "ok" if revocation_ok else "degraded",
     }
-    all_ok = db_ok and redis_ok and s3_ok
+    all_ok = db_ok and redis_ok and s3_ok and revocation_ok
 
     if not all_ok:
         response.status_code = 503

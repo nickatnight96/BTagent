@@ -76,12 +76,13 @@ async def test_readiness_all_healthy(client: AsyncClient, monkeypatch):
 
     monkeypatch.setattr(health_mod, "_check_redis", lambda: _ok())
     monkeypatch.setattr(health_mod, "_check_s3", lambda: _ok())
+    monkeypatch.setattr(health_mod, "_check_revocation", lambda: _ok())
 
     resp = await client.get("/health/ready")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ready"
-    assert body["checks"] == {"db": "ok", "redis": "ok", "s3": "ok"}
+    assert body["checks"] == {"db": "ok", "redis": "ok", "s3": "ok", "revocation": "ok"}
 
 
 @pytest.mark.asyncio
@@ -96,6 +97,7 @@ async def test_readiness_redis_down_returns_503(client: AsyncClient, monkeypatch
 
     monkeypatch.setattr(health_mod, "_check_redis", lambda: _redis_fail())
     monkeypatch.setattr(health_mod, "_check_s3", lambda: _ok())
+    monkeypatch.setattr(health_mod, "_check_revocation", lambda: _ok())
 
     resp = await client.get("/health/ready")
     assert resp.status_code == 503
@@ -119,6 +121,7 @@ async def test_readiness_s3_down_returns_503(client: AsyncClient, monkeypatch):
 
     monkeypatch.setattr(health_mod, "_check_redis", lambda: _ok())
     monkeypatch.setattr(health_mod, "_check_s3", lambda: _s3_fail())
+    monkeypatch.setattr(health_mod, "_check_revocation", lambda: _ok())
 
     resp = await client.get("/health/ready")
     assert resp.status_code == 503
@@ -126,4 +129,26 @@ async def test_readiness_s3_down_returns_503(client: AsyncClient, monkeypatch):
     assert body["status"] == "not_ready"
     assert body["checks"]["s3"] == "down"
     assert body["checks"]["db"] == "ok"
+    assert body["checks"]["redis"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_readiness_revocation_degraded_returns_503(client: AsyncClient, monkeypatch):
+    """B4: a fail-open (in-memory) revocation list flags readiness, not a log."""
+
+    async def _ok() -> bool:
+        return True
+
+    async def _degraded() -> bool:
+        return False
+
+    monkeypatch.setattr(health_mod, "_check_redis", lambda: _ok())
+    monkeypatch.setattr(health_mod, "_check_s3", lambda: _ok())
+    monkeypatch.setattr(health_mod, "_check_revocation", lambda: _degraded())
+
+    resp = await client.get("/health/ready")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "not_ready"
+    assert body["checks"]["revocation"] == "degraded"
     assert body["checks"]["redis"] == "ok"

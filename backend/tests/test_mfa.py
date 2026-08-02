@@ -58,7 +58,7 @@ async def _clean_revocation(_init_db):
     _reset_for_tests()
     # Force the in-memory revocation store (mirrors test_cookie_auth) so no
     # ambient Redis influences the single-use challenge assertions.
-    revocation._redis_unavailable = True
+    revocation._redis_retry_at = float("inf")
     yield
     _reset_for_tests()
 

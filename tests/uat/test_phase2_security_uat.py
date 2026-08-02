@@ -293,10 +293,8 @@ class TestSTIXTLPExport:
         TLP:AMBER IOCs should be exportable but must carry the correct
         TLP marking definition reference.
         """
-        from btagent_backend.services.stix_service import (
-            _TLP_MARKING_DEFS,
-            ioc_to_stix_indicator,
-        )
+        from btagent_backend.services.stix_service import ioc_to_stix_indicator
+        from btagent_shared.stix_tlp import tlp_to_marking_ref
 
         ioc = {
             "type": "domain",
@@ -308,7 +306,9 @@ class TestSTIXTLPExport:
         indicator = ioc_to_stix_indicator(ioc, tlp_level="amber")
 
         assert "object_marking_refs" in indicator
-        amber_ref = _TLP_MARKING_DEFS["amber"]
+        # P2.1: the marking table moved to btagent_shared.stix_tlp and export
+        # now emits the TLP 2.0 ref; resolve it the same way the service does.
+        amber_ref = tlp_to_marking_ref("amber")
         assert amber_ref in indicator["object_marking_refs"]
 
 
