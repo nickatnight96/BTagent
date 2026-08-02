@@ -701,3 +701,89 @@ async def test_declarative_capability_runs_once_policy_allows_it():
 
     assert out.value == 3
     assert len(sender.requests) == 1
+
+
+# --------------------------------------------------------------------------- #
+# P4.4 hardening: E6 httpx timeout, E8 truncation signal, E12 param collision
+# --------------------------------------------------------------------------- #
+
+
+async def test_httpx_timeout_is_treated_as_a_timeout_not_a_generic_retry():
+    """E6: httpx.TimeoutException is NOT a builtin TimeoutError subclass, so it
+    used to hit the retry-everything branch and ignore retry_on_timeout=False."""
+    import httpx
+
+    attempts: list[int] = []
+
+    def _slow(request: HTTPRequest) -> HTTPResponse:
+        attempts.append(1)
+        raise httpx.ConnectTimeout("timed out")
+
+    spec = _spec(retry=RetryPolicy(max_attempts=3, retry_on_timeout=False))
+    connector = DeclarativeConnector(_manifest(spec), mock_sender=_slow, sleep=_Sleeper())
+
+    with pytest.raises(ConnectorTransportError, match="timed out"):
+        await connector.execute("get_thing", {"thing_id": "a"})
+
+    # retry_on_timeout=False is honored: exactly one attempt, no duplicate POSTs.
+    assert len(attempts) == 1
+
+
+async def test_pagination_truncation_is_signalled_when_capped():
+    """E8: a run stopped by max_pages with more data available is flagged."""
+    spec = _paged_spec(
+        PaginationSpec(
+            style=PaginationStyle.CURSOR,
+            items_path="data",
+            cursor_param="cursor",
+            cursor_path="meta.cursor",
+            max_pages=2,
+        )
+    )
+    sender = _Recorder(
+        HTTPResponse(status_code=200, json_body={"data": [1], "meta": {"cursor": "more"}})
+    )
+    connector = DeclarativeConnector(_manifest(spec), mock_sender=sender)
+
+    out = await connector.execute("get_thing", {})
+    # A cursor still present at the cap → truncated marker is set.
+    assert out["_pagination"]["truncated"] is True
+
+
+async def test_complete_pagination_has_no_truncation_marker():
+    spec = _paged_spec(
+        PaginationSpec(
+            style=PaginationStyle.CURSOR,
+            items_path="data",
+            cursor_param="cursor",
+            cursor_path="meta.cursor",
+        )
+    )
+    sender = _Recorder(
+        HTTPResponse(status_code=200, json_body={"data": [1], "meta": {"cursor": "c1"}}),
+        HTTPResponse(status_code=200, json_body={"data": [2], "meta": {}}),
+    )
+    connector = DeclarativeConnector(_manifest(spec), mock_sender=sender)
+
+    out = await connector.execute("get_thing", {})
+    assert "_pagination" not in out
+
+
+async def test_pagination_control_param_collision_is_refused():
+    """E12: a declared query param that collides with a pagination control
+    param is a hard-to-see correctness bug — refuse it up front."""
+    spec = _spec(
+        path="/things",
+        params=[RequestParam(name="cursor", source="cursor", location=ParamLocation.QUERY)],
+        pagination=PaginationSpec(
+            style=PaginationStyle.CURSOR,
+            items_path="data",
+            cursor_param="cursor",
+            cursor_path="meta.cursor",
+        ),
+        response=ResponseMapping(fields={"total": "total"}),
+    )
+    connector = DeclarativeConnector(_manifest(spec), mock_sender=_Recorder(_ok()))
+
+    with pytest.raises(ConnectorConfigError, match="collide"):
+        await connector.execute("get_thing", {"cursor": "x"})

@@ -386,3 +386,30 @@ def test_extract_path_returns_none_for_missing_segments():
     assert extract_path({"a": 1}, "b.c") is None
     assert extract_path({"a": 1}, "a.b") is None
     assert extract_path(None, "a") is None
+
+
+# --------------------------------------------------------------------------- #
+# E3: path params are URL-encoded so they can't restructure the endpoint.
+# --------------------------------------------------------------------------- #
+
+
+def test_render_path_percent_encodes_traversal():
+    spec = _spec()
+    # Raw interpolation of this value normalizes to a DIFFERENT endpoint; with
+    # encoding the slashes/dots become a single opaque segment.
+    rendered = spec.render_path({"thing_id": "x/../../../users/me"})
+    assert "/../" not in rendered
+    assert rendered == "/things/x%2F..%2F..%2F..%2Fusers%2Fme"
+
+
+def test_render_path_encodes_query_injection_char():
+    spec = _spec()
+    rendered = spec.render_path({"thing_id": "a?b#c"})
+    assert "?" not in rendered and "#" not in rendered
+    assert rendered == "/things/a%3Fb%23c"
+
+
+def test_render_path_still_rejects_missing_token():
+    spec = _spec()
+    with pytest.raises(KeyError):
+        spec.render_path({})

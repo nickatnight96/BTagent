@@ -249,3 +249,31 @@ def test_client_scrubber_is_bound_to_its_credential() -> None:
     assert "super-secret-token-value" not in client._scrub(
         "boom: super-secret-token-value rejected"
     )
+
+
+# --------------------------------------------------------------------------- #
+# E11: URL policy matches the sibling RoutingSpec — https + no link-local.
+# --------------------------------------------------------------------------- #
+
+
+def test_normalize_requires_https_for_remote_hosts() -> None:
+    with pytest.raises(TaxiiConfigError, match="plaintext http"):
+        normalize_server_url("http://taxii.example.test/api1")
+
+
+def test_normalize_allows_http_for_loopback() -> None:
+    assert normalize_server_url("http://localhost:8080/api1") == "http://localhost:8080/api1"
+    assert normalize_server_url("http://127.0.0.1/api1") == "http://127.0.0.1/api1"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254/latest/meta-data/",
+        "https://169.254.169.254/api1",
+        "http://[fe80::1]/api1",
+    ],
+)
+def test_normalize_rejects_link_local_metadata_targets(url: str) -> None:
+    with pytest.raises(TaxiiConfigError, match="link-local"):
+        normalize_server_url(url)
