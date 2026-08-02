@@ -116,6 +116,8 @@ def test_chain_includes_all_layers_when_fully_configured():
         "HITLMiddleware",
         "HITLGateMiddleware",
         "ConnectorPolicyMiddleware",
+        # E4: OCSF contract check, after ConnectorPolicy (reads its capability id)
+        "OCSFNormalizerMiddleware",
         "LLMRouterMiddleware",
         "PromptBudgetMiddleware",
         "EvidenceChainMiddleware",
@@ -143,6 +145,7 @@ def test_chain_omits_optional_layers_when_unset():
         "HITLMiddleware",
         "HITLGateMiddleware",
         "ConnectorPolicyMiddleware",
+        "OCSFNormalizerMiddleware",
         "LLMRouterMiddleware",
         "EvidenceChainMiddleware",
     ]

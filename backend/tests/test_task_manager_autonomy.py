@@ -131,3 +131,38 @@ async def test_build_hooks_passes_autonomy_to_the_hitl_hook(manager, monkeypatch
     manager._build_hooks(_Emitter(), "inv_hook_test", object(), tightened)
 
     assert captured["integration_autonomy"] is tightened
+
+
+# --------------------------------------------------------------------------- #
+# A5: the graph's step budget must reach LangGraph as ``recursion_limit``.
+# --------------------------------------------------------------------------- #
+
+
+def test_graph_invoke_config_passes_step_budget_as_recursion_limit():
+    """The compiled graph's ``max_steps`` governs the run — not LangGraph's
+    silent default of 25 (the budget used to be computed and discarded)."""
+    from btagent_backend.services.task_manager import _graph_invoke_config
+
+    class _Graph:
+        max_steps = 80
+
+    config = _graph_invoke_config(_Graph(), callbacks=[], investigation_id="inv_x")
+    assert config["recursion_limit"] == 80
+    assert config["configurable"]["thread_id"] == "inv_x"
+
+
+def test_graph_invoke_config_omits_limit_when_budget_absent_or_invalid():
+    from btagent_backend.services.task_manager import _graph_invoke_config
+
+    class _Bare:
+        pass
+
+    class _Zero:
+        max_steps = 0
+
+    assert "recursion_limit" not in _graph_invoke_config(
+        _Bare(), callbacks=[], investigation_id="i"
+    )
+    assert "recursion_limit" not in _graph_invoke_config(
+        _Zero(), callbacks=[], investigation_id="i"
+    )
