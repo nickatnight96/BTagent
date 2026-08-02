@@ -14,6 +14,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from btagent_shared.security import assert_tlp_allows_egress
+from btagent_shared.stix_tlp import marking_refs_to_tlp, tlp_to_marking_ref
 
 logger = logging.getLogger("btagent.services.stix")
 
@@ -47,14 +48,9 @@ _STIX_PATTERN_TO_IOC_TYPE: dict[str, str] = {
     "email-addr:value": "email",
 }
 
-# TLP -> STIX TLP marking definition IDs
-_TLP_MARKING_DEFS: dict[str, str] = {
-    "white": "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9",
-    "green": "marking-definition--34098fce-860f-48ae-8e50-ebd3cc5e41da",
-    "amber": "marking-definition--f88d31f6-486f-44da-b317-01333bde0b82",
-    "amber_strict": "marking-definition--f88d31f6-486f-44da-b317-01333bde0b82",
-    "red": "marking-definition--5e57c739-391a-4eb3-b6be-7d15ca92d5ed",
-}
+# TLP marking mapping lives in btagent_shared.stix_tlp — it must recognise both
+# TLP 1.0 and TLP 2.0 markings, and an unrecognised marking must not silently
+# become the default level. See that module for why.
 
 
 def _deterministic_id(prefix: str, value: str) -> str:
@@ -137,10 +133,17 @@ def ioc_to_stix_indicator(
         "labels": [ioc_type],
     }
 
-    # Add TLP marking
-    marking_ref = _TLP_MARKING_DEFS.get(tlp_level)
+    # Add TLP marking. tlp_to_marking_ref returns None for a level the export
+    # generation cannot express, so we omit the marking rather than stamp a
+    # weaker one (an amber_strict IOC must never go out labelled plain AMBER).
+    marking_ref = tlp_to_marking_ref(tlp_level)
     if marking_ref:
         indicator["object_marking_refs"] = [marking_ref]
+    else:
+        logger.warning(
+            "No STIX marking available for TLP %s; exporting indicator unmarked",
+            tlp_level,
+        )
 
     # Add enrichment as custom extension if present
     enrichment = ioc.get("enrichment")
@@ -225,6 +228,7 @@ def stix_to_iocs(
     *,
     investigation_id: str = "",
     source: str = "stix_import",
+    default_tlp: str = "green",
 ) -> list[dict[str, Any]]:
     """Convert a STIX 2.1 Bundle into a list of BTagent IOC dicts.
 
@@ -236,6 +240,10 @@ def stix_to_iocs(
         Investigation to associate imported IOCs with.
     source : str
         Source label for the imported IOCs.
+    default_tlp : str
+        TLP applied to an object carrying no recognised marking. Callers
+        ingesting from a feed whose sharing agreement is stricter than
+        community-level should pass a stricter default.
 
     Returns
     -------
@@ -261,13 +269,23 @@ def stix_to_iocs(
         stix_confidence = obj.get("confidence", 50)
         confidence = round(stix_confidence / 100.0, 2)
 
-        # Determine TLP from marking refs
-        tlp_level = "green"
+        # Determine TLP from marking refs. Recognises both TLP 1.0 and 2.0 and
+        # resolves to the *strictest* marking present, never the first matched.
+        # An object carrying no recognised marking keeps the conservative
+        # default rather than being treated as freely shareable.
         marking_refs = obj.get("object_marking_refs", [])
-        for tlp_name, tlp_ref in _TLP_MARKING_DEFS.items():
-            if tlp_ref in marking_refs:
-                tlp_level = tlp_name
-                break
+        resolved_tlp = marking_refs_to_tlp(marking_refs)
+        if resolved_tlp is None:
+            tlp_level = default_tlp
+            if marking_refs:
+                logger.warning(
+                    "STIX object %s carries unrecognised marking refs %s; defaulting to TLP %s",
+                    obj.get("id", "<no id>"),
+                    marking_refs,
+                    tlp_level,
+                )
+        else:
+            tlp_level = resolved_tlp.value
 
         ioc: dict[str, Any] = {
             "type": ioc_type,

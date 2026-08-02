@@ -50,6 +50,7 @@ from typing import Any
 import yaml
 
 from btagent_shared.security.tlp import TLPViolation, assert_tlp_allows_egress
+from btagent_shared.stix_tlp import bundle_has_red_marking
 from btagent_shared.types.config import TLP
 from btagent_shared.types.detection_proposal import (
     CTIToDetectionResponse,
@@ -580,22 +581,15 @@ def propose_sigma_rule(
 # Step 4 — TLP gating
 # ---------------------------------------------------------------------------
 
-_TLP_MARKING_DEFS: dict[str, str] = {
-    "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9": "white",
-    "marking-definition--34098fce-860f-48ae-8e50-ebd3cc5e41da": "green",
-    "marking-definition--f88d31f6-486f-44da-b317-01333bde0b82": "amber",
-    "marking-definition--5e57c739-391a-4eb3-b6be-7d15ca92d5ed": "red",
-}
-
 
 def _bundle_has_red_marking(bundle: dict[str, Any]) -> bool:
-    """Return True if any object in the bundle carries a TLP:RED marking ref."""
-    objects = bundle.get("objects", [])
-    red_ref = "marking-definition--5e57c739-391a-4eb3-b6be-7d15ca92d5ed"
-    for obj in objects:
-        if red_ref in obj.get("object_marking_refs", []):
-            return True
-    return False
+    """Return True if any object in the bundle carries a TLP:RED marking ref.
+
+    Delegates to the shared mapping so this gate recognises TLP 2.0 markings —
+    matching only the TLP 1.0 RED id would let a RED bundle from a modern feed
+    through the gate entirely.
+    """
+    return bundle_has_red_marking(bundle)
 
 
 # ---------------------------------------------------------------------------
