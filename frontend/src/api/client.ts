@@ -1,3 +1,5 @@
+import { resetWSClient } from "./ws";
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 interface RequestOptions extends RequestInit {
@@ -82,8 +84,19 @@ async function request<T>(
     // which, in parallel test runs (or any multi-tab session that
     // shares cookies), propagates the revocation to every other
     // context using the same access token.
+    //
+    // The WebSocket must go too: it was authenticated by the (now dead)
+    // cookie at upgrade time and would otherwise keep streaming the previous
+    // user's events into the page. Done here as well as in
+    // ``clearLocalUser`` so the teardown survives an unconfigured/throwing
+    // auth-store accessor. ``resetWSClient`` is idempotent.
     try {
       getAuthStore().clearLocalUser();
+    } catch {
+      // ignore — we're already in the failure path
+    }
+    try {
+      resetWSClient();
     } catch {
       // ignore — we're already in the failure path
     }
@@ -94,11 +107,21 @@ async function request<T>(
   }
 
   if (!response.ok) {
+    // F8: read the body as text ONCE, then try to parse it as JSON. Calling
+    // response.json() first and falling back to response.text() threw
+    // "TypeError: body stream already read" on any non-JSON error body
+    // (e.g. a gateway's HTML 502) — so every `instanceof ApiError` branch
+    // misclassified it as an unexpected error.
     let body: unknown = null;
     try {
-      body = await response.json();
+      const raw = await response.text();
+      try {
+        body = raw ? JSON.parse(raw) : null;
+      } catch {
+        body = raw;
+      }
     } catch {
-      body = await response.text();
+      body = null;
     }
     throw new ApiError(response.status, response.statusText, body);
   }

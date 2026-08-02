@@ -14,14 +14,13 @@ import type { AgentEvent } from "@/types/events";
  * error toast so an accidental-egress attempt is never silent — closing the
  * "policy violations alerted in real time" acceptance bullet.
  *
- * Chains the existing ``onEvent`` handler so other WS consumers keep working.
+ * Registers through the WS client's multi-subscriber registration list, so it
+ * coexists with every other consumer regardless of mount ordering.
  */
 export function useTlpViolationAlerts(): void {
   useEffect(() => {
     const ws = getWSClient();
-    const prev = ws.onEvent;
-    ws.onEvent = (ev: AgentEvent) => {
-      prev(ev);
+    return ws.onEvent((ev: AgentEvent) => {
       if (ev.type !== EventType.TLP_VIOLATION_ATTEMPT) return;
       const data = (ev.data ?? {}) as Record<string, unknown>;
       const tlp = String(data["tlp"] ?? "").toUpperCase() || "CLASSIFIED";
@@ -31,10 +30,7 @@ export function useTlpViolationAlerts(): void {
         description: reason,
         duration: 12_000,
       });
-    };
-    return () => {
-      ws.onEvent = prev;
-    };
+    });
   }, []);
 }
 

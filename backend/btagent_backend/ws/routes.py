@@ -196,6 +196,15 @@ async def _read_loop(client: ConnectedClient, hub: WebSocketHub) -> None:
             await client.ws.send_text(err)
             continue
 
+        if msg.type == ClientMessageType.PING:
+            # Liveness keepalive — answer directly on the socket (not through
+            # the backpressure queue) so a saturated client still gets a
+            # timely pong. No auth/RBAC needed: the connection is already
+            # authenticated and the reply carries no data.
+            pong = ServerMessage(type=ServerMessageType.PONG).model_dump_json()
+            await client.ws.send_text(pong)
+            continue
+
         if msg.type == ClientMessageType.SUBSCRIBE:
             if not msg.investigation_id:
                 await _send_error(client, "subscribe requires investigation_id")

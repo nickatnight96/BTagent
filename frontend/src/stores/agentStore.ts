@@ -19,11 +19,21 @@ interface AgentState {
   addAssistantMessage: (message: ChatMessage) => void;
   addCheckpoint: (checkpoint: HITLCheckpoint) => void;
   resolveCheckpoint: (checkpointId: string) => void;
+  /**
+   * Clear the streaming flag if a stream is in flight, without appending a
+   * message. Used by terminal events (error / investigation complete) so the
+   * chat input can never be left permanently disabled.
+   */
+  finalizeStreamIfActive: () => void;
+  /**
+   * Returns false when the decision could NOT be delivered (socket down), in
+   * which case the checkpoint is deliberately left pending.
+   */
   respondToCheckpoint: (
     checkpointId: string,
     approved: boolean,
     comment?: string,
-  ) => void;
+  ) => boolean;
   clearMessages: () => void;
 }
 
@@ -67,17 +77,22 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       timestamp: new Date().toISOString(),
     };
 
+    // NOTE: `isStreaming` is deliberately NOT set until we know the message
+    // actually left the browser. It is cleared by OUTPUT_COMPLETE / OUTPUT /
+    // ERROR / INVESTIGATION_* handling in the workspace; setting it for a send
+    // that silently failed left the chat input disabled until a page reload.
     set((state) => ({
       messages: [...state.messages, userMessage],
-      isStreaming: true,
       streamingContent: "",
     }));
 
     try {
       // Try WebSocket first for real-time streaming
       const wsClient = getWSClient();
-      if (wsClient.isConnected) {
-        wsClient.sendChat(investigationId, content);
+      const sentOverWs =
+        wsClient.isConnected && wsClient.sendChat(investigationId, content);
+      if (sentOverWs) {
+        set({ isStreaming: true, streamingContent: "" });
       } else {
         // Fall back to REST
         const response = await chatInvestigation(investigationId, content);
@@ -145,19 +160,52 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }));
   },
 
+  finalizeStreamIfActive: () => {
+    if (!get().isStreaming) return;
+    set({ isStreaming: false, streamingContent: "" });
+  },
+
   respondToCheckpoint: (
     checkpointId: string,
     approved: boolean,
     comment?: string,
-  ) => {
+  ): boolean => {
     const { investigationId } = get();
-    if (!investigationId) return;
+    if (!investigationId) return false;
 
     const wsClient = getWSClient();
-    wsClient.sendHITLResponse(investigationId, checkpointId, approved, comment);
+    const sent = wsClient.sendHITLResponse(
+      investigationId,
+      checkpointId,
+      approved,
+      comment,
+    );
 
-    // Optimistically remove the checkpoint
+    if (!sent) {
+      // The decision never left the browser. Removing the card here (the old
+      // behaviour) made an approve/reject of a containment action silently
+      // evaporate — the analyst sees the card vanish and believes the action
+      // was authorised. There is no REST fallback for HITL, so keep the card
+      // pending and surface the failure instead.
+      set((state) => ({
+        messages: [
+          ...state.messages,
+          {
+            id: `msg-${Date.now()}-hitl-error`,
+            role: "system" as const,
+            content:
+              "Could not deliver your approval decision — the real-time connection is down. The checkpoint is still pending; please retry.",
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }));
+      return false;
+    }
+
+    // Delivered — remove the card. The engine's HITL_RESPONSE / HITL_TIMEOUT
+    // event also resolves it, so a double-resolve is a harmless no-op.
     get().resolveCheckpoint(checkpointId);
+    return true;
   },
 
   clearMessages: () => {

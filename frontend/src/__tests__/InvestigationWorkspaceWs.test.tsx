@@ -1,16 +1,22 @@
 /**
- * Regression test for GH #390 — InvestigationWorkspace must CHAIN the shared
- * WebSocket ``onEvent`` handler (save prev → call prev FIRST → restore prev on
- * cleanup) instead of clobbering it.
+ * InvestigationWorkspace ↔ WebSocket wiring.
  *
- * The singleton WS client exposes a single ``onEvent`` slot. TlpViolationAlerts
- * is mounted once in the persistent Layout shell and registers the real-time
- * TLP:RED egress-violation alerter through the save-prev / call-prev / restore
- * contract. If the workspace bare-overwrites ``onEvent`` on mount and restores
- * a no-op on unmount, that alerter goes permanently dead for the session after
- * a user opens and then leaves any investigation. This test proves the alerter
- * survives a workspace mount+unmount cycle, and that its own investigation-id
- * guard never drops events destined for other subscribers.
+ * Supersedes InvestigationWorkspaceWsChaining.test.tsx, which pinned the old
+ * save-prev / call-prev / restore-prev "chaining" contract on a single mutable
+ * `onEvent` slot. That contract is only correct when consumer lifetimes are
+ * strictly LIFO, and a non-LIFO teardown silently unhooked a live consumer —
+ * the GH #390 bug class. The client now exposes a registration list, so this
+ * file pins the stronger invariants:
+ *
+ *  1. the workspace coexists with other subscribers (TlpViolationAlerts, which
+ *     the persistent Layout shell mounts) in either mount order, and its
+ *     unmount deregisters only its own handler;
+ *  2. its `investigation_id` guard gates only its own logic;
+ *  3. it SUBSCRIBES the connection to the investigation's channel on mount and
+ *     unsubscribes on unmount — without which the hub delivers no agent events
+ *     to this browser at all (RedisEmitter publishes only to
+ *     `btagent:events:{investigation_id}`);
+ *  4. it does NOT open the socket — the Layout shell owns that lifecycle.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, cleanup, act } from "@testing-library/react";
@@ -19,20 +25,33 @@ import { EventType } from "@/types/events";
 import type { AgentEvent } from "@/types/events";
 import { UserRole } from "@/types/config";
 
-// Shared fake WS singleton exposing the same public surface the workspace and
-// the TLP alerter touch. ``isConnected`` is true so the effect never calls
-// ``connect()`` (no jsdom WebSocket needed).
-const fakeWs: {
-  onEvent: (ev: AgentEvent) => void;
-  onConnect: () => void;
-  isConnected: boolean;
-  connect: () => void;
-} = {
-  onEvent: () => {},
-  onConnect: () => {},
+type Handler = (ev: AgentEvent) => void;
+
+const listeners = new Set<Handler>();
+const subscribedChannels: string[] = [];
+const unsubscribedChannels: string[] = [];
+const connectSpy = vi.fn();
+
+const fakeWs = {
+  onEvent(handler: Handler): () => void {
+    listeners.add(handler);
+    return () => {
+      listeners.delete(handler);
+    };
+  },
+  subscribeToInvestigation(id: string): () => void {
+    subscribedChannels.push(id);
+    return () => {
+      unsubscribedChannels.push(id);
+    };
+  },
   isConnected: true,
-  connect: vi.fn(),
+  connect: connectSpy,
 };
+
+function emit(ev: AgentEvent): void {
+  for (const fn of [...listeners]) fn(ev);
+}
 
 vi.mock("@/api/ws", () => ({
   getWSClient: () => fakeWs,
@@ -76,7 +95,7 @@ function violationEvent(): AgentEvent {
     id: "evt_1",
     type: EventType.TLP_VIOLATION_ATTEMPT,
     // Deliberately a DIFFERENT investigation than the mounted workspace, to
-    // prove the workspace's ``investigation_id`` guard is local and never
+    // prove the workspace's `investigation_id` guard is local and never
     // drops events bound for other subscribers.
     investigation_id: "inv_other",
     timestamp: "2026-07-24T00:00:00Z",
@@ -98,7 +117,10 @@ function renderWorkspace() {
 }
 
 beforeEach(() => {
-  fakeWs.onEvent = () => {};
+  listeners.clear();
+  subscribedChannels.length = 0;
+  unsubscribedChannels.length = 0;
+  connectSpy.mockReset();
   fakeWs.isConnected = true;
   toastError.mockReset();
   // The workspace WS effect is gated on a hydrated user.
@@ -113,7 +135,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("InvestigationWorkspace WS handler chaining (GH #390)", () => {
+describe("InvestigationWorkspace WS subscriber registration", () => {
   it("keeps the TLP alerter alive after the workspace mounts and unmounts", () => {
     // 1. The persistent shell registers the TLP alerter FIRST.
     render(<TlpHost />);
@@ -124,26 +146,55 @@ describe("InvestigationWorkspace WS handler chaining (GH #390)", () => {
 
     // 3. A TLP:RED egress-violation event arrives after they left.
     act(() => {
-      fakeWs.onEvent(violationEvent());
+      emit(violationEvent());
     });
 
-    // The alerter must STILL fire: the workspace restored the chain rather
-    // than clobbering it with a no-op on cleanup.
     expect(toastError).toHaveBeenCalledTimes(1);
   });
 
-  it("forwards events to prior subscribers while mounted, even for another investigation", () => {
+  it("keeps a LATER subscriber alive too (non-LIFO teardown)", () => {
+    // Reverse order: the workspace registers first, the alerter after. Under
+    // the old save/restore contract the workspace's unmount would roll the
+    // single handler slot back to a snapshot taken before the alerter existed,
+    // killing it for the rest of the session.
+    const { unmount } = renderWorkspace();
     render(<TlpHost />);
-    renderWorkspace();
 
-    // Event bound for a DIFFERENT investigation must still reach the alerter:
-    // the workspace calls prev() unconditionally before applying its own
-    // investigation_id guard.
+    unmount();
+
     act(() => {
-      fakeWs.onEvent(violationEvent());
+      emit(violationEvent());
     });
 
     expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards events to other subscribers while mounted, even for another investigation", () => {
+    render(<TlpHost />);
+    renderWorkspace();
+
+    act(() => {
+      emit(violationEvent());
+    });
+
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("subscribes to the investigation channel on mount and unsubscribes on unmount", () => {
+    const { unmount } = renderWorkspace();
+    expect(subscribedChannels).toEqual(["inv_1"]);
+
+    unmount();
+    expect(unsubscribedChannels).toEqual(["inv_1"]);
+  });
+
+  it("does not open the socket itself — the Layout shell owns that", () => {
+    fakeWs.isConnected = false;
+    renderWorkspace();
+    expect(connectSpy).not.toHaveBeenCalled();
+    // ...but it still subscribes, so the subscription is replayed once the
+    // session-scoped socket comes up.
+    expect(subscribedChannels).toEqual(["inv_1"]);
   });
 });
 
@@ -181,14 +232,14 @@ describe("InvestigationWorkspace applies the emitted event contract", () => {
 
     // event_emitter_hook.on_llm_new_token → { text, index }.
     act(() => {
-      fakeWs.onEvent(agentEvent(EventType.OUTPUT_CHUNK, { text: "Two ", index: 1 }));
-      fakeWs.onEvent(agentEvent(EventType.OUTPUT_CHUNK, { text: "IPs.", index: 2 }));
+      emit(agentEvent(EventType.OUTPUT_CHUNK, { text: "Two ", index: 1 }));
+      emit(agentEvent(EventType.OUTPUT_CHUNK, { text: "IPs.", index: 2 }));
     });
     expect(useAgentStore.getState().streamingContent).toBe("Two IPs.");
 
     // event_emitter_hook.on_llm_end → { text, run_id }.
     act(() => {
-      fakeWs.onEvent(
+      emit(
         agentEvent(EventType.OUTPUT, { text: "Two IPs.", run_id: "r1" }, "evt_final"),
       );
     });
@@ -208,7 +259,7 @@ describe("InvestigationWorkspace applies the emitted event contract", () => {
 
     // hitl_hook → { checkpoint_id, tool_name, tool_input, message, ... }.
     act(() => {
-      fakeWs.onEvent(
+      emit(
         agentEvent(EventType.HITL_CHECKPOINT, {
           checkpoint_id: "cp_1",
           tool_name: "cs_isolate_host",
@@ -231,7 +282,7 @@ describe("InvestigationWorkspace applies the emitted event contract", () => {
     renderWorkspace();
 
     act(() => {
-      fakeWs.onEvent({
+      emit({
         ...agentEvent(EventType.OUTPUT_CHUNK, { text: "leak", index: 1 }),
         investigation_id: "inv_other",
       });

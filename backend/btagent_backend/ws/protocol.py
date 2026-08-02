@@ -42,10 +42,23 @@ class ClientMessageType(StrEnum):
     UNSUBSCRIBE = "unsubscribe"
     CHAT = "chat"
     HITL_RESPONSE = "hitl_response"
+    # Liveness keepalive. The browser client sends this on its heartbeat
+    # interval and the server answers with ``ServerMessageType.PONG``.
+    # Before this existed the client sent ``{"type": "ping"}`` anyway, which
+    # failed ``ClientMessage`` validation and made the server emit an ERROR
+    # frame every heartbeat — junk that then flowed through the browser's
+    # event handler chain as a malformed "event".
+    PING = "ping"
 
 
 class ClientMessage(BaseModel):
-    """Envelope for messages sent *from* the browser to the server."""
+    """Envelope for messages sent *from* the browser to the server.
+
+    ``data`` is the ONLY place payload fields live. Client code must nest
+    ``message`` (chat) / ``checkpoint_id``+``approved``+``comment`` (HITL)
+    inside it — Pydantic ignores unknown top-level keys, so a flat frame
+    silently arrives here as ``data == {}``.
+    """
 
     type: ClientMessageType
     investigation_id: str | None = None

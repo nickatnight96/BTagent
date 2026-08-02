@@ -111,11 +111,9 @@ export function NotificationBell() {
   // socket is down.
   useEffect(() => {
     const ws = getWSClient();
-    const previous = ws.onNotification;
-    ws.onNotification = () => void refresh();
-    return () => {
-      ws.onNotification = previous;
-    };
+    // Registration list — deregisters only our own handler on unmount, so it
+    // can never unhook another live notification consumer.
+    return ws.onNotification(() => void refresh());
   }, [refresh]);
 
   // Close the panel on an outside click.

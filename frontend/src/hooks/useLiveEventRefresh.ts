@@ -5,9 +5,10 @@
  * Extracted from HuntTriagePage's proven inline effect so all hunt surfaces
  * share one implementation:
  *
- * - Subscribes to the global WS client (chaining the previous `onEvent` so
- *   other consumers keep working) and schedules a refetch when any of the
- *   given event types arrives.
+ * - Registers a handler on the global WS client (via the client's
+ *   multi-subscriber registration list, so any number of consumers can be
+ *   live at once) and schedules a refetch when any of the given event types
+ *   arrives.
  * - Debounces refetches (1 s) so an event burst becomes one API call.
  * - Refreshes on tab visibility change (catching up after an absence).
  * - Keeps a polling safety net regardless of WS connectivity; when the WS
@@ -62,13 +63,14 @@ export function useLiveEventRefresh(
 
     try {
       const ws = getWSClient();
-      const prev = ws.onEvent;
-      ws.onEvent = (ev) => {
-        prev(ev);
+      // Registration list, not a save/restore of a single shared slot: our
+      // cleanup deregisters exactly our own handler and cannot unhook another
+      // live consumer regardless of mount/unmount ordering (GH #390).
+      const unsubscribe = ws.onEvent((ev) => {
         if (typesRef.current.has(ev.type)) {
           scheduleRefetch();
         }
-      };
+      });
 
       const handleVisibility = () => scheduleRefetch();
       window.addEventListener("visibilitychange", handleVisibility);
@@ -80,7 +82,7 @@ export function useLiveEventRefresh(
       }, pollIntervalMs);
 
       return () => {
-        ws.onEvent = prev;
+        unsubscribe();
         window.removeEventListener("visibilitychange", handleVisibility);
         clearAll();
       };

@@ -51,9 +51,13 @@ vi.mock("@/api/hunt", () => ({
 
 // ---- WS mock ----
 
+// `onEvent` is a REGISTRATION method that returns an unsubscribe handle (not
+// an assignable slot) — the hook calls the returned function on cleanup.
 vi.mock("@/api/ws", () => ({
   getWSClient: () => ({
-    onEvent: () => {},
+    onEvent: () => () => {},
+    onNotification: () => () => {},
+    subscribeToInvestigation: () => () => {},
     connect: () => {},
     disconnect: () => {},
     isConnected: false,
