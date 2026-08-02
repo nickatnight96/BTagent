@@ -86,8 +86,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # in prod. ``includeSubDomains`` is intentional (we control all
         # ``*.btagent.example``); ``preload`` is deliberately omitted until
         # the deploy team adds the apex to https://hstspreload.org/.
+        #
+        # P1.6: asks ``is_production`` rather than ``env == "prod"``. The Helm
+        # values files set ``BTAGENT_ENV=production``, so the literal string
+        # comparison meant HSTS was never emitted on any real deployment —
+        # silently, since a missing hardening header looks identical to a
+        # working app.
         settings = get_settings()
-        if settings.env == "prod":
+        if settings.is_production:
             response.headers.setdefault(
                 "Strict-Transport-Security",
                 "max-age=31536000; includeSubDomains",

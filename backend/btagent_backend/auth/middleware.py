@@ -117,9 +117,12 @@ async def _assert_token_not_revoked(payload: TokenPayload) -> None:
         # closes that gap in prod (only) so a stolen legacy token can't
         # outlast the rollout. Dev/test still warn-and-accept so the suite
         # doesn't have to mint jti'd tokens for every fixture.
+        # P1.6: ``is_production`` rather than ``env == "prod"`` — the Helm
+        # values files spell it ``production``, so the literal comparison meant
+        # deployed clusters kept warn-and-accepting unrevocable legacy tokens.
         from btagent_backend.config import get_settings
 
-        if get_settings().env == "prod":
+        if get_settings().is_production:
             logger.warning(
                 "Rejecting legacy access token without jti in prod for user=%s",
                 payload.sub,
