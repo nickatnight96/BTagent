@@ -53,6 +53,7 @@ from typing import Any
 
 import yaml
 
+from btagent_shared.prompt_fence import wrap_external_data
 from btagent_shared.types.connector import OCSFEventClass
 from btagent_shared.types.detection_engineer import (
     BehavioralTTP,
@@ -151,8 +152,12 @@ _KEYWORD_TTPS: list[tuple[str, str, str, str, str]] = [
 
 
 def _wrap_external_data(text: str) -> str:
-    """Fence untrusted intel prose / observables (CLAUDE.md requirement)."""
-    return f"<external-data>\n{text}\n</external-data>"
+    """Fence untrusted intel prose / observables (CLAUDE.md requirement).
+
+    A CTI report body is attacker-influenceable, so this must neutralise
+    embedded fence sentinels — see ``btagent_shared.prompt_fence``.
+    """
+    return wrap_external_data(text)
 
 
 def _dedupe_preserve(items: list[str]) -> list[str]:

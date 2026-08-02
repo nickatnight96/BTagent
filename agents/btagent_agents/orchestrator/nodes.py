@@ -7,6 +7,8 @@ import re
 from datetime import UTC, datetime
 from typing import Any
 
+from btagent_shared.prompt_fence import wrap_external_data
+from btagent_shared.types.config import TLP, ModelTier
 from btagent_shared.types.enums import (
     ContainmentStatus,
     InvestigationStatus,
@@ -113,10 +115,6 @@ _SEVERITY_ORDER: list[str] = [
 # Pre-compiled pattern to strip XML-like tags when extracting plain text.
 _TAG_STRIP_RE = re.compile(r"<[^>]+>")
 
-# Matches an opening or closing ``<external-data>`` fence tag (case-insensitive,
-# tolerating stray inner whitespace) *inside* an untrusted payload so it can be
-# neutralised before the payload is fenced (see ``_wrap_external_data``).
-_EXTERNAL_DATA_SENTINEL_RE = re.compile(r"<\s*/?\s*external-data\s*>", re.IGNORECASE)
 
 # Simple IOC extraction patterns (phase-1 heuristics; enrichment agent expands).
 _IOC_PATTERNS: dict[str, re.Pattern[str]] = {
@@ -157,34 +155,54 @@ def _classify_intent_heuristic(text: str) -> str | None:
     return None
 
 
-def _classify_intent_llm(text: str) -> str:
-    """Lightweight LLM call (Haiku-class) to classify analyst intent.
+def _coerce_tlp_fail_closed(value: Any) -> TLP:
+    """Normalise a state ``tlp_level`` string to the enum, RED on ambiguity."""
+    if isinstance(value, TLP):
+        return value
+    try:
+        return TLP(str(value).lower())
+    except ValueError:
+        return TLP.RED
 
-    In production this uses LiteLLM with the FAST model tier.  For phase-1
-    we use a deterministic heuristic fallback so the graph can execute
-    without a live LLM endpoint.
+
+def _classify_intent_llm(text: str, tlp_level: Any = None) -> str:
+    """Lightweight FAST-tier LLM call to classify analyst intent.
+
+    A1: this used to call ``litellm.completion`` directly with a hard-pinned
+    cloud Anthropic model — bypassing ``TLPAwareLLMRouter``, so a TLP:RED
+    investigation's raw alert text could be POSTed to a hosted provider even
+    under ``BTAGENT_LOCAL_LLM_ONLY``. It now resolves through the router
+    (which honours the TLP allow-list, local-only mode and
+    ``BTAGENT_OLLAMA_BASE_URL``); an unknown ``tlp_level`` fails closed to
+    RED. Any resolution or transport failure falls back to "general" — the
+    heuristic upstream already caught the keyworded traffic.
     """
     try:
-        from litellm import completion
+        from btagent_agents.llm.router import TLPAwareLLMRouter
 
-        response = completion(
-            model="claude-haiku-4-20250514",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a task classifier for a defensive cyber security AI agent. "
-                        "Given the analyst's message, respond with EXACTLY one word — the "
-                        "task type. Valid types: triage, query, enrich, contain, report, "
-                        "coordination, mitigation, general. No explanation."
-                    ),
-                },
-                {"role": "user", "content": text},
-            ],
-            max_tokens=10,
+        router = TLPAwareLLMRouter()  # env-configured: local-only, Ollama URL
+        llm = router.get_llm(
+            _coerce_tlp_fail_closed(tlp_level),
+            ModelTier.FAST,
             temperature=0.0,
+            max_tokens=10,
         )
-        raw = response.choices[0].message.content.strip().lower()
+        from langchain_core.messages import HumanMessage as _Human
+        from langchain_core.messages import SystemMessage as _System
+
+        response = llm.invoke(
+            [
+                _System(
+                    "You are a task classifier for a defensive cyber security AI agent. "
+                    "Given the analyst's message, respond with EXACTLY one word — the "
+                    "task type. Valid types: triage, query, enrich, contain, report, "
+                    "coordination, mitigation, general. No explanation."
+                ),
+                _Human(text),
+            ]
+        )
+        content = response.content if isinstance(response.content, str) else str(response.content)
+        raw = content.strip().lower()
         if raw in {
             "triage",
             "query",
@@ -197,7 +215,8 @@ def _classify_intent_llm(text: str) -> str:
         }:
             return raw
     except Exception:
-        # LLM unavailable — fall through to default.
+        # LLM unavailable or routing refused (e.g. local-only + no local
+        # provider at this TLP) — fall through to default.
         pass
     return "general"
 
@@ -239,16 +258,11 @@ def _highest_severity(current: str, candidate: str) -> str:
 def _wrap_external_data(text: str) -> str:
     """Wrap untrusted external data in XML tags as a prompt injection defense.
 
-    The payload is *untrusted*: a literal ``</external-data>`` embedded in it
-    would otherwise close the fence early and let the trailing text be read as
-    trusted instructions (GH #373, prompt-injection breakout). Any embedded
-    opening/closing sentinel is HTML-escaped before interpolation so the only
-    real fence tags in the output are this wrapper's own.
+    Delegates to :mod:`btagent_shared.prompt_fence` — the single
+    implementation, which also neutralises attribute-bearing fence tags that
+    this module's original pattern let through.
     """
-    safe = _EXTERNAL_DATA_SENTINEL_RE.sub(
-        lambda m: m.group(0).replace("<", "&lt;").replace(">", "&gt;"), text
-    )
-    return f"<external-data>\n{safe}\n</external-data>"
+    return wrap_external_data(text)
 
 
 # ---------------------------------------------------------------------------
@@ -323,9 +337,10 @@ def route_task(state: InvestigationState) -> dict[str, Any]:
     # 1. Fast-path keyword classification.
     classified = _classify_intent_heuristic(last_human_text)
 
-    # 2. If no keyword match, try LLM classification.
+    # 2. If no keyword match, try LLM classification — routed by the
+    #    investigation's TLP so RED/local-only work never leaves the box (A1).
     if classified is None:
-        classified = _classify_intent_llm(last_human_text)
+        classified = _classify_intent_llm(last_human_text, state.get("tlp_level"))
 
     # 3. Conversation continuity: if the classified intent is "general" and we
     #    already have a current agent, keep the current agent.
