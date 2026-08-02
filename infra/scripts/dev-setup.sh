@@ -99,6 +99,55 @@ if [ ! -f infra/.env ] && [ -f infra/.env.example ]; then
   ok "copied infra/.env.example -> infra/.env"
 fi
 
+# Generate per-install secrets.
+#
+# The example file necessarily ships placeholder values, and a placeholder that
+# is committed to a public repo is a publicly-known signing key: anyone who can
+# reach the API can mint an admin JWT with it. So any placeholder or short value
+# is replaced with fresh entropy on first run. Existing strong values are left
+# alone — re-running this script must not invalidate a working install.
+#
+# BTAGENT_WEBHOOK_SECRET gets its OWN value: webhook auth used to fall back to
+# the JWT signing key, which made one credential do two jobs (GH #372). The
+# config validator now refuses to start if the two match.
+gen_secret() { openssl rand -hex 32; }
+
+set_env_var() {  # set_env_var KEY VALUE
+  if grep -qE "^${1}=" infra/.env; then
+    # portable in-place edit (BSD sed on macOS needs the empty -i arg)
+    sed -i.bak -E "s|^${1}=.*|${1}=${2}|" infra/.env && rm -f infra/.env.bak
+  else
+    printf '%s=%s\n' "$1" "$2" >>infra/.env
+  fi
+}
+
+if [ -f infra/.env ]; then
+  for key in BTAGENT_JWT_SECRET BTAGENT_WEBHOOK_SECRET; do
+    current=$(sed -n "s/^${key}=//p" infra/.env | head -1)
+    case "$current" in
+      # Empty, a known placeholder, or too short for the validator (32 chars).
+      ""|*CHANGE-ME*|*change-me*|*change_me*|*example*|*openssl*)
+        set_env_var "$key" "$(gen_secret)"
+        ok "generated a fresh ${key}"
+        ;;
+      *)
+        if [ "${#current}" -lt 32 ]; then
+          set_env_var "$key" "$(gen_secret)"
+          ok "replaced a too-short ${key} (must be >=32 chars)"
+        else
+          info "${key} already set — leaving it alone"
+        fi
+        ;;
+    esac
+  done
+
+  if [ "$(sed -n 's/^BTAGENT_JWT_SECRET=//p' infra/.env | head -1)" = \
+       "$(sed -n 's/^BTAGENT_WEBHOOK_SECRET=//p' infra/.env | head -1)" ]; then
+    set_env_var BTAGENT_WEBHOOK_SECRET "$(gen_secret)"
+    ok "webhook secret matched the JWT secret — regenerated it"
+  fi
+fi
+
 info "docker compose up -d postgres redis minio ollama"
 docker compose -f infra/docker-compose.yml up -d postgres redis minio ollama
 

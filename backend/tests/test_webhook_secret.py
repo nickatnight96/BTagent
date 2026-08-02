@@ -1,21 +1,28 @@
-"""Regression tests for the dedicated webhook secret (SEC #372).
+"""Regression tests for the dedicated webhook secret (SEC #372 + P1.1).
 
 Bug: ``_verify_secret`` used ``getattr(settings, "webhook_secret", None) or
 settings.jwt_secret`` — but no ``webhook_secret`` field existed, so it ALWAYS
 fell back to the JWT signing key. Any holder of the webhook secret (embedded in
 every SIEM/EDR alert-action config) could therefore forge admin JWTs.
 
+The first fix left a dev/test carve-out that kept the ``jwt_secret`` fallback
+"for local convenience". P1.1 removes it: the shipped ``infra/.env`` sets
+``BTAGENT_ENV=dev``, so that carve-out reproduced the original vulnerability on
+every stock install. There is now NO fallback in ANY environment.
+
 Fix contract exercised here:
-  * outside dev/test, a webhook request presenting the *jwt_secret* is REJECTED
-    (401) — the JWT key is never a valid webhook credential;
+  * a webhook request presenting the *jwt_secret* is REJECTED (401) — the JWT
+    key is never a valid webhook credential, in any environment;
   * a request presenting the configured *webhook_secret* is accepted (202);
-  * dev/test keep the jwt_secret fallback (unset ``webhook_secret``) so the
-    existing local/CI webhook flow still works;
+  * an UNSET ``webhook_secret`` fails closed (401) everywhere, dev/test
+    included — webhook ingestion is simply off until a secret is configured;
   * ``Settings`` refuses to start (outside dev/test) when ``webhook_secret``
     equals ``jwt_secret``.
 """
 
 from __future__ import annotations
+
+from contextlib import asynccontextmanager
 
 import pytest
 import pytest_asyncio
@@ -32,9 +39,10 @@ _SPLUNK_PATH = "/api/v1/webhooks/splunk"
 _JWT_SECRET = "j" * 64
 _WEBHOOK_SECRET = "w" * 64
 _REAL_S3_KEY = "real-prod-access-key"
+_REAL_S3_SECRET = "real-prod-secret-key"
 
-# The jwt_secret the conftest test environment runs with — used to prove the
-# dev/test fallback still authenticates.
+# The jwt_secret the conftest test environment runs with — used to prove that
+# even in env=test it is NOT accepted as a webhook credential.
 _TEST_JWT_SECRET = "test-secret-key-for-jwt-signing-only"
 
 
@@ -48,23 +56,23 @@ def _prod_like_settings(**overrides: object) -> Settings:
         "env": "staging",
         "jwt_secret": _JWT_SECRET,
         "s3_access_key": _REAL_S3_KEY,
+        "s3_secret_key": _REAL_S3_SECRET,
         "webhook_secret": _WEBHOOK_SECRET,
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
 
 
-@pytest_asyncio.fixture()
-async def prod_client():
-    """``AsyncClient`` wired to the app with prod-like (staging) settings.
+@asynccontextmanager
+async def _client_with_settings(settings: Settings):
+    """``AsyncClient`` wired to the app with the supplied ``Settings``.
 
     Uses a DEDICATED in-memory SQLite engine with ``StaticPool`` (a single
     shared connection) so the schema is always present regardless of how the
     shared session-wide engine's pool is interleaved by the rest of the suite.
-    Overrides ``get_db`` with this engine's session and ``get_settings`` with a
-    prod-like Settings whose ``webhook_secret`` differs from ``jwt_secret``.
-    ``Base.metadata`` has already been made SQLite-compatible by conftest
-    (JSONB → JSON, PG-only indexes dropped) at import time.
+    Overrides ``get_db`` with this engine's session and ``get_settings`` with
+    the caller's. ``Base.metadata`` has already been made SQLite-compatible by
+    conftest (JSONB → JSON, PG-only indexes dropped) at import time.
     """
     from btagent_backend.api.deps import get_db
     from btagent_backend.db.models import DEFAULT_ORG_ID, Base, OrganizationRow
@@ -92,8 +100,6 @@ async def prod_client():
                 await session.rollback()
                 raise
 
-    settings = _prod_like_settings()
-
     app = create_app()
     app.dependency_overrides[get_db] = _get_db
     app.dependency_overrides[get_settings] = lambda: settings
@@ -104,6 +110,26 @@ async def prod_client():
             yield ac
     finally:
         await engine.dispose()
+
+
+@pytest_asyncio.fixture()
+async def prod_client():
+    """Client running prod-like (staging) settings with a distinct webhook secret."""
+    async with _client_with_settings(_prod_like_settings()) as ac:
+        yield ac
+
+
+@pytest_asyncio.fixture()
+async def test_env_webhook_client():
+    """Client running ``env=test`` with an EXPLICITLY configured webhook secret.
+
+    The supported local/CI webhook path now that the ``jwt_secret`` fallback is
+    gone: dev and test configure ``BTAGENT_WEBHOOK_SECRET`` like every other
+    environment.
+    """
+    settings = Settings(env="test", webhook_secret=_WEBHOOK_SECRET)
+    async with _client_with_settings(settings) as ac:
+        yield ac
 
 
 # --- HTTP behaviour (the core regression) ---------------------------------
@@ -145,21 +171,68 @@ async def test_webhook_rejects_missing_secret_in_prod(prod_client: AsyncClient) 
 
 
 @pytest.mark.asyncio
-async def test_webhook_dev_test_falls_back_to_jwt_secret(client: AsyncClient) -> None:
-    """Dev/test convenience: with webhook_secret unset, jwt_secret still works.
+async def test_webhook_rejects_jwt_secret_in_test_env(client: AsyncClient) -> None:
+    """P1.1: the dev/test jwt_secret fallback is GONE — 401, not 202.
 
-    Uses the default conftest ``client`` (env=test, webhook_secret unset), so
-    this locks in that the fix does NOT break the existing dev/CI webhook flow.
+    This test previously asserted the opposite (``202``), locking in the
+    carve-out that re-created #372 on every stock install: ``infra/.env`` ships
+    ``BTAGENT_ENV=dev``, so "dev/test only" meant "everywhere anyone actually
+    runs this". Uses the default conftest ``client`` (env=test,
+    ``webhook_secret`` unset) and presents the env's JWT signing key.
     """
     resp = await client.post(
         _SPLUNK_PATH,
         headers={"X-Webhook-Secret": _TEST_JWT_SECRET},
         json={"search_name": "fallback", "severity": "low"},
     )
-    assert resp.status_code == 202
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_webhook_unset_secret_denies_in_test_env(client: AsyncClient) -> None:
+    """An unset webhook secret fails closed in test env too — no secret works."""
+    for candidate in (None, "", "guess", _TEST_JWT_SECRET):
+        headers = {} if candidate is None else {"X-Webhook-Secret": candidate}
+        resp = await client.post(
+            _SPLUNK_PATH,
+            headers=headers,
+            json={"search_name": "closed", "severity": "low"},
+        )
+        assert resp.status_code == 401, candidate
+
+
+@pytest.mark.asyncio
+async def test_webhook_accepts_configured_secret_in_test_env(
+    test_env_webhook_client: AsyncClient,
+) -> None:
+    """The supported dev/CI path: configure BTAGENT_WEBHOOK_SECRET explicitly.
+
+    Removing the fallback must not remove the *ability* to run webhooks
+    locally — it only removes the JWT-key shortcut. With an explicit secret
+    configured, env=test ingests exactly as staging/prod does. This is what the
+    UAT harness now does instead of sending ``$BTAGENT_JWT_SECRET``.
+    """
+    resp = await test_env_webhook_client.post(
+        _SPLUNK_PATH,
+        headers={"X-Webhook-Secret": _WEBHOOK_SECRET},
+        json={"search_name": "configured", "severity": "low"},
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["investigation_id"].startswith("inv")
 
 
 # --- Config validator ------------------------------------------------------
+
+
+def test_blank_env_value_reads_as_unset() -> None:
+    """``BTAGENT_WEBHOOK_SECRET=`` (blank, as shipped in .env.example) is unset.
+
+    An env file cannot express ``None``; a present-but-empty key yields ``""``.
+    It must normalise to ``None`` so the startup warning and the request-path
+    error both say "not configured" rather than "mismatch".
+    """
+    assert Settings(env="test", webhook_secret="").webhook_secret is None
+    assert Settings(env="test", webhook_secret="   ").webhook_secret is None
 
 
 def test_config_rejects_webhook_secret_equal_to_jwt() -> None:

@@ -4,8 +4,6 @@ Run with: pytest tests/uat/test_sprint2_uat.py -v
 Requires: backend running on localhost:8000, postgres + redis up
 """
 
-import os
-
 import httpx
 import pytest
 
@@ -19,7 +17,9 @@ def client():
 
 @pytest.fixture(scope="module")
 def admin_token(client):
-    r = client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"})
+    r = client.post(
+        "/api/v1/auth/login", json={"username": "admin", "password": "admin"}
+    )
     assert r.status_code == 200
     return r.json()["access_token"]
 
@@ -31,7 +31,7 @@ def auth_headers(admin_token):
 
 # ── UAT-WEBHOOKS: SIEM/EDR webhook ingestion ─────────────
 class TestWebhooks:
-    def test_splunk_webhook_creates_investigation(self, client):
+    def test_splunk_webhook_creates_investigation(self, client, webhook_headers):
         """Splunk alert webhook should auto-create an investigation."""
         r = client.post(
             "/api/v1/webhooks/splunk",
@@ -45,13 +45,15 @@ class TestWebhooks:
                 },
                 "sid": "splunk_search_12345",
             },
-            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
+            headers=webhook_headers,
         )
-        assert r.status_code in (201, 202), f"Splunk webhook failed: {r.status_code} {r.text}"
+        assert r.status_code in (201, 202), (
+            f"Splunk webhook failed: {r.status_code} {r.text}"
+        )
         data = r.json()
         assert "investigation_id" in data or "id" in data
 
-    def test_crowdstrike_webhook(self, client):
+    def test_crowdstrike_webhook(self, client, webhook_headers):
         """CrowdStrike detection webhook."""
         r = client.post(
             "/api/v1/webhooks/crowdstrike",
@@ -64,11 +66,13 @@ class TestWebhooks:
                 "filename": "mimikatz.exe",
                 "description": "Credential dumping tool detected",
             },
-            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
+            headers=webhook_headers,
         )
-        assert r.status_code in (201, 202), f"CS webhook failed: {r.status_code} {r.text}"
+        assert r.status_code in (201, 202), (
+            f"CS webhook failed: {r.status_code} {r.text}"
+        )
 
-    def test_sentinel_webhook(self, client):
+    def test_sentinel_webhook(self, client, webhook_headers):
         """Microsoft Sentinel incident webhook."""
         r = client.post(
             "/api/v1/webhooks/sentinel",
@@ -81,11 +85,13 @@ class TestWebhooks:
                 },
                 "name": "sentinel-incident-42",
             },
-            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
+            headers=webhook_headers,
         )
-        assert r.status_code in (201, 202), f"Sentinel webhook failed: {r.status_code} {r.text}"
+        assert r.status_code in (201, 202), (
+            f"Sentinel webhook failed: {r.status_code} {r.text}"
+        )
 
-    def test_elastic_webhook(self, client):
+    def test_elastic_webhook(self, client, webhook_headers):
         """Elastic alert webhook."""
         r = client.post(
             "/api/v1/webhooks/elastic",
@@ -95,11 +101,13 @@ class TestWebhooks:
                 "host": {"name": "webserver-01"},
                 "message": "Outbound connection to known C2 IP",
             },
-            headers={"X-Webhook-Secret": os.environ.get("BTAGENT_JWT_SECRET", "CHANGE-ME-IN-PRODUCTION")},
+            headers=webhook_headers,
         )
-        assert r.status_code in (201, 202), f"Elastic webhook failed: {r.status_code} {r.text}"
+        assert r.status_code in (201, 202), (
+            f"Elastic webhook failed: {r.status_code} {r.text}"
+        )
 
-    def test_webhook_without_secret_rejected(self, client):
+    def test_webhook_without_secret_rejected(self, client, webhook_headers):
         """Webhook without X-Webhook-Secret should be rejected."""
         r = client.post(
             "/api/v1/webhooks/splunk",
@@ -107,7 +115,7 @@ class TestWebhooks:
         )
         assert r.status_code in (401, 403), f"Expected rejection, got {r.status_code}"
 
-    def test_webhook_with_wrong_secret_rejected(self, client):
+    def test_webhook_with_wrong_secret_rejected(self, client, webhook_headers):
         """Webhook with wrong secret should be rejected."""
         r = client.post(
             "/api/v1/webhooks/splunk",
@@ -152,11 +160,13 @@ class TestAuditTrail:
     def test_audit_trail_service_importable(self):
         """Audit trail service should be importable."""
         from btagent_backend.services.audit_trail import AuditTrail
+
         assert AuditTrail is not None
 
     def test_audit_trail_sha256_chain(self):
         """Audit entries should form a SHA256 chain."""
         import hashlib
+
         # Verify the hashing concept works
         data = "test|1|2026-03-26|admin|auth|login|user:admin|success|{}|"
         h = hashlib.sha256(data.encode()).hexdigest()
@@ -169,6 +179,7 @@ class TestRateLimiting:
     def test_rate_limiter_importable(self):
         """Rate limiter should be importable."""
         from btagent_backend.security.rate_limiter import RateLimiter
+
         assert RateLimiter is not None
 
     def test_api_responds_under_normal_load(self, client, auth_headers):

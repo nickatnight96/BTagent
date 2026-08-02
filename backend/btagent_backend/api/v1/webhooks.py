@@ -119,37 +119,37 @@ def _verify_secret(
     """Authenticate an inbound webhook against the dedicated webhook secret.
 
     SEC #372: the webhook secret is a DISTINCT credential from ``jwt_secret``
-    and must never be compared against the JWT signing key in a real
-    deployment — a webhook client presenting the JWT key would otherwise be
-    able to forge admin JWTs. Effective-secret resolution:
+    and must never be compared against the JWT signing key — a webhook client
+    presenting the JWT key would otherwise be able to forge admin JWTs. The
+    webhook secret is by nature widely copied: it is pasted into every SIEM/EDR
+    alert-action config, so it has the blast radius of a shared password, while
+    the JWT signing key has the blast radius of a root key.
 
-      * ``settings.webhook_secret`` when configured (the only accepted path in
-        staging/prod);
-      * in dev/test ONLY, if ``webhook_secret`` is unset, fall back to
-        ``jwt_secret`` (with a warning) so local/CI webhook tests keep working
-        without extra config;
-      * otherwise (unset outside dev/test) deny — a misconfiguration must fail
-        closed, never authenticate against the JWT key.
+    P1.1: resolution is now a single rule with NO environment carve-out —
+    ``settings.webhook_secret`` when configured, otherwise DENY (401) in every
+    environment including dev and test.
+
+    The removed carve-out fell back to ``jwt_secret`` in dev/test "for local
+    convenience". That re-introduced #372 wholesale rather than narrowly: the
+    shipped ``infra/.env`` sets ``BTAGENT_ENV=dev``, so every stock local
+    install — including ones reachable from the LAN — accepted the JWT signing
+    key as a webhook credential and handed out admin-token forgery to anyone
+    who could read the SIEM's alert-action config. An unset secret now means
+    "webhook ingestion is not configured", which is the honest reading of an
+    unset credential; operators enable it with
+    ``BTAGENT_WEBHOOK_SECRET=$(openssl rand -hex 32)``.
     """
     expected = settings.webhook_secret
     if expected is None:
-        if settings.env in ("dev", "test"):
-            logger.warning(
-                "webhook_secret unset; falling back to jwt_secret for source=%s "
-                "(dev/test convenience only — set BTAGENT_WEBHOOK_SECRET for "
-                "staging/prod).",
-                source,
-            )
-            expected = settings.jwt_secret
-        else:
-            logger.error(
-                "Webhook rejected: BTAGENT_WEBHOOK_SECRET is not configured (source=%s)",
-                source,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or missing webhook secret",
-            )
+        logger.error(
+            "Webhook rejected: BTAGENT_WEBHOOK_SECRET is not configured (source=%s). "
+            "Generate one with: openssl rand -hex 32",
+            source,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing webhook secret",
+        )
     if not provided or not hmac.compare_digest(provided, expected):
         logger.warning("Webhook secret mismatch from source=%s", source)
         raise HTTPException(
