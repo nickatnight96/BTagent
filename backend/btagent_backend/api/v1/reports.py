@@ -417,11 +417,12 @@ async def generate_detection_content(
     Requires ``remediation:generate`` permission.
     """
     user.require_permission("remediation:generate")
-    await _scope_or_404(db, user, body.investigation_id)
+    inv = await _load_scoped_investigation(db, user, body.investigation_id)
 
     result = await _report_service.generate_detection_content(
         investigation_id=body.investigation_id,
         platform=body.platform,
+        investigation=await _report_payload(db, inv),
     )
 
     if result.get("status") == "failed":

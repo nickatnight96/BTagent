@@ -251,3 +251,102 @@ async def test_summarize_multiple_real_investigations(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body.get("status") == "success", body
+
+
+@pytest.mark.asyncio
+async def test_detection_content_for_a_real_investigation(
+    client: AsyncClient,
+    analyst_token: str,
+    sample_user,
+    db_session: AsyncSession,
+):
+    """The fourth endpoint of this shape (#559).
+
+    Missed by #557 because it lives in a module that fix had already touched —
+    I fixed the modules I had identified without enumerating every tool inside
+    them. `test_every_investigation_route_is_exercised` below makes that
+    enumeration mechanical instead of a claim.
+    """
+    inv = await _seed_case(db_session, sample_user.id, populated=True)
+
+    resp = await client.post(
+        "/api/v1/reports/detection-content",
+        json={"investigation_id": inv.id, "platform": "splunk"},
+        headers=auth_header(analyst_token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["investigation_id"] == inv.id
+    # Rules are derived from the case's IOCs, so the seeded indicator has to
+    # appear — otherwise the rules describe some other investigation.
+    assert "203.0.113.7" in str(body["rules"])
+
+
+# --------------------------------------------------------------------------- #
+# The ratchet
+# --------------------------------------------------------------------------- #
+
+
+def test_every_investigation_route_is_exercised_against_a_real_case():
+    """Every reports route taking an investigation id is tested against a row.
+
+    Four endpoints shipped broken in exactly one way — the route scoped
+    `investigation_id` against Postgres, then handed the id to a plugin tool
+    that resolved the case from a fixture dict. They were fixed in three
+    passes (#554, #557, #559) because each pass enumerated by hand and I twice
+    stated the set was complete when it was not.
+
+    So the enumeration lives here now. A new endpoint in reports.py that takes
+    an investigation id fails this test until it is driven against a real row,
+    which is the only check that would have caught any of the four.
+    """
+    import ast
+    from pathlib import Path
+
+    reports_py = (
+        Path(__file__).resolve().parent.parent / "btagent_backend" / "api" / "v1" / "reports.py"
+    )
+    tree = ast.parse(reports_py.read_text(encoding="utf-8"))
+
+    # Route -> the URL path its decorator declares.
+    routes: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for dec in node.decorator_list:
+            if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)):
+                continue
+            if dec.func.attr not in {"get", "post", "put", "patch", "delete"}:
+                continue
+            if dec.args and isinstance(dec.args[0], ast.Constant):
+                routes[node.name] = str(dec.args[0].value)
+
+    # Which of those actually take an investigation id, via a path param or a
+    # request model field. Reading the source of the function plus the module
+    # keeps this honest for both shapes.
+    src = reports_py.read_text(encoding="utf-8")
+    takes_investigation = {
+        name: path
+        for name, path in routes.items()
+        if "investigation_id" in src.split(f"def {name}(")[1].split("\n@router")[0]
+    }
+    assert len(takes_investigation) >= 4, (
+        f"only found {len(takes_investigation)} investigation routes; matcher broken?"
+    )
+
+    covered = Path(__file__).read_text(encoding="utf-8")
+    uncovered = sorted(
+        f"{name} ({path})"
+        for name, path in takes_investigation.items()
+        # The test file drives endpoints by their full URL.
+        if f'"/api/v1/reports{path}"' not in covered
+        and f"/api/v1/reports{path.split('{')[0]}" not in covered
+    )
+
+    assert not uncovered, (
+        "These reports endpoints take an investigation id but are never driven "
+        "against a real database row in this file, so the failure that broke "
+        "four of them would not be caught:\n  " + "\n  ".join(uncovered)
+    )

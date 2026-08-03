@@ -396,6 +396,8 @@ class ReportService:
         self,
         investigation_id: str,
         platform: str = "splunk",
+        *,
+        investigation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate SIEM detection rules.
 
@@ -405,12 +407,18 @@ class ReportService:
             The investigation to generate detection rules for.
         platform : str
             Target SIEM platform (splunk, elastic, sentinel).
+        investigation : dict | None
+            The case's real data. Same seam as :meth:`generate_report`; without
+            it the generator falls back to its fixture store (see #559).
 
         Returns
         -------
         dict
             Detection rules for the specified platform.
         """
+        from btagent_agents.plugins.mitigation.tools.remediation_generator import (
+            build_detection_content,
+        )
         from btagent_agents.plugins.mitigation.tools.remediation_generator import (
             generate_detection_content as detection_tool,
         )
@@ -420,6 +428,9 @@ class ReportService:
             platform,
             investigation_id,
         )
+
+        if investigation is not None:
+            return build_detection_content(investigation, platform)
 
         return detection_tool.invoke(
             {

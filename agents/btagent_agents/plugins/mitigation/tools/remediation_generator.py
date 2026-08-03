@@ -528,6 +528,42 @@ def generate_remediation(investigation_id: str, audience: str) -> dict[str, Any]
     return build_remediation(inv, audience)
 
 
+def build_detection_content(investigation: dict[str, Any], platform: str) -> dict[str, Any]:
+    """Render SIEM detection rules from investigation *data* (#559).
+
+    The fourth tool of this shape. #554/#557 gave ``build_report``,
+    ``build_remediation`` and ``build_summary`` the same seam; this one was
+    missed because it lives in a module those fixes had already touched, so
+    ``POST /reports/detection-content`` kept 400ing on every real case.
+    """
+    valid_platforms = {"splunk", "elastic", "sentinel"}
+    if platform not in valid_platforms:
+        return {
+            "error": (
+                f"Invalid platform '{platform}'. "
+                f"Must be one of: {', '.join(sorted(valid_platforms))}"
+            ),
+            "status": "failed",
+        }
+
+    generators = {
+        "splunk": _generate_splunk_rules,
+        "elastic": _generate_elastic_rules,
+        "sentinel": _generate_sentinel_rules,
+    }
+
+    rules = generators[platform](investigation)
+
+    return {
+        "investigation_id": investigation.get("id", ""),
+        "platform": platform,
+        "rules": rules,
+        "rule_count": len(rules),
+        "generated_at": datetime.now(UTC).isoformat(),
+        "status": "success",
+    }
+
+
 @tool
 def generate_detection_content(investigation_id: str, platform: str) -> dict[str, Any]:
     """Generate SIEM detection rules based on investigation findings.
@@ -546,32 +582,7 @@ def generate_detection_content(investigation_id: str, platform: str) -> dict[str
             "status": "failed",
         }
 
-    valid_platforms = {"splunk", "elastic", "sentinel"}
-    if platform not in valid_platforms:
-        return {
-            "error": (
-                f"Invalid platform '{platform}'. "
-                f"Must be one of: {', '.join(sorted(valid_platforms))}"
-            ),
-            "status": "failed",
-        }
-
-    generators = {
-        "splunk": _generate_splunk_rules,
-        "elastic": _generate_elastic_rules,
-        "sentinel": _generate_sentinel_rules,
-    }
-
-    rules = generators[platform](inv)
-
-    return {
-        "investigation_id": investigation_id,
-        "platform": platform,
-        "rules": rules,
-        "rule_count": len(rules),
-        "generated_at": datetime.now(UTC).isoformat(),
-        "status": "success",
-    }
+    return build_detection_content(inv, platform)
 
 
 @tool
