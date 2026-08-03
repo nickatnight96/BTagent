@@ -15,6 +15,18 @@ and three of the newer copies never received the #373 hardening at all.
 
 **Do not re-implement this.** ``test_prompt_fence.py`` fails if a new
 hand-rolled fence appears in the tree.
+
+Two halves, not one
+-------------------
+
+That guard scans ``*.py``, so it only covers fences built in Python. Workflow
+and orchestrator templates fence in YAML — ``content:
+"<external-data>{{ alert_text }}</external-data>"`` — and those were invisible
+to it while the renderer substituted values verbatim, which reopened #373 on
+the template path (#560). The second half of this control therefore lives in
+``btagent_engine.runtime.templating``, which runs :func:`neutralize_sentinels`
+over every substituted value. Wrapping (here) and substitution (there) are the
+only two ways untrusted text reaches a fence; both are now closed.
 """
 
 from __future__ import annotations
