@@ -50,6 +50,7 @@ import {
   buildInjectionTimeline,
   buildDriftInventory,
   resourceKeyOf,
+  isGovernable,
 } from "@/components/agentic/AgenticRiskPage";
 
 function finding(id: string, detection: string, severity = "high") {
@@ -299,8 +300,49 @@ describe("AgenticRiskPage", () => {
     expect(await screen.findByTestId("governance-status-hfnd_shadow")).toHaveTextContent(
       "registered",
     );
-    // Non-shadow findings never get governance buttons.
+    // Findings without the routing marker never get governance buttons.
     expect(screen.queryByTestId("govern-register-hfnd_pi")).not.toBeInTheDocument();
+  });
+
+  it("offers governance on identity-drift findings, not just the shadow bucket", async () => {
+    // `detect_identity_drift` sets `shadow_workload: True` on purpose — the
+    // detector comment says drift converges into the one governance queue —
+    // but its detection string is `agent_identity_drift`, which buckets as
+    // identity_abuse. Keying the affordance off the bucket hid Register/Sunset
+    // on a finding `POST /findings/{id}/govern` would have accepted.
+    mockList.mockResolvedValue({
+      clusters: [],
+      findings: [
+        {
+          ...finding("hfnd_drift", "agent_identity_drift"),
+          entities: [{ kind: "agent_identity", value: "arn:aws:iam::1:role/Undeclared" }],
+          evidence: {
+            detection: "agent_identity_drift",
+            shadow_workload: true,
+            drift: ["arn:aws:iam::1:role/Undeclared"],
+          },
+        },
+      ],
+      total_clusters: 0,
+      total_findings: 1,
+    });
+    renderPage();
+    await screen.findByTestId("agentic-finding-hfnd_drift");
+
+    expect(bucketOf(FINDINGS[0] as never)).not.toBe("shadow_agent"); // sanity
+    expect(screen.getByTestId("govern-register-hfnd_drift")).toBeInTheDocument();
+    expect(screen.getByTestId("govern-sunset-hfnd_drift")).toBeInTheDocument();
+  });
+
+  it("isGovernable follows the backend marker, not the display bucket", () => {
+    expect(isGovernable(FINDINGS[1] as never)).toBe(true); // shadow_agent_workload
+    expect(isGovernable(FINDINGS[0] as never)).toBe(false); // prompt_injection
+    expect(
+      isGovernable({
+        ...finding("d", "agent_identity_drift"),
+        evidence: { detection: "agent_identity_drift", shadow_workload: true },
+      } as never),
+    ).toBe(true);
   });
 
   it("hides governance buttons for non-senior roles", async () => {

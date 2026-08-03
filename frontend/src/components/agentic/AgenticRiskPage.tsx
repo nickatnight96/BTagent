@@ -166,6 +166,19 @@ export function buildDriftInventory(findings: HuntFinding[]): DriftInventoryEntr
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 }
 
+/** Does this finding route to governance rather than IR?
+ *
+ * The backend gate (`shadow_governance.govern_finding`) accepts a finding iff
+ * it carries `evidence.shadow_workload`, and the detectors set that marker on
+ * more than the shadow buckets — `agent_identity_drift` sets it too, precisely
+ * so drift "converges into the one governance queue". Deriving the affordance
+ * from the *display* bucket instead hid Register/Sunset on findings the API
+ * would have accepted. Key it on the marker, like CloudHuntsPage does.
+ */
+export function isGovernable(finding: HuntFinding): boolean {
+  return (finding.evidence as Record<string, unknown> | null)?.["shadow_workload"] === true;
+}
+
 function severityVariant(sev: string): "destructive" | "secondary" | "outline" {
   if (sev === "critical" || sev === "high") return "destructive";
   if (sev === "medium") return "secondary";
@@ -466,8 +479,8 @@ export function AgenticRiskPage() {
               </p>
             ) : (
               visible.map((f) => {
-                const isShadow = bucketOf(f) === "shadow_agent";
-                const ruling = isShadow ? registry[resourceKeyOf(f)] : undefined;
+                const governable = isGovernable(f);
+                const ruling = governable ? registry[resourceKeyOf(f)] : undefined;
                 return (
                   <div
                     key={f.id}
@@ -490,7 +503,7 @@ export function AgenticRiskPage() {
                           {ruling.status}
                         </Badge>
                       )}
-                      {isShadow && canGovern && (
+                      {governable && canGovern && (
                         <>
                           <Button
                             variant="outline"
