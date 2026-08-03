@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.auth.scoping import assert_can_access_investigation
-from btagent_backend.db.models import InvestigationRow
+from btagent_backend.db.models import (
+    ContainmentActionRow,
+    InvestigationRow,
+    IOCRow,
+    TimelineEntryRow,
+)
 from btagent_backend.services.report_service import ReportService
 from btagent_backend.services.tlp_egress_guard import assert_org_policy_allows_egress
 
@@ -42,6 +47,71 @@ async def _load_scoped_investigation(
 async def _scope_or_404(db: AsyncSession, user: CurrentUser, investigation_id: str) -> None:
     """Backwards-compatible wrapper that discards the loaded row."""
     await _load_scoped_investigation(db, user, investigation_id)
+
+
+async def _report_payload(db: AsyncSession, inv: InvestigationRow) -> dict[str, Any]:
+    """The case, in the shape the report section generators consume (#554).
+
+    The generators are plain functions over a dict — they were only ever fed
+    a fixture, so the API had no way to report on a real case. This is that
+    mapping, and it is deliberately a *projection of stored facts*: anything
+    the case does not have comes back empty and shows up as a completeness
+    gap, which is the honest answer and exactly what the gap list is for.
+
+    Loaded with explicit queries rather than ORM relationship access: the
+    session is async, so touching ``inv.iocs`` here would lazy-load outside a
+    greenlet and raise.
+    """
+    iocs = (
+        (await db.execute(select(IOCRow).where(IOCRow.investigation_id == inv.id))).scalars().all()
+    )
+    timeline = (
+        (
+            await db.execute(
+                select(TimelineEntryRow)
+                .where(TimelineEntryRow.investigation_id == inv.id)
+                .order_by(TimelineEntryRow.timestamp)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    actions = (
+        (
+            await db.execute(
+                select(ContainmentActionRow).where(ContainmentActionRow.investigation_id == inv.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # Techniques are recorded per timeline entry; the report wants the case's
+    # distinct set. Sorted so a regenerated report is byte-stable.
+    techniques = sorted({e.technique_id for e in timeline if e.technique_id})
+
+    return {
+        "id": inv.id,
+        "title": inv.title,
+        "severity": inv.severity,
+        "status": inv.status,
+        "iocs": [{"type": i.type, "value": i.value} for i in iocs],
+        "timeline": [
+            {
+                "timestamp": e.timestamp.isoformat() if e.timestamp else "",
+                "description": e.description,
+            }
+            for e in timeline
+        ],
+        "mitre_techniques": techniques,
+        "containment_actions": [
+            {"action_type": a.action_type, "target": a.target} for a in actions
+        ],
+        # Per-IOC enrichment, keyed by indicator value the way the findings
+        # section expects. Empty payloads are dropped rather than rendered as
+        # a bare value with nothing behind it.
+        "enrichment": {i.value: i.enrichment for i in iocs if i.enrichment},
+    }
 
 
 logger = logging.getLogger("btagent.api.reports")
@@ -122,11 +192,12 @@ async def generate_report(
     Requires ``report:generate`` permission.
     """
     user.require_permission("report:generate")
-    await _scope_or_404(db, user, body.investigation_id)
+    inv = await _load_scoped_investigation(db, user, body.investigation_id)
 
     result = await _report_service.generate_report(
         investigation_id=body.investigation_id,
         template=body.template,
+        investigation=await _report_payload(db, inv),
     )
 
     if result.get("status") == "failed":
@@ -202,6 +273,7 @@ async def export_report(
             tlp_level=inv.tlp_level or "green",
             severity=inv.severity or "medium",
             org_id=inv.org_id,
+            investigation=await _report_payload(db, inv),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

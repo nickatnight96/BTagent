@@ -449,6 +449,74 @@ def _compute_completeness(
 
 
 # --------------------------------------------------------------------------- #
+# Report building (data in, report out)
+# --------------------------------------------------------------------------- #
+
+
+def build_report(investigation: dict[str, Any], template: str) -> dict[str, Any]:
+    """Render a report from investigation *data* rather than an id (#554).
+
+    The id-taking tool below can only see :data:`_MOCK_INVESTIGATIONS`, which
+    is fine for an agent poking at fixtures and useless to the API — the
+    backend holds the real case in Postgres and the generator could not reach
+    it, so ``POST /reports/generate`` failed for every investigation that
+    actually existed.
+
+    Splitting the lookup from the rendering gives the backend a seam it can
+    pass real data through, and leaves the tool's behaviour unchanged.
+    """
+    inv = investigation
+    tmpl = _load_template(template)
+    if tmpl is None:
+        return {
+            "error": f"Template '{template}' not found",
+            "status": "failed",
+        }
+
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    sections: dict[str, str] = {}
+    template_sections = tmpl.get("sections", [])
+
+    for section_def in template_sections:
+        section_name = section_def.get("name", "")
+        generator = _SECTION_GENERATORS.get(section_name)
+        if generator:
+            sections[section_name] = generator(inv)
+        else:
+            sections[section_name] = f"[Section '{section_name}' — content pending]"
+
+    completeness = _compute_completeness(template_sections, sections)
+
+    return {
+        "investigation_id": inv.get("id", ""),
+        "template": template,
+        "template_title": tmpl.get("title", template),
+        "generated_at": now_iso,
+        "sections": sections,
+        "section_count": len(sections),
+        "completeness": completeness,
+        "status": "success",
+    }
+
+
+def build_section(investigation: dict[str, Any], section: str) -> dict[str, Any]:
+    """Render one section from investigation data. See :func:`build_report`."""
+    generator = _SECTION_GENERATORS.get(section)
+    if generator is None:
+        available = sorted(_SECTION_GENERATORS.keys())
+        return {
+            "error": (f"Unknown section '{section}'. Available: {', '.join(available)}"),
+            "status": "failed",
+        }
+    return {
+        "investigation_id": investigation.get("id", ""),
+        "section": section,
+        "content": generator(investigation),
+        "status": "success",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Tool implementations
 # --------------------------------------------------------------------------- #
 
@@ -473,37 +541,7 @@ def generate_report(investigation_id: str, template: str) -> dict[str, Any]:
             "status": "failed",
         }
 
-    tmpl = _load_template(template)
-    if tmpl is None:
-        return {
-            "error": f"Template '{template}' not found",
-            "status": "failed",
-        }
-
-    now_iso = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
-    sections: dict[str, str] = {}
-    template_sections = tmpl.get("sections", [])
-
-    for section_def in template_sections:
-        section_name = section_def.get("name", "")
-        generator = _SECTION_GENERATORS.get(section_name)
-        if generator:
-            sections[section_name] = generator(inv)
-        else:
-            sections[section_name] = f"[Section '{section_name}' — content pending]"
-
-    completeness = _compute_completeness(template_sections, sections)
-
-    return {
-        "investigation_id": investigation_id,
-        "template": template,
-        "template_title": tmpl.get("title", template),
-        "generated_at": now_iso,
-        "sections": sections,
-        "section_count": len(sections),
-        "completeness": completeness,
-        "status": "success",
-    }
+    return build_report(inv, template)
 
 
 @tool

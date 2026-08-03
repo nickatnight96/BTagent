@@ -140,3 +140,69 @@ def test_unknown_template_and_investigation_fail_cleanly() -> None:
 
     bad_inv = generate_report.invoke({"investigation_id": "inv_nope", "template": "cisa_incident"})
     assert bad_inv["status"] == "failed"
+
+
+# --------------------------------------------------------------------------- #
+# #554 — building a report from supplied data, not the fixture store
+# --------------------------------------------------------------------------- #
+
+
+def test_build_report_uses_supplied_case_data() -> None:
+    """The seam the API needs: data in, report out, no id lookup.
+
+    ``generate_report`` can only see ``_MOCK_INVESTIGATIONS``, so every real
+    investigation failed at the id lookup before it ever reached a template.
+    """
+    from btagent_agents.plugins.report.tools.report_generator import build_report
+
+    case = {
+        "id": "inv_real_042",
+        "title": "Credential stuffing against the VPN",
+        "severity": "high",
+        "status": "contained",
+        "iocs": [{"type": "ip", "value": "203.0.113.7"}],
+        "timeline": [{"timestamp": "2026-08-01T10:00:00Z", "description": "First blocked login"}],
+        "mitre_techniques": ["T1110.004"],
+        "containment_actions": [{"action_type": "block_ip", "target": "203.0.113.7"}],
+        "enrichment": {"203.0.113.7": {"reputation": "malicious"}},
+    }
+
+    result = build_report(case, "incident_report")
+
+    assert result["status"] == "success"
+    # The report is about *this* case, not the fixture.
+    assert result["investigation_id"] == "inv_real_042"
+    assert "Credential stuffing against the VPN" in result["sections"]["executive_summary"]
+    assert "203.0.113.7" in result["sections"]["iocs"]
+    assert "T1110.004" in result["sections"]["findings"]
+
+
+def test_build_report_on_a_sparse_case_reports_gaps() -> None:
+    """A case with only a title is incomplete, and must say so.
+
+    If a bare case scored complete, the completeness block would be measuring
+    the template rather than the investigation — which is worse than absent,
+    because an analyst would sign off on an empty report.
+    """
+    from btagent_agents.plugins.report.tools.report_generator import build_report
+
+    result = build_report({"id": "inv_sparse", "title": "Sparse case"}, "cisa_incident")
+
+    assert result["status"] == "success"
+    assert result["completeness"]["completeness_pct"] < 100
+    assert result["completeness"]["gaps"], "a case with no data must report gaps"
+
+
+def test_build_report_rejects_unknown_template() -> None:
+    from btagent_agents.plugins.report.tools.report_generator import build_report
+
+    result = build_report({"id": "inv_x"}, "no_such_template")
+    assert result["status"] == "failed"
+    assert "not found" in result["error"]
+
+
+def test_generate_report_tool_still_resolves_mock_ids() -> None:
+    """The agent-facing tool keeps its fixture lookup — unchanged behaviour."""
+    result = generate_report.invoke({"investigation_id": _INV, "template": "incident_report"})
+    assert result["status"] == "success"
+    assert result["investigation_id"] == _INV
