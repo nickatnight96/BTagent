@@ -271,6 +271,8 @@ class ReportService:
         self,
         investigation_ids: list[str],
         format: str = "generic",
+        *,
+        investigations: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Summarize one or more investigations for agency submission.
 
@@ -280,6 +282,11 @@ class ReportService:
             Investigation IDs to summarize.
         format : str
             Agency format (cisa, fbi_ic3, isac, generic).
+        investigations : list[dict] | None
+            The cases' real data, in request order. Same seam as
+            :meth:`generate_report` — the API holds the rows it has already
+            scope-checked, and without them the summarizer falls back to its
+            fixture store (see #557).
 
         Returns
         -------
@@ -287,6 +294,8 @@ class ReportService:
             Summarized and formatted report.
         """
         from btagent_agents.plugins.coordination.tools.summarizer import (
+            build_multi_summary,
+            build_summary,
             format_agency_report,
             summarize_investigation,
             summarize_multiple,
@@ -299,7 +308,13 @@ class ReportService:
         )
 
         # Summarize
-        if len(investigation_ids) == 1:
+        if investigations is not None:
+            summary = (
+                build_summary(investigations[0])
+                if len(investigations) == 1
+                else build_multi_summary(investigations)
+            )
+        elif len(investigation_ids) == 1:
             summary = summarize_investigation.invoke(
                 {
                     "investigation_id": investigation_ids[0],
@@ -334,6 +349,8 @@ class ReportService:
         self,
         investigation_id: str,
         audience: str = "technical",
+        *,
+        investigation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate audience-specific remediation guidance.
 
@@ -343,12 +360,18 @@ class ReportService:
             The investigation to generate remediation for.
         audience : str
             Target audience (executive, technical, compliance).
+        investigation : dict | None
+            The case's real data. Same seam as :meth:`generate_report`; without
+            it the generator falls back to its fixture store (see #557).
 
         Returns
         -------
         dict
             Remediation checklist and guidance.
         """
+        from btagent_agents.plugins.mitigation.tools.remediation_generator import (
+            build_remediation,
+        )
         from btagent_agents.plugins.mitigation.tools.remediation_generator import (
             generate_remediation as remediation_tool,
         )
@@ -358,6 +381,9 @@ class ReportService:
             audience,
             investigation_id,
         )
+
+        if investigation is not None:
+            return build_remediation(investigation, audience)
 
         return remediation_tool.invoke(
             {

@@ -198,24 +198,15 @@ def _merge_timelines(investigations: list[dict[str, Any]]) -> list[dict[str, str
 # --------------------------------------------------------------------------- #
 
 
-@tool
-def summarize_investigation(investigation_id: str) -> dict[str, Any]:
-    """Compile investigation data into a structured summary.
+def build_summary(investigation: dict[str, Any]) -> dict[str, Any]:
+    """Summarize investigation *data* rather than an id (#557).
 
-    Gathers IOCs, timeline, containment actions, and enrichment data from
-    a single investigation and produces executive and technical summaries,
-    IOC lists, MITRE mappings, and recommendations.
-
-    Args:
-        investigation_id: The investigation ID to summarize (e.g. inv_mock_001).
+    Same seam as ``report_generator.build_report``: the id-taking tool can only
+    see :data:`_MOCK_INVESTIGATIONS`, so ``POST /reports/summarize`` failed for
+    every case that actually existed. Everything below is a pure function over
+    the dict — it only ever needed to be handed the real one.
     """
-    inv = _get_investigation(investigation_id)
-    if inv is None:
-        return {
-            "error": f"Investigation {investigation_id} not found",
-            "status": "failed",
-        }
-
+    inv = investigation
     iocs = inv.get("iocs", [])
     techniques = inv.get("mitre_techniques", [])
     containment = inv.get("containment_actions", [])
@@ -237,7 +228,7 @@ def summarize_investigation(investigation_id: str) -> dict[str, Any]:
         recommendations.append("Continue monitoring for related activity")
 
     return {
-        "investigation_id": investigation_id,
+        "investigation_id": inv.get("id", ""),
         "executive_summary": _build_executive_summary(inv),
         "technical_summary": _build_technical_summary(inv),
         "ioc_list": iocs,
@@ -251,35 +242,33 @@ def summarize_investigation(investigation_id: str) -> dict[str, Any]:
 
 
 @tool
-def summarize_multiple(investigation_ids: str) -> dict[str, Any]:
-    """Aggregate multiple investigations using map-reduce pattern.
+def summarize_investigation(investigation_id: str) -> dict[str, Any]:
+    """Compile investigation data into a structured summary.
 
-    Summarizes each investigation individually (map phase), then merges
-    the results into a unified synthesis (reduce phase). Useful for
-    correlating related incidents from the same threat actor or campaign.
+    Gathers IOCs, timeline, containment actions, and enrichment data from
+    a single investigation and produces executive and technical summaries,
+    IOC lists, MITRE mappings, and recommendations.
 
     Args:
-        investigation_ids: Comma-separated investigation IDs
-            (e.g. "inv_mock_001,inv_mock_002").
+        investigation_id: The investigation ID to summarize (e.g. inv_mock_001).
     """
-    ids = [i.strip() for i in investigation_ids.split(",") if i.strip()]
+    inv = _get_investigation(investigation_id)
+    if inv is None:
+        return {
+            "error": f"Investigation {investigation_id} not found",
+            "status": "failed",
+        }
 
-    if not ids:
-        return {"error": "No investigation IDs provided", "status": "failed"}
+    return build_summary(inv)
 
-    # --- Map phase: summarize each investigation individually ---
-    individual_summaries: list[dict[str, Any]] = []
-    investigations: list[dict[str, Any]] = []
-    errors: list[str] = []
 
-    for inv_id in ids:
-        inv = _get_investigation(inv_id)
-        if inv is None:
-            errors.append(f"Investigation {inv_id} not found")
-            continue
-        investigations.append(inv)
-        summary = summarize_investigation.invoke({"investigation_id": inv_id})
-        individual_summaries.append(summary)
+def build_multi_summary(
+    investigations: list[dict[str, Any]],
+    *,
+    errors: list[str] | None = None,
+) -> dict[str, Any]:
+    """Map-reduce a set of investigations from data rather than ids (#557)."""
+    errors = list(errors or [])
 
     if not investigations:
         return {
@@ -287,6 +276,9 @@ def summarize_multiple(investigation_ids: str) -> dict[str, Any]:
             "errors": errors,
             "status": "failed",
         }
+
+    # --- Map phase: summarize each investigation individually ---
+    individual_summaries = [build_summary(inv) for inv in investigations]
 
     # --- Reduce phase: merge into unified synthesis ---
     aggregated_iocs = _aggregate_iocs(investigations)
@@ -329,6 +321,35 @@ def summarize_multiple(investigation_ids: str) -> dict[str, Any]:
         "errors": errors,
         "status": "success",
     }
+
+
+@tool
+def summarize_multiple(investigation_ids: str) -> dict[str, Any]:
+    """Aggregate multiple investigations using map-reduce pattern.
+
+    Summarizes each investigation individually (map phase), then merges
+    the results into a unified synthesis (reduce phase). Useful for
+    correlating related incidents from the same threat actor or campaign.
+
+    Args:
+        investigation_ids: Comma-separated investigation IDs
+            (e.g. "inv_mock_001,inv_mock_002").
+    """
+    ids = [i.strip() for i in investigation_ids.split(",") if i.strip()]
+
+    if not ids:
+        return {"error": "No investigation IDs provided", "status": "failed"}
+
+    investigations: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for inv_id in ids:
+        inv = _get_investigation(inv_id)
+        if inv is None:
+            errors.append(f"Investigation {inv_id} not found")
+            continue
+        investigations.append(inv)
+
+    return build_multi_summary(investigations, errors=errors)
 
 
 @tool
