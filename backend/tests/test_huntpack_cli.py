@@ -647,3 +647,81 @@ def test_console_script_is_declared():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     assert data["project"]["scripts"]["bt"] == "btagent_backend.cli.main:main"
+
+
+# --------------------------------------------------------------------------- #
+# E7: a capped import must announce itself (mirror of the sweep-side #546)
+# --------------------------------------------------------------------------- #
+
+
+async def test_install_result_reports_the_cap_and_the_pre_cap_count(
+    db_session, fresh_org, corpus, install_dir
+):
+    """``scanned`` is post-cap, so on its own it reads as the corpus size."""
+    result = await store.install_corpus_pack(
+        db_session,
+        org_id=fresh_org,
+        source_dir=corpus,
+        pack_id="sigma_capped",
+        max_rules=2,
+    )
+
+    assert result.truncated is True
+    assert result.scanned == 2
+    # The number that makes the cap legible: what was there before it bit.
+    assert result.found == 7
+
+
+async def test_install_result_is_not_truncated_when_the_cap_does_not_bite(
+    db_session, fresh_org, corpus, install_dir
+):
+    result = await store.install_corpus_pack(
+        db_session, org_id=fresh_org, source_dir=corpus, pack_id="sigma_full"
+    )
+    assert result.truncated is False
+    assert result.found == result.scanned == 7
+
+
+async def test_cli_install_reports_a_capped_import(db_session, fresh_org, corpus, install_dir):
+    res = await cli_huntpack.cmd_install(
+        db_session,
+        org_id=fresh_org,
+        path=corpus,
+        pack_id="sigma_capped_cli",
+        max_rules=2,
+    )
+
+    assert res.exit_code == 0
+    out = "\n".join(res.lines)
+    assert "CAPPED" in out
+    assert "2 of 7" in out
+    # The report has to name the way out, or the operator is stuck guessing.
+    assert "--max-rules 0" in out
+
+
+async def test_cli_install_says_nothing_about_caps_on_a_full_import(
+    db_session, fresh_org, corpus, install_dir
+):
+    res = await cli_huntpack.cmd_install(
+        db_session, org_id=fresh_org, path=corpus, pack_id="sigma_full_cli"
+    )
+    assert res.exit_code == 0
+    assert "CAPPED" not in "\n".join(res.lines)
+
+
+def test_cli_max_rules_omitted_inherits_the_service_default_cap():
+    """Omitted must NOT mean unlimited.
+
+    The CLI used to forward ``max_rules=None`` whenever the flag was absent,
+    and the service reads ``None`` as "no cap" — so the E7 default existed in
+    name only on the path operators actually use.
+    """
+    assert cli_huntpack._max_rules_kwarg(None) == {}
+
+
+def test_cli_max_rules_zero_is_the_explicit_no_cap_escape_hatch():
+    assert cli_huntpack._max_rules_kwarg(0) == {"max_rules": None}
+
+
+def test_cli_max_rules_number_caps_at_that_number():
+    assert cli_huntpack._max_rules_kwarg(50) == {"max_rules": 50}

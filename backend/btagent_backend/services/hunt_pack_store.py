@@ -194,6 +194,13 @@ class InstallResult(BaseModel):
     path: str
     enabled: bool
     scanned: int = 0
+    # E7: rule files discovered under the source root *before* ``max_rules``
+    # capped the import, and whether that cap actually bit. ``scanned`` is a
+    # post-cap number, so on its own it reads as the size of the corpus —
+    # reporting an install of 2000 of 5000 files as simply "scanned: 2000"
+    # is how a partial import gets mistaken for the whole thing.
+    found: int = 0
+    truncated: bool = False
     installed: int = 0
     skipped: list[dict[str, Any]] = Field(default_factory=list)
     # ``{backend: {"ok": int, "total": int, "rate": float}}`` over parsed rules.
@@ -588,12 +595,17 @@ async def install_corpus_pack(
         raise
 
     logger.info(
-        "hunt pack installed from corpus: org=%s pack=%s rules=%d skipped=%d source=%s",
+        "hunt pack installed from corpus: org=%s pack=%s rules=%d skipped=%d source=%s%s",
         org_id,
         key,
         imported.installed,
         len(imported.skipped),
         source,
+        (
+            f" (CAPPED: {imported.scanned} of {imported.found} files processed)"
+            if imported.truncated
+            else ""
+        ),
     )
     return InstallResult(
         pack_id=key,
@@ -604,6 +616,8 @@ async def install_corpus_pack(
         path=str(dest),
         enabled=bool(row.enabled),
         scanned=imported.scanned,
+        found=imported.found,
+        truncated=bool(imported.truncated),
         installed=imported.installed,
         skipped=[s.model_dump() for s in imported.skipped],
         coverage=_coverage_payload(imported),
