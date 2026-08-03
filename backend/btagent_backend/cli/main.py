@@ -123,7 +123,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="import parse-only: do not transpile, do not drop untranspilable rules",
     )
     install.add_argument(
-        "--max-rules", type=int, default=None, help="cap the number of rule files imported"
+        "--max-rules",
+        type=int,
+        default=None,
+        help=(
+            "cap the number of rule files imported; omit to use the default "
+            "cap, or pass 0 to import the whole corpus with no cap"
+        ),
     )
     install.add_argument(
         "--no-enable", action="store_true", help="install without enabling the pack"

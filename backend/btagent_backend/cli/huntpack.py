@@ -114,6 +114,24 @@ async def cmd_list(db: AsyncSession, *, org_id: str, org_source: str = "default"
     return CommandResult(lines=lines, data=catalog.model_dump(mode="json"))
 
 
+def _max_rules_kwarg(max_rules: int | None) -> dict[str, int | None]:
+    """Translate the CLI's ``--max-rules`` into an ``install_corpus_pack`` kwarg.
+
+    Three states, because "not given" and "no cap" are different intents and
+    conflating them disarms the control:
+
+    * **omitted** (``None``) — pass nothing, so the service's own E7 default
+      cap applies. Previously the CLI forwarded ``max_rules=None`` here, which
+      the service reads as *unlimited* — so the primary install path silently
+      ran uncapped and the default existed in name only.
+    * **0** — the deliberate escape hatch: no cap, import the whole corpus.
+    * **N** — cap at N.
+    """
+    if max_rules is None:
+        return {}
+    return {"max_rules": None if max_rules == 0 else max_rules}
+
+
 async def cmd_install(
     db: AsyncSession,
     *,
@@ -161,10 +179,10 @@ async def cmd_install(
             description=description,
             backends=backends,
             check_transpile=check_transpile,
-            max_rules=max_rules,
             enable=enable,
             overwrite=overwrite,
             updated_by=_actor(actor),
+            **_max_rules_kwarg(max_rules),
         )
     except hunt_pack_store.UnknownPackError as exc:
         return CommandResult(exit_code=2, lines=[f"error: {exc}"])
@@ -180,6 +198,18 @@ async def cmd_install(
         f"  skipped:   {result.skipped_count}",
         f"  enabled:   {'yes' if result.enabled else 'no'}",
     ]
+    if result.truncated:
+        # E7: ``scanned`` is a POST-cap count, so without this line an install
+        # that processed 2000 of 5000 files reports exactly like one that
+        # processed a whole 2000-file corpus. Say what was left untouched, and
+        # say how to take the cap off.
+        not_processed = max(0, result.found - result.scanned)
+        lines.insert(
+            4,
+            f"  CAPPED:    max_rules stopped the import at {result.scanned} of "
+            f"{result.found} file(s) found — {not_processed} never processed "
+            f"(re-run with --max-rules 0 to import all)",
+        )
     if result.coverage:
         lines.append("  transpile coverage (of parsed rules):")
         for backend in sorted(result.coverage):
