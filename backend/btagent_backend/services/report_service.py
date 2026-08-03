@@ -100,6 +100,7 @@ class ReportService:
         template: str = "incident_report",
         *,
         detected_at: datetime | None = None,
+        investigation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate a full report from investigation data.
 
@@ -114,6 +115,13 @@ class ReportService:
             Incident detection/determination time used as the start of the
             regulatory-notification clock for the ``regulatory_notification``
             template. Defaults to "now" when not supplied.
+        investigation : dict | None
+            The case's real data. Callers that hold the row (the API, which
+            has already loaded and scope-checked it) pass it here so the
+            report is built from the actual investigation. Without it the
+            generator falls back to its fixture store, which knows exactly one
+            synthetic id — that fallback is why generation failed for every
+            real case before #554.
 
         Returns
         -------
@@ -124,6 +132,9 @@ class ReportService:
             ``regulatory_deadline`` section.
         """
         from btagent_agents.plugins.report.tools.report_generator import (
+            build_report,
+        )
+        from btagent_agents.plugins.report.tools.report_generator import (
             generate_report as report_tool,
         )
 
@@ -133,12 +144,15 @@ class ReportService:
             template,
         )
 
-        result = report_tool.invoke(
-            {
-                "investigation_id": investigation_id,
-                "template": template,
-            }
-        )
+        if investigation is not None:
+            result = build_report(investigation, template)
+        else:
+            result = report_tool.invoke(
+                {
+                    "investigation_id": investigation_id,
+                    "template": template,
+                }
+            )
 
         if result.get("status") == "failed":
             logger.warning(
@@ -186,6 +200,7 @@ class ReportService:
         tlp_level: str = "green",
         severity: str = "medium",
         org_id: str | None = None,
+        investigation: dict[str, Any] | None = None,
     ) -> bytes:
         """Generate a report and render it to PDF bytes.
 
@@ -225,6 +240,7 @@ class ReportService:
         report = await self.generate_report(
             investigation_id=investigation_id,
             template=template,
+            investigation=investigation,
         )
 
         if report.get("status") == "failed":

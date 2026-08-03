@@ -8,9 +8,10 @@ Covers three layers:
 * The ``GET /api/v1/reports/{id}/export`` endpoint — content-type, ``%PDF``
   magic, scoping, and the TLP:RED 403 (mirroring ``GET /iocs/export``).
 
-The endpoint success path mocks ``export_report_pdf`` because the underlying
-report plugin is backed by a mock investigation store that only knows
-``inv_mock_001``; the existing report endpoints share that limitation.
+The endpoint success path here mocks ``export_report_pdf`` to keep this file
+about the renderer and the TLP/scoping behaviour. It no longer *has* to: the
+generator can be fed a real case since #554, and
+``test_report_generate_real_case.py`` exercises the unmocked export end to end.
 """
 
 from __future__ import annotations
