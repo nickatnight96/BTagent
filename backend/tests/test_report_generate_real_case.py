@@ -175,3 +175,79 @@ async def test_export_pdf_renders_a_real_case(
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"] == "application/pdf"
     assert resp.content.startswith(b"%PDF")
+
+
+# --------------------------------------------------------------------------- #
+# #557 — the same defect in the sibling endpoints
+# --------------------------------------------------------------------------- #
+#
+# `/reports/remediation` and `/reports/summarize` delegate to two more plugin
+# tools with an identical `_MOCK_INVESTIGATIONS` lookup, so they failed for
+# real cases exactly the way generation did. Same seam, same proof.
+
+
+@pytest.mark.asyncio
+async def test_remediation_for_a_real_investigation(
+    client: AsyncClient,
+    analyst_token: str,
+    sample_user,
+    db_session: AsyncSession,
+):
+    inv = await _seed_case(db_session, sample_user.id, populated=True)
+
+    resp = await client.post(
+        "/api/v1/reports/remediation",
+        json={"investigation_id": inv.id, "audience": "technical"},
+        headers=auth_header(analyst_token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "success"
+    assert body["investigation_id"] == inv.id
+
+
+@pytest.mark.asyncio
+async def test_summarize_a_real_investigation(
+    client: AsyncClient,
+    admin_token: str,
+    sample_user,
+    db_session: AsyncSession,
+):
+    """`report:summarize` is senior_analyst+; admin outranks it (no senior fixture)."""
+    inv = await _seed_case(db_session, sample_user.id, populated=True)
+
+    resp = await client.post(
+        "/api/v1/reports/summarize",
+        json={"investigation_ids": [inv.id], "format": "cisa"},
+        headers=auth_header(admin_token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("status") == "success", body
+    # The summary is about this case: its IOC is counted, not the fixture's.
+    payload = str(body)
+    assert "203.0.113.7" in payload
+
+
+@pytest.mark.asyncio
+async def test_summarize_multiple_real_investigations(
+    client: AsyncClient,
+    admin_token: str,
+    sample_user,
+    db_session: AsyncSession,
+):
+    """The multi-case map-reduce path takes data too, not just the single."""
+    first = await _seed_case(db_session, sample_user.id, populated=True)
+    second = await _seed_case(db_session, sample_user.id, populated=True)
+
+    resp = await client.post(
+        "/api/v1/reports/summarize",
+        json={"investigation_ids": [first.id, second.id], "format": "generic"},
+        headers=auth_header(admin_token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("status") == "success", body

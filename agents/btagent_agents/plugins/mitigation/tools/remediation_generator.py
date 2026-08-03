@@ -476,6 +476,38 @@ def _generate_sentinel_rules(inv: dict[str, Any]) -> list[dict[str, str]]:
 # --------------------------------------------------------------------------- #
 
 
+def build_remediation(investigation: dict[str, Any], audience: str) -> dict[str, Any]:
+    """Render remediation from investigation *data* rather than an id (#557).
+
+    Same seam as ``report_generator.build_report``: the id-taking tool can only
+    see :data:`_MOCK_INVESTIGATIONS`, so ``POST /reports/remediation`` failed
+    for every case that actually existed. The generators below are plain
+    functions over a dict — they only ever needed to be handed the real one.
+    """
+    valid_audiences = {"executive", "technical", "compliance"}
+    if audience not in valid_audiences:
+        return {
+            "error": (
+                f"Invalid audience '{audience}'. "
+                f"Must be one of: {', '.join(sorted(valid_audiences))}"
+            ),
+            "status": "failed",
+        }
+
+    generators = {
+        "executive": _remediation_executive,
+        "technical": _remediation_technical,
+        "compliance": _remediation_compliance,
+    }
+
+    result = generators[audience](investigation)
+    result["investigation_id"] = investigation.get("id", "")
+    result["generated_at"] = datetime.now(UTC).isoformat()
+    result["status"] = "success"
+
+    return result
+
+
 @tool
 def generate_remediation(investigation_id: str, audience: str) -> dict[str, Any]:
     """Generate a remediation checklist for a specific audience.
@@ -493,28 +525,7 @@ def generate_remediation(investigation_id: str, audience: str) -> dict[str, Any]
             "status": "failed",
         }
 
-    valid_audiences = {"executive", "technical", "compliance"}
-    if audience not in valid_audiences:
-        return {
-            "error": (
-                f"Invalid audience '{audience}'. "
-                f"Must be one of: {', '.join(sorted(valid_audiences))}"
-            ),
-            "status": "failed",
-        }
-
-    generators = {
-        "executive": _remediation_executive,
-        "technical": _remediation_technical,
-        "compliance": _remediation_compliance,
-    }
-
-    result = generators[audience](inv)
-    result["investigation_id"] = investigation_id
-    result["generated_at"] = datetime.now(UTC).isoformat()
-    result["status"] = "success"
-
-    return result
+    return build_remediation(inv, audience)
 
 
 @tool

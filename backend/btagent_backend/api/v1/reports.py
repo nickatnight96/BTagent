@@ -356,12 +356,15 @@ async def summarize_investigations(
         )
 
     # AUTH-B1: every investigation in the request must be in-scope.
-    for inv_id in body.investigation_ids:
-        await _scope_or_404(db, user, inv_id)
+    payloads = [
+        await _report_payload(db, await _load_scoped_investigation(db, user, inv_id))
+        for inv_id in body.investigation_ids
+    ]
 
     result = await _report_service.summarize_investigations(
         investigation_ids=body.investigation_ids,
         format=body.format,
+        investigations=payloads,
     )
 
     if result.get("status") == "failed":
@@ -385,11 +388,12 @@ async def generate_remediation(
     Requires ``remediation:generate`` permission.
     """
     user.require_permission("remediation:generate")
-    await _scope_or_404(db, user, body.investigation_id)
+    inv = await _load_scoped_investigation(db, user, body.investigation_id)
 
     result = await _report_service.generate_remediation(
         investigation_id=body.investigation_id,
         audience=body.audience,
+        investigation=await _report_payload(db, inv),
     )
 
     if result.get("status") == "failed":
