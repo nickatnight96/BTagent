@@ -188,17 +188,39 @@ These are tracked as peer feature issues, not a single epic. The dependency keys
 
 The following are known limitations in the current release. Several are addressed in the roadmap above. For the must-fix deployment blockers and the sequenced path to a first production deploy, see the [Deployment Plan](DEPLOYMENT_PLAN.md).
 
+> This table is checked against the code by `backend/tests/test_roadmap_limitations.py`.
+> Every row below asserts something the code actually still does *not* do, and the
+> test fails if a retired limitation is re-added or a live one silently gets fixed
+> without the doc catching up. It exists because this table had gone stale in six
+> of nine rows — see "Resolved" below.
+
 | Area | Limitation | Planned Fix |
 |------|-----------|-------------|
-| **MCP Connectors** | All 9 connectors use mock/stub implementations. Set `BTAGENT_MOCK_CONNECTORS=true` for development. | v0.4.0 -- Real API implementations |
-| **JWT Security** | Refresh tokens are not rotated and cannot be revoked. | v0.4.0 -- Token revocation and rotation |
-| **SSO** | Only username/password authentication. No SAML or OIDC. | v0.4.0 -- SSO integration |
-| **Reports** | Reports are text-only within the application. No PDF export. | v0.4.0 -- PDF export |
-| **Multi-Tenancy** | Single-tenant only. All users share one organization. | v0.5.0 -- Multi-tenancy |
-| **IOC Graphs** | IOC relationships are stored flat. No graph database. | v0.5.0 -- Neo4j integration |
-| **Threat Feeds** | Manual STIX import only. No automated feed ingestion. | v0.5.0 -- TAXII client |
-| **Seed Data** | Default seed script uses trivial passwords. Not for production. | v0.4.0 -- Secure defaults |
-| **CORS** | Development config uses wildcard methods/headers. Restrict in production. | v0.4.0 -- Hardened CORS |
+| **MCP Connectors** | All 27 registered connectors are **mock-first**: every live API path raises `NotImplementedError` behind `BTAGENT_MOCK_CONNECTORS` (default on). The manifests, policy gates, and OCSF mappings are real; the network calls are not. | #100 -- live connector wiring, one Tier-1 at a time |
+| **Detection Validation** | Adversary emulation is sandbox-only. Atomic Red Team / Caldera execution against real hosts is not wired, and the emulation service refuses any non-sandbox `target_env`. | #118 -- pending offensive-tooling sign-off |
+| **Agent Evaluation** | `make eval` scores only the deterministic components (MITRE mapper, triage classifier, severity scorer) against a golden dataset. No live-LLM judging of investigation transcripts. | #382 v2 -- DeepEval, behind an explicit opt-in |
+| **IOC Graphs** | IOC relationships are stored flat in PostgreSQL. No graph database, so multi-hop pivots are application-side joins rather than traversals. | v0.5.0 -- graph backend |
+| **Seed Data** | `make db-seed` inserts a demo investigation and sample users. Not for production — use `bt create-admin` instead. (Passwords are no longer the issue: outside test mode seeded users get random, unrecoverable passwords.) | Documented; no fix planned |
+| **Staging Deploy** | No staging cluster is wired, so merges to `main` do not continuously deploy anywhere. | #140 / DEPLOYMENT_PLAN B6 |
+
+### Resolved
+
+These were listed as limitations here long after they shipped. Recorded so the
+change is visible to anyone who read the old table, and pinned by the guard test
+so they cannot creep back in:
+
+- **JWT security** — refresh tokens rotate within a family (`fid`), reuse of a
+  consumed token is detected and revokes the family, and an admin can force-revoke
+  every outstanding session for a user (`POST /auth/revoke/{user_id}`).
+- **SSO** — SAML 2.0 and generic OIDC are both implemented, with JIT provisioning.
+- **Reports** — `GET /reports/investigations/{id}/export?format=pdf` renders a PDF.
+- **Multi-tenancy** — every tenant-owned table carries `org_id`, routes scope to the
+  caller's org, and cross-tenant access returns 404 rather than leaking existence.
+- **Threat feeds** — TAXII 2.1 subscriptions poll on a schedule and ingest through
+  the STIX path, with TLP derived from each object's markings.
+- **CORS** — methods and headers are explicit allow-lists, and the backend refuses
+  to start in prod on a wildcard or localhost origin.
+
 
 ---
 
