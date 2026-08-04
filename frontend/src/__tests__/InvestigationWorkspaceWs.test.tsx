@@ -32,11 +32,20 @@ const subscribedChannels: string[] = [];
 const unsubscribedChannels: string[] = [];
 const connectSpy = vi.fn();
 
+type DisconnectHandler = (code: number, reason: string) => void;
+const disconnectListeners = new Set<DisconnectHandler>();
+
 const fakeWs = {
   onEvent(handler: Handler): () => void {
     listeners.add(handler);
     return () => {
       listeners.delete(handler);
+    };
+  },
+  onDisconnect(handler: DisconnectHandler): () => void {
+    disconnectListeners.add(handler);
+    return () => {
+      disconnectListeners.delete(handler);
     };
   },
   subscribeToInvestigation(id: string): () => void {
@@ -46,6 +55,7 @@ const fakeWs = {
     };
   },
   isConnected: true,
+  isTerminallyClosed: false,
   connect: connectSpy,
 };
 
@@ -53,8 +63,16 @@ function emit(ev: AgentEvent): void {
   for (const fn of [...listeners]) fn(ev);
 }
 
+/** Drive a server-side close, the way `ws.ts` notifies its listeners. */
+function emitClose(code: number, reason = ""): void {
+  for (const fn of [...disconnectListeners]) fn(code, reason);
+}
+
 vi.mock("@/api/ws", () => ({
   getWSClient: () => fakeWs,
+  // Mirrors the real export. Kept as the actual value rather than a stub so a
+  // change to which codes are terminal is reflected here without editing.
+  TERMINAL_CLOSE_CODES: new Set([4404, 1008]),
 }));
 
 // Observe the alerter's toast.
@@ -118,10 +136,12 @@ function renderWorkspace() {
 
 beforeEach(() => {
   listeners.clear();
+  disconnectListeners.clear();
   subscribedChannels.length = 0;
   unsubscribedChannels.length = 0;
   connectSpy.mockReset();
   fakeWs.isConnected = true;
+  fakeWs.isTerminallyClosed = false;
   toastError.mockReset();
   // The workspace WS effect is gated on a hydrated user.
   useAuthStore.setState({
@@ -289,5 +309,69 @@ describe("InvestigationWorkspace applies the emitted event contract", () => {
     });
 
     expect(useAgentStore.getState().streamingContent).toBe("");
+  });
+});
+
+/**
+ * A refusal is visible, not silent.
+ *
+ * `ws/access.py` closes an unauthorized subscribe with 4404 (1008 as the
+ * transport fallback), and the client stops retrying on those — correct, but
+ * on its own it means the page simply stops updating, which looks exactly
+ * like a network blip. `isTerminallyClosed` shipped with no consumer; this is
+ * the consumer, and these tests are what stop it from silently regressing to
+ * one again.
+ */
+describe("InvestigationWorkspace — refused event stream", () => {
+  it.each([
+    [4404, "not found"],
+    [1008, "policy violation"],
+  ])("shows the banner after a %i close", (code, reason) => {
+    const { queryByTestId } = renderWorkspace();
+    expect(queryByTestId("workspace-stream-refused")).toBeNull();
+
+    act(() => {
+      emitClose(code, reason);
+    });
+
+    const banner = queryByTestId("workspace-stream-refused");
+    expect(banner).not.toBeNull();
+    expect(banner?.getAttribute("role")).toBe("alert");
+    expect(banner?.textContent).toMatch(/no longer have access/i);
+  });
+
+  it.each([
+    [1006, "abnormal"],
+    [1011, "server error"],
+    [1000, "server hung up"],
+  ])("stays quiet after a retryable %i close", (code, reason) => {
+    // These reconnect on their own; a scary banner during a blip is worse
+    // than no banner, because it teaches analysts to ignore it.
+    const { queryByTestId } = renderWorkspace();
+
+    act(() => {
+      emitClose(code, reason);
+    });
+
+    expect(queryByTestId("workspace-stream-refused")).toBeNull();
+  });
+
+  it("shows the banner on mount when the client was already refused", () => {
+    // Navigating into a case on a client that is already latched — the
+    // listener alone would never fire, because the close already happened.
+    fakeWs.isTerminallyClosed = true;
+
+    const { queryByTestId } = renderWorkspace();
+
+    expect(queryByTestId("workspace-stream-refused")).not.toBeNull();
+  });
+
+  it("deregisters its disconnect handler on unmount", () => {
+    const { unmount } = renderWorkspace();
+    expect(disconnectListeners.size).toBe(1);
+
+    unmount();
+
+    expect(disconnectListeners.size).toBe(0);
   });
 });
