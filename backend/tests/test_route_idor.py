@@ -374,3 +374,94 @@ async def test_post_investigation_ignores_org_id_in_body(
     inv = await db_session.get(InvestigationRow, new_id)
     assert inv is not None
     assert inv.org_id == alice.org_id == "org_default"
+
+
+# ---------------------------------------------------------------------------
+# Cross-investigation SEARCH scoping.
+#
+# The two search routes are the widest read surface in the API: unlike
+# ``GET /iocs/{id}`` they are *designed* to reach across cases, so the only
+# thing standing between an analyst and every tenant's indicators is the
+# accessible-investigation set the route computes. Nothing pinned that until
+# now — ``test_route_idor.py`` covered GET/PUT/LIST, and
+# ``test_notebook_search.py`` covered analyst-vs-analyst inside one org, but
+# neither drove either search route across an org boundary.
+# ---------------------------------------------------------------------------
+
+
+async def _annotate(db: AsyncSession, ioc: IOCRow) -> None:
+    """Mark an IOC as notebook-visible (the notebook only returns annotated rows)."""
+    ioc.pinned = True
+    db.add(ioc)
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_ioc_search_excludes_other_orgs(client: AsyncClient, cross_org_setup):
+    """A bare ``/iocs/search`` never returns an IOC belonging to another tenant."""
+    resp = await client.get(
+        "/api/v1/iocs/search",
+        headers=auth_header(_token(cross_org_setup["senior"])),
+    )
+    assert resp.status_code == 200
+    returned = {item["id"] for item in resp.json()["items"]}
+    assert cross_org_setup["alice_ioc"].id in returned, "same-org IOC should be visible"
+    assert cross_org_setup["eve_ioc"].id not in returned
+
+
+@pytest.mark.asyncio
+async def test_ioc_search_by_value_cannot_confirm_a_foreign_ioc(
+    client: AsyncClient, cross_org_setup
+):
+    """Searching the *exact* value of another org's IOC yields nothing.
+
+    Worth asserting separately from the bare listing: a value search is how a
+    cross-tenant probe would actually be phrased ("is 10.0.0.99 known?"), and
+    a scoping bug that only surfaced under a filter would slip past a test
+    that just lists everything. The total must be 0 too — a non-zero count
+    with an empty page still confirms the indicator exists.
+    """
+    resp = await client.get(
+        "/api/v1/iocs/search",
+        params={"value": cross_org_setup["eve_ioc"].value},
+        headers=auth_header(_token(cross_org_setup["senior"])),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["items"] == []
+    assert body["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ioc_search_analyst_only_sees_own_cases(client: AsyncClient, org_a_setup):
+    """Inside one org, a plain analyst's search stays on cases assigned to them."""
+    resp = await client.get(
+        "/api/v1/iocs/search",
+        headers=auth_header(_token(org_a_setup["alice"])),
+    )
+    assert resp.status_code == 200
+    returned = {item["id"] for item in resp.json()["items"]}
+    assert org_a_setup["alice_ioc"].id in returned
+    assert org_a_setup["bob_ioc"].id not in returned
+
+
+@pytest.mark.asyncio
+async def test_notebook_search_excludes_other_orgs(
+    client: AsyncClient, db_session: AsyncSession, cross_org_setup
+):
+    """The notebook is analyst *knowledge* — it must not cross a tenant line.
+
+    Both IOCs are annotated first, so the only thing that can keep Eve's out
+    of a senior analyst's results is the org filter.
+    """
+    await _annotate(db_session, cross_org_setup["alice_ioc"])
+    await _annotate(db_session, cross_org_setup["eve_ioc"])
+
+    resp = await client.get(
+        "/api/v1/iocs/notebook/search",
+        headers=auth_header(_token(cross_org_setup["senior"])),
+    )
+    assert resp.status_code == 200
+    returned = {item["id"] for item in resp.json()["items"]}
+    assert cross_org_setup["alice_ioc"].id in returned, "same-org annotated IOC should be visible"
+    assert cross_org_setup["eve_ioc"].id not in returned
