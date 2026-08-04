@@ -110,8 +110,20 @@ async def test_readiness_redis_down_returns_503(client: AsyncClient, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_readiness_s3_down_returns_503(client: AsyncClient, monkeypatch):
-    """GET /health/ready returns 503 and flags S3 when its check raises."""
+async def test_readiness_reports_s3_down_without_going_not_ready(client: AsyncClient, monkeypatch):
+    """S3 is reported but does not gate readiness.
+
+    This test used to assert 503. That was right while nothing consumed
+    ``/health/ready`` — but the chart's ``readinessProbe`` now points here
+    instead of at the always-200 ``/health``, so a 503 removes the pod from
+    the Service. Object storage is provisioned and unused (no upload path
+    exists anywhere in the product), so gating on it would take the whole
+    backend offline to protect a capability that does not exist.
+
+    The rule and the reasoning behind it live in
+    ``health.S3_GATES_READINESS``; ``test_readiness_gating.py`` fails if an
+    upload appears while the flag is still False.
+    """
 
     async def _ok() -> bool:
         return True
@@ -124,10 +136,10 @@ async def test_readiness_s3_down_returns_503(client: AsyncClient, monkeypatch):
     monkeypatch.setattr(health_mod, "_check_revocation", lambda: _ok())
 
     resp = await client.get("/health/ready")
-    assert resp.status_code == 503
+    assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "not_ready"
-    assert body["checks"]["s3"] == "down"
+    assert body["status"] == "ready"
+    assert body["checks"]["s3"] == "down (not gating)"
     assert body["checks"]["db"] == "ok"
     assert body["checks"]["redis"] == "ok"
 

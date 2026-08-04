@@ -142,15 +142,43 @@ async def _run_check(coro) -> bool:
         return False
 
 
+#: Whether a failing S3/MinIO check should take the pod out of the Service.
+#:
+#: ``False`` today, and the reason is narrow and checkable: **nothing in the
+#: product writes to object storage.** There is no ``put_object`` /
+#: ``upload_fileobj`` anywhere in backend, agents or engine; ``EvidenceRow``
+#: is declared but never inserted; no route serves evidence. The bucket is
+#: provisioned by ``bt init-storage`` and head_bucket'd here, and that is the
+#: whole of its involvement.
+#:
+#: So gating readiness on it would mean a MinIO blip pulls every backend pod
+#: out of the Service to protect a capability that does not exist — trading a
+#: real outage for a hypothetical one. The check still runs and is still
+#: reported, because an operator wants to know before evidence storage lands,
+#: not after.
+#:
+#: **Flip this to True in the same change that adds the first upload.**
+#: ``test_readiness_gating.py`` fails if an upload call appears while this is
+#: still False, so the two cannot drift apart.
+S3_GATES_READINESS = False
+
+
 @router.get("/health/ready")
 async def readiness(response: Response) -> dict:
-    """Deep readiness probe — verifies DB, Redis and S3/MinIO concurrently.
+    """Deep readiness probe — verifies DB, Redis, S3/MinIO and revocation.
 
     Returns 200 with ``{"status": "ready", "checks": {...}}`` when every
-    dependency is healthy; 503 with the same shape (``status: not_ready``) when
-    any dependency is down, so the body shows exactly which one failed. Each
-    check is independently bounded by ``READINESS_CHECK_TIMEOUT_SECONDS`` so the
-    probe itself can never hang.
+    *gating* dependency is healthy; 503 with the same shape
+    (``status: not_ready``) when one is down, so the body shows exactly which.
+    Each check is independently bounded by ``READINESS_CHECK_TIMEOUT_SECONDS``
+    so the probe itself can never hang.
+
+    This is what the Helm chart's ``readinessProbe`` points at. ``/health`` is
+    liveness and answers 200 even while reporting ``"database": "unreachable"``
+    — pointing readiness there (as the chart used to) means a pod that cannot
+    reach Postgres stays in the Service and 500s every request.
+
+    ``s3`` is reported but does not gate; see :data:`S3_GATES_READINESS`.
     """
     db_ok, redis_ok, s3_ok, revocation_ok = await asyncio.gather(
         _run_check(_check_db()),
@@ -162,10 +190,10 @@ async def readiness(response: Response) -> dict:
     checks = {
         "db": "ok" if db_ok else "down",
         "redis": "ok" if redis_ok else "down",
-        "s3": "ok" if s3_ok else "down",
+        "s3": "ok" if s3_ok else ("down" if S3_GATES_READINESS else "down (not gating)"),
         "revocation": "ok" if revocation_ok else "degraded",
     }
-    all_ok = db_ok and redis_ok and s3_ok and revocation_ok
+    all_ok = db_ok and redis_ok and revocation_ok and (s3_ok or not S3_GATES_READINESS)
 
     if not all_ok:
         response.status_code = 503

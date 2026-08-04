@@ -1,9 +1,17 @@
 """``bt init-storage`` — idempotently create the evidence bucket.
 
-Nothing in the product ever called ``create_bucket``: ``GET /health/ready``
-does a ``head_bucket`` on ``BTAGENT_S3_BUCKET`` and every evidence upload
-assumes the bucket exists, so a fresh MinIO left the stack permanently
-``not_ready`` until an operator made the bucket by hand through the console.
+Nothing in the product ever called ``create_bucket``, so ``GET /health/ready``
+head_bucket'd a bucket that had never been made and a fresh MinIO reported
+``s3: down`` until an operator created it by hand through the console.
+
+To be accurate about what the bucket is *for*: nothing writes to it yet.
+There is no ``put_object``/``upload_fileobj`` anywhere in the product,
+``EvidenceRow`` is declared but never inserted, and no route serves evidence.
+The bucket is provisioned ahead of evidence storage, and the readiness check
+reports it without gating on it (see ``api/v1/health.py``
+``S3_GATES_READINESS``). Creating it up front is still worth doing — it makes
+the dependency real and checkable before the first upload, rather than on the
+day it lands.
 
 This command closes that gap from *inside* the backend image, reading the same
 :class:`~btagent_backend.config.Settings` fields the readiness probe reads, so

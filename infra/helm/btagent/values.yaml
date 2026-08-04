@@ -159,6 +159,21 @@ networkPolicy:
   extraBackendEgress: []
 
 # -- Liveness and readiness probes (backend)
+#
+# The two paths are different on purpose, and swapping them back is a
+# regression:
+#
+#   /health       liveness. Deliberately never returns non-2xx — a transient
+#                 DB blip must not get the container killed and restarted,
+#                 which fixes nothing and drops in-flight work.
+#   /health/ready readiness. Returns 503 when a dependency the product
+#                 actually needs is down, so Kubernetes stops routing to a pod
+#                 that would only serve errors.
+#
+# `readinessProbe` used to point at `/health` too. Because that endpoint
+# answers 200 even while reporting `"database": "unreachable"`, readiness
+# meant no more than "the process is listening": a pod that could not reach
+# Postgres stayed in the Service and 500'd every request it was handed.
 livenessProbe:
   httpGet:
     path: /health
@@ -170,11 +185,13 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /health/ready
     port: http
   initialDelaySeconds: 5
   periodSeconds: 10
-  timeoutSeconds: 3
+  # /health/ready bounds each dependency check at 3s and runs them
+  # concurrently, so the probe cannot outlast this on its own.
+  timeoutSeconds: 5
   failureThreshold: 3
 
 # -- Node and scheduling
