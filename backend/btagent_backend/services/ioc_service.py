@@ -62,6 +62,79 @@ def _require_tenant_scope(
         )
 
 
+async def _org_of_investigation(db: AsyncSession, investigation_id: str) -> str:
+    """The tenant an IOC must be stamped with: its parent investigation's.
+
+    An IOC's ``org_id`` is not independent data — it is a denormalised copy of
+    the parent's, kept so a single IOC can be scoped without a join. The copy
+    has to be *right*, because ``assert_can_access_ioc`` trusts it: when no
+    parent row is supplied it decides purely on ``ioc.org_id == user.org_id``.
+    An IOC whose org drifted from its investigation's is therefore readable by
+    the wrong tenant's org-wide roles and *un*readable by the right one's.
+
+    Nothing enforced that. ``org_id`` was an optional argument falling back to
+    the column default (``org_default``), so a caller who simply omitted it
+    stamped every IOC with a tenant that had nothing to do with the parent.
+    Every current caller does pass it — five pass ``inv.org_id`` and the TAXII
+    poller passes ``feed.org_id`` (equal by construction: the intake
+    investigation is looked up with ``org_id == feed.org_id``) — but that is a
+    convention six call sites happen to keep, not an invariant. Deriving it
+    here makes it one.
+
+    Raises
+    ------
+    ValueError
+        If the parent investigation does not exist. Creating an orphan IOC is
+        a caller bug; the FK would reject it a moment later anyway, and this
+        says so in terms the caller can act on.
+    """
+    from btagent_backend.db.models import InvestigationRow
+
+    result = await db.execute(
+        select(InvestigationRow.org_id).where(InvestigationRow.id == investigation_id)
+    )
+    org_id = result.scalar_one_or_none()
+    if org_id is None:
+        raise ValueError(f"cannot create an IOC under unknown investigation {investigation_id!r}")
+    return org_id
+
+
+def _build_ioc(
+    *,
+    investigation_id: str,
+    org_id: str,
+    ioc_type: str,
+    value: str,
+    tlp_level: str = "green",
+    confidence: float = 0.5,
+    context: str = "",
+    source: str = "",
+    enrichment: dict[str, Any] | None = None,
+    first_seen: datetime | None = None,
+    last_seen: datetime | None = None,
+) -> IOCRow:
+    """Construct an unsaved ``IOCRow``.
+
+    Shared by the single and bulk paths so they cannot diverge in what they
+    write — ``org_id`` is required here precisely because it is the field that
+    must never be defaulted.
+    """
+    return IOCRow(
+        id=generate_id("ioc"),
+        investigation_id=investigation_id,
+        org_id=org_id,
+        type=ioc_type,
+        value=value,
+        tlp_level=tlp_level,
+        confidence=confidence,
+        context=context,
+        source=source,
+        enrichment=enrichment or {},
+        first_seen=first_seen or datetime.now(UTC),
+        last_seen=last_seen,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------
@@ -114,26 +187,32 @@ async def create_ioc(
     IOCRow
         The newly created DB row (flushed but not yet committed).
     """
-    # AUTH-B1: ``org_id`` is set explicitly by the caller (route layer) from
-    # the parent investigation's tenant. Falls back to the column default
-    # ("org_default") when the legacy code path doesn't supply it, matching
-    # the pre-Phase-A1 behaviour for non-API call sites (e.g. agent imports).
-    ioc_kwargs: dict[str, Any] = dict(
-        id=generate_id("ioc"),
+    # AUTH-B1: the IOC's tenant is the parent investigation's, always — see
+    # :func:`_org_of_investigation`. A supplied ``org_id`` is treated as an
+    # assertion, not as the source of truth: if it disagrees with the parent,
+    # that is the caller reaching across a tenant boundary and it fails loudly
+    # instead of writing a mis-stamped row.
+    resolved_org_id = await _org_of_investigation(db, investigation_id)
+    if org_id is not None and org_id != resolved_org_id:
+        raise ValueError(
+            f"org_id {org_id!r} does not match investigation {investigation_id!r} "
+            f"(org {resolved_org_id!r}); an IOC cannot belong to a different tenant "
+            "than its parent case"
+        )
+
+    ioc = _build_ioc(
         investigation_id=investigation_id,
-        type=ioc_type,
+        org_id=resolved_org_id,
+        ioc_type=ioc_type,
         value=value,
         tlp_level=tlp_level,
         confidence=confidence,
         context=context,
         source=source,
-        enrichment=enrichment or {},
-        first_seen=first_seen or datetime.now(UTC),
+        enrichment=enrichment,
+        first_seen=first_seen,
         last_seen=last_seen,
     )
-    if org_id is not None:
-        ioc_kwargs["org_id"] = org_id
-    ioc = IOCRow(**ioc_kwargs)
     db.add(ioc)
     await db.flush()
 
@@ -170,11 +249,22 @@ async def create_iocs_bulk(
     list[IOCRow]
         List of newly created DB rows.
     """
+    # Resolve the parent's tenant once for the whole batch rather than once
+    # per row: an import can carry hundreds of IOCs and they all share a
+    # parent, so a per-row lookup would be N identical queries.
+    resolved_org_id = await _org_of_investigation(db, investigation_id)
+    if org_id is not None and org_id != resolved_org_id:
+        raise ValueError(
+            f"org_id {org_id!r} does not match investigation {investigation_id!r} "
+            f"(org {resolved_org_id!r}); an IOC cannot belong to a different tenant "
+            "than its parent case"
+        )
+
     rows: list[IOCRow] = []
     for ioc_data in iocs:
-        row = await create_ioc(
-            db,
+        row = _build_ioc(
             investigation_id=investigation_id,
+            org_id=resolved_org_id,
             ioc_type=ioc_data["type"],
             value=ioc_data["value"],
             tlp_level=ioc_data.get("tlp_level", "green"),
@@ -182,9 +272,17 @@ async def create_iocs_bulk(
             context=ioc_data.get("context", ""),
             source=ioc_data.get("source", "bulk_import"),
             enrichment=ioc_data.get("enrichment"),
-            org_id=org_id,
         )
+        db.add(row)
         rows.append(row)
+    await db.flush()
+
+    logger.info(
+        "Created %d IOCs in bulk (investigation=%s, org=%s)",
+        len(rows),
+        investigation_id,
+        resolved_org_id,
+    )
     return rows
 
 
