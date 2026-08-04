@@ -167,15 +167,39 @@ server {
 
 ### 4. Database Backup Schedule
 
-Set up automated PostgreSQL backups:
+Use the shipped script — it is the compose-side counterpart of the Helm
+chart's backup CronJob, with the same integrity properties:
 
 ```bash
 # Add to crontab (daily at 02:00 UTC)
-0 2 * * * docker compose -f /path/to/infra/docker-compose.yml exec -T postgres \
-  pg_dump -U btagent btagent | gzip > /backups/btagent-$(date +\%Y\%m\%d).sql.gz
+0 2 * * * BTAGENT_DATABASE_URL='postgresql://btagent:...@localhost:5432/btagent' \
+  BACKUP_DIR=/backups BACKUP_KEEP_LAST=7 \
+  /path/to/infra/scripts/pg-backup.sh >> /var/log/btagent-backup.log 2>&1
+```
 
-# Retain 30 days of backups
-0 3 * * * find /backups -name "btagent-*.sql.gz" -mtime +30 -delete
+No second cron entry for pruning: the script keeps the newest
+`BACKUP_KEEP_LAST` **complete** dumps itself, after a successful run.
+
+> **This replaces the `pg_dump ... | gzip > file` one-liner this guide used to
+> suggest.** That form has two failure modes that both end with an operator
+> finding out mid-incident that they have no backup:
+>
+> * **A truncated dump looks like a good one.** If `pg_dump` dies partway
+>   (disk full, connection reset, OOM), `gzip` still writes a well-formed
+>   archive of the partial output, and without `pipefail` the pipeline exits
+>   0 — so cron records success. The script dumps to a `.partial` name,
+>   verifies the archive by decoding all of it, and only then renames.
+> * **`find -mtime +30 -delete` deletes good backups.** Age-based pruning
+>   does not check that anything replaced what it removes, so a month of
+>   silently failing backups ends with the last good one deleted. The script
+>   prunes by count over complete dumps only, and never touches a `.partial`.
+
+Restore the newest dump (see [Backup and Recovery](#backup-and-recovery)):
+
+```bash
+pg_restore --clean --if-exists --no-owner \
+  -d 'postgresql://btagent:...@localhost:5432/btagent' \
+  "$(ls -1t /backups/btagent-*.dump | head -1)"
 ```
 
 ### 5. Deploy
@@ -354,29 +378,45 @@ env:
   BTAGENT_MOCK_CONNECTORS: "false"
 ```
 
-### 2. Create Kubernetes Secrets
+### 2. Supply secrets
 
-```bash
-kubectl create namespace btagent
+**Production: External Secrets Operator.** Preferred — nothing sensitive
+touches your values files or the Helm release. See
+[Option A](#option-a-external-secrets-operator-chart-native) for the full
+configuration; in short, set `externalSecrets.enabled: true` with a
+`secretStoreRef` and the chart renders the `ExternalSecret` for you.
 
-kubectl create secret generic btagent-secrets \
-  --namespace btagent \
-  --from-literal=BTAGENT_DATABASE_URL='postgresql+asyncpg://btagent:STRONG_PASSWORD@postgres-host:5432/btagent' \
-  --from-literal=BTAGENT_REDIS_URL='redis://:STRONG_PASSWORD@redis-host:6379' \
-  --from-literal=BTAGENT_JWT_SECRET="$(openssl rand -hex 32)" \
-  --from-literal=BTAGENT_S3_ACCESS_KEY='your-s3-key' \
-  --from-literal=BTAGENT_S3_SECRET_KEY='your-s3-secret' \
-  --from-literal=ANTHROPIC_API_KEY='sk-ant-...' \
-  --from-literal=BTAGENT_OPENAI_API_KEY='sk-...'
+**Otherwise: a local values file, never committed.** The chart renders its own
+Secret from `secretEnv`:
+
+```yaml
+# secrets.yaml — add to .gitignore
+secretEnv:
+  BTAGENT_DATABASE_URL: 'postgresql+asyncpg://btagent:STRONG_PASSWORD@postgres-host:5432/btagent'
+  BTAGENT_REDIS_URL: 'redis://:STRONG_PASSWORD@redis-host:6379'
+  BTAGENT_JWT_SECRET: 'GENERATE_WITH_openssl_rand_hex_32'
+  BTAGENT_S3_ACCESS_KEY: 'your-s3-key'
+  BTAGENT_S3_SECRET_KEY: 'your-s3-secret'
 ```
+
+> **Do not hand-create a Secret and try to point the chart at it.** This guide
+> used to say `kubectl create secret generic btagent-secrets ...` followed by
+> `--set secretEnv.existingSecret=btagent-secrets`, and that silently did not
+> work: the chart has no `existingSecret` value, so `--set` simply added a map
+> entry called `existingSecret`, the rendered Secret contained that one
+> meaningless key and none of the real ones, and the hand-created Secret was
+> never read by anything. The backend came up with no `BTAGENT_DATABASE_URL`.
+> Prefer `externalSecrets`; use `secretEnv` if you cannot.
 
 ### 3. Deploy
 
 ```bash
+kubectl create namespace btagent
+
 helm install btagent infra/helm/btagent/ \
   --namespace btagent \
   --values infra/helm/btagent/values-production.yaml \
-  --set secretEnv.existingSecret=btagent-secrets
+  --values secrets.yaml
 ```
 
 ### 4. Verify
@@ -679,30 +719,33 @@ docker compose -f infra/docker-compose.yml exec -T postgres \
 
 ### Kubernetes Backup
 
-```bash
-# Backup via CronJob
-kubectl apply -f - <<EOF
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: pg-backup
-  namespace: btagent
-spec:
-  schedule: "0 2 * * *"
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          containers:
-          - name: backup
-            image: postgres:16
-            command: ["pg_dump", "-Fc", "-f", "/backups/btagent-\$(date +%Y%m%d).dump"]
-            envFrom:
-            - secretRef:
-                name: btagent-secrets
-          restartPolicy: OnFailure
-EOF
+The chart ships the CronJob — turn it on in values rather than applying one by
+hand:
+
+```yaml
+# values-production.yaml (excerpt)
+backup:
+  enabled: true
+  schedule: "30 2 * * *"
+  keepLast: 7
+  # REQUIRED before enabling: the default is an emptyDir, which dies with the
+  # pod. Point this at a PVC or a CSI/NFS mount.
+  volume:
+    persistentVolumeClaim:
+      claimName: btagent-backups
 ```
+
+It reads `BTAGENT_DATABASE_URL` from the same Secret the app uses, so the
+backup cannot drift onto a different database than the one serving traffic,
+and it applies the same dump-verify-rename and keep-newest-N retention as the
+compose script above.
+
+> **A hand-applied CronJob used to be documented here. Do not resurrect it.**
+> It was broken in two ways that both fail silently: the command was in exec
+> form, so `$(date +%Y%m%d)` never expanded and every night overwrote a single
+> file literally named `btagent-$(date +%Y%m%d).dump`; and its `envFrom`
+> named `btagent-secrets`, which no chart workload creates — the real Secret
+> is `<release>-secret`, so the pod would never have started.
 
 ### Redis Backup
 
