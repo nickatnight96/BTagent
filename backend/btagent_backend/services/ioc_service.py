@@ -95,9 +95,7 @@ async def _org_of_investigation(db: AsyncSession, investigation_id: str) -> str:
     )
     org_id = result.scalar_one_or_none()
     if org_id is None:
-        raise ValueError(
-            f"cannot create an IOC under unknown investigation {investigation_id!r}"
-        )
+        raise ValueError(f"cannot create an IOC under unknown investigation {investigation_id!r}")
     return org_id
 
 
