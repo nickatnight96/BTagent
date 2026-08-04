@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import {
   ArrowLeft,
@@ -24,7 +24,7 @@ import {
   stopInvestigation,
 } from "@/api/investigations";
 import type { ContainmentAction, TimelineEntry, IOC } from "@/types/investigation";
-import { getWSClient } from "@/api/ws";
+import { getWSClient, TERMINAL_CLOSE_CODES } from "@/api/ws";
 import { EventType } from "@/types/events";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
@@ -53,9 +53,37 @@ const tabs: { id: WorkspaceTab; label: string; icon: React.ReactNode }[] = [
   },
 ];
 
+/**
+ * Shown when the server refused to stream this case (WS 4404, or 1008 as its
+ * transport fallback) — a revoked assignment, or a tab left open across a
+ * permission change.
+ *
+ * Rendered in the loading branch as well as the loaded one. A refusal on the
+ * event stream usually means the REST fetch is 404ing for the same reason, so
+ * without it the user sits on a spinner that never resolves and never says
+ * why.
+ */
+function StreamRefusedBanner({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <div
+      className="border-b border-destructive/30 bg-destructive/10 px-6 py-2 text-sm text-destructive"
+      role="alert"
+      data-testid="workspace-stream-refused"
+    >
+      Live updates stopped: you no longer have access to this investigation&apos;s
+      event stream. Reload after signing in again, or ask an incident commander
+      to reassign the case.
+    </div>
+  );
+}
+
 export function InvestigationWorkspace() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+
+  /** The server refused to stream this case; see the effect below. */
+  const [streamRefused, setStreamRefused] = useState(false);
   const { currentInvestigation, updateStatus, updateCost } =
     useInvestigationStore();
   const { activePanel, setActivePanel } = useUIStore();
@@ -94,6 +122,16 @@ export function InvestigationWorkspace() {
 
     const wsClient = getWSClient();
     const eventStore = useEventStore.getState();
+
+    // A refusal (4404, or 1008 as its fallback) means the server will not
+    // stream this case to this user — a revoked assignment, or a stale tab
+    // left open across a permission change. The client stops retrying on
+    // those, which is right, but without surfacing it the page just quietly
+    // stops updating and looks identical to a network blip.
+    setStreamRefused(wsClient.isTerminallyClosed);
+    const unsubscribeDisconnect = wsClient.onDisconnect((code) => {
+      if (TERMINAL_CLOSE_CODES.has(code)) setStreamRefused(true);
+    });
 
     const unsubscribeChannel = wsClient.subscribeToInvestigation(id);
 
@@ -214,6 +252,7 @@ export function InvestigationWorkspace() {
     });
 
     return () => {
+      unsubscribeDisconnect();
       unsubscribeEvents();
       unsubscribeChannel();
     };
@@ -251,6 +290,7 @@ export function InvestigationWorkspace() {
     return (
       <>
         <Header title="Investigation" />
+        <StreamRefusedBanner show={streamRefused} />
         <div
           className="flex-1 flex items-center justify-center text-muted-foreground"
           data-testid="investigation-workspace-loading"
@@ -278,6 +318,8 @@ export function InvestigationWorkspace() {
 
   return (
     <div data-testid="investigation-workspace">
+      <StreamRefusedBanner show={streamRefused} />
+
       {/* Workspace header */}
       <div className="flex items-center justify-between px-6 py-3 bg-card/80 backdrop-blur-sm border-b border-border/50 shrink-0">
         <div className="flex items-center gap-4 min-w-0">
