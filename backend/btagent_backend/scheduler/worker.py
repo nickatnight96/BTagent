@@ -301,3 +301,20 @@ class WorkerSettings:
     on_startup = _on_startup
     on_shutdown = _on_shutdown
     redis_settings = redis_settings()
+
+    #: How often the worker stamps its health key in Redis.
+    #:
+    #: arq defaults this to **3600s**, which makes the key useless as a
+    #: liveness signal: it is written with a TTL of ``interval + 1``, so a
+    #: worker that wedged five minutes ago still looks healthy for another
+    #: fifty-five. 30s means a wedge is visible within about half a minute.
+    #:
+    #: The chart's scheduler ``livenessProbe`` runs ``arq --check`` against
+    #: this key, so the two are coupled: the probe's
+    #: ``periodSeconds x failureThreshold`` must stay comfortably larger than
+    #: this interval, or a single slow heartbeat restarts a healthy worker.
+    #: ``test_scheduler_liveness.py`` pins that relationship.
+    #:
+    #: Cost is one small Redis SET per interval — the heartbeat loop this
+    #: rides on already runs every second.
+    health_check_interval = 30

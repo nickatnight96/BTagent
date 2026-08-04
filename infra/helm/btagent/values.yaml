@@ -308,6 +308,21 @@ scheduler:
   enabled: true
   # Must stay at 1 — see comment above.
   replicaCount: 1
+  # -- Liveness via `arq --check`, which reads the health key the worker
+  # stamps in Redis each heartbeat (see `WorkerSettings.health_check_interval`,
+  # 30s). A wedged worker keeps its process alive, so without this Kubernetes
+  # never restarts it and every scheduled job stops firing silently.
+  #
+  # `periodSeconds x failureThreshold` (90s) must stay comfortably above the
+  # 30s stamp interval, or one slow heartbeat restarts a healthy worker.
+  # `initialDelaySeconds` must clear process start plus the first stamp.
+  # backend/tests/test_scheduler_liveness.py pins both relationships.
+  livenessProbe:
+    enabled: true
+    initialDelaySeconds: 45
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
   resources:
     limits:
       cpu: 500m
