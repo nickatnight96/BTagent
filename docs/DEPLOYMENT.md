@@ -215,7 +215,7 @@ completion before `backend` and `scheduler` are allowed to start
 | Service | Command | Closes |
 |---------|---------|--------|
 | `migrate` | `sh -c "cd backend && alembic upgrade head"` | the backend booting against an empty schema and reporting `/health` OK until the first login fails on a missing `users` table |
-| `init-storage` | `bt init-storage` | `/health/ready` reporting `s3: down`, and every evidence upload failing, because nobody ever created the bucket |
+| `init-storage` | `bt init-storage` | `/health/ready` reporting `s3: down` because nobody ever created the bucket. (Nothing writes to it yet — see the MinIO note under Backup and Recovery — so this is provisioning ahead of evidence storage, not a live data path.) |
 
 Both are idempotent, run on every `up`, and use the backend image, so an
 upgrade migrates before the new code serves traffic. Check them with:
@@ -774,7 +774,17 @@ Redis data is ephemeral (pub/sub events and rate limit counters). No backup is r
 
 ### MinIO / S3 Backup
 
-Evidence stored in MinIO should be replicated to a secondary bucket or backed up to a different storage tier:
+> **The evidence bucket is empty today.** Nothing in the product writes to
+> object storage — there is no upload path, `EvidenceRow` is declared but never
+> inserted, and no route serves evidence. `bt init-storage` provisions the
+> bucket and `/health/ready` reports on it (without gating — see
+> `S3_GATES_READINESS` in `api/v1/health.py`), but until evidence storage
+> lands there is nothing in it to lose. Set the mirror up when you need it,
+> not before; a backup job over an always-empty bucket is a green dashboard
+> that proves nothing.
+
+Once evidence storage exists, replicate it to a secondary bucket or a
+different storage tier:
 
 ```bash
 # Using MinIO client
