@@ -386,8 +386,27 @@ touches your values files or the Helm release. See
 configuration; in short, set `externalSecrets.enabled: true` with a
 `secretStoreRef` and the chart renders the `ExternalSecret` for you.
 
-**Otherwise: a local values file, never committed.** The chart renders its own
-Secret from `secretEnv`:
+**Or: a Secret you create and manage yourself.** Set `existingSecret` and the
+chart renders no Secret of its own — every workload mounts yours instead:
+
+```bash
+kubectl create secret generic btagent-secrets --namespace btagent \
+  --from-literal=BTAGENT_DATABASE_URL='postgresql+asyncpg://btagent:STRONG_PASSWORD@postgres-host:5432/btagent' \
+  --from-literal=BTAGENT_REDIS_URL='redis://:STRONG_PASSWORD@redis-host:6379' \
+  --from-literal=BTAGENT_JWT_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=BTAGENT_S3_ACCESS_KEY='your-s3-key' \
+  --from-literal=BTAGENT_S3_SECRET_KEY='your-s3-secret'
+
+# then, at install time:
+helm install btagent ... --set existingSecret=btagent-secrets
+```
+
+The chart cannot read your Secret at render time, so it does **not** validate
+the keys — a missing one surfaces as the backend failing to start, not as a
+Helm error. The keys it needs are the ones `secretEnv` lists in `values.yaml`.
+
+**Or: a local values file, never committed.** The chart renders its own Secret
+from `secretEnv`:
 
 ```yaml
 # secrets.yaml — add to .gitignore
@@ -399,14 +418,16 @@ secretEnv:
   BTAGENT_S3_SECRET_KEY: 'your-s3-secret'
 ```
 
-> **Do not hand-create a Secret and try to point the chart at it.** This guide
-> used to say `kubectl create secret generic btagent-secrets ...` followed by
-> `--set secretEnv.existingSecret=btagent-secrets`, and that silently did not
-> work: the chart has no `existingSecret` value, so `--set` simply added a map
-> entry called `existingSecret`, the rendered Secret contained that one
-> meaningless key and none of the real ones, and the hand-created Secret was
-> never read by anything. The backend came up with no `BTAGENT_DATABASE_URL`.
-> Prefer `externalSecrets`; use `secretEnv` if you cannot.
+> **Pick exactly one.** `existingSecret` and `externalSecrets.enabled`
+> together fail the render, as does leaving a literal in `secretEnv` while
+> either is active — otherwise that credential would be silently ignored while
+> still sitting in plaintext in your values.
+>
+> Note the value is `existingSecret`, at the top level. This guide previously
+> said `--set secretEnv.existingSecret=...`, which the chart did not
+> understand at all: it just added a map entry by that name, so the rendered
+> Secret held one meaningless key and none of the real ones, and the
+> hand-created Secret was read by nothing.
 
 ### 3. Deploy
 
@@ -416,7 +437,7 @@ kubectl create namespace btagent
 helm install btagent infra/helm/btagent/ \
   --namespace btagent \
   --values infra/helm/btagent/values-production.yaml \
-  --values secrets.yaml
+  --values secrets.yaml          # or: --set existingSecret=btagent-secrets
 ```
 
 ### 4. Verify

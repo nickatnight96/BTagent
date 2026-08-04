@@ -77,3 +77,28 @@ Create the name of the service account to use.
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{/*
+The name of the Secret holding BTAGENT_DATABASE_URL and friends.
+
+Three ways to populate it, and every consumer resolves the name through here
+so they cannot disagree about which object to mount:
+
+  1. `existingSecret` — a Secret you created and manage yourself. The chart
+     renders nothing and only points at it.
+  2. `externalSecrets.enabled` — the External Secrets Operator syncs it from
+     Vault/AWS/etc. into `<fullname>-secret` (see externalsecret.yaml).
+  3. neither — the chart renders `<fullname>-secret` from `secretEnv`.
+
+A hardcoded `<fullname>-secret` in a consumer is the bug this exists to
+prevent: DEPLOYMENT.md used to hand out `--set secretEnv.existingSecret=...`,
+which the chart did not understand, so the release rendered a Secret with one
+meaningless key and the operator's real Secret was mounted by nothing.
+*/}}
+{{- define "btagent.secretName" -}}
+{{- if .Values.existingSecret -}}
+{{- .Values.existingSecret -}}
+{{- else -}}
+{{- printf "%s-secret" (include "btagent.fullname" .) -}}
+{{- end -}}
+{{- end }}
