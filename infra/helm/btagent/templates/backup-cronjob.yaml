@@ -1,0 +1,93 @@
+{{- if .Values.backup.enabled -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "btagent.fullname" . }}-pg-backup
+  labels:
+    {{- include "btagent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pg-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  # Never run two dumps at once: a second pg_dump against the same database
+  # doubles load for no benefit, and two writers racing on the same PVC path
+  # can leave a truncated file that looks like a valid backup.
+  concurrencyPolicy: Forbid
+  # If the cluster was down over a scheduled window, take one catch-up run
+  # rather than a burst of every window that was missed.
+  startingDeadlineSeconds: {{ .Values.backup.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.backup.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.backup.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backup.backoffLimit }}
+      template:
+        metadata:
+          labels:
+            {{- include "btagent.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: pg-backup
+        spec:
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "btagent.serviceAccountName" . }}
+          restartPolicy: Never
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: pg-backup
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              image: "{{ .Values.backup.image.repository }}:{{ .Values.backup.image.tag }}"
+              imagePullPolicy: {{ .Values.backup.image.pullPolicy }}
+              # BTAGENT_DATABASE_URL is the same secret the app reads, so the
+              # backup can never drift onto a different database than the one
+              # actually serving traffic.
+              envFrom:
+                - secretRef:
+                    name: {{ include "btagent.fullname" . }}-secret
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # The app URL is SQLAlchemy-flavoured
+                  # (postgresql+asyncpg://). pg_dump speaks plain libpq, so
+                  # strip the driver suffix rather than maintaining a second
+                  # copy of the credentials that could drift.
+                  DSN=$(printf '%s' "$BTAGENT_DATABASE_URL" | sed 's#^postgresql+[a-z0-9]*://#postgresql://#')
+                  if [ -z "$DSN" ]; then
+                    echo "BTAGENT_DATABASE_URL is empty; refusing to write an empty backup" >&2
+                    exit 1
+                  fi
+                  STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  DEST="{{ .Values.backup.path }}/btagent-${STAMP}.sql.gz"
+                  # Write to a .partial name and rename only on success, so a
+                  # failed or truncated dump is never mistaken for a restorable
+                  # backup by the retention sweep or by an operator.
+                  pg_dump --format=plain --no-owner --no-privileges "$DSN" \
+                    | gzip -c > "${DEST}.partial"
+                  mv "${DEST}.partial" "$DEST"
+                  echo "wrote $DEST"
+                  # Retention: keep the newest N complete dumps. Runs after the
+                  # rename so a failed dump never evicts a good one.
+                  cd {{ .Values.backup.path }}
+                  ls -1t btagent-*.sql.gz 2>/dev/null \
+                    | tail -n +{{ add .Values.backup.keepLast 1 }} \
+                    | xargs -r rm -f
+                  # Leave partials behind on purpose — they are evidence for
+                  # whoever investigates the failed run.
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+              volumeMounts:
+                - name: backup
+                  mountPath: {{ .Values.backup.path }}
+                {{- with .Values.extraVolumeMounts }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+          volumes:
+            - name: backup
+              {{- toYaml .Values.backup.volume | nindent 14 }}
+            {{- with .Values.extraVolumes }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+{{- end }}

@@ -230,3 +230,47 @@ extraVolumeMounts:
     mountPath: /tmp
   - name: cache
     mountPath: /app/.cache
+
+# -- Postgres backup (EPIC-8 DoD: "PG backup CronJob scheduled")
+# A nightly pg_dump. Reads BTAGENT_DATABASE_URL from the same Secret the app
+# uses, so the backup cannot drift onto a different database than the one
+# actually serving traffic.
+#
+# Disabled by default, deliberately. The destination is a deployment decision:
+# the default `volume` below is an emptyDir, which is fine for proving the
+# CronJob runs and useless as an actual backup, because it dies with the pod.
+# Shipping that enabled would produce dumps nobody can restore from while
+# looking, on a dashboard, exactly like a working backup. Set a real volume
+# (a PVC, or an NFS/CSI mount) and then enable.
+backup:
+  enabled: false
+  # 02:30 UTC daily.
+  schedule: "30 2 * * *"
+  # Where dumps land inside the container; must match `volume`.
+  path: /backups
+  # Newest N complete dumps are kept; older ones are pruned after a successful
+  # run. Partial (failed) dumps are never counted and never pruned.
+  keepLast: 7
+  # Replace with a real, durable volume before enabling — see note above.
+  volume:
+    emptyDir: {}
+  # A dump that has not started within this window is skipped rather than
+  # stacking up behind a cluster outage.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # One retry: a transient connection blip is worth retrying, a bad DSN is not.
+  backoffLimit: 1
+  # pg_dump must be >= the server version. Keep this pinned in step with the
+  # Postgres major version the chart's database targets.
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
