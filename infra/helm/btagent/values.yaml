@@ -188,7 +188,11 @@ env:
   BTAGENT_LOG_LEVEL: info
   BTAGENT_OTEL_ENABLED: "true"
 
-# -- Secrets (injected from external secret store or Kubernetes secrets)
+# -- Secrets, as literals rendered into a Kubernetes Secret by the chart.
+#
+# Used only when `externalSecrets.enabled` is false. Anything set here ends up
+# base64'd (not encrypted) in the release, so for anything beyond a local or
+# demo install prefer `externalSecrets` below.
 secretEnv:
   BTAGENT_DATABASE_URL: ""
   BTAGENT_REDIS_URL: ""
@@ -196,6 +200,61 @@ secretEnv:
   BTAGENT_S3_ENDPOINT: ""
   BTAGENT_S3_ACCESS_KEY: ""
   BTAGENT_S3_SECRET_KEY: ""
+
+# -- External Secrets Operator integration (EPIC-8 B7: "external-secrets in place")
+#
+# When enabled, the chart stops rendering `secretEnv` into a Secret and instead
+# renders an ExternalSecret that tells the External Secrets Operator
+# (https://external-secrets.io) to sync one from your backend — Vault, AWS
+# Secrets Manager, Azure Key Vault, GCP Secret Manager, whichever the
+# referenced store fronts.
+#
+# The synced Secret deliberately takes the *same* name the chart's own Secret
+# would have (`<fullname>-secret`), so the backend and scheduler Deployments,
+# the migrate Job and the backup CronJob all keep working unchanged. That is
+# the part the hand-written manifest in docs/DEPLOYMENT.md used to get wrong:
+# it targeted `btagent-secrets` while every consumer mounts `btagent-secret`,
+# so it synced a Secret nothing read.
+#
+# Off by default: it needs a SecretStore that only the operator of a given
+# cluster can create, and turning it on without one is a failed install.
+externalSecrets:
+  enabled: false
+  # ESO promoted these CRDs from v1beta1 to v1 in 0.14. Override if the
+  # cluster runs an older operator.
+  apiVersion: external-secrets.io/v1
+  # How often the operator re-reads the backend. Rotation is only as fast as
+  # this, and a rotated Secret still needs the pods restarted to pick it up
+  # (the chart does not checksum-annotate the Deployments).
+  refreshInterval: 1h
+  secretStoreRef:
+    # Required when enabled — the template fails the render if it is empty.
+    name: ""
+    # `ClusterSecretStore` (cluster-scoped) or `SecretStore` (namespaced).
+    kind: ClusterSecretStore
+  target:
+    creationPolicy: Owner
+    # Retain, so deleting the ExternalSecret does not pull the Secret out from
+    # under running pods.
+    deletionPolicy: Retain
+  # Explicit per-key mapping: env var name -> where it lives in the backend.
+  # `property` picks a field out of a JSON-valued remote secret; `version`
+  # pins a specific version where the backend supports it. Both optional.
+  #
+  #   data:
+  #     BTAGENT_DATABASE_URL:
+  #       key: btagent/production/database-url
+  #     BTAGENT_JWT_SECRET:
+  #       key: btagent/production/app
+  #       property: jwt_secret
+  data: {}
+  # Or pull every key out of a remote secret at once. Combine with `data` if
+  # some keys live elsewhere.
+  #
+  #   dataFrom:
+  #     - extract:
+  #         key: btagent/production/app
+  dataFrom: []
 
 # -- Scheduler (arq worker)
 # Mirrors the `scheduler` service in docker-compose.yml. Uses the backend image
