@@ -241,14 +241,29 @@ set the `KUBE_CONFIG_STAGING` environment secret, then re-enable the
 
 ### B7 — Production hardening is documented but not default *(Medium)*
 
-**Root cause.** `DEPLOYMENT.md` describes the prod nginx config
+**Root cause.** `DEPLOYMENT.md` described the prod nginx config
 (HSTS / CSP / X-Frame-Options), restricted CORS, and external-secrets, but these
-are manual steps; the shipped defaults are dev-grade (wildcard CORS, plain
+were manual steps; the shipped defaults were dev-grade (wildcard CORS, plain
 nginx). See also `ROADMAP.md` "Known Limitations" (CORS, seed data).
 
-**Fix / track.** Fold these into the go-live checklist below; longer term, make
-the hardened nginx config and a CORS-restriction startup assertion the default
-for `BTAGENT_ENV=prod`.
+**Status — closed.** All three are now properties of the shipped artifacts
+rather than instructions:
+
+- **nginx / security headers.** The frontend image and `infra/nginx/nginx.conf`
+  emit HSTS, CSP (with `frame-ancestors`), `X-Frame-Options`,
+  `X-Content-Type-Options` and `Referrer-Policy` by default, and the backend's
+  `SecurityHeadersMiddleware` sets the same baseline so the posture survives a
+  deploy with no nginx in front. Pinned by the Playwright `@nginx` specs.
+- **CORS.** The backend refuses to start under `BTAGENT_ENV=prod` when
+  `BTAGENT_CORS_ORIGINS` is unset, a wildcard, or a localhost origin.
+- **external-secrets.** The chart renders the `ExternalSecret` itself
+  (`externalSecrets.enabled`, `infra/helm/btagent/templates/externalsecret.yaml`),
+  targeting the same `<fullname>-secret` every workload already mounts, and
+  suppresses its own `secretEnv` Secret so the two cannot overwrite each other.
+  Guarded by `backend/tests/test_helm_external_secrets.py`.
+
+TLS termination (certs + the 443 `server` block) remains deliberately manual —
+it needs a certificate that only the operator of a given deployment has.
 
 ---
 
@@ -329,7 +344,8 @@ Phase 5                 enterprise
 - [x] **B5** Admin can log in via a documented, non-leaking bootstrap
       (`bt create-admin`).
 - [ ] **B6** Staging cluster wired; merges to `main` deploy to staging.
-- [ ] **B7** Prod nginx (HSTS/CSP), restricted CORS, external-secrets in place.
+- [x] **B7** Prod nginx (HSTS/CSP), restricted CORS, external-secrets in place.
+      (TLS termination stays manual — see B7 above.)
 - [ ] `BTAGENT_MOCK_CONNECTORS=false` with at least one real connector (#100 P0).
 - [ ] Prod smoke test (`/api/health`) green; PG backup CronJob scheduled.
 

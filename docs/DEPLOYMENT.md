@@ -409,39 +409,59 @@ HPA automatically scales between `minReplicas` and `maxReplicas` based on CPU an
 
 ### 6. Secrets Management
 
-#### Option A: External Secrets Operator
+#### Option A: External Secrets Operator (chart-native)
 
-Install the [External Secrets Operator](https://external-secrets.io/) to sync secrets from AWS Secrets Manager, HashiCorp Vault, or Azure Key Vault:
+Install the [External Secrets Operator](https://external-secrets.io/) and create
+a `SecretStore`/`ClusterSecretStore` for your backend (AWS Secrets Manager,
+HashiCorp Vault, Azure Key Vault, GCP Secret Manager). Then turn it on in
+values — the chart renders the `ExternalSecret` for you:
 
 ```yaml
-# external-secret.yaml
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: btagent-secrets
-  namespace: btagent
-spec:
-  refreshInterval: 1h
+# values-production.yaml (excerpt)
+externalSecrets:
+  enabled: true
   secretStoreRef:
     name: aws-secrets-manager
     kind: ClusterSecretStore
-  target:
-    name: btagent-secrets
   data:
-    - secretKey: BTAGENT_DATABASE_URL
-      remoteRef:
-        key: btagent/production/database-url
-    - secretKey: BTAGENT_JWT_SECRET
-      remoteRef:
-        key: btagent/production/jwt-secret
-    - secretKey: ANTHROPIC_API_KEY
-      remoteRef:
-        key: btagent/production/anthropic-key
+    BTAGENT_DATABASE_URL:
+      key: btagent/production/database-url
+    BTAGENT_REDIS_URL:
+      key: btagent/production/redis-url
+    BTAGENT_JWT_SECRET:
+      key: btagent/production/app
+      # `property` picks one field out of a JSON-valued remote secret.
+      property: jwt_secret
 ```
 
-```bash
-kubectl apply -f external-secret.yaml
+Or pull every key out of one remote secret:
+
+```yaml
+externalSecrets:
+  enabled: true
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  dataFrom:
+    - extract:
+        key: btagent/production/app
 ```
+
+Notes:
+
+- **Do not hand-apply an `ExternalSecret`.** The synced Secret has to be named
+  `<release>-secret` — the name the backend and scheduler Deployments, the
+  migrate Job and the backup CronJob all mount. Targeting any other name syncs
+  a Secret nothing reads, and the backend starts with no `BTAGENT_DATABASE_URL`.
+  Letting the chart render it is what keeps those in step.
+- With `externalSecrets.enabled: true` the chart stops rendering `secretEnv`
+  entirely, so the two paths can never fight over the same Secret. Leaving a
+  literal in `secretEnv` fails the render rather than being silently ignored.
+- Rotation is bounded by `refreshInterval`, and a rotated Secret still needs
+  the pods restarted (`kubectl rollout restart deploy/<release>-backend`) —
+  the chart does not checksum-annotate its Deployments.
+- The CRD group defaults to `external-secrets.io/v1`. On operators older than
+  0.14, set `externalSecrets.apiVersion: external-secrets.io/v1beta1`.
 
 #### Option B: Sealed Secrets
 
