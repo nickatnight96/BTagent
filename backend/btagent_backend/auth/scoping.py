@@ -34,6 +34,50 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type hints
 _ORG_WIDE_ROLES = frozenset({"admin", "incident_commander", "senior_analyst"})
 
 
+def can_access_investigation(
+    user: CurrentUser,
+    investigation: InvestigationRow,
+) -> bool:
+    """Whether ``user`` may access ``investigation``. The single source of truth.
+
+    This is the *predicate*; the two enforcement points wrap it in whatever
+    error their transport speaks — :func:`assert_can_access_investigation`
+    raises a 404 ``HTTPException``, and ``ws.access.assert_can_subscribe``
+    raises ``AccessDenied`` (which becomes a 4404 WebSocket close). Splitting
+    the rule from the error is what lets both share it.
+
+    It exists because they did *not* share it. ``ws/access.py`` carried its
+    own copy of the role set and its own org comparison — and the two had
+    already drifted apart in strictness: the HTTP check denies whenever the
+    org ids differ, while the WS copy only denied when *both* ids were
+    non-``None``, treating a missing org as same-org. That branch was dead
+    (``InvestigationRow.org_id`` is ``nullable=False`` and ``TokenPayload``
+    defaults ``org_id`` to a string, so neither side can be ``None`` today),
+    so nothing was leaking — but a WebSocket carries the entire event stream
+    for a case, and "currently unreachable" is a poor thing to rest a tenant
+    boundary on. The module docstring in ``ws/access.py`` had flagged the
+    duplication as a follow-up since both phases landed; this is it.
+
+    Rules
+    -----
+    * Cross-org access is *always* denied, regardless of role.
+    * ``admin``, ``incident_commander``, and ``senior_analyst`` may access
+      any investigation **within their own org**.
+    * Every other role (``analyst``, or an unrecognized one) may access only
+      investigations where ``assigned_to == user.id``.
+    """
+    # Tenant boundary first: cross-org is never allowed. Compared strictly, so
+    # a missing org id on either side denies rather than waves through.
+    if getattr(investigation, "org_id", None) != getattr(user, "org_id", None):
+        return False
+
+    if user.role in _ORG_WIDE_ROLES:
+        return True
+
+    # Analyst (or any non-org-wide role): must own the investigation.
+    return investigation.assigned_to == user.id
+
+
 def _deny() -> HTTPException:
     """Return the 404 used to mask out-of-scope access (see module docstring)."""
     return HTTPException(
@@ -62,16 +106,11 @@ def assert_can_access_investigation(
     is the same for read and write — but it's part of the API so callers
     document intent and so future policy changes (e.g. read-only viewer
     role) have a hook.
+
+    The rule itself lives in :func:`can_access_investigation`, shared with
+    the WebSocket subscribe check so the two cannot drift.
     """
-    # Tenant boundary first: cross-org never allowed.
-    if getattr(investigation, "org_id", None) != user.org_id:
-        raise _deny()
-
-    if user.role in _ORG_WIDE_ROLES:
-        return
-
-    # Analyst (or any non-org-wide role): must own the investigation.
-    if investigation.assigned_to != user.id:
+    if not can_access_investigation(user, investigation):
         raise _deny()
 
     # ``write`` parameter intentionally unused for the analyst path — both
