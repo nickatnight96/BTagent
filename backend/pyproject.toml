@@ -22,7 +22,12 @@ dependencies = [
     # in transitively by python-jose[cryptography]; pinned explicitly here
     # because auth/mfa.py imports cryptography.fernet directly.
     "pyotp>=2.9.0",
-    "cryptography>=42.0.0",
+    # Floor bumped to 50.0.0 for CVE-2026-69247 (PKCS#7 EnvelopedData decryption
+    # leaks a Bleichenbacher oracle; fixed in 50.0.0) and CVE-2026-69249
+    # (exponential cert path-building on duplicate self-signed intermediates;
+    # fixed in 49.0.0). Both HIGH, both flagged by the Image Vuln Scan against
+    # 48.0.1. Was >=42.0.0.
+    "cryptography>=50.0.0",
     # Generic OIDC SSO (#144 Phase 1b): pure-Python OIDC + JOSE (JWKS / ID-token
     # signature verification via authlib.jose). Pulls ``cryptography`` (already
     # pinned above); no system deps.
