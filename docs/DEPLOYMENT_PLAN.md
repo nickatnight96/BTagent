@@ -272,15 +272,23 @@ it needs a certificate that only the operator of a given deployment has.
 These don't block a deploy from *standing up*, but block running it for real.
 Prioritized; each links to its `ROADMAP.md` v0.4 entry.
 
+Still open:
+
 | Priority | Item | Why it matters | Roadmap |
 |----------|------|----------------|---------|
-| P0 | **Real SIEM/CTI connectors (#100)** | All 9 MCP connectors are mocks (`BTAGENT_MOCK_CONNECTORS=true`); with mocks the product returns canned data. | v0.4 "Real Connector Implementations" |
-| P0 | **JWT revocation + refresh rotation** | Tokens can't be revoked and refresh tokens aren't rotated — logout/compromise can't be enforced. | v0.4 "Authentication Hardening" |
-| P1 | **Hardened CORS default** | Dev config uses wildcard methods/headers (ties to B7). | v0.4 + Known Limitations |
-| P1 | **Deep health checks + graceful shutdown** | `/health` should verify DB/Redis/MinIO; in-flight requests should drain on rollout. | v0.4 "Operational Improvements" |
-| P2 | **SSO (SAML 2.0 / OIDC), MFA (TOTP)** | Enterprise auth requirement. | v0.4 "Authentication Hardening" |
-| P2 | **PDF report export** | Reports are text-only in-app today. | v0.4 "Report Export" |
-| P2 | **Perf: query/index tuning, caching, bundle splitting** | High-concurrency readiness. | v0.4 "Performance Optimization" |
+| P0 | **Real SIEM/CTI connectors (#100)** | All 27 registered MCP connectors are mock-first (`BTAGENT_MOCK_CONNECTORS`, default on) and every live path raises `NotImplementedError`; with mocks the product returns canned data. | v0.4 "Real Connector Implementations" |
+| P2 | **Perf: query/index tuning, caching, bundle splitting** | High-concurrency readiness. Some index work has landed (see `migrations/versions/0010_perf_indexes.py`); caching and bundle splitting have not been measured. | v0.4 "Performance Optimization" |
+
+Closed since this table was written — each verified against the code, not
+assumed, and pinned by `backend/tests/test_roadmap_limitations.py`:
+
+| Priority | Item | Where it landed |
+|----------|------|-----------------|
+| ~~P0~~ | **JWT revocation + refresh rotation** | `auth/revocation.py` (per-user epoch + family revocation), `auth/jwt.py` (`fid` rotation with reuse detection), `POST /auth/revoke/{user_id}` |
+| ~~P1~~ | **Hardened CORS default** | `main.py` — explicit method/header allow-lists; prod startup refuses a wildcard or localhost origin |
+| ~~P1~~ | **Deep health checks + graceful shutdown** | `api/v1/health.py` `/health/ready` checks DB, Redis, S3 and the revocation store concurrently; `lifespan` drains in-flight work on SIGTERM |
+| ~~P2~~ | **SSO (SAML 2.0 / OIDC), MFA (TOTP)** | `auth/saml.py`, `auth/oidc.py`, `api/v1/sso.py`, `api/v1/mfa.py` |
+| ~~P2~~ | **PDF report export** | `GET /reports/investigations/{id}/export?format=pdf` via `services/report_pdf.py` |
 
 ---
 
