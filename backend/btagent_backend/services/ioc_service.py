@@ -20,6 +20,49 @@ logger = logging.getLogger("btagent.services.ioc")
 
 
 # ---------------------------------------------------------------------------
+# Tenant scope
+# ---------------------------------------------------------------------------
+
+
+def _require_tenant_scope(
+    *,
+    investigation_id: str | None,
+    investigation_id_in: list[str] | None,
+) -> None:
+    """Refuse to run an IOC query that carries no tenant scope at all.
+
+    ``IOCRow`` has an ``org_id``, but these queries scope by *parent
+    investigation* rather than by that column, because a plain analyst is
+    additionally restricted to cases assigned to them — a rule that only
+    exists on ``InvestigationRow``. So the tenant boundary here is whichever
+    of two arguments the caller supplied:
+
+    * ``investigation_id`` — a single parent the caller has already run
+      through :func:`assert_can_access_investigation`; or
+    * ``investigation_id_in`` — the full set of parents the caller may read,
+      computed by the API layer from ``org_id`` (+ ownership for analysts).
+
+    Both being ``None`` used to mean "no filter", i.e. every IOC in every
+    tenant. No caller does that today, but nothing said so: it was the
+    default, so forgetting an argument was enough. This turns that from a
+    silent full-tenant read into a loud programming error.
+
+    Raises
+    ------
+    ValueError
+        If neither scope was supplied. Deliberately not an ``HTTPException``
+        — reaching this is a bug in a caller, not bad input from a user.
+    """
+    if investigation_id is None and investigation_id_in is None:
+        raise ValueError(
+            "IOC query requires a tenant scope: pass investigation_id (already "
+            "access-checked by the caller) or investigation_id_in (the caller's "
+            "accessible parent set). Passing neither would return every IOC in "
+            "every organization."
+        )
+
+
+# ---------------------------------------------------------------------------
 # Create
 # ---------------------------------------------------------------------------
 
@@ -178,11 +221,19 @@ async def list_iocs(
         investigation_id is in this list. Used by the API layer to enforce
         per-tenant scoping; an empty list yields no rows.
 
+        May be ``None`` *only* when ``investigation_id`` pins a single parent
+        the caller has already access-checked. Passing neither raises — see
+        :func:`_require_tenant_scope`.
+
     Returns
     -------
     tuple[list[IOCRow], int]
         (rows, total_count)
     """
+    _require_tenant_scope(
+        investigation_id=investigation_id, investigation_id_in=investigation_id_in
+    )
+
     query = select(IOCRow).order_by(IOCRow.first_seen.desc().nullslast())
     count_query = select(func.count(IOCRow.id))
 
@@ -245,38 +296,48 @@ async def list_iocs(
 async def search_cross_investigation(
     db: AsyncSession,
     *,
+    investigation_id_in: list[str],
     value: str | None = None,
     ioc_type: str | None = None,
     confidence_min: float | None = None,
     page: int = 1,
     page_size: int = 50,
-    investigation_id_in: list[str] | None = None,
 ) -> tuple[list[IOCRow], int]:
-    """Search IOCs across all investigations.
+    """Search IOCs across the investigations the caller may see.
 
     This enables analysts to find if an IOC has appeared in other cases,
     supporting correlation and pattern detection.
 
     Parameters
     ----------
-    investigation_id_in : list[str] | None
-        AUTH-B1: when supplied, restrict results to IOCs whose parent
-        investigation_id is in this list. Used by the API layer to enforce
-        per-tenant scoping; an empty list yields no rows.
+    investigation_id_in : list[str]
+        AUTH-B1: the parent investigations the caller is allowed to read.
+        Results are restricted to IOCs whose ``investigation_id`` is in this
+        list; an empty list yields no rows.
+
+        **Required, and deliberately has no default.** It used to default to
+        ``None``, meaning "no tenant filter" — so a caller who simply forgot
+        the argument got every IOC in every tenant, and nothing (no type
+        error, no test, no reviewer prompt) would have said so. A tenant
+        boundary must not be something you opt into. The API layer computes
+        this set from ``org_id`` and, for plain analysts, ownership.
 
     Returns
     -------
     tuple[list[IOCRow], int]
         (rows, total_count)
     """
-    query = select(IOCRow).order_by(IOCRow.first_seen.desc().nullslast())
-    count_query = select(func.count(IOCRow.id))
+    if not investigation_id_in:
+        return [], 0
 
-    if investigation_id_in is not None:
-        if not investigation_id_in:
-            return [], 0
-        query = query.where(IOCRow.investigation_id.in_(investigation_id_in))
-        count_query = count_query.where(IOCRow.investigation_id.in_(investigation_id_in))
+    query = (
+        select(IOCRow)
+        .where(IOCRow.investigation_id.in_(investigation_id_in))
+        .order_by(IOCRow.first_seen.desc().nullslast())
+    )
+    count_query = select(func.count(IOCRow.id)).where(
+        IOCRow.investigation_id.in_(investigation_id_in)
+    )
 
     if value:
         # Partial match search
@@ -305,11 +366,11 @@ async def search_cross_investigation(
 async def search_notebook(
     db: AsyncSession,
     *,
+    investigation_id_in: list[str],
     q: str | None = None,
     disposition: str | None = None,
     page: int = 1,
     page_size: int = 50,
-    investigation_id_in: list[str] | None = None,
 ) -> tuple[list[IOCRow], int]:
     """Search analyst-annotated IOCs across investigations (#108 UC-5.2).
 
@@ -324,15 +385,19 @@ async def search_notebook(
 
     Parameters
     ----------
-    investigation_id_in : list[str] | None
-        AUTH-B1: when supplied, restrict results to IOCs whose parent
-        investigation_id is in this list; an empty list yields no rows.
+    investigation_id_in : list[str]
+        AUTH-B1: the parent investigations the caller is allowed to read.
+        An empty list yields no rows. Required with no default, for the same
+        reason as :func:`search_cross_investigation` — see its docstring.
 
     Returns
     -------
     tuple[list[IOCRow], int]
         (rows, total_count)
     """
+    if not investigation_id_in:
+        return [], 0
+
     # ``tags`` cast to text works on both PostgreSQL (jsonb::text) and the
     # SQLite test dialect (JSON stored as text) — an empty array is '[]'.
     tags_text = cast(IOCRow.tags, Text)
@@ -343,14 +408,9 @@ async def search_notebook(
         tags_text != "[]",
     )
 
-    query = select(IOCRow).where(annotated)
-    count_query = select(func.count(IOCRow.id)).where(annotated)
-
-    if investigation_id_in is not None:
-        if not investigation_id_in:
-            return [], 0
-        query = query.where(IOCRow.investigation_id.in_(investigation_id_in))
-        count_query = count_query.where(IOCRow.investigation_id.in_(investigation_id_in))
+    scoped = IOCRow.investigation_id.in_(investigation_id_in)
+    query = select(IOCRow).where(annotated, scoped)
+    count_query = select(func.count(IOCRow.id)).where(annotated, scoped)
 
     if q:
         like_pattern = f"%{q}%"
