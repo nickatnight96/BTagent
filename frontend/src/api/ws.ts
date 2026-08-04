@@ -16,6 +16,32 @@ type OnErrorCallback = (error: Event) => void;
 /** Handle returned by every `on*` registration; call it to deregister. */
 export type Unsubscribe = () => void;
 
+/**
+ * Close codes that mean "retrying will not help".
+ *
+ * The backend closes an unauthorized subscribe with **4404** — deliberately
+ * in the 4000-4999 range so browsers deliver it cleanly rather than
+ * collapsing it to a generic 1006 — and falls back to **1008** if a transport
+ * rejects the custom code. Both encode an authorization *decision*: this user
+ * may not stream this case. Nothing about reconnecting changes that.
+ *
+ * Reconnecting on them anyway is what this client used to do, because
+ * `onclose` retried on every non-intentional close. The result was a stale or
+ * revoked tab hammering the server forever — a WS handshake, a JWT decode and
+ * an investigation lookup every `maxReconnectDelay` (30s by default), per
+ * client, with no upper bound — while the user saw only a page that silently
+ * never received events. The close code the backend went to trouble to encode
+ * was emitted, delivered, and thrown away.
+ *
+ * 1006 (abnormal), 1011 (server error), 1012/1013 (restart/try-later) and a
+ * server-initiated 1000 stay retryable: those are transport or lifecycle
+ * conditions that a later attempt genuinely can resolve.
+ */
+export const TERMINAL_CLOSE_CODES: ReadonlySet<number> = new Set([
+  4404, // access denied / not found — see backend ws/access.py
+  1008, // policy violation (the 4404 fallback)
+]);
+
 interface WebSocketClientOptions {
   url?: string;
   onEvent?: OnEventCallback;
@@ -95,6 +121,16 @@ export class WebSocketClient {
   private intentionalClose = false;
 
   /**
+   * Set once the server closes us with a code in {@link TERMINAL_CLOSE_CODES}.
+   *
+   * Distinct from `intentionalClose` (which means *we* hung up): this is the
+   * server refusing, and it suppresses reconnects until something changes the
+   * caller's situation. `connect()` clears it, so re-authenticating or
+   * navigating to a case the user can actually see recovers without a reload.
+   */
+  private terminalClose: { code: number; reason: string } | null = null;
+
+  /**
    * Channels this client wants to be on. Kept independently of the socket so
    * the subscriptions can be replayed after a reconnect — otherwise a dropped
    * connection silently downgrades the workspace to a global-only stream.
@@ -168,6 +204,10 @@ export class WebSocketClient {
    */
   connect(): void {
     this.intentionalClose = false;
+    // An explicit connect is the caller saying the situation changed — a new
+    // token, a different case. Clear the latch so a refused socket is not a
+    // permanent one requiring a page reload.
+    this.terminalClose = null;
     if (
       this.ws &&
       (this.ws.readyState === WebSocket.CONNECTING ||
@@ -220,9 +260,16 @@ export class WebSocketClient {
       if (this.ws !== ws) return;
       this.ws = null;
       this.stopHeartbeat();
+
+      // Latch *before* notifying, so a listener that inspects
+      // `isTerminallyClosed` from inside its own callback sees the truth.
+      if (TERMINAL_CLOSE_CODES.has(event.code)) {
+        this.terminalClose = { code: event.code, reason: event.reason };
+      }
+
       this.disconnectListeners.emit(event.code, event.reason);
 
-      if (!this.intentionalClose) {
+      if (!this.intentionalClose && !this.terminalClose) {
         this.scheduleReconnect();
       }
     };
@@ -311,7 +358,12 @@ export class WebSocketClient {
         this.reconnectDelay * 2,
         this.maxReconnectDelay,
       );
-      if (!this.intentionalClose) {
+      // Belt-and-braces. With the `onclose` guard in place no timer is ever
+      // armed after a refusal, so this branch is unreachable today and no
+      // test can reach it — deliberately not dressed up as load-bearing. It
+      // costs nothing and means a future call site that schedules a retry
+      // without checking the latch still cannot restart the loop.
+      if (!this.intentionalClose && !this.terminalClose) {
         this.doConnect();
       }
     }, this.reconnectDelay);
@@ -420,6 +472,22 @@ export class WebSocketClient {
 
   get isConnected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /**
+   * True when the server refused this client and no reconnect is pending.
+   *
+   * Lets the UI distinguish "disconnected, retrying" — which resolves itself —
+   * from "you may not stream this case", which does not. Without it both look
+   * identical to a user: a page that simply stops updating.
+   */
+  get isTerminallyClosed(): boolean {
+    return this.terminalClose !== null;
+  }
+
+  /** The refusal's `{ code, reason }`, or null if we were not refused. */
+  get terminalCloseInfo(): { code: number; reason: string } | null {
+    return this.terminalClose;
   }
 }
 
