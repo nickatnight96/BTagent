@@ -476,3 +476,141 @@ describe("WebSocketClient — connect idempotency and reconnect hygiene", () => 
     expect(client.isConnected).toBe(false);
   });
 });
+
+/**
+ * An authorization refusal is a decision, not an outage.
+ *
+ * `ws/access.py` closes an unauthorized subscribe with **4404** — chosen in
+ * the 4000-4999 range precisely so browsers deliver it instead of collapsing
+ * it to a generic 1006 — and falls back to **1008** if the transport rejects
+ * the custom code. This client used to reconnect on every non-intentional
+ * close, so that carefully-encoded signal was delivered and thrown away, and
+ * a stale or revoked tab retried forever: a handshake, a JWT decode and an
+ * investigation lookup every 30s per client, indefinitely, while the user saw
+ * only a page that quietly stopped updating.
+ */
+describe("WebSocketClient — terminal close codes", () => {
+  function connected(initialReconnectDelayMs = 10) {
+    const client = new WebSocketClient({
+      url: "ws://localhost:8000/ws",
+      initialReconnectDelayMs,
+    });
+    client.connect();
+    instances[0]!.open();
+    return client;
+  }
+
+  it.each([
+    [4404, "not found"],
+    [1008, "policy violation"],
+  ])("does not reconnect after a %i close", (code, reason) => {
+    vi.useFakeTimers();
+    const client = connected();
+
+    instances[0]!.serverClose(code, reason);
+    vi.advanceTimersByTime(120_000);
+
+    expect(instances).toHaveLength(1);
+    expect(client.isTerminallyClosed).toBe(true);
+    expect(client.terminalCloseInfo).toEqual({ code, reason });
+  });
+
+  it.each([
+    [1006, "abnormal"],
+    [1011, "server error"],
+    [1012, "service restart"],
+    [1000, "server hung up"],
+  ])("still reconnects after a %i close", (code, reason) => {
+    vi.useFakeTimers();
+    const client = connected();
+
+    instances[0]!.serverClose(code, reason);
+    vi.advanceTimersByTime(50);
+
+    expect(instances.length).toBeGreaterThan(1);
+    expect(client.isTerminallyClosed).toBe(false);
+    expect(client.terminalCloseInfo).toBeNull();
+  });
+
+  it("reports the refusal to disconnect listeners", () => {
+    const onDisconnect = vi.fn();
+    const client = new WebSocketClient({
+      url: "ws://localhost:8000/ws",
+      onDisconnect,
+    });
+    client.connect();
+    instances[0]!.open();
+
+    instances[0]!.serverClose(4404, "not found");
+
+    expect(onDisconnect).toHaveBeenCalledWith(4404, "not found");
+  });
+
+  it("latches before notifying, so a listener sees the terminal state", () => {
+    // Otherwise a listener that reacts by inspecting the client would decide
+    // "still retrying" during the very callback announcing the refusal.
+    let seen: boolean | null = null;
+    const client = new WebSocketClient({ url: "ws://localhost:8000/ws" });
+    client.onDisconnect(() => {
+      seen = client.isTerminallyClosed;
+    });
+    client.connect();
+    instances[0]!.open();
+
+    instances[0]!.serverClose(4404, "not found");
+
+    expect(seen).toBe(true);
+  });
+
+  it("schedules no reconnect timer at all after a refusal", () => {
+    // Distinguishes the two guards. The timer's own `!terminalClose` check
+    // would neuter a scheduled retry, so a test that only counts sockets
+    // passes even if the call-site guard is removed — the loop is stopped,
+    // but a pointless timer is armed and the backoff keeps doubling. This
+    // asserts the call site itself declined to schedule.
+    vi.useFakeTimers();
+    const client = connected();
+    // Open socket => one heartbeat interval pending.
+    expect(vi.getTimerCount()).toBe(1);
+
+    instances[0]!.serverClose(4404, "not found");
+
+    // The close stops the heartbeat; nothing must replace it. A count of 1
+    // here means a reconnect was armed and merely neutered later — which is
+    // the M1 regression, and why `toBeLessThanOrEqual` was not good enough:
+    // -1 heartbeat +1 reconnect lands on the same number.
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.isTerminallyClosed).toBe(true);
+  });
+
+  it("connect() clears the latch so re-auth recovers without a reload", () => {
+    vi.useFakeTimers();
+    const client = connected();
+    instances[0]!.serverClose(4404, "not found");
+    expect(client.isTerminallyClosed).toBe(true);
+
+    client.connect();
+
+    expect(client.isTerminallyClosed).toBe(false);
+    expect(client.terminalCloseInfo).toBeNull();
+    expect(instances).toHaveLength(2);
+  });
+
+  it("a refusal on a retry does not restart the loop", () => {
+    // The ordering that a call-site-only guard misses: a transient close
+    // schedules a reconnect, and the connection it produces is refused.
+    vi.useFakeTimers();
+    const client = connected();
+
+    instances[0]!.serverClose(1006, "abnormal");
+    vi.advanceTimersByTime(50);
+    expect(instances).toHaveLength(2);
+
+    instances[1]!.open();
+    instances[1]!.serverClose(4404, "not found");
+    vi.advanceTimersByTime(120_000);
+
+    expect(instances).toHaveLength(2);
+    expect(client.isTerminallyClosed).toBe(true);
+  });
+});
