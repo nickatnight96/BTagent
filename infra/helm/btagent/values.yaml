@@ -188,11 +188,33 @@ env:
   BTAGENT_LOG_LEVEL: info
   BTAGENT_OTEL_ENABLED: "true"
 
+# -- Use a Secret you created and manage yourself.
+#
+# When set, the chart renders no Secret of its own and every workload mounts
+# this name instead. It must contain the same keys `secretEnv` lists below —
+# at minimum BTAGENT_DATABASE_URL, BTAGENT_REDIS_URL and BTAGENT_JWT_SECRET:
+#
+#   kubectl create secret generic btagent-secrets -n btagent \
+#     --from-literal=BTAGENT_DATABASE_URL='postgresql+asyncpg://...' \
+#     --from-literal=BTAGENT_REDIS_URL='redis://...' \
+#     --from-literal=BTAGENT_JWT_SECRET="$(openssl rand -hex 32)"
+#
+#   helm install btagent ... --set existingSecret=btagent-secrets
+#
+# The chart does not validate the Secret's *contents* — it cannot read it at
+# render time. A missing key surfaces as the backend failing to start, not as
+# a Helm error.
+#
+# Mutually exclusive with `externalSecrets.enabled`, and any literal left in
+# `secretEnv` fails the render rather than being silently ignored.
+existingSecret: ""
+
 # -- Secrets, as literals rendered into a Kubernetes Secret by the chart.
 #
-# Used only when `externalSecrets.enabled` is false. Anything set here ends up
-# base64'd (not encrypted) in the release, so for anything beyond a local or
-# demo install prefer `externalSecrets` below.
+# Used only when both `existingSecret` is empty and `externalSecrets.enabled`
+# is false. Anything set here ends up base64'd (not encrypted) in the release,
+# so for anything beyond a local or demo install prefer `existingSecret` or
+# `externalSecrets` below.
 secretEnv:
   BTAGENT_DATABASE_URL: ""
   BTAGENT_REDIS_URL: ""

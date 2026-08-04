@@ -1,0 +1,24 @@
+{{- /*
+Cross-cutting value validation.
+
+This template renders no manifest — it exists so the checks below run on every
+`helm template` / `install` / `upgrade`, including the value combinations where
+the template that *would* naturally hold a check is not rendered at all. The
+`existingSecret` + `secretEnv` guard is exactly that case: secret.yaml is
+skipped when `existingSecret` is set, so a check living there could never fire.
+
+Failing the render beats failing the deploy. Every case below otherwise
+installs cleanly and then does not work.
+*/ -}}
+
+{{- if and .Values.existingSecret .Values.externalSecrets.enabled }}
+{{- fail "existingSecret and externalSecrets.enabled are mutually exclusive: the first says you manage the Secret yourself, the second asks the External Secrets Operator to own one. Pick whichever is true and clear the other." }}
+{{- end }}
+
+{{- if .Values.existingSecret }}
+{{- range $key, $value := .Values.secretEnv }}
+{{- if $value }}
+{{- fail (printf "existingSecret is set, but secretEnv.%s carries a literal value. With existingSecret the chart renders no Secret at all, so that credential would be silently ignored while still sitting in plaintext in values. Put it in the Secret you supplied and clear it here." $key) }}
+{{- end }}
+{{- end }}
+{{- end }}

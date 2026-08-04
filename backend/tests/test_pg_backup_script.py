@@ -26,11 +26,13 @@ that the script uses a check that actually reads the archive.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 _REPO = Path(__file__).resolve().parents[2]
 _SCRIPT = _REPO / "infra" / "scripts" / "pg-backup.sh"
@@ -227,15 +229,25 @@ def test_doc_does_not_promise_a_chart_value_that_does_not_exist(deployment_doc: 
     It added a map key named `existingSecret` instead of pointing anything at
     a pre-made Secret, so the release rendered a Secret holding that one
     meaningless entry and no database URL.
+
+    The chart has since grown real top-level `existingSecret` support, so the
+    check is now two-sided: the broken nested form must stay gone, and the
+    form the doc *does* hand out has to be one the chart declares.
     """
-    chart_values = (_REPO / "infra" / "helm" / "btagent" / "values.yaml").read_text(
-        encoding="utf-8"
+    chart_values = yaml.safe_load(
+        (_REPO / "infra" / "helm" / "btagent" / "values.yaml").read_text(encoding="utf-8")
     )
     instructions = _instructions(deployment_doc)
-    if "existingSecret" not in chart_values:
-        assert "secretEnv.existingSecret" not in instructions, (
-            "the doc sets a chart value that does not exist; if support was added, "
-            "this test flips automatically once values.yaml declares it"
+
+    assert "secretEnv.existingSecret" not in instructions, (
+        "`existingSecret` is a top-level value, not a key inside the secretEnv map; "
+        "the nested form silently renders a Secret with one meaningless entry"
+    )
+
+    for match in re.finditer(r"--set\s+([A-Za-z_][\w.]*)=", instructions):
+        root = match.group(1).split(".", 1)[0]
+        assert root in chart_values, (
+            f"the doc sets `{match.group(1)}`, but the chart declares no `{root}` value"
         )
 
 

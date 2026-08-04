@@ -100,9 +100,23 @@ def test_target_name_is_the_name_every_workload_actually_mounts(es_src: str):
 
 
 def test_chart_secret_and_external_secret_are_mutually_exclusive(es_src: str, secret_src: str):
-    """Both rendering means Helm and the operator overwrite each other."""
+    """Both rendering means Helm and the operator overwrite each other.
+
+    Asserted as a property of the guard rather than its exact text: the
+    chart's Secret must be suppressed whenever the operator owns one. The
+    guard also covers `existingSecret` (a third source), which is why this
+    no longer pins the literal opening line.
+    """
     assert es_src.lstrip().startswith("{{- if .Values.externalSecrets.enabled -}}")
-    assert secret_src.lstrip().startswith("{{- if not .Values.externalSecrets.enabled -}}")
+
+    guard = secret_src.lstrip().split("\n", 1)[0]
+    assert guard.startswith("{{- if "), f"secret.yaml is not guarded at all: {guard!r}"
+    assert "not .Values.externalSecrets.enabled" in guard, (
+        f"secret.yaml renders even when the operator owns the Secret: {guard!r}"
+    )
+    assert "not .Values.existingSecret" in guard, (
+        f"secret.yaml renders even when the user supplied their own Secret: {guard!r}"
+    )
 
 
 @pytest.mark.parametrize("template", [_EXTERNAL_SECRET, _SECRET])

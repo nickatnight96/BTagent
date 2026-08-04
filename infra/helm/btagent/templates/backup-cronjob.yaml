@@ -45,7 +45,7 @@ spec:
               # actually serving traffic.
               envFrom:
                 - secretRef:
-                    name: {{ include "btagent.fullname" . }}-secret
+                    name: {{ include "btagent.secretName" . }}
               command:
                 - /bin/sh
                 - -ec

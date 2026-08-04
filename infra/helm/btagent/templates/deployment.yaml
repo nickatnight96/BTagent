@@ -40,7 +40,7 @@ spec:
             - configMapRef:
                 name: {{ include "btagent.fullname" . }}-config
             - secretRef:
-                name: {{ include "btagent.fullname" . }}-secret
+                name: {{ include "btagent.secretName" . }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
           readinessProbe:
@@ -213,7 +213,7 @@ spec:
             - configMapRef:
                 name: {{ include "btagent.fullname" . }}-config
             - secretRef:
-                name: {{ include "btagent.fullname" . }}-secret
+                name: {{ include "btagent.secretName" . }}
           resources:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
           {{- with .Values.extraVolumeMounts }}
