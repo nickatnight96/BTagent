@@ -16,7 +16,7 @@
 // Enums (mirrors Python StrEnum — lowercase string literals)
 // --------------------------------------------------------------------------- //
 
-export type IdentityProvider = "okta" | "entra" | "google_workspace" | "generic";
+export type IdentityProvider = "okta" | "entra" | "google_workspace" | "duo" | "generic";
 
 export type IdentityEntityKind =
   | "user"

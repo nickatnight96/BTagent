@@ -10,7 +10,10 @@ export type HuntDomain =
   | "identity"
   | "cloud"
   | "cross_investigation"
-  | "agentic";
+  | "agentic"
+  | "email"
+  | "deception"
+  | "ndr";
 
 export type HuntSource =
   | "hunt_pack"
@@ -19,6 +22,9 @@ export type HuntSource =
   | "cloud"
   | "cross_investigation"
   | "agentic"
+  | "email_security"
+  | "deception"
+  | "ndr"
   | "manual";
 
 export type HuntFindingState =
