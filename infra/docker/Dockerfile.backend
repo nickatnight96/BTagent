@@ -85,22 +85,45 @@ COPY --from=builder /app/ /app/
 # fixed 78.1.1) and msgpack GHSA-6v7p-g79w-8964 (out-of-bounds read on
 # Unpacker reuse, fixed 1.2.1). Drop an entry once the upstream that pulls it
 # in ships a version at or above the floor.
-# The verification is not ceremony: the first attempt at this fix lived in the
-# builder, changed nothing in the final image, and the only symptom was the
-# scanner reporting the *same* versions — a silent no-op. Failing the build at
-# this step names the problem instead.
-ARG SITE_PACKAGES=/usr/local/lib/python3.14/site-packages
-RUN uv pip install --system --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1" \
+# Uses ``pip``, not ``uv``, and sweeps orphans afterwards. Both details are
+# load-bearing, and both were learned the hard way on this branch:
+#
+#   * ``uv pip install --upgrade`` reported `+ setuptools==83.0.0` with no
+#     matching `-` line — it *added* the new distribution instead of replacing
+#     the copied-in one, because a package that arrived via `COPY --from` was
+#     never installed from uv's point of view. pip performs a real uninstall of
+#     what it finds on disk.
+#   * even so, a dist-info directory the resolver does not consider "installed"
+#     can survive, and Trivy's python-pkg analyzer reports *every* dist-info it
+#     finds — so the superseded one is still a finding. The sweep deletes any
+#     dist-info whose version is not the one now resolved.
+#
+# The verification then fails the build if a floor is unmet or an orphan
+# remains. Two earlier attempts here were silent no-ops whose only symptom was
+# the scanner reporting unchanged versions; a supply-chain step that quietly
+# does nothing is worse than one that fails loudly.
+RUN python -m pip install --no-cache-dir --upgrade \
+        "setuptools>=78.1.1" "msgpack>=1.2.1" \
+    && SP="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" \
+    && for pkg in setuptools msgpack; do \
+         keep="$(python -c "import importlib.metadata as m; print(m.version('$pkg'))")"; \
+         for d in "$SP/$pkg"-*.dist-info; do \
+           [ -e "$d" ] || continue; \
+           case "$d" in \
+             *"-$keep.dist-info") ;; \
+             *) echo "removing superseded metadata: $d"; rm -rf "$d" ;; \
+           esac; \
+         done; \
+         n=$(ls -d "$SP/$pkg"-*.dist-info 2>/dev/null | wc -l); \
+         [ "$n" = "1" ] || { echo "expected exactly 1 $pkg dist-info, found $n"; \
+           ls -d "$SP/$pkg"-*.dist-info; exit 1; }; \
+       done \
     && python -c "\
 import importlib.metadata as m;\
 v = lambda n: tuple(int(p) for p in m.version(n).split('.')[:3]);\
 assert v('setuptools') >= (78, 1, 1), m.version('setuptools');\
-assert v('msgpack') >= (1, 2, 1), m.version('msgpack')" \
-    && for pkg in setuptools msgpack; do \
-         n=$(ls -d "$SITE_PACKAGES/$pkg"-*.dist-info 2>/dev/null | wc -l); \
-         [ "$n" = "1" ] || { echo "expected 1 $pkg dist-info, found $n:"; \
-           ls -d "$SITE_PACKAGES/$pkg"-*.dist-info; exit 1; }; \
-       done
+assert v('msgpack') >= (1, 2, 1), m.version('msgpack');\
+print('remediated:', m.version('setuptools'), m.version('msgpack'))"
 
 # Set ownership
 RUN chown -R btagent:btagent /app
