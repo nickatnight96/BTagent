@@ -53,24 +53,6 @@ COPY backend/alembic.ini backend/
 COPY backend/migrations/ backend/migrations/
 RUN cd backend && uv pip install --system -e .
 
-# Supply-chain remediation for packages the image scan flags that no
-# ``pyproject.toml`` can pin:
-#
-#   * ``setuptools`` ships inside the base image itself;
-#   * ``msgpack`` arrives transitively through the agent runtime.
-#
-# Neither is a declared dependency of any workspace package, so the image build
-# is the only place the floor can be expressed. Kept as an explicit, dated list
-# rather than a blanket ``--upgrade`` of everything: a blanket upgrade would
-# silently move pinned runtime deps and turn a security fix into an
-# unreviewable version bump.
-#
-# 2026-08-05 — setuptools CVE-2025-47273 (path traversal in PackageIndex,
-# fixed 78.1.1) and msgpack GHSA-6v7p-g79w-8964 (out-of-bounds read on
-# Unpacker reuse, fixed 1.2.1). Drop an entry once the upstream that pulls it
-# in ships a version at or above the floor.
-RUN uv pip install --system --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
-
 # Stage 2: Production
 FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}}
 
@@ -82,6 +64,43 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.14/site-packages/ /usr/local/lib/python3.14/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY --from=builder /app/ /app/
+
+# Supply-chain remediation for packages the image scan flags that no
+# ``pyproject.toml`` can pin: ``setuptools`` ships inside the base image
+# itself, and ``msgpack`` arrives transitively through the agent runtime.
+#
+# This MUST run in the final stage, not the builder. ``COPY --from`` *merges*
+# into the destination and cannot delete: stage 2 starts from a fresh
+# ``${BASE_IMAGE}`` carrying its own ``setuptools-70.3.0.dist-info``, so
+# copying an upgraded tree over it leaves both dist-info directories present
+# and the scanner keeps reading the old one. Upgrading here instead runs a
+# real uninstall/install against the final filesystem, so the superseded
+# distribution is actually removed.
+#
+# Kept as an explicit, dated list rather than a blanket ``--upgrade`` of
+# everything: a blanket upgrade would silently move pinned runtime deps and
+# turn a security fix into an unreviewable version bump.
+#
+# 2026-08-05 — setuptools CVE-2025-47273 (path traversal in PackageIndex,
+# fixed 78.1.1) and msgpack GHSA-6v7p-g79w-8964 (out-of-bounds read on
+# Unpacker reuse, fixed 1.2.1). Drop an entry once the upstream that pulls it
+# in ships a version at or above the floor.
+# The verification is not ceremony: the first attempt at this fix lived in the
+# builder, changed nothing in the final image, and the only symptom was the
+# scanner reporting the *same* versions — a silent no-op. Failing the build at
+# this step names the problem instead.
+ARG SITE_PACKAGES=/usr/local/lib/python3.14/site-packages
+RUN uv pip install --system --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1" \
+    && python -c "\
+import importlib.metadata as m;\
+v = lambda n: tuple(int(p) for p in m.version(n).split('.')[:3]);\
+assert v('setuptools') >= (78, 1, 1), m.version('setuptools');\
+assert v('msgpack') >= (1, 2, 1), m.version('msgpack')" \
+    && for pkg in setuptools msgpack; do \
+         n=$(ls -d "$SITE_PACKAGES/$pkg"-*.dist-info 2>/dev/null | wc -l); \
+         [ "$n" = "1" ] || { echo "expected 1 $pkg dist-info, found $n:"; \
+           ls -d "$SITE_PACKAGES/$pkg"-*.dist-info; exit 1; }; \
+       done
 
 # Set ownership
 RUN chown -R btagent:btagent /app
