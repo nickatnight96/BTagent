@@ -209,6 +209,92 @@ async def test_bulk_block_safelisted_target_refused_and_audited(client: AsyncCli
     assert not [r for r in rows if r.outcome == "success"]
 
 
+async def test_disable_account_on_safelisted_principal_refused_and_audited(
+    client: AsyncClient, db_session
+):
+    """Disabling a safelisted account is refused — the break-glass-admin case.
+
+    Until this landed, ``disable_account`` was not in the safelist-screened set
+    at all: the screen covered blocklist targets and cloud IAM principals, so an
+    approved request to disable the break-glass admin dispatched without ever
+    consulting the never-touch list. An account identifier is the same class of
+    thing the ``principal`` entry kind already holds, so this needed no new
+    entry kind — only routing the action to the list that was already there.
+    """
+    org_id, user_id, token = await _seed_ic(db_session)
+
+    add = await client.post(
+        "/api/v1/containment/safelist",
+        json={
+            "entry_type": "principal",
+            "value": "breakglass-admin@corp.example",
+            "reason": "break-glass account — never disable",
+        },
+        headers=auth_header(token),
+    )
+    assert add.status_code == 201, add.text
+
+    resp = await client.post(
+        "/api/v1/containment/execute/response-action",
+        json={
+            "action_id": "act_disable_1",
+            "action_type": "disable_account",
+            "connector": "okta",
+            "target": "breakglass-admin@corp.example",
+            "approved": True,
+        },
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 403, resp.text
+    detail = resp.json()["detail"]
+    assert detail["outcome"] == "denied"
+    assert detail["approver_id"] == user_id
+
+    rows = await _audit_rows(db_session, org_id=org_id)
+    denials = [r for r in rows if r.outcome == "denied"]
+    assert len(denials) == 1
+    assert denials[0].action == "execute:disable_account"
+    assert "safelist" in denials[0].details.get("reason", "").lower()
+    # Nothing was dispatched.
+    assert not [r for r in rows if r.outcome == "success"]
+
+
+async def test_disable_account_off_the_safelist_still_executes(client: AsyncClient, db_session):
+    """Guard the guard: the new screen must refuse the safelisted account only.
+
+    Without this, routing every ``disable_account`` to a denial would satisfy
+    the test above while breaking the feature outright.
+    """
+    org_id, user_id, token = await _seed_ic(db_session)
+
+    await client.post(
+        "/api/v1/containment/safelist",
+        json={
+            "entry_type": "principal",
+            "value": "breakglass-admin@corp.example",
+            "reason": "break-glass account",
+        },
+        headers=auth_header(token),
+    )
+
+    resp = await client.post(
+        "/api/v1/containment/execute/response-action",
+        json={
+            "action_id": "act_disable_2",
+            "action_type": "disable_account",
+            "connector": "okta",
+            "target": "mallory@corp.example",
+            "approved": True,
+        },
+        headers=auth_header(token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = await _audit_rows(db_session, org_id=org_id)
+    assert [r.outcome for r in rows] == ["success"]
+    assert rows[0].details.get("approver_id") == user_id
+
+
 async def test_bulk_block_structurally_reserved_ip_refused(client: AsyncClient, db_session):
     """RFC1918 targets are refused by the universal baseline even with no org entry."""
     org_id, _user_id, token = await _seed_ic(db_session)

@@ -150,8 +150,56 @@ _CLOUD_IAM_ACTION_TYPES: frozenset[str] = frozenset(
     {"revoke_role", "freeze_access_key", "detach_policy"}
 )
 
+# Identity action_types whose target is an *account* rather than an address.
+#
+# ``disable_account`` screens the same principal safelist the cloud IAM actions
+# do. An account identifier is the same class of thing the ``principal`` entry
+# kind already holds (ARN / service-account email / object id), matched exactly
+# and case-insensitively, and the always-on account-root guard applies to it for
+# free — disabling a cloud account root is precisely the outage the safelist
+# exists to prevent.
+#
+# This was unscreened until now: the safelist described itself as a
+# "collateral-outage guard", and disabling the break-glass admin is the textbook
+# collateral outage, but only blocklist and cloud-IAM targets were ever checked.
+# Nothing destructive reaches a real system today (``_dispatch`` refuses in live
+# mode), so the gap was latent rather than exploitable — which is exactly why it
+# is cheap to close before #100/#106 unbolt the live paths.
+_ACCOUNT_ACTION_TYPES: frozenset[str] = frozenset({"disable_account"})
+
+# Action types screened against the principal safelist (cloud IAM + accounts).
+_PRINCIPAL_SCREENED_ACTION_TYPES: frozenset[str] = _CLOUD_IAM_ACTION_TYPES | _ACCOUNT_ACTION_TYPES
+
 # Every action_type that must be safelist-screened before any dispatch.
-_SAFELIST_SCREENED_ACTION_TYPES: frozenset[str] = _BLOCK_ACTION_TYPES | _CLOUD_IAM_ACTION_TYPES
+_SAFELIST_SCREENED_ACTION_TYPES: frozenset[str] = (
+    _BLOCK_ACTION_TYPES | _PRINCIPAL_SCREENED_ACTION_TYPES
+)
+
+#: Destructive action types the safelist **cannot** screen, and why.
+#:
+#: Named rather than left implicit, because an unscreened destructive action is
+#: indistinguishable from a screened one at this call site — the ``if
+#: action_type in _SAFELIST_SCREENED_ACTION_TYPES`` simply does not fire, and
+#: nothing says whether that was a decision or an oversight. For ``disable_account``
+#: it was an oversight.
+#:
+#: These two remain open because their target is a host, and the safelist has no
+#: host entry kind: ``ip`` is an exact IP match, and an isolation target is a
+#: hostname or device id. Adding one needs a matching rule (exact hostname?
+#: FQDN suffix? device id?) that is an operator-facing product decision, not a
+#: mechanical extension of what already exists.
+#:
+#: ``test_containment_safelist_coverage.py`` fails if this list grows.
+UNSCREENED_DESTRUCTIVE_ACTION_TYPES: dict[str, str] = {
+    "isolate_host": (
+        "target is a hostname / device id; the safelist has no host entry kind "
+        "(ip matches exact addresses only)"
+    ),
+    "kill_process": (
+        "target is a process on a host; screening it needs the same host entry "
+        "kind isolate_host does"
+    ),
+}
 
 
 async def execute_response_action(
@@ -194,7 +242,9 @@ async def execute_response_action(
     if action_type in _SAFELIST_SCREENED_ACTION_TYPES:
         policy = await response_safelist_service.load_policy(db, org_id=org_id)
         if _target_safelisted(policy, action_type, target):
-            noun = "never-touch" if action_type in _CLOUD_IAM_ACTION_TYPES else "never-block"
+            noun = (
+                "never-touch" if action_type in _PRINCIPAL_SCREENED_ACTION_TYPES else "never-block"
+            )
             return await _record_denial(
                 db,
                 actor_id=actor_id,
@@ -404,9 +454,10 @@ def _target_safelisted(policy: SafelistPolicy, action_type: str, target: str) ->
         return policy.ip_safelisted(target)
     if action_type == "block_domain":
         return policy.domain_safelisted(target)
-    if action_type in _CLOUD_IAM_ACTION_TYPES:
-        # Cloud IAM containment targets a *principal*, so it screens the org
-        # principal safelist (plus the always-on account-root guard).
+    if action_type in _PRINCIPAL_SCREENED_ACTION_TYPES:
+        # Cloud IAM containment targets a *principal*; disabling an account
+        # targets the same class of identifier. Both screen the org principal
+        # safelist (plus the always-on account-root guard).
         return policy.principal_safelisted(target)
     return False
 
