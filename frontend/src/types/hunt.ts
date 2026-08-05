@@ -334,6 +334,18 @@ export type HuntRuleState =
   | "under_firing"
   | "errored";
 
+/**
+ * Rule health as the *history view* can report it (#112).
+ *
+ * A superset of `HuntRuleState`, and deliberately not part of that mirror: the
+ * runner classifies rules it has just executed, so it can never emit
+ * `never_run`. That state is a fact about the run *history* — the sweep cap or
+ * per-run deadline skipped this rule on every run in the window, so it has no
+ * `rule_stats` entry to classify at all (see `NeverRunRule`). Widening the
+ * shared enum would claim the runner produces a value it cannot.
+ */
+export type HuntRuleViewState = HuntRuleState | "never_run";
+
 /** One rule's rollup inside a pack run's ``rule_stats`` map. */
 export interface HuntPackRunRuleStat {
   title: string;

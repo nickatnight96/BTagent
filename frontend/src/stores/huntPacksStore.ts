@@ -33,6 +33,8 @@ import type {
   HuntPackRun,
   HuntPackRunRuleStat,
   HuntRuleState,
+  HuntRuleViewState,
+  NeverRunRule,
   NoiseBaseline,
   NoisyRule,
 } from "@/types/hunt";
@@ -75,7 +77,7 @@ export function completedRuns(runs: HuntPackRun[]): HuntPackRun[] {
 export interface RuleStatus {
   rule_id: string;
   title: string;
-  state: HuntRuleState;
+  state: HuntRuleViewState;
   last_hits: number;
   last_errors: number;
   runs_observed: number;
@@ -84,6 +86,16 @@ export interface RuleStatus {
   hit_rate: number;
   /** Transpiled query per backend, from the rule's most recent run. */
   queries: Record<string, string>;
+  /**
+   * Sweeps in the window that skipped this rule entirely (`never_run` only).
+   *
+   * Present only for rules assembled from the baseline's `never_run` list —
+   * they have no run statistics, so every other numeric field above is 0 by
+   * absence rather than by observation.
+   */
+  runs_skipped?: number;
+  /** Days between the first and last sweep that skipped it (`never_run` only). */
+  days_dark?: number;
 }
 
 /** One point in a pack's daily hit-volume sparkline. */
@@ -225,6 +237,45 @@ function latestRuleStat(
   return undefined;
 }
 
+/**
+ * Rows for rules the sweep cap has never executed, keyed by pack (#577).
+ *
+ * These cannot be derived from run history the way every other rule state is:
+ * a rule with no `rule_stats` entry in any run is absent from the union the
+ * rule list is built out of, so before this the HuntPacks view could not
+ * represent them at all — a pack whose tail is permanently capped read as
+ * "12 rules, all clean" while 28 enabled rules had never executed. The
+ * backend already computes the list; this only places it.
+ *
+ * Numeric fields are 0 by *absence*, not observation, which is why the chip
+ * and detail panel branch on the state rather than rendering "0% hit rate"
+ * as though the rule had been measured.
+ */
+export function neverRunRuleStatuses(
+  packId: string,
+  baseline: NoiseBaseline | null,
+  observedRuleIds: Set<string>,
+): RuleStatus[] {
+  const rows = (baseline?.never_run ?? []).filter(
+    (r: NeverRunRule) => r.pack_id === packId && !observedRuleIds.has(r.rule_id),
+  );
+  return rows.map((r) => ({
+    rule_id: r.rule_id,
+    // `rules_not_run` carries ids only — the runner never built a result
+    // object for these rules, so there is no title to show.
+    title: r.rule_id,
+    state: "never_run" as const,
+    last_hits: 0,
+    last_errors: 0,
+    runs_observed: 0,
+    total_hits: 0,
+    hit_rate: 0,
+    queries: {},
+    runs_skipped: r.runs_skipped,
+    days_dark: r.days_dark,
+  }));
+}
+
 /** Index the pack catalog by the manifest id run history carries. */
 export function indexCatalog(
   catalog: HuntPackCatalogEntry[],
@@ -294,6 +345,10 @@ export function buildInstalledPacks(
         queries: stat?.queries ?? {},
       });
     }
+    // Rules no sweep in the window ever executed have no rule_stats entry, so
+    // they are absent from `ruleIds` by construction and must be added from
+    // the baseline rather than derived.
+    rules.push(...neverRunRuleStatuses(packId, baseline, ruleIds));
     rules.sort((a, b) => a.title.localeCompare(b.title));
 
     const entry = catalogIndex.get(packId);

@@ -48,7 +48,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { UserRole } from "@/types/config";
 import { Button } from "@/components/ds/button";
 import { Card, CardContent } from "@/components/ds/card";
-import type { HuntRuleState } from "@/types/hunt";
+import type { HuntRuleViewState } from "@/types/hunt";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -71,7 +71,7 @@ function useCanManage(): boolean {
 // Rule-state + run-status presentation
 // ---------------------------------------------------------------------------
 
-const RULE_STATE_STYLE: Record<HuntRuleState, { label: string; cls: string }> = {
+const RULE_STATE_STYLE: Record<HuntRuleViewState, { label: string; cls: string }> = {
   clean: { label: "Clean", cls: "bg-slate-500/20 text-slate-300 border-slate-500/30" },
   firing_as_expected: {
     label: "Firing as expected",
@@ -86,6 +86,13 @@ const RULE_STATE_STYLE: Record<HuntRuleState, { label: string; cls: string }> = 
     cls: "bg-sky-500/20 text-sky-300 border-sky-500/30",
   },
   errored: { label: "Errored", cls: "bg-rose-500/20 text-rose-300 border-rose-500/30" },
+  // Not a health verdict — the rule has never executed, so there is nothing to
+  // judge. Styled apart from `clean` on purpose: the two look identical in the
+  // data (no hits) and mean opposite things (nothing found vs never looked).
+  never_run: {
+    label: "Never run",
+    cls: "bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/30",
+  },
 };
 
 const RUN_STATUS_STYLE: Record<string, string> = {
@@ -95,7 +102,7 @@ const RUN_STATUS_STYLE: Record<string, string> = {
   failed: "bg-rose-500/20 text-rose-300 border-rose-500/30",
 };
 
-function RuleStateChip({ state }: { state: HuntRuleState }) {
+function RuleStateChip({ state }: { state: HuntRuleViewState }) {
   const s = RULE_STATE_STYLE[state];
   return (
     <span className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${s.cls}`}>
@@ -209,20 +216,43 @@ function RuleDetail({ rule, onClose }: { rule: RuleStatus; onClose: () => void }
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-          <span>
-            last hits: <span className="text-foreground">{rule.last_hits}</span>
-          </span>
-          <span>
-            observed: <span className="text-foreground">{rule.runs_observed}</span> runs
-          </span>
-          <span>
-            hit rate: <span className="text-foreground">{Math.round(rule.hit_rate * 100)}%</span>
-          </span>
-          {rule.last_errors > 0 && (
-            <span className="text-rose-300">errors: {rule.last_errors}</span>
-          )}
-        </div>
+        {rule.state === "never_run" ? (
+          // Its zeroes mean "unmeasured", not "measured as zero". Reporting a
+          // 0% hit rate here would read as a finding about the rule when the
+          // finding is about the schedule.
+          <div className="space-y-1 text-xs text-muted-foreground" data-testid="rule-detail-never-run">
+            <p>
+              Never executed — the rules-per-sweep cap or the per-run deadline stopped the runner
+              before reaching it on{" "}
+              <span className="text-foreground">{rule.runs_skipped ?? 0}</span> sweep
+              {rule.runs_skipped === 1 ? "" : "s"}
+              {rule.days_dark ? (
+                <>
+                  {" "}
+                  over <span className="text-foreground">{rule.days_dark}</span> day
+                  {rule.days_dark === 1 ? "" : "s"}
+                </>
+              ) : null}
+              .
+            </p>
+            <p>Raise the cap, lengthen the deadline, or split the pack.</p>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span>
+              last hits: <span className="text-foreground">{rule.last_hits}</span>
+            </span>
+            <span>
+              observed: <span className="text-foreground">{rule.runs_observed}</span> runs
+            </span>
+            <span>
+              hit rate: <span className="text-foreground">{Math.round(rule.hit_rate * 100)}%</span>
+            </span>
+            {rule.last_errors > 0 && (
+              <span className="text-rose-300">errors: {rule.last_errors}</span>
+            )}
+          </div>
+        )}
 
         <div className="space-y-2">
           <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
@@ -274,7 +304,13 @@ function PackCard({
   const lastRunAt = pack.last_run?.started_at
     ? new Date(pack.last_run.started_at).toLocaleString()
     : "never";
-  const ruleCount = pack.rules.length || pack.rule_count;
+  // Prefer the catalog's count over the number of rules we have history for.
+  // The old order (`rules.length || rule_count`) reported the *observed* rules
+  // as though they were the whole pack, so a pack whose tail the sweep cap
+  // never reaches read as "12 rules" instead of 40 — under-reporting coverage
+  // in the one place an analyst would look to notice it. Falls back to the
+  // derived length for ad-hoc packs, which have no catalog entry.
+  const ruleCount = pack.rule_count || pack.rules.length;
   // Two inert-switch cases: an ad-hoc pack (run history, no catalog entry)
   // is not schedulable at all; a "custom" uploaded bundle IS scheduled but is
   // enabled by existence — its lifecycle is the custom-packs panel below, not
@@ -302,7 +338,8 @@ function PackCard({
               )}
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {ruleCount} rule{ruleCount === 1 ? "" : "s"} ·{" "}
+              <span data-testid={`pack-rule-count-${pack.pack_id}`}>{ruleCount}</span> rule
+              {ruleCount === 1 ? "" : "s"} ·{" "}
               {pack.backends.join(", ") || "no backends"} · {pack.run_count} run
               {pack.run_count === 1 ? "" : "s"}
             </p>
