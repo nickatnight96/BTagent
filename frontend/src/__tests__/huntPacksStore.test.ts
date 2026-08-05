@@ -8,6 +8,7 @@ import type {
   HuntPackCatalogEntry,
   HuntPackRun,
   HuntPackRunRuleStat,
+  NeverRunRule,
   NoiseBaseline,
 } from "@/types/hunt";
 import {
@@ -17,6 +18,7 @@ import {
   groupRunsByPack,
   indexBaseline,
   indexCatalog,
+  neverRunRuleStatuses,
   HIT_VOLUME_DAYS,
 } from "@/stores/huntPacksStore";
 
@@ -50,8 +52,31 @@ function run(overrides: Partial<HuntPackRun> & { id: string }): HuntPackRun {
   };
 }
 
-function baseline(items: NoiseBaseline["items"]): NoiseBaseline {
-  return { items, runs_analyzed: items.length, min_runs: 3, hit_rate_threshold: 0.8 };
+function baseline(
+  items: NoiseBaseline["items"],
+  never_run: NoiseBaseline["never_run"] = [],
+): NoiseBaseline {
+  return {
+    items,
+    runs_analyzed: items.length,
+    min_runs: 3,
+    hit_rate_threshold: 0.8,
+    never_run,
+  };
+}
+
+function neverRun(pack_id: string, rule_id: string, overrides: Partial<NeverRunRule> = {}) {
+  return {
+    pack_id,
+    pack_name: "Windows Baseline",
+    rule_id,
+    runs_skipped: 14,
+    first_skipped_at: "2026-06-01T08:00:00Z",
+    last_skipped_at: "2026-07-27T08:00:00Z",
+    days_dark: 56,
+    window_days: 60,
+    ...overrides,
+  };
 }
 
 function catalogEntry(
@@ -539,5 +564,85 @@ describe("useHuntPacksStore.selectRule", () => {
     expect(useHuntPacksStore.getState().selectedRuleId).toBe("ruleA");
     useHuntPacksStore.getState().selectRule(null);
     expect(useHuntPacksStore.getState().selectedRuleId).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// never-run rules (#577 follow-through)
+// --------------------------------------------------------------------------- //
+
+describe("neverRunRuleStatuses", () => {
+  it("builds a row per skipped rule with zeroes marked as unmeasured", () => {
+    const rows = neverRunRuleStatuses(
+      "hpack_win",
+      baseline([], [neverRun("hpack_win", "rule_dark")]),
+      new Set(),
+    );
+    expect(rows).toHaveLength(1);
+    const r = rows[0]!;
+    expect(r.rule_id).toBe("rule_dark");
+    // No title exists — rules_not_run carries ids only.
+    expect(r.title).toBe("rule_dark");
+    expect(r.state).toBe("never_run");
+    expect(r.runs_observed).toBe(0);
+    expect(r.hit_rate).toBe(0);
+    expect(r.runs_skipped).toBe(14);
+    expect(r.days_dark).toBe(56);
+  });
+
+  it("is scoped to the pack — another pack's dark rules do not leak in", () => {
+    const rows = neverRunRuleStatuses(
+      "hpack_win",
+      baseline([], [neverRun("hpack_linux", "rule_dark")]),
+      new Set(),
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("skips a rule that run history already observed", () => {
+    // Belt and braces: the backend already guarantees the lists are disjoint,
+    // but a rule appearing twice in one pack's grid would be a visible bug.
+    const rows = neverRunRuleStatuses(
+      "hpack_win",
+      baseline([], [neverRun("hpack_win", "rule1")]),
+      new Set(["rule1"]),
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("tolerates a payload with no never_run field", () => {
+    const legacy = { items: [], runs_analyzed: 0, min_runs: 3, hit_rate_threshold: 0.8 };
+    expect(neverRunRuleStatuses("hpack_win", legacy, new Set())).toEqual([]);
+    expect(neverRunRuleStatuses("hpack_win", null, new Set())).toEqual([]);
+  });
+});
+
+describe("buildInstalledPacks with never-run rules", () => {
+  it("lists rules that no sweep ever executed alongside the observed ones", () => {
+    // The gap this closes: `ruleIds` is the union of rule_stats keys, so a rule
+    // the sweep cap never reaches has no entry to derive from and could not
+    // appear on the page at all — the pack read "1 rule, clean" while its
+    // capped tail was invisible.
+    const runs = [
+      run({ id: "1", pack_id: "hpack_win", rule_stats: { rule1: ruleStat({ hits: 2 }) } }),
+    ];
+    const packs = buildInstalledPacks(
+      runs,
+      baseline([], [neverRun("hpack_win", "rule_dark")]),
+      [],
+    );
+    const pack = packs.find((p) => p.pack_id === "hpack_win")!;
+    const states = Object.fromEntries(pack.rules.map((r) => [r.rule_id, r.state]));
+    expect(states).toEqual({ rule1: "firing_as_expected", rule_dark: "never_run" });
+  });
+
+  it("does not invent rules for a pack that has never run at all", () => {
+    // A catalog-only pack has no runs, so nothing was skipped either.
+    const packs = buildInstalledPacks(
+      [],
+      baseline([], [neverRun("hpack_win", "rule_dark")]),
+      [catalogEntry({ pack_id: "windows_baseline", manifest_pack_id: "hpack_win" })],
+    );
+    expect(packs.find((p) => p.pack_id === "hpack_win")!.rules).toEqual([]);
   });
 });
