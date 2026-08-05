@@ -125,8 +125,14 @@ describe("ReportsPage", () => {
     renderPage(<ReportsPage />);
     await waitFor(() => expect(listReportTemplates).toHaveBeenCalledTimes(1));
     expect(screen.getByText(/Pick an investigation and a template/i)).toBeTruthy();
+    // Wait on the rendered *outcome*, not just the fetch having been called.
+    // `toHaveBeenCalledTimes` resolves as soon as the request is issued, while
+    // the default selection needs its promise to settle and the <select> to
+    // re-render with options. On a fast machine the microtask queue drains
+    // before the next line; on a loaded CI runner it does not, and this read
+    // `''`. Flaked exactly that way on #584.
     const select = screen.getByTestId("reports-template-select") as HTMLSelectElement;
-    expect(select.value).toBe("cisa_incident");
+    await waitFor(() => expect(select.value).toBe("cisa_incident"));
   });
 
   it("generates a report and renders completeness, gaps and sections", async () => {
