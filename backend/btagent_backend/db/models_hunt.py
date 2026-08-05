@@ -209,7 +209,10 @@ class HuntPackRunRow(Base):
     # run wears until it lands one of the terminal values: ``completed`` (no
     # execution errors) | ``completed_with_errors`` (some rule×backend
     # executions errored, some succeeded) | ``failed`` (every execution
-    # errored, or the run itself raised before finishing).
+    # errored, or the run itself raised before finishing) | ``abandoned`` (no
+    # worker resumed it inside ``hunt_run_resume_window_minutes``; the sweep
+    # was interrupted, not broken, and the distinction matters when an analyst
+    # is deciding whether coverage actually ran).
     # ``completed_with_errors`` is 21 chars, hence the 32-char column (widened
     # from 16 in migration 0022, Codex #202 P2). ``running`` added in migration
     # 0055 (#112 resume-from-checkpoint).

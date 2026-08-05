@@ -47,6 +47,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from btagent_backend.db.models_hunt import HuntPackRunRow
 
 _FAILED = "failed"
+#: An interrupted sweep, not a broken one — but still incomplete: some rules
+#: never ran, so counting it as a clean sweep understates noise for exactly
+#: the rules that produced nothing *because they were never executed*.
+_ABANDONED = "abandoned"
+#: Statuses that do not represent a sweep whose coverage can be trusted.
+_INCOMPLETE = (_FAILED, _ABANDONED)
 
 # A rule must have gone this long with zero hits to count as under-firing.
 UNDER_FIRING_WINDOW_DAYS = 60
@@ -142,7 +148,7 @@ def compute_noise_baseline(
     """
     stats: dict[tuple[str, str], dict[str, Any]] = {}
     for run in runs:
-        if run.status == _FAILED:
+        if run.status in _INCOMPLETE:
             continue
         for rule_id, entry in (run.rule_stats or {}).items():
             hits = int(entry.get("hits", 0) or 0)
@@ -213,7 +219,7 @@ def compute_under_firing(
 
     stats: dict[tuple[str, str], dict[str, Any]] = {}
     for run in runs:
-        if run.status == _FAILED:
+        if run.status in _INCOMPLETE:
             continue
         started = _aware(run.started_at)
         if started < cutoff:
@@ -283,7 +289,7 @@ async def under_firing(
         select(HuntPackRunRow)
         .where(
             HuntPackRunRow.org_id == org_id,
-            HuntPackRunRow.status != _FAILED,
+            HuntPackRunRow.status.not_in(_INCOMPLETE),
             HuntPackRunRow.started_at >= now - timedelta(days=window_days),
         )
         .order_by(HuntPackRunRow.started_at.desc())
@@ -321,7 +327,7 @@ async def noise_baseline(
         select(HuntPackRunRow)
         .where(
             HuntPackRunRow.org_id == org_id,
-            HuntPackRunRow.status != _FAILED,
+            HuntPackRunRow.status.not_in(_INCOMPLETE),
         )
         .order_by(HuntPackRunRow.started_at.desc())
         .limit(lookback_runs)

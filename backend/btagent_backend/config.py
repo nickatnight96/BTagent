@@ -494,6 +494,22 @@ class Settings(BaseSettings):
     hunt_scheduler_backends: list[str] = Field(default_factory=lambda: ["splunk"])
     hunt_scheduler_lookback_hours: int = 24
     hunt_scheduler_max_hits_per_query: int = 100
+    # How recently a ``running`` pack-run must have started for the next
+    # invocation to resume it rather than abandon it and sweep fresh.
+    #
+    # Resumption exists for a worker *restart* — a pod that died mid-sweep
+    # picks up at the next rule instead of re-ingesting what it already
+    # committed. It was never meant to span scheduled ticks, and unbounded it
+    # does: a run orphaned by a permanently-dead worker stays ``running``, so
+    # the next scheduled sweep adopts its progress cursor, skips *persisting*
+    # every rule the dead run had finished — discarding that sweep's fresh
+    # hits — and stamps the old row terminal under the dead run's timestamp.
+    # One sweep of coverage silently lost, attributed to the wrong run.
+    #
+    # Must stay well below ``hunt_scheduler_interval_hours`` so a resume can
+    # never span two scheduled sweeps; test_stale_run_resume_window.py pins
+    # that relationship.
+    hunt_run_resume_window_minutes: int = 60
     # The stale-suppression sweep cadence (minutes past each hour it fires on).
     hunt_suppression_sweep_minute: int = 0
     # Where externally-imported hunt packs (#112 SigmaHQ corpus install) are
