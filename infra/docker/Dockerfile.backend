@@ -53,6 +53,21 @@ COPY backend/alembic.ini backend/
 COPY backend/migrations/ backend/migrations/
 RUN cd backend && uv pip install --system -e .
 
+# Same CVE floors the final stage applies (see the long note there). Correct
+# here on its own merits: without it this stage ships msgpack 1.1.2, so an
+# intermediate build artifact carries a package with a known HIGH advisory
+# even though the runtime image does not.
+#
+# It may also be informative about the scan. The final image's merged
+# filesystem provably contains only the patched versions, yet Trivy keeps
+# reporting the old ones; if it were reading per-layer rather than the merged
+# view, msgpack would clear here (this stage is its only source) while
+# setuptools persisted, since the final stage's base ships setuptools in its
+# first layer and nothing downstream can rewrite that layer. Stated as a
+# prediction rather than a diagnosis — Trivy does apply whiteouts, so the
+# likelier outcome is no change and the real cause lies elsewhere.
+RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
+
 # Stage 2: Production
 FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}}
 
