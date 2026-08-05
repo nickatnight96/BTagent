@@ -104,19 +104,24 @@ COPY --from=builder /app/ /app/
 # does nothing is worse than one that fails loudly.
 RUN python -m pip install --no-cache-dir --upgrade \
         "setuptools>=78.1.1" "msgpack>=1.2.1" \
-    && SP="$(python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" \
     && for pkg in setuptools msgpack; do \
          keep="$(python -c "import importlib.metadata as m; print(m.version('$pkg'))")"; \
-         for d in "$SP/$pkg"-*.dist-info; do \
-           [ -e "$d" ] || continue; \
-           case "$d" in \
-             *"-$keep.dist-info") ;; \
-             *) echo "removing superseded metadata: $d"; rm -rf "$d" ;; \
-           esac; \
-         done; \
-         n=$(ls -d "$SP/$pkg"-*.dist-info 2>/dev/null | wc -l); \
-         [ "$n" = "1" ] || { echo "expected exactly 1 $pkg dist-info, found $n"; \
-           ls -d "$SP/$pkg"-*.dist-info; exit 1; }; \
+         echo "== $pkg: resolved $keep; metadata found in image:"; \
+         find / -xdev \( -path /proc -o -path /sys \) -prune -o \
+              -maxdepth 12 -type d \
+              \( -name "$pkg-*.dist-info" -o -name "$pkg-*.egg-info" \) -print \
+         | while read -r d; do \
+             echo "   $d"; \
+             case "$d" in \
+               *"-$keep.dist-info"|*"-$keep.egg-info") ;; \
+               *) echo "   ^ superseded, removing"; rm -rf "$d" ;; \
+             esac; \
+           done; \
+         n=$(find / -xdev \( -path /proc -o -path /sys \) -prune -o \
+                 -maxdepth 12 -type d \
+                 \( -name "$pkg-*.dist-info" -o -name "$pkg-*.egg-info" \) -print \
+             | wc -l); \
+         [ "$n" = "1" ] || { echo "expected exactly 1 $pkg metadata dir, found $n"; exit 1; }; \
        done \
     && python -c "\
 import importlib.metadata as m;\
