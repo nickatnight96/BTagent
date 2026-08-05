@@ -36,41 +36,59 @@ _TRUSTED_CLOUD_PROVIDERS: frozenset[str] = frozenset(
     }
 )
 
-# TLP routing rules: which providers are allowed per classification level
+# TLP routing rules: which providers are allowed per classification level.
+#
+# Built *from* the sets above rather than restating them. They used to be dead
+# constants — defined, named as though they were the policy, and referenced
+# nowhere, while the table below inlined the same values. Tightening
+# `_TRUSTED_CLOUD_PROVIDERS` would have looked like a policy change and done
+# nothing. `test_tlp_provider_ladder.py` fails if they stop being referenced.
+#
+# The ladder must widen monotonically as classification relaxes: every provider
+# allowed at a stricter level stays allowed at every looser one. Local inference
+# in particular is admissible at *every* level — data never leaves the
+# deployment, so it is the most conservative destination there is, which is
+# exactly why TLP:RED permits nothing else.
 TLP_ALLOWED_PROVIDERS: dict[TLP, frozenset[str]] = {
-    TLP.RED: frozenset({ModelProvider.OLLAMA}),
-    TLP.AMBER_STRICT: frozenset({ModelProvider.OLLAMA, ModelProvider.BEDROCK}),
-    TLP.AMBER: frozenset(
+    TLP.RED: _LOCAL_PROVIDERS,
+    TLP.AMBER_STRICT: _TRUSTED_CLOUD_PROVIDERS,
+    TLP.AMBER: _LOCAL_PROVIDERS
+    | frozenset(
         {
             ModelProvider.ANTHROPIC,
             ModelProvider.BEDROCK,
             ModelProvider.VERTEX_AI,
         }
     ),
-    TLP.GREEN: frozenset(
+    TLP.GREEN: _LOCAL_PROVIDERS
+    | frozenset(
         {
             ModelProvider.ANTHROPIC,
             ModelProvider.OPENAI,
             ModelProvider.BEDROCK,
             ModelProvider.VERTEX_AI,
-            ModelProvider.OLLAMA,
         }
     ),
-    TLP.WHITE: frozenset(
+    TLP.WHITE: _LOCAL_PROVIDERS
+    | frozenset(
         {
             ModelProvider.ANTHROPIC,
             ModelProvider.OPENAI,
             ModelProvider.BEDROCK,
             ModelProvider.VERTEX_AI,
             ModelProvider.AZURE,
-            ModelProvider.OLLAMA,
         }
     ),
 }
 
 
 def is_provider_allowed(tlp: TLP, provider: str) -> bool:
-    """Check if a provider is authorized for the given TLP level."""
+    """Check if a provider is authorized for the given TLP level.
+
+    Fails **closed**: a TLP with no entry in the table allows nothing, so a
+    classification level added without a routing rule refuses every provider
+    rather than silently permitting all of them.
+    """
     allowed = TLP_ALLOWED_PROVIDERS.get(tlp)
     if allowed is None:
         return False
