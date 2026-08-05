@@ -71,7 +71,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from btagent_shared.types.enums import Severity
@@ -109,6 +109,12 @@ DEFAULT_BUILTIN_PACKS: tuple[str, ...] = hunt_pack_store.DEFAULT_BUILTIN_PACKS
 
 # In-flight status a resumable run wears until it lands a terminal status.
 _RUNNING = "running"
+
+# Terminal status for a ``running`` row nobody resumed inside the window.
+# Deliberately distinct from ``failed``: the run did not error, it was
+# orphaned, and an analyst reading history should be able to tell those
+# apart when deciding whether coverage actually ran.
+_ABANDONED = "abandoned"
 
 
 # --------------------------------------------------------------------------- #
@@ -262,12 +268,27 @@ def _completed_rule_ids(run_row: HuntPackRunRow) -> list[str]:
 async def _find_resumable_run(
     db: AsyncSession, *, org_id: str, pack_id: str
 ) -> HuntPackRunRow | None:
-    """The newest in-flight (``running``) run for one org's pack, or ``None``.
+    """The newest *recent* in-flight run for one org's pack, or ``None``.
 
     A worker restart calls this to pick up where the previous invocation left
     off. Keyed on ``(org_id, pack_id, status)`` — served by the composite index
     added in migration 0055.
+
+    Bounded by ``hunt_run_resume_window_minutes`` (60 by default), and the
+    bound is the point. Resumption is for a *restart*, not for the next
+    scheduled tick. Unbounded, a run orphaned by a permanently-dead worker sits
+    at ``running`` forever, so the next scheduled sweep adopts its progress
+    cursor, skips *persisting* every rule the dead run had completed — throwing
+    away that sweep's freshly-executed hits — and then stamps the dead row
+    terminal under its original timestamp. One sweep of coverage lost, silently,
+    filed against the wrong run.
+
+    A candidate outside the window is abandoned rather than ignored: it is
+    stamped ``failed`` so the history stops claiming it is still running, and so
+    it cannot be picked up again. The caller then opens a fresh row and ingests
+    everything.
     """
+    cutoff = datetime.now(UTC) - timedelta(minutes=get_settings().hunt_run_resume_window_minutes)
     result = await db.execute(
         select(HuntPackRunRow)
         .where(
@@ -278,7 +299,41 @@ async def _find_resumable_run(
         .order_by(HuntPackRunRow.started_at.desc())
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+
+    started = row.started_at
+    if started is not None and started.tzinfo is None:
+        # SQLite (and any naive-datetime column) hands back tz-naive values;
+        # the rows are written in UTC, so attach it rather than comparing a
+        # naive to an aware datetime and raising.
+        started = started.replace(tzinfo=UTC)
+
+    if started is not None and started < cutoff:
+        logger.info(
+            "abandoning stale running pack-run %s (org=%s pack=%s started=%s); "
+            "outside the %s-minute resume window",
+            row.id,
+            org_id,
+            pack_id,
+            started.isoformat(),
+            get_settings().hunt_run_resume_window_minutes,
+        )
+        row.status = _ABANDONED
+        # E7: an abandoned sweep is not a clean one — some rules never ran.
+        # Reusing the existing truncation flag makes it read correctly in run
+        # history without every consumer learning a new status.
+        row.truncated = True
+        row.error = (
+            "abandoned: no worker resumed this run within the "
+            f"{get_settings().hunt_run_resume_window_minutes}-minute resume window"
+        )
+        row.completed_at = datetime.now(UTC)
+        await db.flush()
+        return None
+
+    return row
 
 
 def _new_running_row(*, org_id: str, result: PackRunResult) -> HuntPackRunRow:
