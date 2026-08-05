@@ -150,4 +150,85 @@ describe("NoisyRulesPanel", () => {
       expect(getNoiseBaseline.mock.calls.length).toBeGreaterThan(before),
     );
   });
+
+  describe("never-run rules", () => {
+    const DARK = {
+      pack_id: "pack_win",
+      pack_name: "Windows Baseline",
+      rule_id: "sigma_rare_lolbin",
+      runs_skipped: 14,
+      first_skipped_at: "2026-06-01T08:00:00Z",
+      last_skipped_at: "2026-07-30T08:00:00Z",
+      days_dark: 59,
+      window_days: 60,
+    };
+
+    it("renders the panel when only never-run rules are present", async () => {
+      // The case the old `items.length === 0` guard hid: a pack whose tail has
+      // never executed produces no noisy rules at all, so the whole advisory
+      // used to disappear precisely when it had something to say.
+      getNoiseBaseline.mockResolvedValue({ ...NOISY, items: [], never_run: [DARK] });
+      render(<NoisyRulesPanel />);
+      expect(await screen.findByTestId("noisy-rules-panel")).toBeTruthy();
+      expect(screen.getByTestId("never-run-count").textContent).toContain("1 never run");
+      // No noisy rules, so no noisy-rules count and no suppression copy.
+      expect(screen.queryByTestId("noisy-rule-r1")).toBeNull();
+    });
+
+    it("still renders nothing when both lists are empty", async () => {
+      getNoiseBaseline.mockResolvedValue({ ...NOISY, items: [], never_run: [] });
+      render(<NoisyRulesPanel />);
+      await waitFor(() => expect(getNoiseBaseline).toHaveBeenCalled());
+      expect(screen.queryByTestId("noisy-rules-panel")).toBeNull();
+    });
+
+    it("lists each dark rule with its skip count and darkness once expanded", async () => {
+      getNoiseBaseline.mockResolvedValue({ ...NOISY, never_run: [DARK] });
+      render(<NoisyRulesPanel />);
+      const toggle = await screen.findByTestId("noisy-rules-toggle");
+      // Both advisories are summarised on the collapsed header.
+      expect(toggle).toHaveTextContent("Noisy rules (2)");
+      expect(toggle).toHaveTextContent("1 never run");
+      expect(screen.queryByTestId("never-run-section")).toBeNull();
+
+      act(() => {
+        fireEvent.click(toggle);
+      });
+      expect(screen.getByTestId("never-run-section")).toBeTruthy();
+      const row = screen.getByTestId(`never-run-rule-${DARK.rule_id}`);
+      // The rule id is the identity we have — rules_not_run carries no title.
+      expect(row.textContent).toContain(DARK.rule_id);
+      expect(screen.getByTestId(`never-run-skips-${DARK.rule_id}`).textContent).toContain(
+        "skipped by 14 sweeps",
+      );
+      expect(row.textContent).toContain("59 days dark");
+    });
+
+    it("offers no suppress action for a rule that never ran", async () => {
+      // Suppressing a rule that has never executed would mute coverage that was
+      // never the problem — the fix is a schedule change, not a suppression.
+      getNoiseBaseline.mockResolvedValue({ ...NOISY, items: [], never_run: [DARK] });
+      render(<NoisyRulesPanel />);
+      const toggle = await screen.findByTestId("noisy-rules-toggle");
+      act(() => {
+        fireEvent.click(toggle);
+      });
+      expect(screen.queryByTestId(`noisy-rule-suppress-${DARK.rule_id}`)).toBeNull();
+      expect(createSuppression).not.toHaveBeenCalled();
+    });
+
+    it("tolerates a payload with no never_run field at all", async () => {
+      // Older backends (and the /hunt/noise-baseline response before this
+      // change) omit the key entirely; the panel must not crash on it.
+      getNoiseBaseline.mockResolvedValue(NOISY);
+      render(<NoisyRulesPanel />);
+      const toggle = await screen.findByTestId("noisy-rules-toggle");
+      expect(toggle).toHaveTextContent("Noisy rules (2)");
+      expect(screen.queryByTestId("never-run-count")).toBeNull();
+      act(() => {
+        fireEvent.click(toggle);
+      });
+      expect(screen.queryByTestId("never-run-section")).toBeNull();
+    });
+  });
 });

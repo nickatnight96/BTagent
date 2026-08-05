@@ -2,7 +2,7 @@
 
 ``hunt_pack_runs.rule_stats`` records per-rule hit volumes for every pack
 execution — "the substrate the future noise baselines read". This module is
-that reader, in **both directions**:
+that reader, in **three directions**:
 
 * *over-firing* (:func:`compute_noise_baseline`) — rules that hit on (nearly)
   every run of their pack, which in practice means the rule is matching
@@ -12,14 +12,31 @@ that reader, in **both directions**:
   that has never fired in two months is either mis-scoped, pointed at
   telemetry the org does not send, or genuinely dead — either way it is a
   detection-engineering review item, not a suppression candidate.
+* *never-run* (:func:`compute_never_run`) — enabled rules that were **skipped
+  by every sweep in the window** and so produced no observation at all.
 
-Advisory only, by design: nothing here writes a suppression rule or retires a
-detection. The analyst reviews the lists (``GET /hunt/noise-baseline``, which
-carries both, and ``GET /hunt/under-firing``) and acts through the existing
-suppression / detection APIs — the same HITL posture as the rest of the hunt
-inbox (a machine may propose; only an analyst decides).
+That third direction reads a different column, and it exists because the
+first two cannot see it *by construction*. ``rule_stats`` is written per rule
+as the runner finishes it, so it contains exactly the rules that executed;
+the E7 rules-per-sweep cap and per-run deadline stop the runner mid-list and
+record the remainder in ``hunt_pack_runs.rules_not_run`` instead. A rule the
+cap keeps skipping therefore appears in *neither* hit-rate analysis — it is
+not over-firing (no hits), not under-firing (no observations), just absent.
+And because the runner truncates the **tail** of ``pack.enabled_rules`` in
+pack order, a pack that consistently exceeds its bound skips the *same* rules
+on every sweep: the same permanent blind spot, invisible on every existing
+surface. Run history shows ``rules_not_run`` for one run at a time, which
+cannot distinguish "a slow tick trimmed a few rules once" from "these forty
+rules have not executed in two months".
 
-Semantics (shared by both directions):
+Advisory only, by design: nothing here writes a suppression rule, retires a
+detection, or raises a cap. The analyst reviews the lists (``GET
+/hunt/noise-baseline``, which carries all three, and ``GET
+/hunt/under-firing``) and acts through the existing suppression / detection /
+schedule APIs — the same HITL posture as the rest of the hunt inbox (a
+machine may propose; only an analyst decides).
+
+Semantics (shared by all three directions):
 
 * Rules are tracked **per pack** — the same ``rule_id`` in two packs is two
   candidates (different query contexts, different noise profiles).
@@ -32,6 +49,15 @@ Semantics (shared by both directions):
   is reported as ``errored`` by the rule-state surfaces and is excluded from
   the under-firing list, matching the precedence the HuntPacks view and the
   Coverage Console already use (errored > over_firing > under_firing).
+
+Deliberately **not** covered, so a clean list is not mistaken for more than it
+is: a rule that executed even once inside the window is an observation and is
+handed to the hit-rate analyses, so "ran in the first sweep of the window,
+capped out of the forty since" is not reported as never-run. Reporting it
+would require a per-run notion of "should have run", which the history rows do
+not carry. The window bound is what limits the damage — over a 60-day window a
+rule that has been capped out since day one drops out of ``executed`` and
+surfaces normally.
 """
 
 from __future__ import annotations
@@ -63,6 +89,16 @@ UNDER_FIRING_MIN_RUNS = 3
 # Defensive cap on how many runs the under-firing window query reads.
 UNDER_FIRING_MAX_RUNS = 500
 
+# The never-run analysis reads the same window of runs as under-firing (it is
+# the same question — "has this rule done anything for me lately?" — asked of
+# the rules that never got to answer), so it shares the bounds rather than
+# introducing a second set an operator would have to keep in sync.
+NEVER_RUN_WINDOW_DAYS = UNDER_FIRING_WINDOW_DAYS
+# A rule must have been skipped by at least this many sweeps. One capped run is
+# a slow tick, not a blind spot; the floor is what makes this a *chronic*-cap
+# advisory rather than a notification for every deadline overrun.
+NEVER_RUN_MIN_RUNS = UNDER_FIRING_MIN_RUNS
+
 
 class _RunLike(Protocol):
     """The slice of :class:`HuntPackRunRow` the pure analysis reads."""
@@ -70,6 +106,11 @@ class _RunLike(Protocol):
     pack_id: str
     pack_name: str
     rule_stats: dict[str, Any]
+    # E7 (migration 0069): enabled rule ids the sweep never got to, because the
+    # rules-per-sweep cap or the per-run deadline stopped it early. Disjoint
+    # from ``rule_stats`` by construction — the runner writes a stat entry as it
+    # finishes each rule and lists the untouched remainder here.
+    rules_not_run: list[str]
     status: str
     started_at: datetime
 
@@ -112,6 +153,33 @@ class UnderFiringRule(BaseModel):
     window_days: int = UNDER_FIRING_WINDOW_DAYS
 
 
+class NeverRunRule(BaseModel):
+    """One enabled rule that every sweep in the window skipped."""
+
+    pack_id: str
+    pack_name: str
+    rule_id: str
+    # No ``rule_title``: ``rules_not_run`` carries ids only (the runner never
+    # built a result object for these rules, so there is no title to copy).
+    # Inventing one from the id would read like data the row does not have.
+    # Runs of its pack (inside the window) that listed the rule as not run.
+    runs_skipped: int
+    first_skipped_at: datetime | None = None
+    last_skipped_at: datetime | None = None
+    # Whole days between the first and last time a sweep skipped the rule.
+    days_dark: int = 0
+    window_days: int = NEVER_RUN_WINDOW_DAYS
+
+
+class NeverRunReport(BaseModel):
+    """Advisory list of never-executed rules — a coverage-honesty queue."""
+
+    items: list[NeverRunRule] = Field(default_factory=list)
+    runs_analyzed: int = 0
+    window_days: int = NEVER_RUN_WINDOW_DAYS
+    min_runs: int = NEVER_RUN_MIN_RUNS
+
+
 class UnderFiringReport(BaseModel):
     """Advisory list of silent rules — a detection-engineering review queue."""
 
@@ -132,6 +200,12 @@ class NoiseBaseline(BaseModel):
     # rule doing its job?" arrive together. Empty when analysis is skipped.
     under_firing: list[UnderFiringRule] = Field(default_factory=list)
     under_firing_window_days: int = UNDER_FIRING_WINDOW_DAYS
+    # The third direction: enabled rules no sweep in the window ever executed,
+    # so neither hit-rate list can see them. Carried here so one fetch answers
+    # "is this rule doing its job?" for rules that hit too much, rules that hit
+    # too little, and rules that never got the chance. Empty when skipped.
+    never_run: list[NeverRunRule] = Field(default_factory=list)
+    never_run_window_days: int = NEVER_RUN_WINDOW_DAYS
 
 
 def compute_noise_baseline(
@@ -269,6 +343,134 @@ def compute_under_firing(
     return silent
 
 
+def compute_never_run(
+    runs: Iterable[_RunLike],
+    *,
+    window_days: int = NEVER_RUN_WINDOW_DAYS,
+    min_runs: int = NEVER_RUN_MIN_RUNS,
+    now: datetime | None = None,
+) -> list[NeverRunRule]:
+    """Pure per-(pack, rule) *skip* analysis over run history rows.
+
+    A rule qualifies when, across the runs of its pack inside the last
+    ``window_days``, at least ``min_runs`` of them listed it in
+    ``rules_not_run`` and **none** of them executed it (no ``rule_stats``
+    entry, in any run in the window).
+
+    That second condition is what keeps the three directions disjoint: a rule
+    with even one execution is an observation, so it belongs to the hit-rate
+    analyses rather than here, however often it was skipped afterwards. The
+    executed set is therefore built from *every* in-window run before any
+    verdict is reached, not run by run.
+
+    ``now`` is injectable so tests are deterministic. Sorted
+    longest-dark-first, then by skip count.
+    """
+    now = now or datetime.now(UTC)
+    cutoff = now - timedelta(days=window_days)
+
+    executed: set[tuple[str, str]] = set()
+    skipped: dict[tuple[str, str], dict[str, Any]] = {}
+    for run in runs:
+        if run.status in _INCOMPLETE:
+            continue
+        started = _aware(run.started_at)
+        if started < cutoff:
+            continue
+        for rule_id in run.rule_stats or {}:
+            executed.add((run.pack_id, rule_id))
+        for rule_id in run.rules_not_run or []:
+            key = (run.pack_id, rule_id)
+            agg = skipped.setdefault(
+                key,
+                {
+                    "pack_name": run.pack_name,
+                    "skips": 0,
+                    "first_at": started,
+                    "last_at": started,
+                },
+            )
+            agg["skips"] += 1
+            if started < agg["first_at"]:
+                agg["first_at"] = started
+            if started > agg["last_at"]:
+                agg["last_at"] = started
+
+    dark: list[NeverRunRule] = []
+    for (pack_id, rule_id), agg in skipped.items():
+        if agg["skips"] < min_runs or (pack_id, rule_id) in executed:
+            continue
+        dark.append(
+            NeverRunRule(
+                pack_id=pack_id,
+                pack_name=agg["pack_name"],
+                rule_id=rule_id,
+                runs_skipped=agg["skips"],
+                first_skipped_at=agg["first_at"],
+                last_skipped_at=agg["last_at"],
+                days_dark=max((agg["last_at"] - agg["first_at"]).days, 0),
+                window_days=window_days,
+            )
+        )
+    dark.sort(key=lambda r: (-r.days_dark, -r.runs_skipped, r.pack_id, r.rule_id))
+    return dark
+
+
+async def _window_rows(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    window_days: int,
+    max_runs: int,
+    now: datetime,
+) -> list[HuntPackRunRow]:
+    """The org's terminal pack runs inside ``window_days``, newest-first.
+
+    Shared by the under-firing and never-run analyses: both ask about the same
+    window of the same rows, so one round-trip serves both rather than two
+    identical queries firing back to back on the combined payload.
+    """
+    result = await db.execute(
+        select(HuntPackRunRow)
+        .where(
+            HuntPackRunRow.org_id == org_id,
+            HuntPackRunRow.status.not_in(_INCOMPLETE),
+            HuntPackRunRow.started_at >= now - timedelta(days=window_days),
+        )
+        .order_by(HuntPackRunRow.started_at.desc())
+        .limit(max_runs)
+    )
+    return list(result.scalars().all())
+
+
+async def never_run(
+    db: AsyncSession,
+    *,
+    org_id: str,
+    window_days: int = NEVER_RUN_WINDOW_DAYS,
+    min_runs: int = NEVER_RUN_MIN_RUNS,
+    max_runs: int = UNDER_FIRING_MAX_RUNS,
+    now: datetime | None = None,
+) -> NeverRunReport:
+    """Enabled rules no sweep executed over the org's last ``window_days``.
+
+    Org-scoped at the query and read-only. Incomplete runs are excluded: a
+    ``failed`` or ``abandoned`` sweep did skip rules, but it skipped them
+    because it broke, and counting that as evidence of a chronic cap would
+    report a transient outage as a permanent blind spot.
+    """
+    now = now or datetime.now(UTC)
+    rows = await _window_rows(
+        db, org_id=org_id, window_days=window_days, max_runs=max_runs, now=now
+    )
+    return NeverRunReport(
+        items=compute_never_run(rows, window_days=window_days, min_runs=min_runs, now=now),
+        runs_analyzed=len(rows),
+        window_days=window_days,
+        min_runs=min_runs,
+    )
+
+
 async def under_firing(
     db: AsyncSession,
     *,
@@ -285,17 +487,9 @@ async def under_firing(
     org only reads the runs it needs.
     """
     now = now or datetime.now(UTC)
-    result = await db.execute(
-        select(HuntPackRunRow)
-        .where(
-            HuntPackRunRow.org_id == org_id,
-            HuntPackRunRow.status.not_in(_INCOMPLETE),
-            HuntPackRunRow.started_at >= now - timedelta(days=window_days),
-        )
-        .order_by(HuntPackRunRow.started_at.desc())
-        .limit(max_runs)
+    rows = await _window_rows(
+        db, org_id=org_id, window_days=window_days, max_runs=max_runs, now=now
     )
-    rows = list(result.scalars().all())
     return UnderFiringReport(
         items=compute_under_firing(rows, window_days=window_days, min_runs=min_runs, now=now),
         runs_analyzed=len(rows),
@@ -313,16 +507,19 @@ async def noise_baseline(
     hit_rate_threshold: float = 0.8,
     include_under_firing: bool = True,
     under_firing_window_days: int = UNDER_FIRING_WINDOW_DAYS,
+    include_never_run: bool = True,
     now: datetime | None = None,
 ) -> NoiseBaseline:
     """Analyse the org's most recent ``lookback_runs`` pack executions.
 
-    Returns both halves of the advisory: the chronically-hitting rules and —
-    unless ``include_under_firing`` is off — the rules that have gone silent
-    for a whole ``under_firing_window_days`` window (a separate, date-bounded
-    query, since "the last 50 runs" and "the last 60 days" are different
-    questions).
+    Returns all three directions of the advisory: the chronically-hitting
+    rules, and — unless the corresponding flag is off — the rules that have
+    gone silent for a whole ``under_firing_window_days`` window and the rules
+    every sweep in that window skipped. The latter two share one date-bounded
+    query, separate from the ``lookback_runs`` one, since "the last 50 runs"
+    and "the last 60 days" are different questions.
     """
+    now = now or datetime.now(UTC)
     result = await db.execute(
         select(HuntPackRunRow)
         .where(
@@ -333,12 +530,21 @@ async def noise_baseline(
         .limit(lookback_runs)
     )
     rows = list(result.scalars().all())
+
     silent: list[UnderFiringRule] = []
-    if include_under_firing:
-        report = await under_firing(
-            db, org_id=org_id, window_days=under_firing_window_days, now=now
+    dark: list[NeverRunRule] = []
+    if include_under_firing or include_never_run:
+        window = await _window_rows(
+            db,
+            org_id=org_id,
+            window_days=under_firing_window_days,
+            max_runs=UNDER_FIRING_MAX_RUNS,
+            now=now,
         )
-        silent = report.items
+        if include_under_firing:
+            silent = compute_under_firing(window, window_days=under_firing_window_days, now=now)
+        if include_never_run:
+            dark = compute_never_run(window, window_days=under_firing_window_days, now=now)
     return NoiseBaseline(
         items=compute_noise_baseline(
             rows, min_runs=min_runs, hit_rate_threshold=hit_rate_threshold
@@ -348,4 +554,6 @@ async def noise_baseline(
         hit_rate_threshold=hit_rate_threshold,
         under_firing=silent,
         under_firing_window_days=under_firing_window_days,
+        never_run=dark,
+        never_run_window_days=under_firing_window_days,
     )

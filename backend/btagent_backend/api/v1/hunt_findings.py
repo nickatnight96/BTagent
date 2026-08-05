@@ -684,9 +684,16 @@ async def get_noise_baseline(
     nothing is suppressed automatically — the analyst acts through the
     existing suppression API. RBAC: ``hunt:view``.
 
-    The payload also carries ``under_firing`` — the mirror-image advisory
-    (rules with a zero-hit record across the whole 60-day window), so the
-    review surface shows both halves of "is this rule doing its job?".
+    The payload also carries the other two directions of "is this rule doing
+    its job?", so one fetch answers the whole question:
+
+    * ``under_firing`` — rules with a zero-hit record across the whole 60-day
+      window (they ran; they never matched anything);
+    * ``never_run`` — enabled rules every sweep in that window *skipped*,
+      because the rules-per-sweep cap or the per-run deadline stopped the
+      runner before reaching them. These have no ``rule_stats`` entry at all,
+      so neither hit-rate list can see them; without this they are a blind
+      spot that reads as clean coverage.
     """
     user.require_permission("hunt:view")
     return await noise_baseline.noise_baseline(
