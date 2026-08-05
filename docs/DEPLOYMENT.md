@@ -722,6 +722,56 @@ Complete list of all `BTAGENT_*` environment variables:
 | `BTAGENT_EVENT_RETENTION_DAYS` | `90` | No | Agent event retention |
 | `BTAGENT_AUDIT_RETENTION_YEARS` | `7` | No | Audit log retention |
 
+### Auth and access (continued)
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `BTAGENT_MFA_ISSUER` | `BTagent` | No | Issuer label shown in the analyst's TOTP app |
+| `BTAGENT_MFA_SECRET_ENC_KEY` | (empty) | Conditional | Fernet key encrypting TOTP secrets at rest. In dev/test only, a deterministic key is derived from `BTAGENT_JWT_SECRET`; in prod the MFA endpoints raise a clear config error until this is set. Only affects users actively enrolling — MFA is opt-in. |
+| `BTAGENT_OIDC_PROVIDERS` | `{}` | No | JSON map of OIDC providers (issuer, client id/secret, redirect URI, role claim + map). See `config.py` for a worked example. |
+| `BTAGENT_SAML_PROVIDERS` | `{}` | No | JSON map of SAML 2.0 providers (IdP metadata URL, SP entity id, ACS URL, role attribute + map). Requires the `saml` extra. |
+| `BTAGENT_FRONTEND_URL` | `/` | No | Frontend root the SSO callback redirects to after establishing the session. `/` suits a same-origin SPA behind the API ingress. |
+| `BTAGENT_WEBHOOK_SECRET` | (unset) | Conditional | HMAC secret for inbound webhooks. Deliberately has **no** fallback to `BTAGENT_JWT_SECRET`: that carve-out authenticated webhooks against the JWT signing key on any dev box reachable on the network (#372). |
+| `BTAGENT_ALLOW_LOCAL_ORIGINS` | `false` | No | Unlocks *only* the prod localhost-origin CORS rejection. The empty-allowlist and `*` rejections still apply, and the validator warns every time it fires. Setting it on a multi-host deployment re-opens the hole it was carved out of. |
+| `BTAGENT_METRICS_TOKEN` | (empty) | No | Bearer token gating the Prometheus `/metrics` scrape. Unset leaves the endpoint open — fine behind a private network, not fine on a directly-published `:8000`. |
+
+### Scheduled hunts and sweeps
+
+Cadences are wall-clock: an "every N hours" setting expands to the hour set
+`{0, N, 2N, …}`. The `*_SCHEDULE_ENABLED` gates default to **unset**, which
+*derives* from `BTAGENT_MOCK_CONNECTORS` — on when mocks are on, off when they
+are off — so a deployment with un-wired live connectors does not run a
+scheduled tick that can only land zero findings. Set one explicitly to force it.
+
+| Variable | Default | Required | Description |
+|----------|---------|----------|-------------|
+| `BTAGENT_HUNT_SCHEDULE_ENABLED` | (derives from mocks) | No | Force the scheduled hunt-pack sweep on/off |
+| `BTAGENT_HUNT_SCHEDULER_INTERVAL_HOURS` | `4` | No | Hunt-pack sweep cadence |
+| `BTAGENT_HUNT_SCHEDULER_BACKENDS` | `["splunk"]` | No | Backends each scheduled sweep queries |
+| `BTAGENT_HUNT_SCHEDULER_LOOKBACK_HOURS` | `24` | No | Query window per scheduled sweep |
+| `BTAGENT_HUNT_SCHEDULER_MAX_HITS_PER_QUERY` | `100` | No | Per-query hit cap; a capped run is flagged `truncated` in run history |
+| `BTAGENT_HUNT_RUN_RESUME_WINDOW_MINUTES` | `60` | No | How recently a `running` pack-run must have started for the next invocation to resume it rather than abandon it. Must stay below `HUNT_SCHEDULER_INTERVAL_HOURS` so a resume can never span two sweeps. |
+| `BTAGENT_HUNT_SUPPRESSION_SWEEP_MINUTE` | `0` | No | Minute past each hour the stale-suppression sweep fires |
+| `BTAGENT_HUNT_PACK_INSTALL_DIR` | `./data/hunt_packs` | No | Where installed hunt packs are written |
+| `BTAGENT_EMAIL_HUNT_SCHEDULE_ENABLED` | (derives from mocks) | No | Force the email-hunt sweep on/off |
+| `BTAGENT_EMAIL_HUNT_SCAN_INTERVAL_HOURS` | `6` | No | Email-hunt sweep cadence |
+| `BTAGENT_EMAIL_HUNT_LOOKBACK_HOURS` | `24` | No | Email-hunt query window |
+| `BTAGENT_DECEPTION_HUNT_SCHEDULE_ENABLED` | (derives from mocks) | No | Force the deception (Canary) sweep on/off |
+| `BTAGENT_DECEPTION_HUNT_SCAN_INTERVAL_HOURS` | `6` | No | Deception sweep cadence. No lookback setting — the Canary connector has no time-window filter. |
+| `BTAGENT_NDR_HUNT_SCHEDULE_ENABLED` | (derives from mocks) | No | Force the NDR (Vectra) sweep on/off |
+| `BTAGENT_NDR_HUNT_SCAN_INTERVAL_HOURS` | `6` | No | NDR sweep cadence |
+| `BTAGENT_BEHAVIORAL_SCHEDULE_ENABLED` | (derives from mocks) | No | Force the behavioural baseline rebuild on/off. With it off the sweep still runs the stale-entity archival pass and logs one "no telemetry source wired" warning rather than fabricating baselines. |
+| `BTAGENT_BEHAVIORAL_SCHEDULER_INTERVAL_HOURS` | `6` | No | Behavioural baseline/stale sweep cadence |
+| `BTAGENT_BEHAVIORAL_STALE_AFTER_DAYS` | `30` | No | Age at which a behavioural entity is archived as stale |
+| `BTAGENT_PATTERN_SCAN_ENABLED` | `true` | No | Weekly cross-investigation pattern scan. Defaults **on** — unlike the hunt sweeps it is not connector-blocked, running entirely over stored data. |
+| `BTAGENT_PATTERN_SCAN_WEEKDAY` | `6` | No | Day of week (0 = Monday … 6 = Sunday) |
+| `BTAGENT_PATTERN_SCAN_HOUR` | `3` | No | Hour of day (UTC) |
+| `BTAGENT_PATTERN_SCAN_TOP_N` | `10` | No | Proposals upserted per scan |
+| `BTAGENT_TAXII_POLL_ENABLED` | `true` | No | TAXII 2.1 feed polling. Defaults on and is inert by construction — a fresh install has no feed rows, and creating one is an explicit admin action. Hard-off it here if outbound polling must be guaranteed absent. |
+| `BTAGENT_TAXII_POLL_SWEEP_INTERVAL_MINUTES` | `15` | No | Minutes between feed-poll sweeps |
+| `BTAGENT_TAXII_MAX_OBJECTS_PER_POLL` | `500` | No | Per-feed object cap per poll |
+
+
 ---
 
 ## Backup and Recovery
