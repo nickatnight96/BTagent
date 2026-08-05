@@ -11,6 +11,10 @@ export type IOCType =
   | "email"
   | "cve"
   | "file_path"
+  | "registry_key"
+  | "user_agent"
+  | "mutex"
+  | "process_name"
   | "other";
 
 export type EnrichmentStatus = "pending" | "enriching" | "enriched" | "failed";

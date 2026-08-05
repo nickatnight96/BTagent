@@ -113,6 +113,10 @@ const TYPE_LABELS: Record<IOCType, string> = {
   email: "Email",
   cve: "CVE",
   file_path: "Path",
+  registry_key: "Registry",
+  user_agent: "User-Agent",
+  mutex: "Mutex",
+  process_name: "Process",
   other: "Other",
 };
 
