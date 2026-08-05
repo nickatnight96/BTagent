@@ -53,6 +53,24 @@ COPY backend/alembic.ini backend/
 COPY backend/migrations/ backend/migrations/
 RUN cd backend && uv pip install --system -e .
 
+# Supply-chain remediation for packages the image scan flags that no
+# ``pyproject.toml`` can pin:
+#
+#   * ``setuptools`` ships inside the base image itself;
+#   * ``msgpack`` arrives transitively through the agent runtime.
+#
+# Neither is a declared dependency of any workspace package, so the image build
+# is the only place the floor can be expressed. Kept as an explicit, dated list
+# rather than a blanket ``--upgrade`` of everything: a blanket upgrade would
+# silently move pinned runtime deps and turn a security fix into an
+# unreviewable version bump.
+#
+# 2026-08-05 — setuptools CVE-2025-47273 (path traversal in PackageIndex,
+# fixed 78.1.1) and msgpack GHSA-6v7p-g79w-8964 (out-of-bounds read on
+# Unpacker reuse, fixed 1.2.1). Drop an entry once the upstream that pulls it
+# in ships a version at or above the floor.
+RUN uv pip install --system --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
+
 # Stage 2: Production
 FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}}
 
