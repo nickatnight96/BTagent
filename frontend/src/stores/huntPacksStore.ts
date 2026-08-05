@@ -46,6 +46,27 @@ export const HIT_VOLUME_DAYS = 30;
 // backend noise-baseline's ``min_runs`` floor.
 export const UNDER_FIRING_MIN_RUNS = 3;
 
+/**
+ * Run statuses whose `rule_stats` are NOT admissible observations.
+ *
+ * Mirrors `noise_baseline.INCOMPLETE_RUN_STATUSES` on the backend, and the
+ * `test_incomplete_run_parity` guard fails if the two lists drift apart.
+ *
+ * A `failed` or `abandoned` sweep still writes `rule_stats` for the rules it
+ * got through before it died. Counting those as observations means a pack
+ * whose worker keeps restarting accumulates zero-hit observations and its
+ * rules cross the UNDER_FIRING_MIN_RUNS floor — this page would report them
+ * "under-firing" (a detection to review) while the noise-baseline advisory
+ * next to it, which excludes these statuses, says nothing about them. The
+ * rules are fine; the sweep never finished.
+ */
+export const INCOMPLETE_RUN_STATUSES: readonly string[] = ["failed", "abandoned"];
+
+/** Runs whose per-rule stats can be trusted as observations. */
+export function completedRuns(runs: HuntPackRun[]): HuntPackRun[] {
+  return runs.filter((r) => !INCOMPLETE_RUN_STATUSES.includes(r.status));
+}
+
 // ---------------------------------------------------------------------------
 // Derived-view types
 // ---------------------------------------------------------------------------
@@ -168,6 +189,9 @@ export function build30dHitVolume(
  *   5. CLEAN              — most recent run was quiet.
  *
  * ``packRunsNewestFirst`` is that pack's runs already sorted newest-first.
+ * Incomplete (failed / abandoned) runs are dropped before anything is counted,
+ * so this agrees with the backend advisory rather than reaching its own
+ * verdict from a wider set of runs — see INCOMPLETE_RUN_STATUSES.
  */
 export function classifyRuleState(
   ruleId: string,
@@ -175,7 +199,9 @@ export function classifyRuleState(
   packRunsNewestFirst: HuntPackRun[],
   baselineIndex: Map<string, NoisyRule>,
 ): HuntRuleState {
-  const observed = packRunsNewestFirst.filter((r) => r.rule_stats[ruleId] !== undefined);
+  const observed = completedRuns(packRunsNewestFirst).filter(
+    (r) => r.rule_stats[ruleId] !== undefined,
+  );
   const latest = observed[0]?.rule_stats[ruleId];
 
   if (latest && latest.errors > 0) return "errored";
@@ -238,23 +264,28 @@ export function buildInstalledPacks(
   const packs: InstalledPack[] = [];
 
   for (const [packId, packRuns] of groups.entries()) {
+    // `last_run` stays the newest run of *any* status — the header reports what
+    // actually happened last, including a sweep that failed or was abandoned.
+    // Only the per-rule statistics below drop those runs, because only they
+    // are claims about a rule's behaviour.
     const lastRun = packRuns[0] ?? null;
-    // Union of every rule id seen across the pack's runs.
+    const completed = completedRuns(packRuns);
+    // Union of every rule id observed across the pack's completed runs.
     const ruleIds = new Set<string>();
-    for (const run of packRuns) {
+    for (const run of completed) {
       for (const rid of Object.keys(run.rule_stats)) ruleIds.add(rid);
     }
 
     const rules: RuleStatus[] = [];
     for (const rid of ruleIds) {
-      const observed = packRuns.filter((r) => r.rule_stats[rid] !== undefined);
-      const stat = latestRuleStat(rid, packRuns);
+      const observed = completed.filter((r) => r.rule_stats[rid] !== undefined);
+      const stat = latestRuleStat(rid, completed);
       const totalHits = observed.reduce((sum, r) => sum + (r.rule_stats[rid]?.hits ?? 0), 0);
       const hitRuns = observed.filter((r) => (r.rule_stats[rid]?.hits ?? 0) > 0).length;
       rules.push({
         rule_id: rid,
         title: stat?.title ?? rid,
-        state: classifyRuleState(rid, packId, packRuns, baselineIndex),
+        state: classifyRuleState(rid, packId, completed, baselineIndex),
         last_hits: stat?.hits ?? 0,
         last_errors: stat?.errors ?? 0,
         runs_observed: observed.length,
@@ -273,6 +304,11 @@ export function buildInstalledPacks(
       backends: lastRun?.backends ?? [],
       last_run: lastRun,
       run_count: packRuns.length,
+      // Deliberately over ALL runs, unlike the per-rule stats above: a hit
+      // found before a sweep died is a real hit whose finding was ingested, so
+      // dropping it would under-report volume the analyst can see in the inbox.
+      // The exclusion applies to claims about a rule's *behaviour*, not to
+      // counting things that happened.
       hit_volume_30d: build30dHitVolume(packRuns),
       rules,
       install_key: entry?.pack_id ?? null,

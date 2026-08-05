@@ -74,7 +74,10 @@ from btagent_backend.db.models_cti import DetectionProposalRow
 from btagent_backend.db.models_hunt import HuntPackRunRow
 from btagent_backend.db.models_mitre import MitreTechniqueRow
 from btagent_backend.db.models_validation import DetectionValidationRunRow
-from btagent_backend.services.noise_baseline import compute_noise_baseline
+from btagent_backend.services.noise_baseline import (
+    INCOMPLETE_RUN_STATUSES,
+    compute_noise_baseline,
+)
 from btagent_backend.services.validation_coverage_service import (
     DEFAULT_STALE_DAYS,
     build_coverage_map,
@@ -94,7 +97,6 @@ MAX_TELEMETRY_GAPS = 100
 # Techniques listed inline on an action row before it just reports a count.
 _ACTION_SAMPLE = 10
 
-_FAILED = "failed"
 _UNKNOWN_TACTIC = "unknown"
 
 # Telemetry-gap reasons, worst-first. ``OCSF_GAP`` is the persisted
@@ -385,6 +387,14 @@ async def _rule_health(db: AsyncSession, *, org_id: str, lookback_runs: int) -> 
     Reads the same ``hunt_pack_runs.rule_stats`` substrate the noise baseline
     reads, and reuses :func:`compute_noise_baseline` verbatim for the
     over-firing set rather than re-deriving it.
+
+    The status filter uses the baseline's own
+    :data:`~btagent_backend.services.noise_baseline.INCOMPLETE_RUN_STATUSES`.
+    A private literal here is what let ``abandoned`` sweeps through: the
+    over-firing half stayed correct (``compute_noise_baseline`` re-filters the
+    rows it is handed) while the aggregation loop below counted their partial
+    stats as observations — so *within this one function* the two halves
+    disagreed about which runs happened.
     """
     rows = list(
         (
@@ -392,7 +402,7 @@ async def _rule_health(db: AsyncSession, *, org_id: str, lookback_runs: int) -> 
                 select(HuntPackRunRow)
                 .where(
                     HuntPackRunRow.org_id == org_id,
-                    HuntPackRunRow.status != _FAILED,
+                    HuntPackRunRow.status.not_in(INCOMPLETE_RUN_STATUSES),
                 )
                 .order_by(HuntPackRunRow.started_at.desc())
                 .limit(lookback_runs)

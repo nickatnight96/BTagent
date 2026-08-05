@@ -77,8 +77,25 @@ _FAILED = "failed"
 #: never ran, so counting it as a clean sweep understates noise for exactly
 #: the rules that produced nothing *because they were never executed*.
 _ABANDONED = "abandoned"
-#: Statuses that do not represent a sweep whose coverage can be trusted.
-_INCOMPLETE = (_FAILED, _ABANDONED)
+
+#: Run statuses whose ``rule_stats`` are **not** admissible observations.
+#:
+#: The single definition for every surface that classifies rule health from
+#: pack-run history. It is public and imported (rather than each module keeping
+#: its own ``"failed"`` literal) because the surfaces are only correct while
+#: they agree: a rule's state is a function of how many runs observed it, so a
+#: module that admits one extra status counts observations its neighbour does
+#: not and reaches a different verdict about the same rule.
+#:
+#: That is not hypothetical — it is what happened when ``abandoned`` was
+#: introduced. ``coverage_console_service`` kept a private ``_FAILED`` and
+#: silently began counting abandoned sweeps' partial stats as real
+#: observations, so a pack whose worker kept restarting had its rules reported
+#: as under-firing ("review this detection") while ``GET /hunt/under-firing``
+#: — correctly — said nothing about them. ``test_incomplete_run_parity.py``
+#: guards the agreement, in Python and in the TypeScript mirror.
+INCOMPLETE_RUN_STATUSES = (_FAILED, _ABANDONED)
+_INCOMPLETE = INCOMPLETE_RUN_STATUSES
 
 # A rule must have gone this long with zero hits to count as under-firing.
 UNDER_FIRING_WINDOW_DAYS = 60

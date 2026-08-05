@@ -318,6 +318,102 @@ async def test_console_lists_broken_rules_and_omits_healthy_ones(db_session):
     assert console.broken_rules[0].state == "errored"
 
 
+async def test_abandoned_sweeps_do_not_make_a_rule_look_under_firing(db_session):
+    """A sweep that never finished is not evidence about a rule.
+
+    The regression this pins: the console filtered ``status != "failed"`` from
+    its own private literal, so when ``abandoned`` was added its partial
+    ``rule_stats`` kept counting as observations. Three restarts were enough to
+    push a perfectly healthy rule over the under-firing floor and onto the
+    "review this detection" list — while ``GET /hunt/under-firing``, which
+    excludes both statuses, stayed silent about it. Same substrate, opposite
+    verdicts.
+    """
+    org_id = await _make_org(db_session)
+    pack_id = generate_id("pack")
+    rule_id = generate_id("rule")
+
+    # Three abandoned sweeps: the rule was reached, ran, found nothing, and the
+    # worker died before the sweep completed. These are the runs that must not
+    # count — on their own they are enough to clear UNDER_FIRING_MIN_RUNS.
+    for day in range(3):
+        await _seed_pack_run(
+            db_session,
+            org_id,
+            pack_id=pack_id,
+            started_at=_NOW - timedelta(days=day),
+            status="abandoned",
+            rule_stats={rule_id: {"title": "New rule", "hits": 0, "errors": 0}},
+        )
+    # One genuine sweep. A single quiet observation is not a verdict, so with
+    # the abandoned runs excluded the rule sits below the floor and is silent
+    # about itself — which is the honest answer for a rule this new.
+    await _seed_pack_run(
+        db_session,
+        org_id,
+        pack_id=pack_id,
+        started_at=_NOW - timedelta(days=3),
+        rule_stats={rule_id: {"title": "New rule", "hits": 0, "errors": 0}},
+    )
+
+    console = await build_coverage_console(db_session, org_id=org_id, now=_NOW)
+    assert rule_id not in {r.rule_id for r in console.broken_rules}
+
+
+async def test_failed_and_abandoned_are_excluded_identically(db_session):
+    """The two incomplete statuses must not be treated differently.
+
+    Without this, a fix that special-cased ``abandoned`` while leaving
+    ``failed`` on a separate path would still pass the test above.
+    """
+    org_id = await _make_org(db_session)
+    results = {}
+    for status in ("failed", "abandoned"):
+        pack_id = generate_id("pack")
+        rule_id = generate_id("rule")
+        for day in range(4):
+            await _seed_pack_run(
+                db_session,
+                org_id,
+                pack_id=pack_id,
+                started_at=_NOW - timedelta(days=day),
+                status=status,
+                rule_stats={rule_id: {"title": "Quiet rule", "hits": 0, "errors": 0}},
+            )
+        results[status] = rule_id
+
+    console = await build_coverage_console(db_session, org_id=org_id, now=_NOW)
+    listed = {r.rule_id for r in console.broken_rules}
+    assert results["failed"] not in listed
+    assert results["abandoned"] not in listed
+
+
+async def test_completed_with_errors_still_counts_as_an_observation(db_session):
+    """Guard the guard: the exclusion must not swallow partially-errored sweeps.
+
+    Some of a ``completed_with_errors`` run's rule x backend executions
+    succeeded, so it is a real observation. An over-broad filter would make the
+    under-firing list quietly unreachable, and every assertion above would
+    still pass.
+    """
+    org_id = await _make_org(db_session)
+    pack_id = generate_id("pack")
+    rule_id = generate_id("rule")
+    for day in range(4):
+        await _seed_pack_run(
+            db_session,
+            org_id,
+            pack_id=pack_id,
+            started_at=_NOW - timedelta(days=day),
+            status="completed_with_errors",
+            rule_stats={rule_id: {"title": "Silent rule", "hits": 0, "errors": 0}},
+        )
+
+    console = await build_coverage_console(db_session, org_id=org_id, now=_NOW)
+    states = {r.rule_id: r.state for r in console.broken_rules}
+    assert states.get(rule_id) == "under_firing"
+
+
 async def test_console_flags_detections_unproven_against_telemetry(db_session):
     org_id = await _make_org(db_session)
     # Every backend errored → the rule could not be run against telemetry.
