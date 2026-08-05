@@ -186,6 +186,54 @@ describe("classifyRuleState", () => {
     const runs = [run({ id: "1", rule_stats: { rule1: ruleStat({ hits: 0 }) } })];
     expect(classifyRuleState("rule1", "hpack_win", runs, empty)).toBe("clean");
   });
+
+  describe("incomplete runs are not observations", () => {
+    // Mirrors the backend's INCOMPLETE_RUN_STATUSES. A failed or abandoned
+    // sweep still wrote rule_stats for the rules it got through before it
+    // died; counting those lets a restarting worker manufacture the
+    // observations that push a healthy rule over the under-firing floor —
+    // and this page would then contradict the advisory rendered beside it.
+    it.each(["failed", "abandoned"])(
+      "a %s sweep does not count toward the under-firing floor",
+      (status) => {
+        const runs = [
+          run({ id: "1", status, rule_stats: { rule1: ruleStat({ hits: 0 }) } }),
+          run({ id: "2", status, rule_stats: { rule1: ruleStat({ hits: 0 }) } }),
+          run({ id: "3", status, rule_stats: { rule1: ruleStat({ hits: 0 }) } }),
+          run({ id: "4", rule_stats: { rule1: ruleStat({ hits: 0 }) } }),
+        ];
+        // Only one real observation → below the floor, so "clean", not a
+        // verdict. Counting all four would read "under_firing".
+        expect(classifyRuleState("rule1", "hpack_win", runs, empty)).toBe("clean");
+      },
+    );
+
+    it("completed_with_errors still counts — some executions succeeded", () => {
+      // Guard the guard: an over-broad filter would make under_firing
+      // unreachable from this page and every assertion above would still pass.
+      const runs = [
+        run({ id: "1", status: "completed_with_errors", rule_stats: { rule1: ruleStat({ hits: 0 }) } }),
+        run({ id: "2", status: "completed_with_errors", rule_stats: { rule1: ruleStat({ hits: 0 }) } }),
+        run({ id: "3", status: "completed_with_errors", rule_stats: { rule1: ruleStat({ hits: 0 }) } }),
+      ];
+      expect(classifyRuleState("rule1", "hpack_win", runs, empty)).toBe("under_firing");
+    });
+
+    it("an error in an abandoned sweep does not mark the rule errored", () => {
+      // `errored` reads the *latest* observation. If incomplete runs leaked in,
+      // the newest abandoned run would win the precedence check and brand a
+      // rule broken on the strength of a sweep that never finished.
+      const runs = [
+        run({
+          id: "newest",
+          status: "abandoned",
+          rule_stats: { rule1: ruleStat({ hits: 0, errors: 1 }) },
+        }),
+        run({ id: "older", rule_stats: { rule1: ruleStat({ hits: 3 }) } }),
+      ];
+      expect(classifyRuleState("rule1", "hpack_win", runs, empty)).toBe("firing_as_expected");
+    });
+  });
 });
 
 // --------------------------------------------------------------------------- //
