@@ -372,12 +372,15 @@ def _stat(hits: int = 0, errors: int = 0, title: str = "Silent rule") -> dict:
 class _Run:
     """Minimal ``_RunLike`` stand-in for the pure analysis."""
 
-    def __init__(self, *, started_at, rule_stats, pack_id="p1", status="completed"):
+    def __init__(
+        self, *, started_at, rule_stats, pack_id="p1", status="completed", rules_not_run=()
+    ):
         self.pack_id = pack_id
         self.pack_name = "Pack One"
         self.rule_stats = rule_stats
         self.status = status
         self.started_at = started_at
+        self.rules_not_run = list(rules_not_run)
 
 
 def test_under_firing_flags_a_rule_silent_across_the_window():

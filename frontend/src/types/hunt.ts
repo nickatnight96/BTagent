@@ -258,6 +258,25 @@ export interface UnderFiringReport {
   min_runs: number;
 }
 
+/**
+ * One enabled rule that every sweep in the window skipped (#112).
+ *
+ * The E7 rules-per-sweep cap and per-run deadline stop the runner mid-list, so
+ * these rules produced no `rule_stats` entry at all — they are invisible to
+ * both hit-rate advisories, which is exactly why they get their own list. No
+ * `rule_title`: the backend only has ids for rules that never built a result.
+ */
+export interface NeverRunRule {
+  pack_id: string;
+  pack_name: string;
+  rule_id: string;
+  runs_skipped: number;
+  first_skipped_at: string | null;
+  last_skipped_at: string | null;
+  days_dark: number;
+  window_days: number;
+}
+
 /** Response from GET /hunt/noise-baseline. */
 export interface NoiseBaseline {
   items: NoisyRule[];
@@ -267,6 +286,9 @@ export interface NoiseBaseline {
   /** Mirror-image advisory: rules silent for the whole window (#112 Phase C). */
   under_firing?: UnderFiringRule[];
   under_firing_window_days?: number;
+  /** Third direction: enabled rules no sweep in the window ever executed. */
+  never_run?: NeverRunRule[];
+  never_run_window_days?: number;
 }
 
 /** One hunt pack + this org's install/enable state (GET /hunt/packs). */

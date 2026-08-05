@@ -8,12 +8,20 @@
  * rule, pre-filled name/reason from the baseline stats); analysts see the
  * advisory list only. The decision stays human — nothing auto-suppresses.
  *
- * Renders nothing when the baseline is empty or fails to load — a quiet
+ * It also carries the payload's `never_run` list: enabled rules the
+ * rules-per-sweep cap or the per-run deadline skipped on *every* sweep in the
+ * window. Those have no hit statistics at all, so no amount of reading the
+ * noisy or under-firing lists would reveal them — the pack simply looks like
+ * it is covering ground it has never touched. There is no one-click action:
+ * the fix is raising a cap or splitting a pack, which is a schedule decision,
+ * not a suppression.
+ *
+ * Renders nothing when both lists are empty or the fetch fails — a quiet
  * environment shouldn't pay a UI tax for the analysis.
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2, RefreshCw, VolumeX } from "lucide-react";
+import { ChevronDown, ChevronRight, EyeOff, Loader2, RefreshCw, VolumeX } from "lucide-react";
 import { Card, CardContent } from "@/components/ds/card";
 import { Button } from "@/components/ds/button";
 import { createSuppression, getNoiseBaseline } from "@/api/hunt";
@@ -85,7 +93,8 @@ export function NoisyRulesPanel({
     [onSuppressed],
   );
 
-  if (!baseline || baseline.items.length === 0) return null;
+  const neverRun = baseline?.never_run ?? [];
+  if (!baseline || (baseline.items.length === 0 && neverRun.length === 0)) return null;
 
   return (
     <Card data-testid="noisy-rules-panel">
@@ -98,8 +107,18 @@ export function NoisyRulesPanel({
             data-testid="noisy-rules-toggle"
           >
             {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-            <VolumeX className="w-4 h-4 text-amber-400" aria-hidden="true" />
-            Noisy rules ({baseline.items.length})
+            {baseline.items.length > 0 && (
+              <>
+                <VolumeX className="w-4 h-4 text-amber-400" aria-hidden="true" />
+                <span>Noisy rules ({baseline.items.length})</span>
+              </>
+            )}
+            {neverRun.length > 0 && (
+              <>
+                <EyeOff className="w-4 h-4 text-rose-400" aria-hidden="true" />
+                <span data-testid="never-run-count">{neverRun.length} never run</span>
+              </>
+            )}
           </button>
           <Button
             variant="ghost"
@@ -119,14 +138,16 @@ export function NoisyRulesPanel({
 
         {open && (
           <div className="mt-3 space-y-2">
-            <p className="text-xs text-muted-foreground">
-              These pack rules hit on nearly every run over the last{" "}
-              {baseline.runs_analyzed} run{baseline.runs_analyzed === 1 ? "" : "s"} — likely
-              baseline activity. Nothing is suppressed automatically
-              {canSuppress
-                ? "; Suppress rule mutes exactly that detection rule."
-                : "; suppression requires senior_analyst or higher."}
-            </p>
+            {baseline.items.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                These pack rules hit on nearly every run over the last{" "}
+                {baseline.runs_analyzed} run{baseline.runs_analyzed === 1 ? "" : "s"} — likely
+                baseline activity. Nothing is suppressed automatically
+                {canSuppress
+                  ? "; Suppress rule mutes exactly that detection rule."
+                  : "; suppression requires senior_analyst or higher."}
+              </p>
+            )}
             {error && (
               <p className="text-xs text-rose-300" data-testid="noisy-rules-error">
                 {error}
@@ -185,6 +206,44 @@ export function NoisyRulesPanel({
                 </div>
               );
             })}
+
+            {neverRun.length > 0 && (
+              <div
+                className="mt-3 space-y-2 border-t border-border/60 pt-3"
+                data-testid="never-run-section"
+              >
+                <p className="text-xs text-muted-foreground">
+                  These rules are enabled but no sweep in the last {neverRun[0]!.window_days} days
+                  ever executed them — the rules-per-sweep cap or the per-run deadline stopped the
+                  runner first, every time. They have no hit statistics because they have never
+                  run, so a quiet pack here is a blind spot, not a clean result. Raise the cap,
+                  lengthen the deadline, or split the pack.
+                </p>
+                {neverRun.map((r) => (
+                  <div
+                    key={`${r.pack_id}:${r.rule_id}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2"
+                    data-testid={`never-run-rule-${r.rule_id}`}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate font-mono text-sm text-foreground">{r.rule_id}</p>
+                      <p className="text-xs text-muted-foreground">{r.pack_name}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2 text-xs">
+                      <span
+                        className="rounded border border-rose-500/30 bg-rose-600/20 px-1.5 py-0.5 text-rose-300"
+                        data-testid={`never-run-skips-${r.rule_id}`}
+                      >
+                        skipped by {r.runs_skipped} sweep{r.runs_skipped === 1 ? "" : "s"}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {r.days_dark} day{r.days_dark === 1 ? "" : "s"} dark
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </CardContent>

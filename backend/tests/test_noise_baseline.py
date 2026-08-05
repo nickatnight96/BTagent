@@ -15,7 +15,11 @@ from conftest import auth_header
 
 from btagent_backend.db.models import DEFAULT_ORG_ID
 from btagent_backend.db.models_hunt import HuntPackRunRow
-from btagent_backend.services.noise_baseline import compute_noise_baseline
+from btagent_backend.services.noise_baseline import (
+    NEVER_RUN_WINDOW_DAYS,
+    compute_never_run,
+    compute_noise_baseline,
+)
 
 _T0 = datetime(2026, 7, 1, 12, 0, 0, tzinfo=UTC)
 
@@ -27,6 +31,7 @@ def _run(
     status: str = "completed",
     at: datetime = _T0,
     pack_name: str = "Windows Baseline",
+    rules_not_run: tuple[str, ...] = (),
 ):
     return SimpleNamespace(
         pack_id=pack_id,
@@ -34,6 +39,7 @@ def _run(
         rule_stats=rule_stats,
         status=status,
         started_at=at,
+        rules_not_run=list(rules_not_run),
     )
 
 
@@ -124,11 +130,130 @@ def test_sorted_noisiest_first():
 
 
 # --------------------------------------------------------------------------- #
+# Never-run (the third direction: rules the cap/deadline skipped every sweep)
+# --------------------------------------------------------------------------- #
+
+_NEVER_RUN_NOW = _T0 + timedelta(days=10)
+
+
+def _skipped(pack_id: str, rule_ids: tuple[str, ...], *, day: int, **kw):
+    """A truncated sweep that executed nothing and skipped ``rule_ids``."""
+    return _run(pack_id, {}, at=_T0 + timedelta(days=day), rules_not_run=rule_ids, **kw)
+
+
+def test_chronically_skipped_rule_is_flagged_with_correct_stats():
+    runs = [_skipped("pack_a", ("r_dark",), day=d) for d in (0, 4, 9)]
+    dark = compute_never_run(runs, now=_NEVER_RUN_NOW)
+    assert len(dark) == 1
+    r = dark[0]
+    assert (r.pack_id, r.rule_id) == ("pack_a", "r_dark")
+    assert r.runs_skipped == 3
+    assert r.first_skipped_at == _T0
+    assert r.last_skipped_at == _T0 + timedelta(days=9)
+    assert r.days_dark == 9
+    assert r.window_days == NEVER_RUN_WINDOW_DAYS
+
+
+def test_a_rule_that_executed_even_once_is_not_never_run():
+    """The disjointness guarantee: one execution makes it the hit-rate lists' problem.
+
+    Otherwise a rule could be reported as never-run *and* over-firing at the
+    same time, and the analyst would get contradictory advice about it.
+    """
+    runs = [_skipped("pack_a", ("r1",), day=d) for d in (0, 4, 9)]
+    runs.append(_run("pack_a", {"r1": _stats(3)}, at=_T0 + timedelta(days=5)))
+    assert compute_never_run(runs, now=_NEVER_RUN_NOW) == []
+
+
+def test_execution_in_an_older_run_still_disqualifies():
+    """The executed set is built across the whole window before any verdict.
+
+    Rows arrive newest-first from the query, so an implementation that decided
+    run by run would emit this rule after seeing three skips and only later
+    learn it had executed. Ordering must not change the answer.
+    """
+    runs = [
+        _skipped("pack_a", ("r1",), day=9),
+        _skipped("pack_a", ("r1",), day=6),
+        _skipped("pack_a", ("r1",), day=3),
+        # Oldest row, read last: the one execution in the window.
+        _run("pack_a", {"r1": _stats(0)}, at=_T0),
+    ]
+    assert compute_never_run(runs, now=_NEVER_RUN_NOW) == []
+
+
+def test_a_single_capped_sweep_is_not_a_blind_spot():
+    runs = [
+        _skipped("pack_a", ("r1",), day=9),
+        _run("pack_a", {"r2": _stats(1)}, at=_T0 + timedelta(days=4)),
+        _run("pack_a", {"r2": _stats(1)}, at=_T0),
+    ]
+    assert compute_never_run(runs, now=_NEVER_RUN_NOW) == []
+
+
+def test_incomplete_runs_do_not_count_as_skips():
+    """A failed/abandoned sweep skipped rules because it broke, not because of a cap."""
+    runs = [
+        _skipped("pack_a", ("r1",), day=0, status="failed"),
+        _skipped("pack_a", ("r1",), day=4, status="abandoned"),
+        _skipped("pack_a", ("r1",), day=9, status="failed"),
+    ]
+    assert compute_never_run(runs, now=_NEVER_RUN_NOW) == []
+
+
+def test_completed_with_errors_still_counts_as_a_skip():
+    """A partially-errored sweep still reached (and declined to run) the tail."""
+    runs = [_skipped("pack_a", ("r1",), day=d, status="completed_with_errors") for d in (0, 4, 9)]
+    assert [r.rule_id for r in compute_never_run(runs, now=_NEVER_RUN_NOW)] == ["r1"]
+
+
+def test_skips_outside_the_window_are_ignored():
+    old = _NEVER_RUN_NOW - timedelta(days=NEVER_RUN_WINDOW_DAYS + 5)
+    runs = [
+        _run("pack_a", {}, at=old, rules_not_run=("r1",)),
+        _run("pack_a", {}, at=old + timedelta(days=1), rules_not_run=("r1",)),
+        _skipped("pack_a", ("r1",), day=9),
+    ]
+    assert compute_never_run(runs, now=_NEVER_RUN_NOW) == []
+
+
+def test_never_run_is_tracked_per_pack():
+    runs = [_skipped("pack_a", ("shared",), day=d) for d in (0, 4, 9)]
+    runs += [_skipped("pack_b", ("shared",), day=d) for d in (0, 4)]
+    # pack_b only reached two skips, so only pack_a's copy qualifies.
+    dark = compute_never_run(runs, now=_NEVER_RUN_NOW)
+    assert [(r.pack_id, r.rule_id) for r in dark] == [("pack_a", "shared")]
+
+
+def test_sorted_longest_dark_first():
+    runs = [_skipped("pack_a", ("r_recent",), day=d) for d in (7, 8, 9)]  # 2 days of darkness
+    runs += [_skipped("pack_a", ("r_old",), day=d) for d in (0, 5, 9)]  # 9 days
+    dark = compute_never_run(runs, now=_NEVER_RUN_NOW)
+    assert [r.rule_id for r in dark] == ["r_old", "r_recent"]
+
+
+def test_a_pack_that_runs_every_rule_reports_nothing():
+    """Guard the guard — the analysis is not flagging on presence alone."""
+    runs = [
+        _run("pack_a", {"r1": _stats(0), "r2": _stats(2)}, at=_T0 + timedelta(days=d))
+        for d in (0, 4, 9)
+    ]
+    assert compute_never_run(runs, now=_NEVER_RUN_NOW) == []
+
+
+# --------------------------------------------------------------------------- #
 # API
 # --------------------------------------------------------------------------- #
 
 
-async def _seed_run(db_session, pack_id: str, rule_stats: dict, *, at: datetime) -> None:
+async def _seed_run(
+    db_session,
+    pack_id: str,
+    rule_stats: dict,
+    *,
+    at: datetime,
+    rules_not_run: tuple[str, ...] = (),
+) -> None:
     db_session.add(
         HuntPackRunRow(
             id=generate_id("hpr"),
@@ -142,6 +267,8 @@ async def _seed_run(db_session, pack_id: str, rule_stats: dict, *, at: datetime)
             error_count=0,
             findings_created=0,
             status="completed",
+            truncated=bool(rules_not_run),
+            rules_not_run=list(rules_not_run),
             started_at=at,
         )
     )
@@ -173,6 +300,46 @@ async def test_noise_baseline_api(client, analyst_token, sample_user, db_session
     assert mine[0]["rule_title"] == "Chronic beacon"
     assert mine[0]["hit_rate"] == 1.0
     assert mine[0]["total_hits"] == 21
+
+
+async def test_noise_baseline_carries_never_run(client, analyst_token, sample_user, db_session):
+    """A chronically-capped pack surfaces its skipped tail on the combined payload.
+
+    Seeded relative to *now* rather than the file's fixed ``_T0``, because
+    unlike the over-firing analysis this one is window-bounded and would go
+    quiet once ``_T0`` aged past 60 days.
+    """
+    now = datetime.now(UTC)
+    pack_id = generate_id("pack")
+    ran_id = generate_id("rule")
+    dark_id = generate_id("rule")
+    for day in (12, 6, 1):
+        await _seed_run(
+            db_session,
+            pack_id,
+            {ran_id: {"title": "Executed rule", "hits": 0, "errors": 0}},
+            at=now - timedelta(days=day),
+            rules_not_run=(dark_id,),
+        )
+
+    resp = await client.get(
+        "/api/v1/hunt/noise-baseline?lookback_runs=500",
+        headers=auth_header(analyst_token),
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["never_run_window_days"] == NEVER_RUN_WINDOW_DAYS
+
+    mine = [i for i in data["never_run"] if i["pack_id"] == pack_id]
+    assert len(mine) == 1
+    assert mine[0]["rule_id"] == dark_id
+    assert mine[0]["runs_skipped"] == 3
+    assert mine[0]["days_dark"] == 11
+
+    # The rule that *did* run is under-firing (observed 3×, never hit), not
+    # never-run — the two lists carve up the pack rather than overlapping.
+    assert dark_id not in {i["rule_id"] for i in data["under_firing"]}
+    assert ran_id in {i["rule_id"] for i in data["under_firing"] if i["pack_id"] == pack_id}
 
 
 async def test_noise_baseline_requires_auth(client):
