@@ -187,3 +187,175 @@ async def test_indicators_carry_a_marking_at_the_requested_level(
     for indicator in indicators:
         refs = indicator.get("object_marking_refs")
         assert refs, f"indicator exported unmarked: {indicator.get('name')}"
+
+
+# --------------------------------------------------------------------------- #
+# The dialog's other three controls (#586 follow-through)
+# --------------------------------------------------------------------------- #
+#
+# ``format``, ``type`` and ``confidence_min`` were discarded by the same
+# mechanism as ``tlp_max``: the route did not declare them, so FastAPI dropped
+# them without a word. ``format`` was the one with teeth — the endpoint always
+# returned STIX while ``iocStore`` picked the download *extension* from the
+# analyst's choice, so "CSV" saved STIX JSON into a ``.csv`` file.
+
+
+async def _export_fmt(client: AsyncClient, token: str, inv_id: str, **params):
+    query = "&".join(f"{k}={v}" for k, v in params.items())
+    return await client.get(
+        f"/api/v1/iocs/export?investigation_id={inv_id}&{query}",
+        headers=auth_header(token),
+    )
+
+
+async def test_csv_format_returns_csv_not_stix(
+    client: AsyncClient, analyst_token: str, db_session: AsyncSession, sample_user
+):
+    """The headline bug: asking for CSV must not return a STIX bundle."""
+    inv = await _seed(db_session, assigned_to=sample_user.id)
+
+    resp = await _export_fmt(client, analyst_token, inv.id, tlp_level="amber", format="csv")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("text/csv")
+
+    body = resp.text
+    assert not body.lstrip().startswith("{"), "CSV export returned JSON"
+    header, *rows = [ln for ln in body.splitlines() if ln.strip()]
+    # Column order matches what ``_parse_csv_rows`` reads, so an export
+    # re-imports cleanly.
+    assert header == "type,value,source,confidence,tlp"
+    assert any(_SEEDED["amber"] in row for row in rows)
+
+
+async def test_csv_export_carries_the_classification(
+    client: AsyncClient, analyst_token: str, db_session: AsyncSession, sample_user
+):
+    """CSV has no marking mechanism, so the TLP must ride in a column.
+
+    Without it, picking CSV would turn export into a classification-stripping
+    channel: the indicators leave and the label does not.
+    """
+    inv = await _seed(db_session, assigned_to=sample_user.id)
+
+    resp = await _export_fmt(client, analyst_token, inv.id, tlp_level="amber", format="csv")
+    assert resp.status_code == 200, resp.text
+
+    by_value = {
+        row.split(",")[1]: row.split(",")[4] for row in resp.text.splitlines()[1:] if row.strip()
+    }
+    assert by_value[_SEEDED["amber"]] == "amber"
+    assert by_value[_SEEDED["green"]] == "green"
+
+
+async def test_csv_export_still_obeys_the_tlp_ceiling(
+    client: AsyncClient, analyst_token: str, db_session: AsyncSession, sample_user
+):
+    """A different serialisation must not be a way around the ceiling."""
+    inv = await _seed(db_session, assigned_to=sample_user.id)
+
+    resp = await _export_fmt(client, analyst_token, inv.id, tlp_level="green", format="csv")
+    assert resp.status_code == 200, resp.text
+
+    body = resp.text
+    assert _SEEDED["green"] in body
+    for excluded in ("amber", "amber_strict", "red"):
+        assert _SEEDED[excluded] not in body, f"{excluded} leaked into a green CSV export"
+
+
+async def test_json_format_returns_plain_iocs_with_the_level(
+    client: AsyncClient, analyst_token: str, db_session: AsyncSession, sample_user
+):
+    inv = await _seed(db_session, assigned_to=sample_user.id)
+
+    resp = await _export_fmt(client, analyst_token, inv.id, tlp_level="amber", format="json")
+    assert resp.status_code == 200, resp.text
+
+    payload = resp.json()
+    assert payload["tlp_level"] == "amber"
+    assert "objects" not in payload, "json format returned a STIX bundle"
+    assert {i["value"] for i in payload["iocs"]} == {
+        _SEEDED["white"],
+        _SEEDED["green"],
+        _SEEDED["amber"],
+    }
+
+
+async def test_type_filter_narrows_the_export(
+    client: AsyncClient, analyst_token: str, db_session: AsyncSession, sample_user
+):
+    inv = await _seed(db_session, assigned_to=sample_user.id)
+    # Everything seeded is an ip, so a different type must yield nothing —
+    # proving the filter is applied rather than ignored.
+    resp = await _export_fmt(
+        client, analyst_token, inv.id, tlp_level="amber", format="json", type="domain"
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["iocs"] == []
+
+    same = await _export_fmt(
+        client, analyst_token, inv.id, tlp_level="amber", format="json", type="ip"
+    )
+    assert len(same.json()["iocs"]) == 3
+
+
+async def test_confidence_floor_narrows_the_export(
+    client: AsyncClient, analyst_token: str, db_session: AsyncSession, sample_user
+):
+    """The seed is all at 0.9, so a floor above it must empty the export."""
+    inv = await _seed(db_session, assigned_to=sample_user.id)
+
+    kept = await _export_fmt(
+        client, analyst_token, inv.id, tlp_level="amber", format="json", confidence_min=0.5
+    )
+    assert len(kept.json()["iocs"]) == 3
+
+    dropped = await _export_fmt(
+        client, analyst_token, inv.id, tlp_level="amber", format="json", confidence_min=0.95
+    )
+    assert dropped.json()["iocs"] == []
+
+
+async def test_unknown_format_is_rejected(
+    client: AsyncClient, analyst_token: str, db_session: AsyncSession, sample_user
+):
+    """An unsupported format must 422 rather than quietly falling back to STIX.
+
+    Same principle as the TLP level above: a value the endpoint cannot honour
+    must not silently become the default, because that is indistinguishable
+    from having asked for the default.
+    """
+    inv = await _seed(db_session, assigned_to=sample_user.id)
+
+    resp = await _export_fmt(client, analyst_token, inv.id, tlp_level="amber", format="pdf")
+    assert resp.status_code == 422, resp.text
+
+
+def test_csv_export_round_trips_through_the_import_parser():
+    """The exported column order is the one ``_parse_csv_rows`` reads.
+
+    Export and import are separate code paths that agree only by convention,
+    so the convention is pinned here rather than left to be discovered when
+    an analyst's round-trip silently drops every row.
+
+    Note what is *not* preserved: the parser reads columns 0-3 and ignores the
+    rest, so the ``tlp`` column rides along in the file but does not come back
+    as a classification — re-imported IOCs take the default. That is a real
+    limitation of the import side, asserted here so it is a known boundary
+    rather than a surprise.
+    """
+    from btagent_backend.api.v1.iocs import _parse_csv_rows
+
+    exported = (
+        "type,value,source,confidence,tlp\n"
+        "ip,1.2.3.4,btagent_export,0.9,amber\n"
+        "domain,evil.example,btagent_export,0.75,green\n"
+    )
+
+    rows, skipped = _parse_csv_rows(exported)
+
+    assert skipped == 0, "an exported CSV must not lose rows on re-import"
+    assert [r["value"] for r in rows] == ["1.2.3.4", "evil.example"]
+    assert [r["type"] for r in rows] == ["ip", "domain"]
+    assert rows[0]["confidence"] == 0.9
+    # The trailing tlp column is carried in the file but not read back.
+    assert "tlp_level" not in rows[0]
