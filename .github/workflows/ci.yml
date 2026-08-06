@@ -935,6 +935,41 @@ jobs:
           tags: btagent-backend:scan
           cache-from: type=gha
 
+      - name: Report where each finding comes from (diagnostic, non-gating)
+        # Prints PkgPath for every HIGH/CRITICAL finding *before* the gate runs.
+        #
+        # Added because a scan failure gave no way to tell which file a finding
+        # came from, and that cost several round trips on #584: the image
+        # provably contained only patched versions of the two flagged packages
+        # (verified image-wide from inside the build) while Trivy went on
+        # reporting the superseded ones. Four hypotheses — builder-stage-only
+        # patching, a vendored third-party SBOM, stale dist-info anywhere on
+        # disk, per-layer rather than merged-view reading — were each tested
+        # and disproved by pushing a change and re-reading a table that does
+        # not name its source.
+        #
+        # `PkgPath` names the file. This step is deliberately non-gating and
+        # changes no severity threshold: the scan below still fails the build
+        # on the same findings. It only makes the next failure diagnosable
+        # from the log instead of by bisection.
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.58.1 image \
+              --format json \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              btagent-backend:scan \
+          > trivy-report.json
+          echo "TARGET | TYPE | PACKAGE | INSTALLED | PKGPATH"
+          jq -r '
+            .Results[]
+            | .Target as $target
+            | .Class as $class
+            | (.Vulnerabilities // [])[]
+            | "\($target) | \($class) | \(.PkgName) | \(.InstalledVersion) | \(.PkgPath // "(no PkgPath — not read from an on-disk package)")"
+          ' trivy-report.json | sort -u
+
       - name: Scan the backend image with Trivy
         # Runs the Trivy CLI from its official image rather than
         # `aquasecurity/trivy-action`. The action is a thin wrapper that
