@@ -233,7 +233,9 @@ Enrichment results are stored alongside the IOC and update the confidence score.
 ### Exporting IOCs
 
 - **STIX 2.1 Export**: Export individual IOCs or bulk-export as STIX 2.1 bundles for sharing with partner organizations or MISP instances.
-- **TLP enforcement**: IOCs marked as TLP:RED are blocked from export.
+- **Other formats**: CSV and JSON are also available. CSV uses the same column order the import modal accepts (`type,value,source,confidence`), so an export re-imports cleanly, plus a trailing `tlp` column.
+- **Narrowing an export**: the IOC-type and minimum-confidence controls filter what goes into the file.
+- **TLP enforcement**: the "Maximum TLP Level" you pick is a *ceiling* — indicators classified above it are left out rather than exported under a weaker label, and TLP:RED is never exportable. Because CSV and JSON have no marking mechanism of their own, each row/record carries its own `tlp` value.
 
 ### Importing IOCs
 

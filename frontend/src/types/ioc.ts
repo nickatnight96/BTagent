@@ -171,8 +171,15 @@ export interface ImportResult {
  * actually takes — `buildQuery` serialises them verbatim, and FastAPI drops an
  * unknown parameter silently rather than erroring.
  *
- * `tlp_level` was `tlp_max` here, which the endpoint has never accepted, so
- * the selected ceiling was discarded on every export (#586).
+ * All four are now honoured by the route. Previously none of them were:
+ * `tlp_level` was spelled `tlp_max` here, and `format` / `type` /
+ * `confidence_min` were simply not declared on the endpoint (#586). The
+ * dialog's controls all appeared to work and none of them did — `format`
+ * most visibly, since `iocStore` picks the download extension from it while
+ * the response was always a STIX bundle.
+ *
+ * `backend/tests/test_api_query_param_parity.py` fails if a field is added
+ * here that the route does not declare.
  */
 export interface ExportOptions {
   format: "stix_2.1" | "csv" | "json";

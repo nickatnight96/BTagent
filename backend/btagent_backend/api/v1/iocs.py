@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
 from typing import Any, Literal
 
 from btagent_shared.security import TLPViolation, tlp_rank
 from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import IOCType
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -405,14 +408,61 @@ async def search_notebook(
     )
 
 
+#: Serialisations ``GET /iocs/export`` can produce. ``stix_2.1`` is the
+#: default and the only one that carries TLP markings structurally; see
+#: :func:`_render_export` for how the other two keep classification with the
+#: data instead.
+ExportFormat = Literal["stix_2.1", "csv", "json"]
+
+
+def _render_export(ioc_dicts: list[dict[str, Any]], *, fmt: str, tlp: str) -> Response:
+    """Serialise the (already TLP-filtered) IOCs in the requested format.
+
+    Every format carries the classification with the data. STIX has
+    ``object_marking_refs``; CSV and JSON have no such mechanism, so they
+    carry an explicit ``tlp`` column/field. Without it, choosing CSV would
+    turn the export into a classification-stripping channel — the indicators
+    leave, the label does not.
+
+    The CSV column order matches what :func:`_parse_csv_rows` reads
+    (``type,value,source,confidence``), so an export re-imports cleanly; the
+    parser ignores columns past the fourth, which is where ``tlp`` sits.
+    """
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf, lineterminator="\n")
+        writer.writerow(["type", "value", "source", "confidence", "tlp"])
+        for ioc in ioc_dicts:
+            writer.writerow(
+                [
+                    ioc["type"],
+                    ioc["value"],
+                    ioc.get("source") or "btagent_export",
+                    ioc.get("confidence", 0.5),
+                    ioc.get("tlp_level", tlp),
+                ]
+            )
+        return Response(content=buf.getvalue(), media_type="text/csv")
+
+    if fmt == "json":
+        return JSONResponse(content={"tlp_level": tlp, "iocs": ioc_dicts})
+
+    return JSONResponse(content=stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=tlp))
+
+
 @router.get("/export", response_model=None)
 async def export_stix(
     investigation_id: str = Query(...),
     tlp_level: str = Query("green"),
+    # Aliased: the wire names are ``format`` and ``type``, which shadow
+    # builtins if used as Python parameter names.
+    export_format: ExportFormat = Query("stix_2.1", alias="format"),
+    ioc_type: IOCType | None = Query(None, alias="type"),
+    confidence_min: float = Query(0.0, ge=0.0, le=1.0),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Export IOCs as a STIX 2.1 JSON bundle.
+    """Export an investigation's IOCs.
 
     ``tlp_level`` is the classification this export is being made at, and it
     acts as a ceiling: an indicator more restricted than it is excluded rather
@@ -426,6 +476,13 @@ async def export_stix(
     The frontend now sends ``tlp_level``; this name is canonical because the
     API tests, the security E2E spec and ``docs/deployment/air-gap.md`` all
     already speak it.
+
+    ``format``, ``type`` and ``confidence_min`` are the export dialog's other
+    three controls, which the route did not declare and therefore discarded in
+    the same silent way. ``format`` was the worst of the three: the endpoint
+    always returned a STIX bundle while ``iocStore`` picked the *download
+    extension* from the analyst's choice, so selecting CSV saved STIX JSON
+    into a ``.csv`` file.
     """
     user.require_permission("ioc:export")
 
@@ -479,17 +536,21 @@ async def export_stix(
             "value": r.value,
             "confidence": r.confidence,
             "context": r.context,
+            "source": r.source,
             "tlp_level": r.tlp_level,
             "enrichment": r.enrichment,
             "first_seen": r.first_seen.isoformat() if r.first_seen else None,
         }
         for r in rows
+        # The TLP ceiling is applied first and unconditionally: the dialog's
+        # other two filters narrow what the analyst asked for, but they must
+        # never be able to widen what classification permits.
         if r.tlp_level in allowed
+        and (ioc_type is None or r.type == ioc_type.value)
+        and (r.confidence or 0.0) >= confidence_min
     ]
 
-    bundle = stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=ceiling.value)
-
-    return bundle
+    return _render_export(ioc_dicts, fmt=export_format, tlp=ceiling.value)
 
 
 # NOTE: ``/{ioc_id}`` MUST stay below the static-path GET routes

@@ -111,6 +111,18 @@ test.describe("IOC export dialog", () => {
     await notebook.exportDialog.submitButton.click();
     const download = await downloadPromise;
     // Download filename pattern is ``iocs_export_<ts>.<ext>``.
-    expect(download.suggestedFilename()).toMatch(/iocs_export_\d+\..+/);
+    expect(download.suggestedFilename()).toMatch(/iocs_export_\d+\.csv$/);
+
+    // ...and the bytes are actually CSV. Asserting only the filename passed
+    // just as happily when the endpoint ignored `format` and returned a STIX
+    // bundle regardless — the `.csv` name was the whole of the lie (#586).
+    const stream = await download.createReadStream();
+    if (!stream) throw new Error("download stream missing");
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    const text = Buffer.concat(chunks).toString("utf8");
+
+    expect(text.split("\n")[0]).toBe("type,value,source,confidence,tlp");
+    expect(text).not.toContain('"type": "bundle"');
   });
 });

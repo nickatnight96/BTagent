@@ -396,7 +396,10 @@ IOC import and export are file-based and need no network:
 * `POST /api/v1/iocs/import` (STIX bundle in the JSON body) and
   `POST /api/v1/iocs/import/stix` (file upload) — parse a STIX 2.1 bundle into
   IOCs;
-* `GET /api/v1/iocs/export?investigation_id=…&tlp_level=…` — emit a bundle.
+* `GET /api/v1/iocs/export?investigation_id=…&tlp_level=…&format=…` — emit a
+  bundle. `format` is `stix_2.1` (default), `csv` or `json`; `type` and
+  `confidence_min` narrow the set. CSV and JSON carry the classification in a
+  `tlp` column/field, since neither has STIX's `object_marking_refs`.
 
 Export is TLP-gated: `tlp_level` is a ceiling, so indicators more restricted
 than the requested level are left out of the bundle rather than shipped under a

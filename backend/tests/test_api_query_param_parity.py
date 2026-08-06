@@ -92,19 +92,11 @@ KNOWN_GAPS: dict[str, str] = {
         "filters client-side, so search only matches within the page already "
         "loaded rather than across the investigation set"
     ),
-    "/api/v1/iocs/export format": (
-        "the export dialog's STIX/CSV/JSON radio. The endpoint always returns "
-        "a STIX bundle, but iocStore picks the download *extension* from this "
-        "value — so choosing CSV saves STIX JSON into a .csv file"
-    ),
-    "/api/v1/iocs/export type": (
-        "the dialog's IOC-type filter; the endpoint exports every IOC on the "
-        "investigation regardless"
-    ),
-    "/api/v1/iocs/export confidence_min": (
-        "the dialog's confidence slider; the endpoint exports every IOC on the "
-        "investigation regardless"
-    ),
+    # The three ``/iocs/export`` entries this list shipped with — ``format``,
+    # ``type`` and ``confidence_min`` — are gone because the route now declares
+    # them. ``test_exemption_list_only_holds_live_entries`` is what forced
+    # their removal: leaving a fixed gap listed fails just as loudly as a new
+    # one appearing, which is the half of a ratchet that keeps it honest.
 }
 
 # A parser this simple could match nothing and pass vacuously. The floors are
