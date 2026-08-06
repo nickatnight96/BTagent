@@ -44,7 +44,7 @@ from btagent_shared.types.identity_hunt import (
     RevocationProposalStatus,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -332,6 +332,7 @@ _playbook_service = PlaybookService()
 
 
 class RevocationDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     rationale: str = Field(default="", max_length=8192)
 
 

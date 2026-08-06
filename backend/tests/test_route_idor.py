@@ -8,8 +8,8 @@ These tests pin the audit Wave 2 IDOR fixes:
 * LIST endpoints filter by org and (for plain analysts) by ownership
 * admin can access cross-investigation in same org
 * POST IOC validates the parent investigation is accessible
-* mass-assignment of org_id from the request body is ignored — the row is
-  created with the caller's org_id
+* mass-assignment of org_id from the request body is *refused* (422), and a
+  legitimate create is stamped with the caller's org_id from the token
 
 The fixtures here build users/investigations/IOCs directly via the DB so we
 can place them in arbitrary orgs and assign them to arbitrary owners.
@@ -350,10 +350,23 @@ async def test_list_investigations_senior_sees_org_wide(client: AsyncClient, org
 
 
 @pytest.mark.asyncio
-async def test_post_investigation_ignores_org_id_in_body(
-    client: AsyncClient, db_session: AsyncSession, cross_org_setup
-):
-    """Sending ``org_id="org_b"`` in the body is ignored — row is in caller's org."""
+async def test_post_investigation_refuses_org_id_in_body(client: AsyncClient, cross_org_setup):
+    """Sending ``org_id`` in the body is now *refused*, not quietly discarded.
+
+    This used to assert 201-and-ignored: ``CreateInvestigationRequest`` did not
+    declare ``org_id``, so Pydantic dropped it. That was safe but silent, and
+    the silence was the same mechanism that let a *misspelled* ``tlp_level``
+    fall back to TLP:GREEN without anyone noticing — a mass-assignment attempt
+    and a typo were indistinguishable to the caller, and both looked like
+    success.
+
+    With ``extra="forbid"`` the request 422s instead. A body containing
+    ``org_id`` is either a client bug or an attempt to cross tenants; neither
+    deserves a 201.
+
+    The underlying guarantee is unchanged and still proved below: tenancy comes
+    from the token, never from anything the caller controls.
+    """
     alice = cross_org_setup["alice"]
     resp = await client.post(
         "/api/v1/investigations",
@@ -361,17 +374,33 @@ async def test_post_investigation_ignores_org_id_in_body(
         json={
             "title": "Mass assignment probe",
             "description": "should land in org_default",
-            # Attempt to inject a different org_id; CreateInvestigationRequest
-            # doesn't declare it so Pydantic drops it, and even if accepted
-            # the route sets org_id from user.org_id explicitly.
             "org_id": "org_b",
         },
     )
-    assert resp.status_code == 201
-    new_id = resp.json()["id"]
+    assert resp.status_code == 422, resp.text
+    assert "org_id" in resp.text
 
-    # Check the DB row — org_id should be alice's org, NOT "org_b".
-    inv = await db_session.get(InvestigationRow, new_id)
+
+@pytest.mark.asyncio
+async def test_post_investigation_stamps_org_from_the_token(
+    client: AsyncClient, db_session: AsyncSession, cross_org_setup
+):
+    """The defence the test above used to carry: org_id comes from the caller.
+
+    Kept as its own case so the AUTH-B1 protection is still asserted directly.
+    If ``extra="forbid"`` were ever relaxed, the 422 above would change but this
+    must not — the route sets ``org_id=user.org_id`` explicitly and does not
+    consult the body at all.
+    """
+    alice = cross_org_setup["alice"]
+    resp = await client.post(
+        "/api/v1/investigations",
+        headers=auth_header(_token(alice)),
+        json={"title": "Legitimate create", "description": "no org_id supplied"},
+    )
+    assert resp.status_code == 201, resp.text
+
+    inv = await db_session.get(InvestigationRow, resp.json()["id"])
     assert inv is not None
     assert inv.org_id == alice.org_id == "org_default"
 

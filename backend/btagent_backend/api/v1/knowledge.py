@@ -7,7 +7,7 @@ from typing import Any
 
 from btagent_shared.security import TLPViolation
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -31,6 +31,7 @@ router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
 class IngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     # SEC-P2-003 FIX: Size limits to prevent memory exhaustion
     title: str = Field(max_length=500)
     content: str = Field(max_length=1_000_000)  # 1MB limit

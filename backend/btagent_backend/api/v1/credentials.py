@@ -49,6 +49,7 @@ class CredentialListResponse(BaseModel):
 
 
 class UpsertCredentialRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     secret_ref: str = Field(
         ...,
         description=(

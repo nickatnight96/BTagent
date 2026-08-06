@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from jose import JWTError
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,10 +82,12 @@ class EnrollResponse(BaseModel):
 
 
 class CodeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     code: str
 
 
 class VerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     code: str
 
 

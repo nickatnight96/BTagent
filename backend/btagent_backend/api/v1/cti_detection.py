@@ -196,6 +196,7 @@ class DetectionProposalListResponse(BaseModel):
 
 
 class ProposalReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Optional rationale for an accept / reject decision."""
 
     rationale: str = Field(default="", max_length=8192)
@@ -405,6 +406,7 @@ async def reject_detection_proposal(
 
 
 class ProposalEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """An analyst-edited Sigma rule body for a proposal (Engineer UI edit path)."""
 
     sigma_yaml: str = Field(min_length=1, max_length=64 * 1024)
@@ -466,6 +468,7 @@ async def edit_detection_proposal(
 
 
 class ProposalValidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Optional overrides for the historical-telemetry validation run."""
 
     backends: list[str] | None = Field(
@@ -548,6 +551,7 @@ async def validate_detection_proposal(
 
 
 class ComposePRRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Accepted proposal rows to ship in one detection-repo PR."""
 
     row_ids: list[str] = Field(min_length=1, max_length=50)
@@ -607,6 +611,7 @@ async def compose_detection_pr(
 
 
 class PROutcomeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Record the detection-repo PR outcome for a composed proposal."""
 
     outcome: PROutcome = Field(

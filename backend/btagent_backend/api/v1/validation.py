@@ -41,7 +41,7 @@ from btagent_shared.types.detection_validation import (
 from btagent_shared.types.enums import Severity
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -113,6 +113,7 @@ class CoverageMapResponse(BaseModel):
 
 
 class EmulationRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Body for a sandbox-gated adversary-emulation validation run."""
 
     technique_id: str = Field(..., min_length=1, max_length=20)

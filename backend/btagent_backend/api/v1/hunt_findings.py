@@ -29,7 +29,7 @@ from btagent_shared.types.hunt_finding import (
     SuppressionRule,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -171,6 +171,7 @@ async def record_finding(
 
 
 class EmailHuntRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Trigger an email hunt over a time window.
 
     Supply ``lookback_hours`` (default 24h back from now) or an explicit
@@ -353,6 +354,7 @@ class AllHuntsRunResponse(BaseModel):
 
 
 class AllHuntsRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Trigger a combined sweep. The window applies to the email vertical only.
 
     Supply ``lookback_hours`` (default 24h back from now) or an explicit
@@ -773,6 +775,7 @@ async def create_suppression(
 
 
 class GovernFindingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Register/sunset ruling for a shadow-agent finding's workload."""
 
     action: str = Field(..., pattern="^(register|sunset)$")

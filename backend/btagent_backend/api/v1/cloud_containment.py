@@ -44,7 +44,7 @@ from btagent_shared.types.cloud_hunt import (
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +62,7 @@ _PROPOSAL_KEY = "cloud_containment_proposal"
 
 
 class ContainmentDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Accept/reject body.
 
     ``approved`` is the explicit HITL half of the double gate — the same flag the

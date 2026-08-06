@@ -67,6 +67,7 @@ class SeedIdResponse(BaseModel):
 
 class SeedEntityRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid")
 
     kind: EntityKind
     canonical_id: str = Field(..., min_length=1, max_length=512)
@@ -111,6 +112,7 @@ async def seed_behavioral_entity(
 
 
 class SeedOutlierRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model_config = ConfigDict(extra="forbid")
 
     entity_id: str = Field(..., min_length=1, max_length=64)
@@ -165,6 +167,7 @@ async def seed_behavioral_outlier(
 
 
 class SeedProposalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     model_config = ConfigDict(extra="forbid")
 
     cluster_id: str = Field(..., min_length=1, max_length=128)
@@ -231,6 +234,7 @@ async def seed_pattern_proposal(
 
 
 class SeedInvestigationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Create an investigation row with a caller-chosen id.
 
     The product create route mints its own ULID, but the report plugin's

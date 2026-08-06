@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from btagent_shared.security import TLPViolation
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -128,6 +128,7 @@ _report_service = ReportService()
 
 
 class GenerateReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
     template: Literal[
         "incident_report",
@@ -146,16 +147,19 @@ class ListTemplatesResponse(BaseModel):
 
 
 class SummarizeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     investigation_ids: list[str] = Field(..., min_length=1)
     format: Literal["cisa", "fbi_ic3", "isac", "generic"] = "generic"
 
 
 class RemediationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
     audience: Literal["executive", "technical", "compliance"] = "technical"
 
 
 class DetectionContentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     investigation_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]+$")
     platform: Literal["splunk", "elastic", "sentinel"] = "splunk"
 

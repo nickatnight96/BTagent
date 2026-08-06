@@ -210,23 +210,43 @@ test.describe("XSS — knowledge documents", () => {
   });
 });
 
+// This describe used to create an *investigation* with a `tags` field and
+// inspect the investigation card. `CreateInvestigationRequest` declares no
+// `tags`, and no `investigations` column backs one — so the payload was
+// dropped on the way in, no chip was ever rendered, and "the card HTML does
+// not contain <script>alert(" was trivially true. The test asserted nothing
+// for as long as it existed. Forbidding undeclared body fields turned that
+// silent drop into a 422 and exposed it.
+//
+// IOC tags, which the describe is named for, *are* real: `AnnotateIOCRequest`
+// declares them and `IOCNotebook` renders them as chips. So the fix is to
+// point the test at the surface it always claimed to cover.
 test.describe("XSS — IOC tag", () => {
-  test("escaped in card tag chips", async ({ analystPage, analystApi }) => {
+  test("escaped in notebook tag chips", async ({ analystPage, analystApi }) => {
     const dispose = trapDialogs(analystPage);
     try {
-      const inv = await analystApi.createInvestigation({
-        title: `[E2E] tag-xss ${Date.now()}`,
-        severity: "low",
-        tlp_level: "green",
-        tags: [`tag-${XSS_PAYLOAD}`],
+      const { investigation } = await seedInvestigationWithIOCs(analystApi);
+      const ioc = await analystApi.addIOC({
+        investigation_id: investigation.id,
+        type: "ip",
+        value: `203.0.113.${Date.now() % 250}`,
       });
 
-      const list = new InvestigationListPage(analystPage);
-      await list.goto();
-      const card = list.cardFor(inv.id);
-      await card.waitFor({ state: "visible" });
-      const html = await card.innerHTML();
-      expect(html).not.toContain("<script>alert(");
+      const annotated = await analystApi.ctx.patch(
+        `/api/v1/iocs/${ioc.id}/annotate`,
+        { data: { tags: [`tag-${XSS_PAYLOAD}`] } },
+      );
+      expect(annotated.ok()).toBe(true);
+
+      const notebook = new IOCNotebookPage(analystPage);
+      await notebook.goto();
+      await notebook.table.waitFor({ state: "visible" });
+
+      const tableHtml = await notebook.table.innerHTML();
+      // The payload must reach the page as text, never as live markup — and
+      // it must actually be *there*, or this is back to proving nothing.
+      expect(tableHtml).not.toContain("<script>alert(");
+      expect(tableHtml).toMatch(/&lt;script&gt;|&amp;lt;script/);
     } finally {
       dispose();
     }

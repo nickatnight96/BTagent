@@ -22,7 +22,7 @@ from btagent_shared.security.tlp_policy import TLPPolicy, TLPPolicyAction
 from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -37,6 +37,7 @@ _VALID_EGRESS_KINDS = set(EgressKind.__args__)  # type: ignore[attr-defined]
 
 
 class CreateTLPPolicyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     action: TLPPolicyAction
     egress_kinds: list[str] = Field(default_factory=list)
     applies_to_tlp: list[TLP] = Field(default_factory=list)
@@ -57,6 +58,7 @@ class CreateTLPPolicyRequest(BaseModel):
 
 
 class EvaluateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     tlp: TLP
     egress_kind: str
 

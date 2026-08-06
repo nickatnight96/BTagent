@@ -31,7 +31,7 @@ from btagent_engine.reasoning import (
 )
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -48,6 +48,7 @@ _MAX_IOCS = 500
 
 
 class MitigationPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     iocs: list[IOCRef] = Field(
         default_factory=list, max_length=_MAX_IOCS, description="IOCs to consider for blocking."
     )
