@@ -26,6 +26,7 @@ from btagent_shared.types.playbook import (
     PlaybookDefinition,
     PlaybookStatus,
     PlaybookStep,
+    StepExecutionStatus,
     StepType,
     TriggerCondition,
     ValidationResult,
@@ -197,6 +198,40 @@ def _parse_step(raw: dict[str, Any]) -> PlaybookStep:
             next_step=raw.get("next_step"),
             on_failure=OnFailure(raw.get("on_failure", "abort")),
         )
+
+
+def steps_until_gate(
+    definition: PlaybookDefinition, *, resume_after: str | None = None
+) -> list[PlaybookStep]:
+    """The steps a walk may run next, up to and including the next HITL gate.
+
+    Pure, so the *policy* — where execution is allowed to stop — is testable
+    without a database, a background task or an event loop. That matters here:
+    the stub executor writes through its own session factory, which the pytest
+    harness cannot reach from a background task, so before this split the only
+    coverage of "does a gate actually stop the run" was a browser test. That
+    test waited on a status string nothing writes, so the answer was "no" for
+    as long as anyone had been asking (#588).
+
+    The gate itself is included — the caller pauses *on* it rather than before
+    it, so the step shows as in-flight while a human decides.
+
+    Raises ``KeyError`` if ``resume_after`` names a step the definition does
+    not contain.
+    """
+    steps = list(definition.steps)
+    if resume_after is not None:
+        ids = [s.id for s in steps]
+        if resume_after not in ids:
+            raise KeyError(resume_after)
+        steps = steps[ids.index(resume_after) + 1 :]
+
+    out: list[PlaybookStep] = []
+    for step in steps:
+        out.append(step)
+        if step.type == StepType.HITL_GATE:
+            break
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -562,12 +597,31 @@ class PlaybookService:
         )
         return execution
 
-    async def _run_execution_stub(self, execution_id: str, yaml_str: str) -> None:
+    async def _run_execution_stub(
+        self,
+        execution_id: str,
+        yaml_str: str,
+        *,
+        resume_after: str | None = None,
+        step_results: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         """Walk the compiled steps and write StepResult entries.
 
         Held intentionally simple: each step transitions ``running`` ->
         ``completed`` with a brief sleep so the frontend's 2 s polling
         sees progress. Errors during compile are recorded on the row.
+
+        **HITL gates actually gate.** On reaching a ``hitl_gate`` step the walk
+        stops, leaving the gate step ``running`` and the run ``paused_hitl``
+        until :meth:`resolve_hitl_gate` is called. Until #588 this stub ran
+        straight through every step type, so a HITL-gated playbook completed
+        without ever asking anyone — and the browser test written to prove
+        otherwise could not detect it, because it waited on a status string
+        (``awaiting_hitl``) that no code path writes.
+
+        ``resume_after`` restarts the walk at the step following the named
+        gate, carrying ``step_results`` forward so completed work is not
+        re-run.
         """
         from btagent_backend.db.engine import async_session_factory
 
@@ -588,12 +642,50 @@ class PlaybookService:
                 await session.commit()
             return
 
-        step_results: dict[str, dict[str, Any]] = {}
-        for step in definition.steps:
+        try:
+            pending = steps_until_gate(definition, resume_after=resume_after)
+        except KeyError:
+            logger.error(
+                "Stub executor: cannot resume %s after unknown step %s",
+                execution_id,
+                resume_after,
+            )
+            return
+
+        step_results = dict(step_results or {})
+        for step in pending:
+            if step.type == StepType.HITL_GATE:
+                # Stop here. The gate step stays ``running`` — it is genuinely
+                # in flight, waiting on a person — and the *run* is what
+                # reports paused_hitl, mirroring the real executor where
+                # ``_hitl_node`` returns the run status while the step result
+                # carries the eventual decision.
+                now = datetime.now(UTC)
+                step_results[step.id] = {
+                    "step_id": step.id,
+                    "status": StepExecutionStatus.RUNNING.value,
+                    "started_at": now.isoformat(),
+                    "completed_at": None,
+                    "output": {"awaiting_approval": True},
+                    "error": None,
+                }
+                async with async_session_factory() as session:
+                    await session.execute(
+                        update(PlaybookExecutionRow)
+                        .where(PlaybookExecutionRow.id == execution_id)
+                        .values(
+                            status=PlaybookStatus.PAUSED_HITL.value,
+                            step_results=dict(step_results),
+                        )
+                    )
+                    await session.commit()
+                logger.info("Playbook execution %s paused at HITL gate %s", execution_id, step.id)
+                return
+
             now = datetime.now(UTC)
             step_results[step.id] = {
                 "step_id": step.id,
-                "status": "running",
+                "status": StepExecutionStatus.RUNNING.value,
                 "started_at": now.isoformat(),
                 "completed_at": None,
                 "output": {},
@@ -613,7 +705,7 @@ class PlaybookService:
 
             done = datetime.now(UTC)
             step_results[step.id].update(
-                status="completed",
+                status=StepExecutionStatus.COMPLETED.value,
                 completed_at=done.isoformat(),
                 output={"stub": True},
             )
@@ -752,6 +844,92 @@ class PlaybookService:
         rows = list(result.scalars().all())
 
         return rows, total
+
+    class GateNotPending(RuntimeError):
+        """Raised when a HITL decision is submitted for a run that is not paused.
+
+        Distinct from "not found": the caller reached a real run in their own
+        org, so the route answers 409 rather than 404 — the run's state is the
+        problem, not their right to see it.
+        """
+
+    async def resolve_hitl_gate(
+        self,
+        db: AsyncSession,
+        row: PlaybookExecutionRow,
+        *,
+        approved: bool,
+        approver_id: str,
+        comment: str = "",
+    ) -> PlaybookExecutionRow:
+        """Record a human decision on the gate a run is paused at.
+
+        Approval resolves the gate ``completed`` and resumes the walk from the
+        step after it. Rejection resolves it ``rejected`` and fails the run —
+        matching the real executor, where an unapproved gate is a terminal
+        outcome for that branch rather than a retryable state.
+
+        Raises :class:`GateNotPending` if the run is not ``paused_hitl``, so a
+        double-submit cannot resume a run twice.
+        """
+        if row.status != PlaybookStatus.PAUSED_HITL.value:
+            raise self.GateNotPending(
+                f"Execution {row.id} is {row.status}, not awaiting a HITL decision"
+            )
+
+        step_results = dict(row.step_results or {})
+        gate_id = next(
+            (
+                sid
+                for sid, result in step_results.items()
+                if result.get("output", {}).get("awaiting_approval")
+            ),
+            None,
+        )
+        if gate_id is None:
+            raise self.GateNotPending(
+                f"Execution {row.id} is paused but no step is marked awaiting approval"
+            )
+
+        now = datetime.now(UTC)
+        step_results[gate_id] = {
+            **step_results[gate_id],
+            "status": (
+                StepExecutionStatus.COMPLETED.value
+                if approved
+                else StepExecutionStatus.REJECTED.value
+            ),
+            "completed_at": now.isoformat(),
+            "output": {
+                "awaiting_approval": False,
+                "approved": approved,
+                "approver_id": approver_id,
+                "comment": comment,
+            },
+        }
+
+        row.step_results = step_results
+        if approved:
+            row.status = PlaybookStatus.RUNNING.value
+        else:
+            row.status = PlaybookStatus.FAILED.value
+            row.error = f"HITL gate {gate_id} was not approved"
+            row.completed_at = now
+        await db.commit()
+        await db.refresh(row)
+
+        if approved:
+            playbook = await db.get(PlaybookRow, row.playbook_id)
+            if playbook is not None:
+                asyncio.create_task(
+                    self._run_execution_stub(
+                        row.id,
+                        playbook.yaml_content,
+                        resume_after=gate_id,
+                        step_results=step_results,
+                    )
+                )
+        return row
 
     async def get_execution(
         self,

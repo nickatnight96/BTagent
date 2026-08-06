@@ -2,10 +2,17 @@
  * Playbook HITL gate — pause / approve / advance.
  *
  * Sprint F scope. Seeds a playbook with a HITL gate via the API,
- * starts a run, and verifies the execution status transitions to
- * ``awaiting_hitl``. Approval is performed via the API since a
- * UI-side approval surface for HITL gates may not be wired up yet
- * (TODO below — replace with UI clicks once it ships).
+ * starts a run, and verifies the execution pauses at the gate.
+ * Approval is performed via the API since a UI-side approval surface
+ * for HITL gates is not wired up yet (TODO below — replace with UI
+ * clicks once it ships).
+ *
+ * #588: this file waited on ``awaiting_hitl``, which is not a
+ * ``PlaybookStatus`` — the run reports ``paused_hitl``. So the approval
+ * test's "did not pause, skipping" branch fired unconditionally and its
+ * body never ran, while the executor had no gate handling at all and
+ * ``POST /executions/{id}/approve`` did not exist. All three are fixed
+ * together; none of them alone would have made this spec meaningful.
  */
 import { test, expect } from "../../fixtures/auth";
 import { PlaybookExecutionPage } from "../../pages/playbook-pages";
@@ -130,23 +137,18 @@ test.describe("Playbook HITL gate", () => {
       executionId = null;
     }
 
-    // If we know the execution id, poll the API for the awaiting state
-    // — this is the load-bearing assertion of the HITL contract.
-    if (executionId) {
-      const state = await pollStatus(
-        seniorApi,
-        executionId,
-        (status) =>
-          ["awaiting_hitl", "running", "completed", "failed"].includes(status),
-        20_000,
-      );
-      expect([
-        "awaiting_hitl",
-        "running",
-        "completed",
-        "failed",
-      ]).toContain(state.status);
-    }
+    // The load-bearing assertion of the HITL contract — and now actually
+    // load-bearing. It used to accept any of four statuses, a set that
+    // omitted the only one the gate produces, so it could pass exactly when
+    // the gate did nothing and would have failed had it worked (#588).
+    expect(executionId).toBeTruthy();
+    const state = await pollStatus(
+      seniorApi,
+      executionId!,
+      (status) => status === "paused_hitl",
+      20_000,
+    );
+    expect(state.status).toBe("paused_hitl");
 
     // The UI status surface should also reflect a non-empty status.
     await expect(exec.status).toBeVisible({ timeout: 10_000 });
@@ -154,7 +156,7 @@ test.describe("Playbook HITL gate", () => {
     expect(text.trim().length).toBeGreaterThan(0);
   });
 
-  test("approve via API advances execution out of awaiting_hitl", async ({
+  test("approve via API advances execution out of paused_hitl", async ({
     seniorApi,
   }) => {
     // TODO: Replace this with UI-driven approval once a HITL approval
@@ -178,48 +180,31 @@ test.describe("Playbook HITL gate", () => {
       seniorApi,
       execBody.id,
       (status) =>
-        ["awaiting_hitl", "completed", "failed"].includes(status),
+        ["paused_hitl", "completed", "failed"].includes(status),
       20_000,
     );
 
-    if (beforeApproval.status !== "awaiting_hitl") {
-      // The HITL gate may already have resolved (auto-approve in test
-      // mode) or the run completed without ever pausing — either is
-      // surfaceable at the API level. Don't false-fail.
-      test.skip(
-        true,
-        `Run did not pause at HITL (status=${beforeApproval.status}); skipping approval probe`,
-      );
-      return;
-    }
+    // No skip-hatch here any more. Both of the ones that stood here — "the
+    // run didn't pause" and "the approval endpoint 404s" — described the real
+    // state of the world, and between them they meant this test could only
+    // ever skip. A spec that cannot fail is worse than no spec, because it
+    // occupies the slot where coverage would go (#588).
+    expect(beforeApproval.status).toBe("paused_hitl");
 
-    // Approve via the canonical HITL approval endpoint. The exact
-    // surface is documented in backend/btagent_backend/api/v1 — we
-    // accept any non-5xx as proof the path exists.
     const approveRes = await seniorApi.ctx.post(
       `/api/v1/playbooks/executions/${execBody.id}/approve`,
       { data: { decision: "approve", comment: "[E2E] auto-approve" } },
     );
-    // If the approval endpoint isn't present yet, this surfaces as a
-    // 404. We tolerate that with a TODO-skip so the spec is forward-
-    // compatible without false-failing on a missing endpoint.
-    if (approveRes.status() === 404) {
-      test.skip(
-        true,
-        "HITL approval endpoint not yet available — TODO: enable when wired",
-      );
-      return;
-    }
-    expect(approveRes.status()).toBeLessThan(500);
+    expect(approveRes.status()).toBe(200);
 
     // After approval the run should advance — eventually completed
-    // or failed (i.e. no longer awaiting_hitl).
+    // or failed (i.e. no longer paused_hitl).
     const afterApproval = await pollStatus(
       seniorApi,
       execBody.id,
-      (status) => status !== "awaiting_hitl",
+      (status) => status !== "paused_hitl",
       20_000,
     );
-    expect(afterApproval.status).not.toBe("awaiting_hitl");
+    expect(afterApproval.status).not.toBe("paused_hitl");
   });
 });

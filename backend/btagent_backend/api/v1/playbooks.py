@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
+from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
 from btagent_backend.auth.scoping import assert_can_access_investigation
 from btagent_backend.db.models import InvestigationRow
 from btagent_backend.db.models_playbook import PlaybookExecutionRow, PlaybookRow
+from btagent_backend.services.audit_trail import AuditTrail
 from btagent_backend.services.playbook_service import PlaybookService
 
 logger = logging.getLogger("btagent.api.playbooks")
@@ -172,6 +174,76 @@ async def get_execution_detail(
     row = await _service.get_execution(db, execution_id, org_id=user.org_id)
     if not row:
         raise HTTPException(status_code=404, detail="Execution not found")
+
+    return _to_execution_response(row)
+
+
+class HITLDecisionRequest(BaseModel):
+    """A human's answer to the gate a run is paused at."""
+
+    decision: Literal["approve", "reject"]
+    comment: str = Field(default="", max_length=2048)
+
+
+@router.post(
+    "/executions/{execution_id}/approve",
+    response_model=ExecutionResponse,
+)
+async def resolve_execution_hitl_gate(
+    execution_id: str,
+    body: HITLDecisionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Approve or reject the HITL gate a paused playbook run is waiting on.
+
+    Gated by ``hitl:approve`` (senior_analyst and above), the same permission
+    that approves a workflow run's gate and a containment action — a playbook
+    gate exists precisely to stop the automation before something consequential,
+    so it carries the same weight.
+
+    404 on a run in another tenant (not 403, so the ID's existence is not
+    disclosed); 409 when the run is not actually awaiting a decision, which is
+    also what makes a double-submit safe.
+
+    #588: this endpoint did not exist. The browser test written to prove the
+    gate holds called it, got a 404, and skipped itself with a plausible
+    message — while the stub executor ran straight through every HITL gate
+    without pausing. Both halves are fixed together, because either one alone
+    leaves the control untested.
+    """
+    user.require_permission("hitl:approve")
+
+    row = await _service.get_execution(db, execution_id, org_id=user.org_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    approved = body.decision == "approve"
+    try:
+        row = await _service.resolve_hitl_gate(
+            db,
+            row,
+            approved=approved,
+            approver_id=user.id,
+            comment=body.comment,
+        )
+    except PlaybookService.GateNotPending as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    await AuditTrail(db).record(
+        org_id=user.org_id,
+        actor=user.id,
+        category=AuditCategory.AGENT_ACTION,
+        action="playbook_hitl_approved" if approved else "playbook_hitl_rejected",
+        resource=f"playbook_execution:{execution_id}",
+        outcome=AuditOutcome.SUCCESS,
+        details={
+            "execution_id": execution_id,
+            "playbook_id": row.playbook_id,
+            "decision": body.decision,
+            "comment": body.comment,
+        },
+    )
 
     return _to_execution_response(row)
 

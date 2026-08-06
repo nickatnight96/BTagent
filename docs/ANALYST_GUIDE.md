@@ -204,6 +204,8 @@ When a checkpoint appears, review:
 - **Approve**: Click the approve button and optionally add a comment. The agent proceeds with the action.
 - **Reject**: Click the reject button with a reason. The agent notes the rejection and continues analysis without executing the action.
 
+For a **playbook** gate specifically, the run stops on the gate step and the execution view shows Approve / Reject next to the status. Approving records who approved it and resumes the run from the step after the gate; rejecting is terminal for that run — the remaining steps do not execute. Either decision is written to the audit chain.
+
 **Important:** Only users with `senior_analyst` or higher role can respond to HITL checkpoints. The investigation remains in `paused_hitl` status until a qualified user responds.
 
 ---
