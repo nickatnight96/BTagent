@@ -34,7 +34,11 @@ interface PlaybookState {
   executionState: PlaybookExecution | null;
 
   // List actions
-  fetchPlaybooks: (params?: { search?: string; is_active?: boolean }) => Promise<void>;
+  // Mirrors what `GET /v1/playbooks` declares. This used to be
+  // `{ search?, is_active? }` — neither is a route parameter, and no caller
+  // ever passed either, so they would have been discarded silently (#586).
+  // PlaybookList filters by name/description client-side.
+  fetchPlaybooks: (params?: { active_only?: boolean }) => Promise<void>;
 
   // CRUD actions
   createPlaybook: (data: CreatePlaybookRequest) => Promise<Playbook>;

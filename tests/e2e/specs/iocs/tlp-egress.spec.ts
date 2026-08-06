@@ -105,18 +105,22 @@ test.describe("STIX export TLP egress (regression)", () => {
     expect(text).not.toContain(redValue);
   });
 
-  test("WHITE/CLEAR context: export contains GREEN IOC values, not RED ones", async ({
+  // `tlp_level` is a ceiling (#586): WHITE is the *most permissive* export
+  // classification, so it admits only WHITE indicators — a GREEN one exported
+  // in a WHITE-marked bundle would be a downgrade. This case therefore seeds a
+  // WHITE IOC; the GREEN-under-AMBER path is covered by the test above.
+  test("WHITE/CLEAR context: export contains WHITE IOC values, not RED ones", async ({
     seniorPage,
     seniorApi,
   }) => {
     const stamp = Date.now();
-    const greenValue = `198.51.120.${stamp % 240}`;
+    const whiteValue = `198.51.120.${stamp % 240}`;
     const redValue = `198.51.121.${stamp % 240}`;
     const { investigation } = await seedInvestigationWithIOCs(seniorApi, {
       title: `[E2E] TLP egress WHITE ${stamp}`,
       tlp_level: "amber",
       iocs: [
-        { type: "ip", value: greenValue, tlp_level: "green" },
+        { type: "ip", value: whiteValue, tlp_level: "white" },
         { type: "ip", value: redValue, tlp_level: "red" },
       ],
     });
@@ -133,7 +137,7 @@ test.describe("STIX export TLP egress (regression)", () => {
     await notebook.exportDialog.tlpInput.selectOption("white");
 
     const text = await readDownloadText(seniorPage, notebook);
-    expect(text).toContain(greenValue);
+    expect(text).toContain(whiteValue);
     expect(text).not.toContain(redValue);
   });
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from btagent_shared.security import TLPViolation
+from btagent_shared.security import TLPViolation, tlp_rank
+from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import IOCType
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -413,11 +414,31 @@ async def export_stix(
 ):
     """Export IOCs as a STIX 2.1 JSON bundle.
 
-    Respects TLP enforcement: TLP:RED IOCs are never included in exports.
+    ``tlp_level`` is the classification this export is being made at, and it
+    acts as a ceiling: an indicator more restricted than it is excluded rather
+    than shipped under a weaker marking. TLP:RED is never exportable, and the
+    org egress policy is evaluated against the same value.
+
+    Until #586 the export dialog sent this as ``tlp_max``. FastAPI drops an
+    unknown query parameter silently, so ``tlp_level`` always fell back to its
+    ``"green"`` default: the analyst's choice reached nothing, every bundle
+    was marked TLP:GREEN, and the org policy was only ever evaluated at green.
+    The frontend now sends ``tlp_level``; this name is canonical because the
+    API tests, the security E2E spec and ``docs/deployment/air-gap.md`` all
+    already speak it.
     """
     user.require_permission("ioc:export")
 
-    if tlp_level == "red":
+    try:
+        ceiling = TLP(tlp_level)
+    except ValueError:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown TLP level {tlp_level!r}. Expected one of: "
+            f"{', '.join(t.value for t in TLP)}.",
+        ) from None
+
+    if ceiling is TLP.RED:
         raise HTTPException(
             status_code=403,
             detail="Cannot export TLP:RED IOCs. Downgrade TLP level before export.",
@@ -433,7 +454,7 @@ async def export_stix(
     # services/tlp_egress_guard.py.
     try:
         await assert_org_policy_allows_egress(
-            db, org_id=user.org_id, tlp=tlp_level, egress_kind="stix_export"
+            db, org_id=user.org_id, tlp=ceiling.value, egress_kind="stix_export"
         )
     except TLPViolation as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -445,7 +466,12 @@ async def export_stix(
         page_size=10000,  # Export all
     )
 
-    # Filter out TLP:RED IOCs
+    # Apply the ceiling. This generalises the hardcoded ``!= "red"`` drop that
+    # stood here: an IOC goes out only if its restriction rank is at or below
+    # the ceiling's, so choosing TLP:GREEN no longer silently ships AMBER
+    # indicators. An unrecognised stored ``tlp_level`` is not in the allowed
+    # set, so it fails closed rather than being treated as unclassified.
+    allowed = {t.value for t in TLP if tlp_rank(t) <= tlp_rank(ceiling)}
     ioc_dicts = [
         {
             "id": r.id,
@@ -458,10 +484,10 @@ async def export_stix(
             "first_seen": r.first_seen.isoformat() if r.first_seen else None,
         }
         for r in rows
-        if r.tlp_level != "red"
+        if r.tlp_level in allowed
     ]
 
-    bundle = stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=tlp_level)
+    bundle = stix_service.stix_bundle_from_iocs(ioc_dicts, tlp_level=ceiling.value)
 
     return bundle
 

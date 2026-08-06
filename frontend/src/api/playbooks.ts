@@ -14,12 +14,15 @@ interface PaginatedResponse<T> {
   page_size: number;
 }
 
+// Only the parameters `GET /v1/playbooks` actually declares. `search`,
+// `is_active` and `trigger_type` were here with no caller ever passing them,
+// and the route takes none of the three — `is_active` in particular was a
+// near-miss for its `active_only`. FastAPI discards unknown query parameters
+// silently, so they would have been dropped had anything sent them (#586).
 interface ListPlaybooksParams {
   page?: number;
   page_size?: number;
-  search?: string;
-  is_active?: boolean;
-  trigger_type?: string;
+  active_only?: boolean;
 }
 
 export async function listPlaybooks(
@@ -28,9 +31,8 @@ export async function listPlaybooks(
   const searchParams = new URLSearchParams();
   if (params.page) searchParams.set("page", String(params.page));
   if (params.page_size) searchParams.set("page_size", String(params.page_size));
-  if (params.search) searchParams.set("search", params.search);
-  if (params.is_active !== undefined) searchParams.set("is_active", String(params.is_active));
-  if (params.trigger_type) searchParams.set("trigger_type", params.trigger_type);
+  if (params.active_only !== undefined)
+    searchParams.set("active_only", String(params.active_only));
 
   const query = searchParams.toString();
   const endpoint = `/v1/playbooks${query ? `?${query}` : ""}`;

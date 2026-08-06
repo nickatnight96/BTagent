@@ -65,7 +65,7 @@ test.describe("IOC export dialog", () => {
     await expect(csv).toHaveAttribute("aria-checked", "false");
   });
 
-  test("TLP warning appears when tlp_max >= amber", async ({
+  test("TLP warning appears at AMBER and above", async ({
     analystPage,
   }) => {
     const notebook = new IOCNotebookPage(analystPage);
