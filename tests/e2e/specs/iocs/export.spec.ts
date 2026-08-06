@@ -73,15 +73,15 @@ test.describe("IOC export dialog", () => {
     await notebook.exportButton.click();
 
     // No warning at GREEN.
-    await notebook.exportDialog.tlpInput.selectOption("GREEN");
+    await notebook.exportDialog.tlpInput.selectOption("green");
     await expect(notebook.exportDialog.tlpWarning).toBeHidden();
 
     // Warning fires at AMBER.
-    await notebook.exportDialog.tlpInput.selectOption("AMBER");
+    await notebook.exportDialog.tlpInput.selectOption("amber");
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();
 
     // And at RED.
-    await notebook.exportDialog.tlpInput.selectOption("RED");
+    await notebook.exportDialog.tlpInput.selectOption("red");
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();
   });
 
