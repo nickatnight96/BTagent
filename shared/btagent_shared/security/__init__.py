@@ -15,11 +15,11 @@ from btagent_shared.security.safelist import (
     is_structurally_reserved_ip,
 )
 from btagent_shared.security.tlp import (
-    EgressKind,
     TLPViolation,
     assert_tlp_allows_egress,
 )
 from btagent_shared.security.tlp_policy import (
+    EgressKind,
     PolicyDecision,
     TLPPolicy,
     TLPPolicyAction,

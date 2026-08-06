@@ -68,6 +68,29 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+class EgressKind(StrEnum):
+    """The channels an org's TLP policy can govern.
+
+    Every one of these is a real gate: each value is passed to
+    ``assert_org_policy_allows_egress`` at a call site that can refuse the
+    operation. Naming them here rather than as bare strings is what lets the
+    frontend's picker be generated from the vocabulary instead of typed out —
+    ``report_export`` was gated and tested on the backend while the SPA's
+    hand-written list offered only the other four, so no operator could write
+    a policy restricting report exports by TLP. The control existed and could
+    not be configured.
+
+    ``test_shared_enum_ts_parity`` compares this against
+    ``frontend/src/types/containment.ts`` from here on.
+    """
+
+    STIX_EXPORT = "stix_export"
+    REPORT_EXPORT = "report_export"
+    KNOWLEDGE_INGEST = "knowledge_ingest"
+    MCP_RETURN = "mcp_return"
+    EVENT_EMIT = "event_emit"
+
+
 class TLPPolicyAction(StrEnum):
     """What an egress policy does when it matches."""
 
@@ -272,6 +295,7 @@ def emit_violation(event: TLPViolationEvent) -> None:
 __all__ = [
     "PolicyDecision",
     "TLPPolicy",
+    "EgressKind",
     "TLPPolicyAction",
     "TLPViolationEvent",
     "ViolationSink",

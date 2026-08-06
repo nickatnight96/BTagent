@@ -7,7 +7,7 @@ import io
 import logging
 from typing import Any, Literal
 
-from btagent_shared.security import TLPViolation, tlp_rank
+from btagent_shared.security import EgressKind, TLPViolation, tlp_rank
 from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import IOCType
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -521,7 +521,7 @@ async def export_stix(
     # services/tlp_egress_guard.py.
     try:
         await assert_org_policy_allows_egress(
-            db, org_id=user.org_id, tlp=ceiling.value, egress_kind="stix_export"
+            db, org_id=user.org_id, tlp=ceiling.value, egress_kind=EgressKind.STIX_EXPORT.value
         )
     except TLPViolation as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

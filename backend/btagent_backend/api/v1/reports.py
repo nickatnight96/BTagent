@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from typing import Any, Literal
 
-from btagent_shared.security import TLPViolation
+from btagent_shared.security import EgressKind, TLPViolation
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -262,7 +262,7 @@ async def export_report(
             db,
             org_id=inv.org_id or user.org_id,
             tlp=inv.tlp_level or "green",
-            egress_kind="report_export",
+            egress_kind=EgressKind.REPORT_EXPORT.value,
         )
     except TLPViolation as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

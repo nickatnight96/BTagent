@@ -2,13 +2,13 @@ import api from "./client";
 
 export type TLPPolicyAction = "allow" | "deny" | "downgrade_then_allow";
 export type TLP = "red" | "amber_strict" | "amber" | "green" | "white";
-export const EGRESS_KINDS = [
-  "stix_export",
-  "knowledge_ingest",
-  "mcp_return",
-  "event_emit",
-] as const;
-export type EgressKind = (typeof EGRESS_KINDS)[number];
+// Defined in `types/containment.ts` so the shared-enum parity guard compares
+// it against the Python `EgressKind`; a hand-written copy here is how
+// `report_export` came to be missing from the policy picker.
+import { EGRESS_KINDS, type EgressKind } from "@/types/containment";
+
+export { EGRESS_KINDS };
+export type { EgressKind };
 
 export interface TLPPolicy {
   id: string;
