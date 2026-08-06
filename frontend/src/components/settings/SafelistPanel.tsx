@@ -6,12 +6,15 @@ import {
   listSafelistEntries,
   removeSafelistEntry,
   type SafelistEntry,
-  type SafelistEntryType,
 } from "@/api/containment";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ds/button";
 import { Input } from "@/components/ds/input";
 import { NativeSelect } from "@/components/ds/native-select";
+import {
+  SAFELIST_ENTRY_TYPE_LABELS,
+  type SafelistEntryType,
+} from "@/types/containment";
 
 /** Pull a human-readable message out of an ApiError's JSON ``detail`` body. */
 function errMessage(e: unknown, fallback: string): string {
@@ -146,7 +149,8 @@ export function SafelistPanel() {
               data-testid={`safelist-entry-${entry.id}`}
             >
               <span className="rounded border border-border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                {entry.entry_type}
+                {SAFELIST_ENTRY_TYPE_LABELS[entry.entry_type] ??
+                  entry.entry_type}
               </span>
               <span className="font-mono">{entry.value}</span>
               <span className="flex-1 min-w-32 text-muted-foreground">
@@ -204,8 +208,17 @@ export function SafelistPanel() {
           data-testid="safelist-add-type"
           className="h-9 w-28"
         >
-          <option value="ip">IP</option>
-          <option value="domain">Domain</option>
+          {/* Rendered from the shared vocabulary rather than hand-listed:
+              `principal` was a valid, service-enforced entry kind that this
+              dropdown never offered, so cloud IAM principals (#117) could not
+              be safelisted from the product at all. */}
+          {(
+            Object.keys(SAFELIST_ENTRY_TYPE_LABELS) as SafelistEntryType[]
+          ).map((kind) => (
+            <option key={kind} value={kind}>
+              {SAFELIST_ENTRY_TYPE_LABELS[kind]}
+            </option>
+          ))}
         </NativeSelect>
         <Input
           value={value}

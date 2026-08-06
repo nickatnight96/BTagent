@@ -95,7 +95,13 @@ export async function executeBulkBlock(
 // Reads and writes all require `containment:execute`, same as executing.
 // --------------------------------------------------------------------------
 
-export type SafelistEntryType = "ip" | "domain";
+// Re-exported so existing importers keep working; the definition lives in
+// `types/containment.ts`, which is the directory the shared-enum parity guard
+// scans. Imported separately because a bare `export ... from` does not bring
+// the name into local scope.
+import type { SafelistEntryType } from "@/types/containment";
+
+export type { SafelistEntryType };
 
 export interface SafelistEntry {
   id: string;
