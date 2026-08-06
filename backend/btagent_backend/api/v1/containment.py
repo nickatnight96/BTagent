@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 
-from btagent_shared.types.enums import AuditCategory, AuditOutcome
+from btagent_shared.types.enums import AuditCategory, AuditOutcome, SafelistEntryType
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -78,8 +78,15 @@ class ExecutionResponse(BaseModel):
 
 class SafelistEntryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    entry_type: str = Field(..., description="'ip' or 'domain'.")
-    value: str = Field(..., description="The IP or domain to never block.")
+    entry_type: SafelistEntryType = Field(
+        ...,
+        description=(
+            "Kind of never-touch entry. IPs match exactly, domains by suffix, "
+            "principals (cloud IAM ARN / service-account email / object id) "
+            "exactly and case-insensitively."
+        ),
+    )
+    value: str = Field(..., description="The IP, domain or principal to never touch.")
     reason: str = Field(default="", description="Why it must never be blocked.")
 
 
@@ -195,7 +202,7 @@ async def add_safelist_entry(
         row = await response_safelist_service.add_entry(
             db,
             org_id=user.org_id,
-            entry_type=body.entry_type,
+            entry_type=body.entry_type.value,
             value=body.value,
             reason=body.reason,
             created_by=user.id,

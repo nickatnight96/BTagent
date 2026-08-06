@@ -70,6 +70,29 @@ class ContainmentStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class SafelistEntryType(StrEnum):
+    """Kinds of never-touch entry an operator can add to the response safelist.
+
+    The safelist is a containment *veto*: anything listed here is never
+    isolated, blocked or disabled, however the agent scores it. Each kind has
+    its own matching rule — IPs match exactly, domains match by suffix, and
+    principals (cloud IAM ARN / service-account email / object id, #117) match
+    exactly and case-insensitively.
+
+    ``PRINCIPAL`` was enforced by the service and read into the effective
+    policy, but the API described the field as "'ip' or 'domain'", the
+    TypeScript type was ``"ip" | "domain"``, and the settings dropdown offered
+    two options. The capability existed and no caller could reach it. Naming
+    the vocabulary once, and mirroring it in ``frontend/src/types``, is what
+    makes that kind of drift visible — ``test_shared_enum_ts_parity`` compares
+    the two from here on.
+    """
+
+    IP = "ip"
+    DOMAIN = "domain"
+    PRINCIPAL = "principal"
+
+
 class UserRole(StrEnum):
     ANALYST = "analyst"
     SENIOR_ANALYST = "senior_analyst"

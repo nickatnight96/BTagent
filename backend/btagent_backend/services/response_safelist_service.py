@@ -27,6 +27,7 @@ import logging
 import re
 
 from btagent_shared.security.safelist import BASELINE_SAFELIST, SafelistPolicy
+from btagent_shared.types.enums import SafelistEntryType
 from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,7 +39,7 @@ logger = logging.getLogger("btagent.services.response_safelist")
 # Entry kinds an operator may add. IPs match exactly; domains match by suffix;
 # principals (cloud IAM ARN / service-account email / object id — #117) match
 # exactly, case-insensitively.
-VALID_ENTRY_TYPES: frozenset[str] = frozenset({"ip", "domain", "principal"})
+VALID_ENTRY_TYPES: frozenset[str] = frozenset(t.value for t in SafelistEntryType)
 
 # ``ResponseSafelistRow.value`` is String(255); refuse over-long principals up
 # front rather than letting Postgres truncate (a truncated ARN would silently
@@ -178,9 +179,9 @@ async def remove_entry(
 async def load_policy(db: AsyncSession, *, org_id: str) -> SafelistPolicy:
     """Build the effective never-touch policy for an org: baseline + org rows."""
     rows = await list_entries(db, org_id=org_id)
-    ips = [r.value for r in rows if r.entry_type == "ip"]
-    suffixes = [r.value for r in rows if r.entry_type == "domain"]
-    principals = [r.value for r in rows if r.entry_type == "principal"]
+    ips = [r.value for r in rows if r.entry_type == SafelistEntryType.IP.value]
+    suffixes = [r.value for r in rows if r.entry_type == SafelistEntryType.DOMAIN.value]
+    principals = [r.value for r in rows if r.entry_type == SafelistEntryType.PRINCIPAL.value]
     return BASELINE_SAFELIST.merge(
         extra_ips=ips,
         extra_domain_suffixes=suffixes,
@@ -196,8 +197,8 @@ async def load_policy_tuples(db: AsyncSession, *, org_id: str) -> tuple[list[str
     plan already skips org-safelisted targets — the baseline lives in the engine.
     """
     rows = await list_entries(db, org_id=org_id)
-    ips = [r.value for r in rows if r.entry_type == "ip"]
-    suffixes = [r.value for r in rows if r.entry_type == "domain"]
+    ips = [r.value for r in rows if r.entry_type == SafelistEntryType.IP.value]
+    suffixes = [r.value for r in rows if r.entry_type == SafelistEntryType.DOMAIN.value]
     return ips, suffixes
 
 
