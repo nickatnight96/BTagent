@@ -159,13 +159,19 @@ export class BTAgentApiClient {
   // Investigations
   // ------------------------------------------------------------------
 
+  // Only the fields `CreateInvestigationRequest` declares. `assigned_to` and
+  // `tags` were advertised here and are on neither the model nor the
+  // `investigations` table — `assigned_to` is set from the token, and nothing
+  // backs `tags` at all. They were silently dropped, which is how the IOC-tag
+  // XSS spec came to seed a payload that never reached a page and assert
+  // against markup that was never rendered. The API now 422s on them, so
+  // leaving them in the signature would only hand the next test the same trap.
   async createInvestigation(payload: {
     title: string;
     description?: string;
     severity?: "low" | "medium" | "high" | "critical";
     tlp_level?: "white" | "green" | "amber" | "red";
-    assigned_to?: string;
-    tags?: string[];
+    template?: string;
   }): Promise<SeededInvestigation> {
     const res = await this.ctx.post("/api/v1/investigations", {
       data: {
