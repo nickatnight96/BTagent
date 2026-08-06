@@ -188,6 +188,7 @@ List investigations with pagination. Requires `investigation:view` permission.
 - `page` (default 1): Page number.
 - `page_size` (default 20, max 100): Items per page.
 - `status` (optional): Filter by status.
+- `search` (optional, max 200 chars): Case-insensitive substring match on title or description. `%` and `_` are matched literally. Applied before pagination, so `total` is the count of matches rather than of the whole board.
 
 **Response 200**:
 ```json

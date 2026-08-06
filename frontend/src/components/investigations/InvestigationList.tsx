@@ -120,18 +120,16 @@ export function InvestigationList() {
   // safety net when the WS is unavailable, so the board can't silently stale.
   useLiveEventRefresh(handleRefresh, INVESTIGATION_LIFECYCLE_EVENTS);
 
-  const filteredInvestigations = investigations.filter((inv) => {
-    if (statusFilter && inv.status !== statusFilter) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      return (
-        (inv.title ?? "").toLowerCase().includes(q) ||
-        (inv.description ?? "").toLowerCase().includes(q) ||
-        (inv.tags ?? []).some((t) => t.toLowerCase().includes(q))
-      );
-    }
-    return true;
-  });
+  // The server applies both the status filter and the search (it did not used
+  // to — `search` was sent to a route that never declared it, so this list
+  // re-filtered whatever page had already been fetched). Re-filtering here now
+  // would only hide rows: the server matches on description too, and the `tags`
+  // branch that used to be here read a field no API response carries.
+  //
+  // Leaving it out also keeps `total` honest — the count in the header is the
+  // server's count for the same query, so it no longer disagrees with the rows
+  // on screen.
+  const filteredInvestigations = investigations;
 
   return (
     <>
