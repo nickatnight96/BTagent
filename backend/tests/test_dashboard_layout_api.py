@@ -6,18 +6,46 @@ always retained; duplicates collapse), reset via DELETE, and rejection of
 unknown section keys.
 """
 
+from btagent_shared.types.enums import InvestigationStatus
 from conftest import auth_header
 
-from btagent_backend.services.dashboard_layout import DashboardLayout, role_default_layout
+from btagent_backend.services.dashboard_layout import (
+    _ROLE_DEFAULTS,
+    DashboardLayout,
+    role_default_layout,
+)
 
 URL = "/api/v1/config/dashboard-layout"
 
 
+def test_every_role_default_preselects_a_real_status():
+    """The pill a role lands on must be a status the API can actually return.
+
+    This is the ratchet for the bug these defaults shipped with: they were
+    written in a frontend-only vocabulary ("running", "awaiting_hitl",
+    "completed") that ``investigations.status`` never holds. The list endpoint
+    compares the pill to the stored status with ``==`` and does not validate
+    it, so six of the ten personas here silently preselected a filter matching
+    zero rows — the punch list rendered empty on login with no error anywhere.
+    """
+    valid = {s.value for s in InvestigationStatus}
+    bad = {
+        role: layout.default_status_filter
+        for role, layout in _ROLE_DEFAULTS.items()
+        # "" is the All pill and is deliberately not a status.
+        if layout.default_status_filter and layout.default_status_filter not in valid
+    }
+    assert not bad, (
+        f"role defaults preselect statuses the API never returns: {bad}.\n"
+        f"Valid values are {sorted(valid)} or '' for All."
+    )
+
+
 def test_role_defaults_are_tuned_per_role():
     assert role_default_layout("analyst").default_status_filter == ""
-    assert role_default_layout("senior_analyst").default_status_filter == "running"
-    assert role_default_layout("incident_commander").default_status_filter == "awaiting_hitl"
-    assert role_default_layout("admin").default_status_filter == "awaiting_hitl"
+    assert role_default_layout("senior_analyst").default_status_filter == "investigating"
+    assert role_default_layout("incident_commander").default_status_filter == "paused_hitl"
+    assert role_default_layout("admin").default_status_filter == "paused_hitl"
     # Unknown/future roles fall back to the analyst view.
     assert role_default_layout("intern").default_status_filter == ""
     # Callers get a copy — mutating it must not poison the shared default.
@@ -73,14 +101,14 @@ async def test_admin_role_default_preselects_hitl_queue(client, admin_token):
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["source"] == "role_default"
-    assert data["layout"]["default_status_filter"] == "awaiting_hitl"
+    assert data["layout"]["default_status_filter"] == "paused_hitl"
 
 
 async def test_put_then_get_round_trips_customization(client, analyst_token):
     put = await client.put(
         URL,
         headers=auth_header(analyst_token),
-        json={"sections": ["investigations"], "default_status_filter": "running"},
+        json={"sections": ["investigations"], "default_status_filter": "investigating"},
     )
     assert put.status_code == 200, put.text
     assert put.json()["source"] == "user"
@@ -90,7 +118,7 @@ async def test_put_then_get_round_trips_customization(client, analyst_token):
     data = got.json()
     assert data["source"] == "user"
     assert data["layout"]["sections"] == ["investigations"]
-    assert data["layout"]["default_status_filter"] == "running"
+    assert data["layout"]["default_status_filter"] == "investigating"
 
     # Second PUT updates in place (upsert, not duplicate-row insert).
     put2 = await client.put(

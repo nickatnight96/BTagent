@@ -20,7 +20,7 @@ import type { DashboardLayout } from "@/types/dashboard";
 
 const STATUS_OPTIONS = [
   { label: "All", value: "" },
-  { label: "Running", value: "running" },
+  { label: "Investigating", value: "investigating" },
   { label: "Failed", value: "failed" },
 ];
 
@@ -82,7 +82,7 @@ describe("LayoutSettings", () => {
 
   it("changing the default filter saves it", async () => {
     const saved = {
-      layout: { sections: ["handover", "investigations"], default_status_filter: "running" },
+      layout: { sections: ["handover", "investigations"], default_status_filter: "investigating" },
       source: "user",
       role: "analyst",
     };
@@ -90,12 +90,12 @@ describe("LayoutSettings", () => {
     const { onApplied } = renderSettings();
 
     fireEvent.change(screen.getByTestId("layout-settings-filter-select"), {
-      target: { value: "running" },
+      target: { value: "investigating" },
     });
     await waitFor(() =>
       expect(putDashboardLayout).toHaveBeenCalledWith({
         sections: ["handover", "investigations"],
-        default_status_filter: "running",
+        default_status_filter: "investigating",
       }),
     );
     await waitFor(() => expect(onApplied).toHaveBeenCalledWith(saved));

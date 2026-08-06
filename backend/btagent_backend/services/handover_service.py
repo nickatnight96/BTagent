@@ -37,6 +37,10 @@ _TERMINAL_STATUSES = frozenset(
         InvestigationStatus.REMEDIATED.value,
         InvestigationStatus.CANCELLED.value,
         InvestigationStatus.FAILED.value,
+        # Retention-archived cases are closed cases the sweep has aged out.
+        # ``_OPEN_STATUSES`` is derived by *exclusion*, so leaving ARCHIVED out
+        # would resurrect every aged-out case in the incoming shift's backlog.
+        InvestigationStatus.ARCHIVED.value,
     }
 )
 _OPEN_STATUSES = tuple(s.value for s in InvestigationStatus if s.value not in _TERMINAL_STATUSES)

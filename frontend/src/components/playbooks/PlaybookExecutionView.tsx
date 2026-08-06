@@ -70,17 +70,17 @@ const STEP_STATUS_STYLES: Record<string, { border: string; shadow: string; label
     label: "Failed",
     icon: <XCircle className="w-3 h-3 text-red-400" />,
   },
-  [StepExecutionStatus.SKIPPED]: {
-    border: "border-slate-600",
-    shadow: "",
-    label: "Skipped",
-    icon: <SkipForward className="w-3 h-3 text-slate-500" />,
-  },
-  [StepExecutionStatus.WAITING_HITL]: {
+  [StepExecutionStatus.REJECTED]: {
     border: "border-amber-500",
     shadow: "shadow-amber-500/20 shadow-lg",
-    label: "Awaiting Approval",
-    icon: <Pause className="w-3 h-3 text-amber-400 animate-pulse" />,
+    label: "Not Approved",
+    icon: <Pause className="w-3 h-3 text-amber-400" />,
+  },
+  [StepExecutionStatus.PARTIALLY_FAILED]: {
+    border: "border-orange-500",
+    shadow: "shadow-orange-500/20 shadow-lg",
+    label: "Partially Failed",
+    icon: <SkipForward className="w-3 h-3 text-orange-400" />,
   },
 };
 
@@ -155,9 +155,9 @@ export function PlaybookExecutionView() {
       const status = stepResult?.status ?? StepExecutionStatus.PENDING;
       const styles = STEP_STATUS_STYLES[status] ?? STEP_STATUS_STYLES[StepExecutionStatus.PENDING]!;
 
-      const isPulsing =
-        status === StepExecutionStatus.RUNNING ||
-        status === StepExecutionStatus.WAITING_HITL;
+      // Only a running step is still in motion — `rejected` is a settled
+      // outcome, so it gets the amber treatment without the pulse.
+      const isPulsing = status === StepExecutionStatus.RUNNING;
 
       return {
         ...node,
@@ -175,10 +175,10 @@ export function PlaybookExecutionView() {
                 ? "#22c55e"
                 : status === StepExecutionStatus.FAILED
                   ? "#ef4444"
-                  : status === StepExecutionStatus.WAITING_HITL
+                  : status === StepExecutionStatus.REJECTED
                     ? "#f59e0b"
-                    : status === StepExecutionStatus.SKIPPED
-                      ? "#475569"
+                    : status === StepExecutionStatus.PARTIALLY_FAILED
+                      ? "#f97316"
                       : undefined,
         },
       };
@@ -305,10 +305,10 @@ export function PlaybookExecutionView() {
                     return "#22c55e";
                   case StepExecutionStatus.FAILED:
                     return "#ef4444";
-                  case StepExecutionStatus.WAITING_HITL:
+                  case StepExecutionStatus.REJECTED:
                     return "#f59e0b";
-                  case StepExecutionStatus.SKIPPED:
-                    return "#475569";
+                  case StepExecutionStatus.PARTIALLY_FAILED:
+                    return "#f97316";
                   default:
                     return "#334155";
                 }

@@ -6,11 +6,25 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from btagent_shared.types.enums import InvestigationStatus
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.config import Settings
 from btagent_backend.db.models import AuditLogRow, EventRow, InvestigationRow
+
+#: Statuses that make an investigation eligible for retention archival — the
+#: resolved end-states a case can sit in once nobody will work it again.
+#:
+#: ``FAILED`` is deliberately absent: a failed run is an *unresolved* case
+#: (the agent crashed, nobody triaged the wreckage), so archiving it would
+#: hide work that still needs a human. ``ARCHIVED`` is absent because the
+#: sweep is idempotent — it is the output of this filter, not an input.
+ARCHIVABLE_STATUSES: tuple[str, ...] = (
+    InvestigationStatus.CLOSED.value,
+    InvestigationStatus.CANCELLED.value,
+    InvestigationStatus.REMEDIATED.value,
+)
 
 logger = logging.getLogger("btagent.services.retention")
 
@@ -92,13 +106,11 @@ class DataRetentionService:
         retention_days = days if days is not None else self.event_retention_days
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
-        _CLOSED_STATUSES = ("closed", "cancelled", "remediated")
-
         # Find candidates
         result = await db.execute(
             select(InvestigationRow.id).where(
                 InvestigationRow.org_id == org_id,
-                InvestigationRow.status.in_(_CLOSED_STATUSES),
+                InvestigationRow.status.in_(ARCHIVABLE_STATUSES),
                 InvestigationRow.closed_at.isnot(None),
                 InvestigationRow.closed_at < cutoff,
             )
@@ -111,7 +123,7 @@ class DataRetentionService:
             await db.execute(
                 update(InvestigationRow)
                 .where(InvestigationRow.id.in_(inv_ids))
-                .values(status="archived")
+                .values(status=InvestigationStatus.ARCHIVED.value)
             )
             logger.info(
                 "Archived %d closed investigations older than %d days",
@@ -243,11 +255,10 @@ class DataRetentionService:
 
         # Closed investigations eligible for archival
         inv_cutoff = now - timedelta(days=self.event_retention_days)
-        _CLOSED_STATUSES = ("closed", "cancelled", "remediated")
         archivable_result = await db.execute(
             select(func.count(InvestigationRow.id)).where(
                 InvestigationRow.org_id == org_id,
-                InvestigationRow.status.in_(_CLOSED_STATUSES),
+                InvestigationRow.status.in_(ARCHIVABLE_STATUSES),
                 InvestigationRow.closed_at.isnot(None),
                 InvestigationRow.closed_at < inv_cutoff,
             )

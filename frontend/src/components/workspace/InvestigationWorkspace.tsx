@@ -170,11 +170,14 @@ export function InvestigationWorkspace() {
 
         // There is no `status_changed` event; status moves via the
         // investigation lifecycle events and AGENT_STATUS.
+        // task_manager defaults final_status to InvestigationStatus.CLOSED, so
+        // the fallback here has to agree with it — the old `COMPLETED` was a
+        // status the backend has never written.
         case EventType.INVESTIGATION_COMPLETE:
           updateStatus(
             id,
             (event.data.final_status as InvestigationStatus) ??
-              InvestigationStatus.COMPLETED,
+              InvestigationStatus.CLOSED,
           );
           finalizeStreamIfActive();
           break;
@@ -188,10 +191,15 @@ export function InvestigationWorkspace() {
           updateStatus(id, InvestigationStatus.PAUSED);
           break;
 
+        // task_manager.resume_investigation sets INVESTIGATING before emitting
+        // this event; the old `RUNNING` disagreed with the row it described.
         case EventType.INVESTIGATION_RESUMED:
-          updateStatus(id, InvestigationStatus.RUNNING);
+          updateStatus(id, InvestigationStatus.INVESTIGATING);
           break;
 
+        // The synthesize node puts a real InvestigationStatus (paused_hitl /
+        // investigating) on this payload — it just could not be named by the
+        // frontend enum until now.
         case EventType.AGENT_STATUS:
           if (typeof event.data.status === "string") {
             updateStatus(id, event.data.status as InvestigationStatus);
@@ -305,12 +313,16 @@ export function InvestigationWorkspace() {
   }
 
   const inv = currentInvestigation;
-  const isRunning = inv.status === InvestigationStatus.RUNNING;
+  // "Running" for the control bar means the agent is mid-flight: the backend
+  // splits that into triaging (early) and investigating (main loop).
+  const isRunning =
+    inv.status === InvestigationStatus.TRIAGING ||
+    inv.status === InvestigationStatus.INVESTIGATING;
   const isPaused = inv.status === InvestigationStatus.PAUSED;
   const canControl =
-    inv.status === InvestigationStatus.RUNNING ||
-    inv.status === InvestigationStatus.PAUSED ||
-    inv.status === InvestigationStatus.AWAITING_HITL;
+    isRunning ||
+    isPaused ||
+    inv.status === InvestigationStatus.PAUSED_HITL;
 
   // Current active right-panel tab
   const rightTab =
