@@ -35,7 +35,7 @@ const tlpOptions = [
   { value: TLP.AMBER, label: "TLP:AMBER" },
   { value: TLP.AMBER_STRICT, label: "TLP:AMBER+STRICT" },
   { value: TLP.GREEN, label: "TLP:GREEN" },
-  { value: TLP.CLEAR, label: "TLP:CLEAR" },
+  { value: TLP.WHITE, label: "TLP:CLEAR" },
 ];
 
 const templateOptions = [
@@ -84,15 +84,15 @@ export function NewInvestigationModal({
       setError(null);
 
       try {
-        // Backend expects ``tlp_level: lowercase`` (matching the
-        // shared ``TLP`` enum in ``btagent_shared.types.config``); the
-        // frontend ``TLP`` enum stores uppercase strings for display
-        // in the form, so coerce to lowercase before posting.
+        // The frontend TLP enum now holds the wire values the shared ``TLP``
+        // enum defines, so ``tlp`` posts as-is. The lowercasing that used to
+        // happen here only covered three of the five levels — "AMBER+STRICT"
+        // and "CLEAR" came out as values the backend rejects.
         const investigation = await createInvestigation({
           title: title.trim(),
           description: description.trim(),
           severity,
-          tlp_level: (tlp as string).toLowerCase() as TLP,
+          tlp_level: tlp,
           template: template || undefined,
         });
 

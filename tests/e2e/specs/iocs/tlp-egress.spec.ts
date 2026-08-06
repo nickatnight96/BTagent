@@ -66,7 +66,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("GREEN");
+    await notebook.exportDialog.tlpInput.selectOption("green");
 
     const text = await readDownloadText(seniorPage, notebook);
     expect(text).toContain(greenValue);
@@ -95,7 +95,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("AMBER");
+    await notebook.exportDialog.tlpInput.selectOption("amber");
 
     // AMBER context shows the warning, but export still proceeds.
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();
@@ -127,14 +127,10 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    // The export dialog uses the TLP enum from frontend/types/config —
-    // ``white`` is the legacy alias; ``clear`` is the post-2.0 value
-    // and is the option actually rendered. Try the modern value first.
-    try {
-      await notebook.exportDialog.tlpInput.selectOption("CLEAR");
-    } catch {
-      await notebook.exportDialog.tlpInput.selectOption("CLEAR");
-    }
+    // The export dialog's TLP enum now carries the API's wire values, so the
+    // option value is unambiguously ``white`` (labelled "TLP:CLEAR" for the
+    // reader). This used to be a try/catch guessing between two spellings.
+    await notebook.exportDialog.tlpInput.selectOption("white");
 
     const text = await readDownloadText(seniorPage, notebook);
     expect(text).toContain(greenValue);
@@ -161,7 +157,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("RED");
+    await notebook.exportDialog.tlpInput.selectOption("red");
 
     // The user must be warned before they confirm a TLP:RED export.
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();
@@ -201,7 +197,7 @@ test.describe("STIX export TLP egress (regression)", () => {
       investigation.id,
     );
     await notebook.exportDialog.formatRadio("stix_2.1").click();
-    await notebook.exportDialog.tlpInput.selectOption("RED");
+    await notebook.exportDialog.tlpInput.selectOption("red");
 
     // Warning must be visible at RED.
     await expect(notebook.exportDialog.tlpWarning).toBeVisible();

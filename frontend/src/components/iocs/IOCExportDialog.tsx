@@ -60,7 +60,7 @@ const IOC_TYPE_OPTIONS: { label: string; value: IOCType | "" }[] = [
 
 const TLP_OPTIONS: { label: string; value: TLP | ""; warning?: boolean }[] = [
   { label: "All TLP levels", value: "" },
-  { label: "TLP:CLEAR", value: TLP.CLEAR },
+  { label: "TLP:CLEAR", value: TLP.WHITE },
   { label: "TLP:GREEN", value: TLP.GREEN },
   { label: "TLP:AMBER", value: TLP.AMBER, warning: true },
   { label: "TLP:AMBER+STRICT", value: TLP.AMBER_STRICT, warning: true },

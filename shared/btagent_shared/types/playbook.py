@@ -53,6 +53,35 @@ class PlaybookStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class StepExecutionStatus(StrEnum):
+    """Execution status of a single step within a playbook run.
+
+    Distinct from :class:`PlaybookStatus`, which tracks the *run*. A step is
+    never ``cancelled`` or ``paused_hitl`` — an unapproved HITL gate resolves
+    immediately to ``REJECTED`` and it is the run that pauses.
+
+    Written as bare string literals across ``playbook/steps/*.py`` and
+    ``playbook_service`` until the frontend's copy was compared against them.
+    That copy named ``skipped`` and ``waiting_hitl`` — neither of which
+    anything writes — and was missing ``rejected`` and ``partially_failed``,
+    so a rejected HITL gate and a half-failed parallel fork both fell through
+    to the "pending" styling in PlaybookExecutionView.
+
+    There is no skip state: ``OnFailure.SKIP`` continues the run rather than
+    recording a skipped result.
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    #: HITL gate resolved without approval (explicit reject, or the
+    #: fail-closed auto-reject when no interrupt function is available).
+    REJECTED = "rejected"
+    #: Parallel fork where some branches completed and others failed.
+    PARTIALLY_FAILED = "partially_failed"
+
+
 # ---------------------------------------------------------------------------
 # Trigger
 # ---------------------------------------------------------------------------
@@ -151,7 +180,7 @@ class StepResult(BaseModel):
     """Result of executing a single playbook step."""
 
     step_id: str
-    status: str = "pending"
+    status: StepExecutionStatus = StepExecutionStatus.PENDING
     started_at: datetime | None = None
     completed_at: datetime | None = None
     output: dict[str, Any] = Field(default_factory=dict)

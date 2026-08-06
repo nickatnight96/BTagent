@@ -68,22 +68,26 @@ describe("InvestigationList dashboard-layout preference", () => {
 
   it("preselects the preferred status pill and fetches with it", async () => {
     getDashboardLayout.mockResolvedValue(
-      layoutResponse(["handover", "investigations"], "running"),
+      layoutResponse(["handover", "investigations"], "investigating"),
     );
     renderList();
 
-    const pill = await screen.findByTestId("investigation-list-filter-running");
+    const pill = await screen.findByTestId("investigation-list-filter-investigating");
     await waitFor(() => expect(pill.getAttribute("aria-selected")).toBe("true"));
     await waitFor(() =>
       expect(fetchInvestigations).toHaveBeenCalledWith(
-        expect.objectContaining({ status: "running" }),
+        expect.objectContaining({ status: "investigating" }),
       ),
     );
   });
 
+  // This case used to pass "investigating" as the unknown value — a real
+  // InvestigationStatus — so it asserted that a genuine backend status was
+  // correctly ignored by the pill row. Every real status now has a pill, so
+  // the unknown case needs a value that truly is not one.
   it("ignores a preferred filter the pill row doesn't know", async () => {
     getDashboardLayout.mockResolvedValue(
-      layoutResponse(["handover", "investigations"], "investigating"),
+      layoutResponse(["handover", "investigations"], "not_a_status"),
     );
     renderList();
     await waitFor(() => expect(getDashboardLayout).toHaveBeenCalled());
@@ -102,7 +106,7 @@ describe("InvestigationList dashboard-layout preference", () => {
     renderList();
 
     fireEvent.click(screen.getByTestId("investigation-list-filter-failed"));
-    resolveLayout(layoutResponse(["handover", "investigations"], "running"));
+    resolveLayout(layoutResponse(["handover", "investigations"], "investigating"));
 
     await waitFor(() =>
       expect(
@@ -110,7 +114,9 @@ describe("InvestigationList dashboard-layout preference", () => {
       ).toBe("true"),
     );
     expect(
-      screen.getByTestId("investigation-list-filter-running").getAttribute("aria-selected"),
+      screen
+        .getByTestId("investigation-list-filter-investigating")
+        .getAttribute("aria-selected"),
     ).toBe("false");
   });
 

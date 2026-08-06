@@ -30,14 +30,24 @@ const INVESTIGATION_LIFECYCLE_EVENTS = [
   EventType.INVESTIGATION_RESUMED,
 ] as const;
 
+// Every real InvestigationStatus gets a pill, so no case is unreachable by
+// filtering. The value is sent verbatim to `GET /investigations?status=` and
+// compared against the stored status, so these must be the backend's values —
+// the previous list offered "running" / "awaiting_hitl" / "completed", which
+// the API never writes, so those three pills always returned nothing.
 const statusFilters: { label: string; value: string }[] = [
   { label: "All", value: "" },
-  { label: "Running", value: InvestigationStatus.RUNNING },
   { label: "Pending", value: InvestigationStatus.PENDING },
-  { label: "Awaiting HITL", value: InvestigationStatus.AWAITING_HITL },
+  { label: "Triaging", value: InvestigationStatus.TRIAGING },
+  { label: "Investigating", value: InvestigationStatus.INVESTIGATING },
+  { label: "Awaiting HITL", value: InvestigationStatus.PAUSED_HITL },
   { label: "Paused", value: InvestigationStatus.PAUSED },
-  { label: "Completed", value: InvestigationStatus.COMPLETED },
+  { label: "Contained", value: InvestigationStatus.CONTAINED },
+  { label: "Remediated", value: InvestigationStatus.REMEDIATED },
+  { label: "Closed", value: InvestigationStatus.CLOSED },
   { label: "Failed", value: InvestigationStatus.FAILED },
+  { label: "Cancelled", value: InvestigationStatus.CANCELLED },
+  { label: "Archived", value: InvestigationStatus.ARCHIVED },
 ];
 
 export function InvestigationList() {

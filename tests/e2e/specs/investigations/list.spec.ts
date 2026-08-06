@@ -51,10 +51,10 @@ test("filter tab toggles narrow the list to matching status", async ({
 }) => {
   const list = new InvestigationListPage(analystPage);
   await list.goto();
-  await list.filterByStatus("completed");
+  await list.filterByStatus("closed");
   // Active tab gets aria-selected=true (per the convention's tablist
   // semantics applied in InvestigationList).
-  await expect(list.filterTab("completed")).toHaveAttribute(
+  await expect(list.filterTab("closed")).toHaveAttribute(
     "aria-selected",
     "true",
   );
@@ -79,7 +79,7 @@ test("creating an investigation via the modal lands a new card", async ({
     title,
     description: "Created by the investigation-list E2E test.",
     severity: "medium",
-    tlpLevel: "GREEN",
+    tlpLevel: "green",
   });
   await modal.submit();
 

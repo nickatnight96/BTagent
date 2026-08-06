@@ -51,7 +51,10 @@ The PunchList is your landing page after login. It provides a single-pane view o
   - `investigating` -- Active analysis in progress
   - `paused` -- Manually paused by an analyst
   - `paused_hitl` -- Waiting for human approval at a checkpoint
-  - `closed` / `cancelled` -- Terminal states
+  - `contained` -- Containment actions applied, remediation still open
+  - `remediated` -- Remediation complete
+  - `closed` / `cancelled` / `failed` -- Terminal states
+  - `archived` -- Aged out of the active board by the retention sweep
 - **Severity badges** -- Color-coded by severity level: critical (red), high (orange), medium (yellow), low (blue), info (gray).
 - **Filters** -- Filter by status, severity, or assignee to focus on what matters.
 - **TLP labels** -- Each investigation shows its Traffic Light Protocol level, which controls data sharing and LLM routing.

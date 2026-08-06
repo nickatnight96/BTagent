@@ -49,9 +49,30 @@ Every classification resolves its expected values by **importing the live
 Python**, never by restating them. A registry that hardcoded the values would
 agree with itself forever and detect nothing.
 
+The union parser left a second hole, and it hid the worst drift in the repo:
+it only ever looked at ``export type X = "a" | "b"``. Everything declared as
+``export enum`` — twelve of them, including all of ``config.ts`` — was never
+read. Extending the scan to that form (``_ts_enums``, merged into
+``_ts_value_sets``) immediately failed on four live divergences:
+
+* ``InvestigationStatus`` named ``running`` / ``awaiting_hitl`` / ``completed``
+  / ``stopped``, none of which the API has ever written, and was missing the
+  seven statuses it does. The list filter sends the pill value straight to
+  ``GET /investigations?status=`` for an exact string compare, so six of the
+  ten role defaults preselected a filter that matched nothing — those personas
+  landed on a permanently empty punch list.
+* ``TLP`` held display text (``"AMBER+STRICT"``, ``"CLEAR"``) where the API
+  expects ``amber_strict`` / ``white``, with one caller lowercasing on the way
+  out; that covered three of the five levels and 422'd the other two.
+* ``UserRole`` carried ``viewer``, which exists nowhere in the backend.
+* ``StepExecutionStatus`` named ``skipped`` and ``waiting_hitl`` (never
+  written) while missing ``rejected`` and ``partially_failed`` (both written),
+  so a rejected HITL gate rendered as "pending".
+
 Still not covered, so a pass here is not mistaken for proof: a backend value
-set with no TS union at all is invisible in both directions, and a union whose
-values are assembled at runtime rather than written as literals is not parsed.
+set with no TS declaration at all is invisible in both directions, and a
+declaration whose values are assembled at runtime rather than written as
+literals is not parsed.
 """
 
 from __future__ import annotations
@@ -89,11 +110,17 @@ INTENTIONAL_DIVERGENCE: dict[str, str] = {}
 # itself forever and detect nothing.
 # --------------------------------------------------------------------------- #
 
-#: TS union -> the shared StrEnum it mirrors under a different name.
+#: TS name -> the Python StrEnum it mirrors, when the name-match cannot find it:
+#: either the TS name differs, or the enum lives outside ``shared/…/types``
+#: (which is all the ``_python_str_enums`` scan walks).
 RENAMED_MIRRORS: dict[str, tuple[str, str]] = {
     # The frontend appends "Kind" because `ValidationVerdict` is also the name
     # of a record type in validation.ts.
     "ValidationVerdictKind": ("btagent_shared.types.detection_validation", "ValidationVerdict"),
+    # Same name, different home: the WebSocket wire protocol is a backend
+    # concern, so these live in the backend rather than the shared package.
+    "ClientMessageType": ("btagent_backend.ws.protocol", "ClientMessageType"),
+    "ServerMessageType": ("btagent_backend.ws.protocol", "ServerMessageType"),
 }
 
 #: TS union -> (module, constant prefix) whose module-level string constants it
@@ -135,12 +162,18 @@ FRONTEND_ONLY: dict[str, str] = {
 }
 
 # A parser this simple could silently match nothing and pass. These floors are
-# set below the real counts at the time of writing (80 enums / 40 unions / 29
-# pairs) so ordinary additions do not trip them, but a parser that breaks
-# outright does.
+# set below the real counts at the time of writing (80 Python enums / 39 TS
+# unions / 12 TS enums / 38 pairs) so ordinary additions do not trip them, but
+# a parser that breaks outright does.
+#
+# ``_MIN_TS_ENUMS`` earns its keep: without it, an enum parser that returned
+# nothing would still leave 29 union-only pairs, comfortably above
+# ``_MIN_PAIRS`` — so the whole `export enum` half could go dark and every
+# check would still report green.
 _MIN_PY_ENUMS = 60
 _MIN_TS_UNIONS = 30
-_MIN_PAIRS = 25
+_MIN_TS_ENUMS = 10
+_MIN_PAIRS = 32
 
 
 def _python_str_enums() -> dict[str, tuple[set[str], str]]:
@@ -182,29 +215,110 @@ def _ts_literal_unions() -> dict[str, tuple[set[str], str]]:
     return found
 
 
+def _ts_enums() -> dict[str, tuple[set[str], str]]:
+    """``{EnumName: ({values}, source file)}`` for every exported TS ``enum``.
+
+    The union parser above could not see these, and that hole hid the worst
+    divergence in the codebase: ``config.ts`` declares ``export enum
+    InvestigationStatus`` whose members were ``running`` / ``awaiting_hitl`` /
+    ``completed`` / ``stopped`` — four values the API has never sent — while
+    missing seven it does. The list filter compares those values against
+    ``investigations.status`` with an exact string match, so six of the ten
+    role defaults preselected a pill that matched nothing.
+
+    Only string-valued members are collected; a numeric or computed member
+    makes the enum not a value mirror, so it is skipped rather than
+    half-parsed.
+    """
+    found: dict[str, tuple[set[str], str]] = {}
+    block = re.compile(r"export enum (\w+)\s*\{(.*?)\n\}", re.DOTALL)
+    member = re.compile(r"^\s*\w+\s*=\s*\"([^\"]+)\"\s*,?\s*$", re.MULTILINE)
+    for path in sorted(_TS_TYPES.glob("*.ts")):
+        for match in block.finditer(path.read_text()):
+            values = set(member.findall(match.group(2)))
+            if values:
+                found[match.group(1)] = (values, path.name)
+    return found
+
+
+def _ts_value_sets() -> dict[str, tuple[set[str], str]]:
+    """Every TS name that declares a fixed set of strings — union or ``enum``.
+
+    Both forms are mirrors of a backend vocabulary and both drift the same way,
+    so every check in this file runs over the merged view.
+    """
+    unions, enums = _ts_literal_unions(), _ts_enums()
+    # A name may legitimately be declared both ways — `Severity` is an enum in
+    # config.ts and a union in hunt.ts. That is fine only while the two agree;
+    # if they drift, the merged view below would hide one of them and the
+    # backend check would silently grade the wrong declaration.
+    for name in sorted(set(unions) & set(enums)):
+        union_values, union_file = unions[name]
+        enum_values, enum_file = enums[name]
+        assert union_values == enum_values, (
+            f"{name} is declared twice on the frontend and the two disagree:\n"
+            f"  union in {union_file}: {sorted(union_values)}\n"
+            f"  enum in  {enum_file}: {sorted(enum_values)}\n"
+            "Collapse them to one declaration, or make them match."
+        )
+    return {**unions, **enums}
+
+
 def _pairs() -> list[str]:
-    return sorted(set(_python_str_enums()) & set(_ts_literal_unions()))
+    return sorted(set(_python_str_enums()) & set(_ts_value_sets()))
 
 
 def test_parsers_find_a_realistic_amount():
     """Guard the guard: an empty parse would make every parity check vacuous."""
-    py, ts, pairs = _python_str_enums(), _ts_literal_unions(), _pairs()
+    py, unions, enums, pairs = (
+        _python_str_enums(),
+        _ts_literal_unions(),
+        _ts_enums(),
+        _pairs(),
+    )
     assert len(py) >= _MIN_PY_ENUMS, f"only parsed {len(py)} Python StrEnums"
-    assert len(ts) >= _MIN_TS_UNIONS, f"only parsed {len(ts)} TypeScript unions"
+    assert len(unions) >= _MIN_TS_UNIONS, f"only parsed {len(unions)} TypeScript unions"
+    assert len(enums) >= _MIN_TS_ENUMS, f"only parsed {len(enums)} TypeScript enums"
     assert len(pairs) >= _MIN_PAIRS, f"only matched {len(pairs)} name pairs"
 
 
-def test_parsers_read_a_known_enum_correctly():
-    """Pin one pair end to end, so a parser that returns junk cannot pass."""
+def test_parsers_read_a_known_union_correctly():
+    """Pin one union pair end to end, so a parser that returns junk cannot pass."""
     py, ts = _python_str_enums(), _ts_literal_unions()
     assert py["Severity"][0] == {"critical", "high", "medium", "low", "info"}
     assert ts["Severity"][0] == {"critical", "high", "medium", "low", "info"}
 
 
+def test_parsers_read_a_known_ts_enum_correctly():
+    """Same pin for the `export enum` half — the form that went unchecked.
+
+    ``InvestigationStatus`` is the one this parser was written for, so it is
+    the one worth pinning: a regex that matched the block but dropped members
+    would leave the pair "agreeing" on a subset and report green.
+    """
+    py, ts = _python_str_enums(), _ts_enums()
+    expected = {
+        "pending",
+        "triaging",
+        "investigating",
+        "paused",
+        "paused_hitl",
+        "contained",
+        "remediated",
+        "closed",
+        "failed",
+        "cancelled",
+        "archived",
+    }
+    assert py["InvestigationStatus"][0] == expected
+    assert ts["InvestigationStatus"][0] == expected
+    assert ts["InvestigationStatus"][1] == "config.ts"
+
+
 @pytest.mark.parametrize("name", _pairs())
 def test_ts_union_matches_its_python_enum(name: str):
     py_values, py_file = _python_str_enums()[name]
-    ts_values, ts_file = _ts_literal_unions()[name]
+    ts_values, ts_file = _ts_value_sets()[name]
 
     if name in INTENTIONAL_DIVERGENCE:
         pytest.skip(f"documented divergence: {INTENTIONAL_DIVERGENCE[name]}")
@@ -241,7 +355,7 @@ def test_renamed_mirror_matches_its_enum(ts_name: str):
     """A union that renames the concept must still track it."""
     module_path, enum_name = RENAMED_MIRRORS[ts_name]
     expected = {member.value for member in _import_attr(module_path, enum_name)}
-    actual, ts_file = _ts_literal_unions()[ts_name]
+    actual, ts_file = _ts_value_sets()[ts_name]
     assert actual == expected, (
         f"{ts_name} ({ts_file}) has drifted from {enum_name} in {module_path}.\n"
         f"  missing in TS: {sorted(expected - actual)}\n"
@@ -260,7 +374,7 @@ def test_constant_backed_union_matches_the_backend_constants(ts_name: str):
     """
     module_path, prefix = CONSTANT_BACKED[ts_name]
     expected = _constants_with_prefix(module_path, prefix)
-    actual, ts_file = _ts_literal_unions()[ts_name]
+    actual, ts_file = _ts_value_sets()[ts_name]
     assert expected, f"no {prefix}* constants found in {module_path}"
     assert actual == expected, (
         f"{ts_name} ({ts_file}) has drifted from {prefix}* in {module_path}.\n"
@@ -274,7 +388,7 @@ def test_subset_union_stays_a_subset(ts_name: str):
     """A deliberate subset must remain a subset — and a real one."""
     module_path, enum_name, _reason = SUBSET_OF[ts_name]
     superset = {member.value for member in _import_attr(module_path, enum_name)}
-    actual, ts_file = _ts_literal_unions()[ts_name]
+    actual, ts_file = _ts_value_sets()[ts_name]
     assert actual <= superset, (
         f"{ts_name} ({ts_file}) names values {enum_name} does not have: {sorted(actual - superset)}"
     )
@@ -301,7 +415,7 @@ def test_every_ts_union_is_classified():
         | set(SUBSET_OF)
         | set(FRONTEND_ONLY)
     )
-    unclassified = sorted(set(_ts_literal_unions()) - classified)
+    unclassified = sorted(set(_ts_value_sets()) - classified)
     assert not unclassified, (
         f"unclassified TypeScript unions: {unclassified}.\n"
         "Each must be one of: same-named as a shared StrEnum (checked "
@@ -332,7 +446,7 @@ def test_no_union_is_classified_twice():
 
 def test_classification_lists_only_hold_real_unions():
     """No bucket may name a union that no longer exists."""
-    known = set(_ts_literal_unions())
+    known = set(_ts_value_sets())
     for label, names in (
         ("RENAMED_MIRRORS", set(RENAMED_MIRRORS)),
         ("CONSTANT_BACKED", set(CONSTANT_BACKED)),

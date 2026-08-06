@@ -12,6 +12,21 @@ class Severity(StrEnum):
 
 
 class InvestigationStatus(StrEnum):
+    """Lifecycle of an investigation, as stored in ``investigations.status``.
+
+    This is the *only* investigation-status vocabulary in the product. The
+    frontend compares its status pills against these raw values (the list
+    filter sends one to ``GET /investigations?status=`` and also compares it
+    client-side), so any value the SPA can name that is absent here matches
+    nothing at all — silently, because the filter is an exact string compare
+    with no validation.
+
+    ``ARCHIVED`` is terminal-plus: the retention sweep
+    (:meth:`DataRetentionService.archive_old_investigations`) sets it on
+    long-closed cases so they drop out of default queries. It was written to
+    the column for a long time without being declared here.
+    """
+
     PENDING = "pending"
     TRIAGING = "triaging"
     INVESTIGATING = "investigating"
@@ -22,6 +37,7 @@ class InvestigationStatus(StrEnum):
     CLOSED = "closed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    ARCHIVED = "archived"
 
 
 class IOCType(StrEnum):

@@ -36,13 +36,22 @@ export enum PlaybookStatus {
   CANCELLED = "cancelled",
 }
 
+/**
+ * Mirrors `StepExecutionStatus` in shared/btagent_shared/types/playbook.py.
+ *
+ * This is the *step* vocabulary, not the run's — a step never reports
+ * `paused_hitl`; an unapproved gate resolves to `rejected` and the run pauses.
+ * The members used to be `skipped` / `waiting_hitl`, neither of which any
+ * executor writes, while `rejected` and `partially_failed` — both of which
+ * they do write — had no member at all.
+ */
 export enum StepExecutionStatus {
   PENDING = "pending",
   RUNNING = "running",
   COMPLETED = "completed",
   FAILED = "failed",
-  SKIPPED = "skipped",
-  WAITING_HITL = "waiting_hitl",
+  REJECTED = "rejected",
+  PARTIALLY_FAILED = "partially_failed",
 }
 
 // ---------------------------------------------------------------------------
