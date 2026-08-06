@@ -80,8 +80,9 @@ class PatternHuntProposalListResponse(BaseModel):
 
 
 class ActionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Optional rationale for dismiss / snooze / accept transitions."""
+
+    model_config = ConfigDict(extra="forbid")
 
     rationale: str = ""
 

@@ -62,13 +62,14 @@ _PROPOSAL_KEY = "cloud_containment_proposal"
 
 
 class ContainmentDecisionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Accept/reject body.
 
     ``approved`` is the explicit HITL half of the double gate — the same flag the
     ``/containment/execute/*`` routes carry. It defaults to ``False`` so a body
     that merely omits it can never execute anything.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     approved: bool = Field(
         default=False,

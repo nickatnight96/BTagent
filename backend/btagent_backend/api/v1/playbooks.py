@@ -183,8 +183,9 @@ async def get_execution_detail(
 
 
 class HITLDecisionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """A human's answer to the gate a run is paused at."""
+
+    model_config = ConfigDict(extra="forbid")
 
     decision: Literal["approve", "reject"]
     comment: str = Field(default="", max_length=2048)

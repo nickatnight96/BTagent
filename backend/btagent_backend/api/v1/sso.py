@@ -404,8 +404,9 @@ def _derive_username(email: str | None, subject: str) -> str:
 
 
 class LinkSSOIdentityRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Bind an existing user to an IdP ``(provider, subject)`` identity."""
+
+    model_config = ConfigDict(extra="forbid")
 
     user_id: str
     provider: str

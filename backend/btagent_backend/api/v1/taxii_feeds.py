@@ -93,8 +93,9 @@ class CreateTaxiiFeedRequest(BaseModel):
 
 
 class UpdateTaxiiFeedRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Partial update — only supplied fields change (``exclude_unset``)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, max_length=200)
     server_url: str | None = Field(default=None, max_length=1000)
