@@ -14,6 +14,7 @@ import {
   updatePlaybook as apiUpdatePlaybook,
   executePlaybook as apiExecutePlaybook,
   getExecution,
+  resolveExecutionGate,
 } from "@/api/playbooks";
 
 interface PlaybookState {
@@ -60,6 +61,11 @@ interface PlaybookState {
   // Execution actions
   executePlaybook: (id: string, investigationId?: string) => Promise<void>;
   fetchExecution: (executionId: string) => Promise<void>;
+  resolveGate: (
+    executionId: string,
+    decision: "approve" | "reject",
+    comment?: string,
+  ) => Promise<void>;
   setExecutionState: (execution: PlaybookExecution | null) => void;
 
   clearError: () => void;
@@ -235,6 +241,19 @@ export const usePlaybookStore = create<PlaybookState>((set, get) => ({
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to execute playbook";
       set({ isLoading: false, error: message });
+    }
+  },
+
+  resolveGate: async (executionId, decision, comment = "") => {
+    set({ error: null });
+    try {
+      const execution = await resolveExecutionGate(executionId, decision, comment);
+      set({ executionState: execution });
+    } catch (err) {
+      set({
+        error:
+          err instanceof Error ? err.message : "Failed to record the HITL decision",
+      });
     }
   },
 

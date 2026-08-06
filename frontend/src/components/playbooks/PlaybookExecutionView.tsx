@@ -23,6 +23,8 @@ import {
 import { clsx } from "clsx";
 
 import { usePlaybookStore } from "@/stores/playbookStore";
+import { useAuthStore } from "@/stores/authStore";
+import { UserRole, roleAtLeast } from "@/types/config";
 import { StepExecutionStatus, PlaybookStatus } from "@/types/playbook";
 import type { StepResult } from "@/types/playbook";
 import { TriggerNode } from "./nodes/TriggerNode";
@@ -107,12 +109,29 @@ export function PlaybookExecutionView() {
     loadPlaybook,
     executePlaybook,
     fetchExecution,
+    resolveGate,
     builderNodes,
     builderEdges,
     isLoading,
   } = usePlaybookStore();
 
+  const user = useAuthStore((state) => state.user);
+
   const [selectedStepResult, setSelectedStepResult] = useState<StepResult | null>(null);
+  const [isDeciding, setIsDeciding] = useState(false);
+
+  const handleGateDecision = useCallback(
+    async (decision: "approve" | "reject") => {
+      if (!executionState?.id) return;
+      setIsDeciding(true);
+      try {
+        await resolveGate(executionState.id, decision);
+      } finally {
+        setIsDeciding(false);
+      }
+    },
+    [executionState?.id, resolveGate],
+  );
 
   // Load playbook data
   useEffect(() => {
@@ -260,6 +279,32 @@ export function PlaybookExecutionView() {
               {executionState.status.replace(/_/g, " ").toUpperCase()}
             </span>
           )}
+          {/* A paused run is waiting on a person. Without this control the
+              only way past a HITL gate was a hand-rolled API call, which is
+              why the gate had no UI-driven coverage at all (#588). Gated on
+              rank client-side so an analyst is not offered a button that can
+              only 403; the server enforces `hitl:approve` regardless. */}
+          {executionState?.status === PlaybookStatus.PAUSED_HITL &&
+            roleAtLeast(user?.role, UserRole.SENIOR_ANALYST) && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleGateDecision("approve")}
+                  disabled={isDeciding}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 transition-colors"
+                  data-testid="playbook-execution-approve-button"
+                >
+                  Approve
+                </button>
+                <button
+                  onClick={() => handleGateDecision("reject")}
+                  disabled={isDeciding}
+                  className="px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
+                  data-testid="playbook-execution-reject-button"
+                >
+                  Reject
+                </button>
+              </div>
+            )}
           {!executionState && (
             <button
               onClick={handleStartExecution}

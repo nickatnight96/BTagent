@@ -93,6 +93,23 @@ export async function getExecutions(
   );
 }
 
+/**
+ * Approve or reject the HITL gate a paused run is waiting on.
+ *
+ * Requires `hitl:approve` (senior_analyst and above) server-side; the caller
+ * should hide the control below that rank rather than rely on the 403.
+ */
+export async function resolveExecutionGate(
+  executionId: string,
+  decision: "approve" | "reject",
+  comment = "",
+): Promise<PlaybookExecution> {
+  return api.post<PlaybookExecution>(
+    `/v1/playbooks/executions/${executionId}/approve`,
+    { decision, comment },
+  );
+}
+
 export async function getExecution(executionId: string): Promise<PlaybookExecution> {
   // Backend's executions live at /v1/playbooks/executions/{id}; the
   // bare /v1/executions path 404s. The frontend store polls this
