@@ -17,6 +17,8 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from btagent_shared.types.huntpack import HuntRunStatus
+
 from btagent_backend.config import get_settings
 from btagent_backend.db.engine import async_session_factory
 from btagent_backend.db.models import DEFAULT_ORG_ID
@@ -211,7 +213,9 @@ async def scheduled_hunt_pack_run(ctx: dict[str, Any]) -> dict[str, int]:
             counts["packs_run"] += len(run_rows)
             counts["findings_created"] += sum(r.findings_created for r in run_rows)
             counts["hits"] += sum(r.hit_count for r in run_rows)
-            counts["failed_packs"] += sum(1 for r in run_rows if r.status == "failed")
+            counts["failed_packs"] += sum(
+                1 for r in run_rows if r.status == HuntRunStatus.FAILED.value
+            )
 
         failed_orgs = await _run_per_org(session, "scheduled_hunt_pack_run", org_ids, _work)
 

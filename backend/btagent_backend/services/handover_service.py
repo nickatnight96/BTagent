@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from btagent_shared.types.enums import InvestigationStatus
+from btagent_shared.types.hunt import HuntFindingState
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -108,15 +109,22 @@ async def build_handover_summary(
     )
     findings_by_severity = {severity: count for severity, count in sev_result.all()}
     # "Untriaged" = nobody has acted on it yet. Findings auto-cluster on
-    # insert, so both pre-cluster ("new") and clustered-but-unreviewed
-    # ("clustered") states count.
+    # insert, so both pre-cluster (NEW) and clustered-but-unreviewed
+    # (CLUSTERED) states count.
+    #
+    # Named from the enum rather than written as literals: this file already
+    # rolled up on invented status strings once (#387, see above), and "new"
+    # is also a member of ThreatSubmissionStatus — a bare literal does not say
+    # which contract it is keeping.
     untriaged_result = await db.execute(
         select(func.count())
         .select_from(HuntFindingRow)
         .where(
             HuntFindingRow.org_id == org_id,
             HuntFindingRow.created_at >= cutoff,
-            HuntFindingRow.state.in_(("new", "clustered")),
+            HuntFindingRow.state.in_(
+                (HuntFindingState.NEW.value, HuntFindingState.CLUSTERED.value)
+            ),
         )
     )
     findings_untriaged = int(untriaged_result.scalar_one())

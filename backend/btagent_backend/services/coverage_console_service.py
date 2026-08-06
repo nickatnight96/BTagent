@@ -66,6 +66,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from btagent_shared.types.detection_proposal import ProposalState, PROutcome
+from btagent_shared.types.huntpack import HuntRuleState
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -520,7 +522,7 @@ def _build_actions(
             )
         )
 
-    errored_rules = [r for r in broken_rules if r.state == "errored"]
+    errored_rules = [r for r in broken_rules if r.state == HuntRuleState.ERRORED.value]
     if errored_rules:
         actions.append(
             NextBestAction(
@@ -702,10 +704,12 @@ async def build_coverage_console(
     prs_open = 0
     telemetry_gaps: list[TelemetryGap] = []
     for row in proposals:
-        if row.state == "proposed":
+        # ``state`` and ``pr_outcome`` are different enums that share the
+        # value "proposed"; naming them makes which one is meant unambiguous.
+        if row.state == ProposalState.PROPOSED.value:
             awaiting_review += 1
             awaiting_ids.extend(row.technique_ids or [])
-        if row.pr_outcome == "pr_opened":
+        if row.pr_outcome == PROutcome.PR_OPENED.value:
             prs_open += 1
 
         validation = row.validation if isinstance(row.validation, dict) else None
