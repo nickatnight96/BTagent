@@ -970,6 +970,25 @@ jobs:
             | "\($target) | \($class) | \(.PkgName) | \(.InstalledVersion) | \(.PkgPath // "(no PkgPath — not read from an on-disk package)")"
           ' trivy-report.json | sort -u
 
+          # The first run of the above showed both findings with no PkgPath,
+          # which rules out installed metadata as their source. These fields
+          # say where they DID come from: the purl records how the package was
+          # identified, and the layer diffID maps back to a build step via
+          # `docker history`. Dumped whole rather than field-by-field because
+          # narrowing the output prematurely is what made the previous rounds
+          # inconclusive.
+          echo
+          echo "=== full finding records (identity + originating layer) ==="
+          jq '
+            .Results[]
+            | (.Vulnerabilities // [])[]
+            | {PkgName, InstalledVersion, PkgID, PkgIdentifier, PkgPath, Layer, DataSource, SeveritySource}
+          ' trivy-report.json
+
+          echo
+          echo "=== every artifact Trivy treated as a package source ==="
+          jq -r '.Results[] | "\(.Target)  [Class=\(.Class), Type=\(.Type // "-")]"' trivy-report.json
+
       - name: Scan the backend image with Trivy
         # Runs the Trivy CLI from its official image rather than
         # `aquasecurity/trivy-action`. The action is a thin wrapper that
