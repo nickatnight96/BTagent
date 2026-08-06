@@ -52,6 +52,18 @@ def _mock_connectors_enabled() -> bool:
     return os.getenv("BTAGENT_MOCK_CONNECTORS", "true").strip().lower() == "true"
 
 
+class LiveDispatchDisabled(NotImplementedError):
+    """Raised when dispatch is attempted with the mock switch off.
+
+    A subclass of :class:`NotImplementedError` so any caller that already
+    expects that type keeps working, but a *distinct* type so the execute
+    functions can catch exactly this refusal and record it. Catching bare
+    ``NotImplementedError`` there would also swallow an unrelated one from
+    deeper code and file it on the ledger as a policy denial — a misleading
+    audit fact is worse than a missing one.
+    """
+
+
 # --------------------------------------------------------------------------- #
 # Connector/MCP dispatch (mock-first; live stays guarded)
 # --------------------------------------------------------------------------- #
@@ -90,7 +102,7 @@ async def _dispatch(action_type: str, connector: str, target: str) -> dict[str, 
     performing a real destructive action from this half-built path.
     """
     if not _mock_connectors_enabled():
-        raise NotImplementedError(
+        raise LiveDispatchDisabled(
             "Live containment execution is not enabled. Connectors remain "
             "mock-first (BTAGENT_MOCK_CONNECTORS); the live dispatch path is a "
             "guarded placeholder and #106 does not unbolt it."
@@ -274,6 +286,23 @@ async def execute_response_action(
             reason=f"Manifest policy refused dispatch: {refusal.verdict.reason}",
             extra={"policy_status": refusal.verdict.status},
         )
+    except LiveDispatchDisabled as refusal:
+        # The same lesson, applied to the other refusal this function can hit.
+        # It used to escape uncaught: with the mock switch off — the intended
+        # production posture — every containment attempt returned an unaudited
+        # 500, so the ledger held no record that anyone tried. The refusal was
+        # always correct; only the evidence of it was missing.
+        return await _record_denial(
+            db,
+            actor_id=actor_id,
+            org_id=org_id,
+            action=action,
+            resource=resource,
+            target=target,
+            tool=connector,
+            reason=f"Live dispatch is disabled: {refusal}",
+            extra={"mock_connectors": False},
+        )
     outcome = _outcome_for(tool_response)
 
     audit = await AuditTrail(db).record(
@@ -376,8 +405,24 @@ async def execute_bulk_block(
             extra={"ioc_type": ioc_type},
         )
 
-    # (3) Dispatch the block (mock-first).
-    tool_response = await _dispatch("block_ioc", tool, ioc_value)
+    # (3) Dispatch the block (mock-first). A live-mode refusal is audited for
+    # the same reason the response-action path audits one: SAFETY rule #4 says
+    # nothing is refused without a row, and an unaudited 500 leaves no trace
+    # that a block was attempted in production.
+    try:
+        tool_response = await _dispatch("block_ioc", tool, ioc_value)
+    except LiveDispatchDisabled as refusal:
+        return await _record_denial(
+            db,
+            actor_id=actor_id,
+            org_id=org_id,
+            action=action,
+            resource=resource,
+            target=ioc_value,
+            tool=tool,
+            reason=f"Live dispatch is disabled: {refusal}",
+            extra={"ioc_type": ioc_type, "mock_connectors": False},
+        )
     outcome = _outcome_for(tool_response)
 
     # (4) Change-management link (mock-first ServiceNow SIR).

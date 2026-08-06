@@ -1,0 +1,50 @@
+# Trivy vulnerability exceptions for the container image scan.
+#
+# Entries here suppress a finding in `Image Vuln Scan`. That is a security
+# gate, so each one states what is being suppressed, why it is not a real
+# exposure, what still protects us, and when it must be revisited. An entry
+# without those four things does not belong here.
+#
+# NOTE ON SCOPE: this file suppresses *specific findings*, not a scanner or an
+# input. SBOM parsing stays on deliberately — the vendored CycloneDX documents
+# inside wheels describe bundled native libraries (Pillow ships libwebp,
+# libtiff, FreeType, zlib and others), and a real CVE in one of those is
+# exactly the kind of thing worth catching. Blanket `--skip-files '**/*.cdx.json'`
+# would clear the two findings below and lose that coverage with them.
+
+vulnerabilities:
+  - id: CVE-2025-47273
+    # setuptools path traversal in PackageIndex. Fixed in 78.1.1.
+    #
+    # NOT PRESENT IN THE IMAGE. The runtime image ships setuptools 83.0.0.
+    # Verified from inside the build: `Dockerfile.backend` enumerates every
+    # `*.dist-info` / `*.egg-info` directory across the whole filesystem and
+    # prints them, and there is exactly one, at the patched version.
+    #
+    # The finding is SBOM-sourced. Its Trivy record carries `PkgPath: null`
+    # and a `BOMRef`, which Trivy sets only for packages ingested from a
+    # CycloneDX document — a wheel's vendored SBOM describing its *build*
+    # environment, not our installed inventory. Both suppressed findings share
+    # one layer diffID, consistent with a single such document.
+    #
+    # COMPENSATING CONTROL: the image build FAILS if the real setuptools drops
+    # below 78.1.1, or if more than one metadata directory exists for it. That
+    # assertion is stricter than this scan for this package, and it runs on
+    # every build — so suppressing the phantom cannot mask a genuine downgrade.
+    # See the remediation step in infra/docker/Dockerfile.backend, pinned by
+    # backend/tests/test_trivyignore_justified.py.
+    statement: >-
+      SBOM-sourced false positive: the image ships setuptools 83.0.0, verified
+      image-wide at build time. The build fails if it drops below 78.1.1.
+    expired_at: 2026-11-01
+
+  - id: GHSA-6v7p-g79w-8964
+    # msgpack out-of-bounds read on Unpacker reuse. Fixed in 1.2.1.
+    #
+    # Same shape as above: the image ships msgpack 1.2.1, the finding carries
+    # `PkgPath: null` + `BOMRef`, and the build asserts the floor and the
+    # single-metadata-directory invariant on every run.
+    statement: >-
+      SBOM-sourced false positive: the image ships msgpack 1.2.1, verified
+      image-wide at build time. The build fails if it drops below 1.2.1.
+    expired_at: 2026-11-01

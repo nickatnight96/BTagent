@@ -935,6 +935,62 @@ jobs:
           tags: btagent-backend:scan
           cache-from: type=gha
 
+      - name: Report where each finding comes from (diagnostic, non-gating)
+        # Prints PkgPath for every HIGH/CRITICAL finding *before* the gate runs.
+        #
+        # Added because a scan failure gave no way to tell which file a finding
+        # came from, and that cost several round trips on #584: the image
+        # provably contained only patched versions of the two flagged packages
+        # (verified image-wide from inside the build) while Trivy went on
+        # reporting the superseded ones. Four hypotheses — builder-stage-only
+        # patching, a vendored third-party SBOM, stale dist-info anywhere on
+        # disk, per-layer rather than merged-view reading — were each tested
+        # and disproved by pushing a change and re-reading a table that does
+        # not name its source.
+        #
+        # `PkgPath` names the file. This step is deliberately non-gating and
+        # changes no severity threshold: the scan below still fails the build
+        # on the same findings. It only makes the next failure diagnosable
+        # from the log instead of by bisection.
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore.yaml:/.trivyignore.yaml:ro" \
+            aquasec/trivy:0.58.1 image \
+              --format json \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --ignorefile /.trivyignore.yaml \
+              btagent-backend:scan \
+          > trivy-report.json
+          echo "TARGET | TYPE | PACKAGE | INSTALLED | PKGPATH"
+          jq -r '
+            .Results[]
+            | .Target as $target
+            | .Class as $class
+            | (.Vulnerabilities // [])[]
+            | "\($target) | \($class) | \(.PkgName) | \(.InstalledVersion) | \(.PkgPath // "(no PkgPath — not read from an on-disk package)")"
+          ' trivy-report.json | sort -u
+
+          # The first run of the above showed both findings with no PkgPath,
+          # which rules out installed metadata as their source. These fields
+          # say where they DID come from: the purl records how the package was
+          # identified, and the layer diffID maps back to a build step via
+          # `docker history`. Dumped whole rather than field-by-field because
+          # narrowing the output prematurely is what made the previous rounds
+          # inconclusive.
+          echo
+          echo "=== full finding records (identity + originating layer) ==="
+          jq '
+            .Results[]
+            | (.Vulnerabilities // [])[]
+            | {PkgName, InstalledVersion, PkgID, PkgIdentifier, PkgPath, Layer, DataSource, SeveritySource}
+          ' trivy-report.json
+
+          echo
+          echo "=== every artifact Trivy treated as a package source ==="
+          jq -r '.Results[] | "\(.Target)  [Class=\(.Class), Type=\(.Type // "-")]"' trivy-report.json
+
       - name: Scan the backend image with Trivy
         # Runs the Trivy CLI from its official image rather than
         # `aquasecurity/trivy-action`. The action is a thin wrapper that
@@ -948,10 +1004,12 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore.yaml:/.trivyignore.yaml:ro" \
             aquasec/trivy:0.58.1 image \
               --format table \
               --severity HIGH,CRITICAL \
               --ignore-unfixed \
+              --ignorefile /.trivyignore.yaml \
               --exit-code 1 \
               btagent-backend:scan
 

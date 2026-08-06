@@ -53,6 +53,21 @@ COPY backend/alembic.ini backend/
 COPY backend/migrations/ backend/migrations/
 RUN cd backend && uv pip install --system -e .
 
+# Same CVE floors the final stage applies (see the long note there). Correct
+# here on its own merits: without it this stage ships msgpack 1.1.2, so an
+# intermediate build artifact carries a package with a known HIGH advisory
+# even though the runtime image does not.
+#
+# It may also be informative about the scan. The final image's merged
+# filesystem provably contains only the patched versions, yet Trivy keeps
+# reporting the old ones; if it were reading per-layer rather than the merged
+# view, msgpack would clear here (this stage is its only source) while
+# setuptools persisted, since the final stage's base ships setuptools in its
+# first layer and nothing downstream can rewrite that layer. Stated as a
+# prediction rather than a diagnosis — Trivy does apply whiteouts, so the
+# likelier outcome is no change and the real cause lies elsewhere.
+RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
+
 # Stage 2: Production
 FROM ${BASE_IMAGE}${BASE_IMAGE_DIGEST:+@${BASE_IMAGE_DIGEST}}
 
@@ -64,6 +79,71 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.14/site-packages/ /usr/local/lib/python3.14/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 COPY --from=builder /app/ /app/
+
+# Supply-chain remediation for packages the image scan flags that no
+# ``pyproject.toml`` can pin: ``setuptools`` ships inside the base image
+# itself, and ``msgpack`` arrives transitively through the agent runtime.
+#
+# This MUST run in the final stage, not the builder. ``COPY --from`` *merges*
+# into the destination and cannot delete: stage 2 starts from a fresh
+# ``${BASE_IMAGE}`` carrying its own ``setuptools-70.3.0.dist-info``, so
+# copying an upgraded tree over it leaves both dist-info directories present
+# and the scanner keeps reading the old one. Upgrading here instead runs a
+# real uninstall/install against the final filesystem, so the superseded
+# distribution is actually removed.
+#
+# Kept as an explicit, dated list rather than a blanket ``--upgrade`` of
+# everything: a blanket upgrade would silently move pinned runtime deps and
+# turn a security fix into an unreviewable version bump.
+#
+# 2026-08-05 — setuptools CVE-2025-47273 (path traversal in PackageIndex,
+# fixed 78.1.1) and msgpack GHSA-6v7p-g79w-8964 (out-of-bounds read on
+# Unpacker reuse, fixed 1.2.1). Drop an entry once the upstream that pulls it
+# in ships a version at or above the floor.
+# Uses ``pip``, not ``uv``, and sweeps orphans afterwards. Both details are
+# load-bearing, and both were learned the hard way on this branch:
+#
+#   * ``uv pip install --upgrade`` reported `+ setuptools==83.0.0` with no
+#     matching `-` line — it *added* the new distribution instead of replacing
+#     the copied-in one, because a package that arrived via `COPY --from` was
+#     never installed from uv's point of view. pip performs a real uninstall of
+#     what it finds on disk.
+#   * even so, a dist-info directory the resolver does not consider "installed"
+#     can survive, and Trivy's python-pkg analyzer reports *every* dist-info it
+#     finds — so the superseded one is still a finding. The sweep deletes any
+#     dist-info whose version is not the one now resolved.
+#
+# The verification then fails the build if a floor is unmet or an orphan
+# remains. Two earlier attempts here were silent no-ops whose only symptom was
+# the scanner reporting unchanged versions; a supply-chain step that quietly
+# does nothing is worse than one that fails loudly.
+RUN python -m pip install --no-cache-dir --upgrade \
+        "setuptools>=78.1.1" "msgpack>=1.2.1" \
+    && for pkg in setuptools msgpack; do \
+         keep="$(python -c "import importlib.metadata as m; print(m.version('$pkg'))")"; \
+         echo "== $pkg: resolved $keep; metadata found in image:"; \
+         find / -xdev \( -path /proc -o -path /sys \) -prune -o \
+              -maxdepth 12 -type d \
+              \( -name "$pkg-*.dist-info" -o -name "$pkg-*.egg-info" \) -print \
+         | while read -r d; do \
+             echo "   $d"; \
+             case "$d" in \
+               *"-$keep.dist-info"|*"-$keep.egg-info") ;; \
+               *) echo "   ^ superseded, removing"; rm -rf "$d" ;; \
+             esac; \
+           done; \
+         n=$(find / -xdev \( -path /proc -o -path /sys \) -prune -o \
+                 -maxdepth 12 -type d \
+                 \( -name "$pkg-*.dist-info" -o -name "$pkg-*.egg-info" \) -print \
+             | wc -l); \
+         [ "$n" = "1" ] || { echo "expected exactly 1 $pkg metadata dir, found $n"; exit 1; }; \
+       done \
+    && python -c "\
+import importlib.metadata as m;\
+v = lambda n: tuple(int(p) for p in m.version(n).split('.')[:3]);\
+assert v('setuptools') >= (78, 1, 1), m.version('setuptools');\
+assert v('msgpack') >= (1, 2, 1), m.version('msgpack');\
+print('remediated:', m.version('setuptools'), m.version('msgpack'))"
 
 # Set ownership
 RUN chown -R btagent:btagent /app
