@@ -422,13 +422,16 @@ class HuntPlanIOC(BaseModel):
     synthesises the missing identity fields.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     type: IOCType
     value: str = Field(..., min_length=1, max_length=2048)
 
 
 class HuntPlanRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Direct hunt-plan generation (#99 Phase A) — analyst names the target."""
+
+    model_config = ConfigDict(extra="forbid")
 
     adversaries: list[str] = Field(
         default_factory=list,

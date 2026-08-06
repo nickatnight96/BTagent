@@ -171,13 +171,14 @@ async def record_finding(
 
 
 class EmailHuntRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Trigger an email hunt over a time window.
 
     Supply ``lookback_hours`` (default 24h back from now) or an explicit
     ``start`` / ``end`` ISO-8601 pair; the explicit pair wins when both are
     given.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     lookback_hours: int = Field(default=24, ge=1, le=8760)
     start: str | None = Field(
@@ -354,13 +355,14 @@ class AllHuntsRunResponse(BaseModel):
 
 
 class AllHuntsRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Trigger a combined sweep. The window applies to the email vertical only.
 
     Supply ``lookback_hours`` (default 24h back from now) or an explicit
     ``start`` / ``end`` ISO-8601 pair; the explicit pair wins when both are
     given. Deception and NDR are windowless and ignore these.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     lookback_hours: int = Field(default=24, ge=1, le=8760)
     start: str | None = Field(
@@ -775,8 +777,9 @@ async def create_suppression(
 
 
 class GovernFindingRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Register/sunset ruling for a shadow-agent finding's workload."""
+
+    model_config = ConfigDict(extra="forbid")
 
     action: str = Field(..., pattern="^(register|sunset)$")
     rationale: str = Field(default="", max_length=2000)

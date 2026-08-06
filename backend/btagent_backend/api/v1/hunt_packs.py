@@ -114,8 +114,9 @@ async def set_hunt_pack_enabled(
 
 
 class CustomPackUploadRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """A pack uploaded as content: pack.yaml text + rule files by name."""
+
+    model_config = ConfigDict(extra="forbid")
 
     manifest_yaml: str = Field(..., min_length=1, max_length=200_000)
     rule_files: dict[str, str] = Field(

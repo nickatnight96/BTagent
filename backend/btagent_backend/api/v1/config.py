@@ -90,8 +90,9 @@ class AutonomyConfigResponse(BaseModel):
 
 
 class AutonomyOverridesRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Wholesale replacement of the org's override set; {} clears to defaults."""
+
+    model_config = ConfigDict(extra="forbid")
 
     overrides: dict[str, str] = Field(default_factory=dict, max_length=32)
 

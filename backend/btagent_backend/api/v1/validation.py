@@ -113,8 +113,9 @@ class CoverageMapResponse(BaseModel):
 
 
 class EmulationRunRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Body for a sandbox-gated adversary-emulation validation run."""
+
+    model_config = ConfigDict(extra="forbid")
 
     technique_id: str = Field(..., min_length=1, max_length=20)
     # No default sandbox: the caller must state the target explicitly, and the

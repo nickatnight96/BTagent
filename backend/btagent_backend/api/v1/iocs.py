@@ -134,13 +134,14 @@ class IOCListResponse(BaseModel):
 
 
 class AnnotateIOCRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Partial update of the UC-5.2 notebook annotations.
 
     Only the supplied fields change (``exclude_unset`` semantics), so a pin
     toggle doesn't clobber tags or the note. Empty string / empty list are
     valid values — they clear the field.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     pinned: bool | None = None
     tags: list[str] | None = Field(default=None, max_length=20)
@@ -170,13 +171,14 @@ class STIXImportRequest(BaseModel):
 
 
 class TextImportRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Frontend-shaped import body (``IOCImportModal`` sends ``{data, investigation_id}``).
 
     Used by both ``/import/csv`` (raw CSV text) and ``/import/stix`` (STIX
     bundle as a JSON string — kept distinct from ``STIXImportRequest``
     which expects an already-parsed object).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     data: str
     investigation_id: str

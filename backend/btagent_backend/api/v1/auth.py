@@ -105,24 +105,26 @@ class RegisterRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Refresh request body.
 
     Phase C1: ``refresh_token`` is now *optional* in the body — when omitted,
     the endpoint reads the value from the ``btagent_refresh`` httpOnly cookie.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     refresh_token: str | None = None
 
 
 class LogoutRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Optional refresh token so logout can revoke the whole session.
 
     The access token comes from the ``Authorization`` header; the refresh
     token (if the client still holds one) is supplied here so we can revoke
     both halves of the session in a single round-trip.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     refresh_token: str | None = None
 

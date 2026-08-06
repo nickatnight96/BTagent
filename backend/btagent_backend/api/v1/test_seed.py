@@ -234,7 +234,6 @@ async def seed_pattern_proposal(
 
 
 class SeedInvestigationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     """Create an investigation row with a caller-chosen id.
 
     The product create route mints its own ULID, but the report plugin's
@@ -243,6 +242,8 @@ class SeedInvestigationRequest(BaseModel):
     case (e.g. ``inv_mock_001``) to pass the route's org-scope check. Only
     this test-gated route may choose an id; it upserts on (org, id).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     model_config = ConfigDict(extra="forbid")
 
