@@ -398,8 +398,10 @@ IOC import and export are file-based and need no network:
   IOCs;
 * `GET /api/v1/iocs/export?investigation_id=…&tlp_level=…` — emit a bundle.
 
-Export is TLP-gated: the shared baseline blocks TLP:RED outright, and the
-org-policy guard can further deny an export the baseline would have allowed
+Export is TLP-gated: `tlp_level` is a ceiling, so indicators more restricted
+than the requested level are left out of the bundle rather than shipped under a
+weaker marking; the shared baseline blocks TLP:RED outright; and the org-policy
+guard can further deny an export the baseline would have allowed
 (`backend/btagent_backend/services/tlp_egress_guard.py`). Both run inside the
 enclave; "egress" there means *out of the investigation context*, which is a
 classification control, not a network one.

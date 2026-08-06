@@ -16,7 +16,15 @@ interface ListInvestigationsParams {
   page?: number;
   page_size?: number;
   status?: string;
-  severity?: string;
+  // `severity` was here with no caller; the route does not declare it, so it
+  // would have been discarded silently. Removed rather than left as a field
+  // that looks like a filter and is not one.
+  //
+  // `search` IS sent (the list page passes it) and IS ignored by the route —
+  // InvestigationList compensates by filtering client-side, which means search
+  // only ever matches within the page already loaded. Tracked as debt in
+  // backend/tests/test_api_query_param_parity.py rather than silently dropped
+  // here, because removing it would quietly narrow the feature further.
   search?: string;
 }
 
@@ -33,7 +41,6 @@ export async function listInvestigations(
   if (params.page) searchParams.set("page", String(params.page));
   if (params.page_size) searchParams.set("page_size", String(params.page_size));
   if (params.status) searchParams.set("status", params.status);
-  if (params.severity) searchParams.set("severity", params.severity);
   if (params.search) searchParams.set("search", params.search);
 
   const query = searchParams.toString();

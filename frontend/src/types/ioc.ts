@@ -166,13 +166,20 @@ export interface ImportResult {
   iocs: IOC[];
 }
 
-/** Export options */
+/**
+ * Export options. Field names are the query parameters `GET /v1/iocs/export`
+ * actually takes — `buildQuery` serialises them verbatim, and FastAPI drops an
+ * unknown parameter silently rather than erroring.
+ *
+ * `tlp_level` was `tlp_max` here, which the endpoint has never accepted, so
+ * the selected ceiling was discarded on every export (#586).
+ */
 export interface ExportOptions {
   format: "stix_2.1" | "csv" | "json";
   investigation_id?: string;
   type?: IOCType;
   confidence_min?: number;
-  tlp_max?: TLP;
+  tlp_level?: TLP;
 }
 
 /** Preview row before import */

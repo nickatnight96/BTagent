@@ -86,7 +86,7 @@ export function IOCExportDialog({ open, onOpenChange }: IOCExportDialogProps) {
       investigation_id: investigationId || undefined,
       type: iocType || undefined,
       confidence_min: confidenceMin > 0 ? confidenceMin : undefined,
-      tlp_max: tlpMax || undefined,
+      tlp_level: tlpMax || undefined,
     };
     await exportIOCs(options);
     onOpenChange(false);
