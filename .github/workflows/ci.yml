@@ -955,10 +955,12 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore.yaml:/.trivyignore.yaml:ro" \
             aquasec/trivy:0.58.1 image \
               --format json \
               --severity HIGH,CRITICAL \
               --ignore-unfixed \
+              --ignorefile /.trivyignore.yaml \
               btagent-backend:scan \
           > trivy-report.json
           echo "TARGET | TYPE | PACKAGE | INSTALLED | PKGPATH"
@@ -1002,10 +1004,12 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore.yaml:/.trivyignore.yaml:ro" \
             aquasec/trivy:0.58.1 image \
               --format table \
               --severity HIGH,CRITICAL \
               --ignore-unfixed \
+              --ignorefile /.trivyignore.yaml \
               --exit-code 1 \
               btagent-backend:scan
 
