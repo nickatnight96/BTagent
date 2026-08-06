@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, ShieldCheck, Trash2, Plus, FlaskConical } from "lucide-react";
+import { Loader2, ShieldCheck, Trash2, Plus, FlaskConical, AlertTriangle } from "lucide-react";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ds/button";
 import { Label } from "@/components/ds/label";
@@ -15,10 +15,12 @@ import {
 } from "@/components/ds/card";
 import {
   listTLPPolicies,
+  listEgressKinds,
   createTLPPolicy,
   deleteTLPPolicy,
   evaluateTLPPolicy,
   EGRESS_KINDS,
+  type EgressKindInfo,
   type TLPPolicy,
   type TLPPolicyAction,
   type TLP,
@@ -39,6 +41,18 @@ const ACTION_VARIANT: Record<TLPPolicyAction, "low" | "destructive" | "medium"> 
   downgrade_then_allow: "medium",
 };
 
+const ADVISORY_NOTE =
+  "Advisory: this channel has no runtime gate, so a policy naming it is recorded and evaluated but never applied to a real egress.";
+
+// Fallback used only if `GET /tlp-policies/egress-kinds` fails. Every channel
+// is shown, none claimed as enforced: an outage must not silently upgrade an
+// advisory channel to a governed one in the operator's mind. The reverse
+// mistake — an enforced channel briefly labelled advisory — costs nothing.
+const FALLBACK_KINDS: EgressKindInfo[] = EGRESS_KINDS.map((kind) => ({
+  kind,
+  policy_enforced: false,
+}));
+
 export function TLPPolicyPage() {
   const [policies, setPolicies] = useState<TLPPolicy[]>([]);
   const [loading, setLoading] = useState(false);
@@ -56,6 +70,12 @@ export function TLPPolicyPage() {
   const [evalTlp, setEvalTlp] = useState<TLP>("red");
   const [evalKind, setEvalKind] = useState<string>("stix_export");
   const [decision, setDecision] = useState<PolicyDecision | null>(null);
+  // The channel the displayed decision was computed for. Changing the select
+  // afterwards leaves the decision on screen, so naming `evalKind` in the
+  // warning below would attribute the verdict to a channel it is not about.
+  const [decidedKind, setDecidedKind] = useState<string>("");
+
+  const [kinds, setKinds] = useState<EgressKindInfo[]>(FALLBACK_KINDS);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,6 +88,27 @@ export function TLPPolicyPage() {
       setLoading(false);
     }
   }, []);
+
+  // Separate from `load` so a policy-list failure does not also blank the
+  // picker — the two are independent reads and the form stays usable.
+  useEffect(() => {
+    void (async () => {
+      try {
+        setKinds(await listEgressKinds());
+      } catch {
+        setKinds(FALLBACK_KINDS);
+      }
+    })();
+  }, []);
+
+  const advisoryKinds = kinds.filter((k) => !k.policy_enforced).map((k) => k.kind);
+  // An empty selection means "any channel" on the backend, so it covers the
+  // ungoverned ones too. Reporting the broadest policy in the system as fully
+  // enforced is the one reading that is exactly backwards.
+  const selectedAdvisory =
+    egressKinds.length === 0
+      ? advisoryKinds
+      : advisoryKinds.filter((k) => egressKinds.includes(k));
 
   useEffect(() => {
     void load();
@@ -115,6 +156,7 @@ export function TLPPolicyPage() {
     setError(null);
     try {
       setDecision(await evaluateTLPPolicy(evalTlp, evalKind));
+      setDecidedKind(evalKind);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Evaluation failed");
     }
@@ -194,18 +236,37 @@ export function TLPPolicyPage() {
             <div className="space-y-1.5">
               <Label>Egress channels (empty = any)</Label>
               <div className="flex flex-wrap gap-2">
-                {EGRESS_KINDS.map((k) => (
+                {kinds.map(({ kind, policy_enforced }) => (
                   <Button
-                    key={k}
+                    key={kind}
                     type="button"
-                    variant={egressKinds.includes(k) ? "default" : "outline"}
+                    variant={egressKinds.includes(kind) ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setEgressKinds((p) => toggle(p, k))}
+                    title={policy_enforced ? undefined : ADVISORY_NOTE}
+                    data-testid={`egress-kind-${kind}`}
+                    data-advisory={policy_enforced ? undefined : "true"}
+                    onClick={() => setEgressKinds((p) => toggle(p, kind))}
                   >
-                    {k}
+                    {kind}
+                    {!policy_enforced && <span className="ml-1.5 opacity-70">·&nbsp;advisory</span>}
                   </Button>
                 ))}
               </div>
+              {selectedAdvisory.length > 0 && (
+                <p
+                  className="flex items-start gap-1.5 text-xs text-amber-400"
+                  data-testid="advisory-channel-warning"
+                  role="status"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                  <span>
+                    {selectedAdvisory.join(", ")}{" "}
+                    {selectedAdvisory.length === 1 ? "has" : "have"} no runtime gate. This policy
+                    will be recorded and shown here, but nothing consults it when data leaves over{" "}
+                    {selectedAdvisory.length === 1 ? "that channel" : "those channels"}.
+                  </span>
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -349,9 +410,10 @@ export function TLPPolicyPage() {
                   onChange={(e) => setEvalKind(e.target.value)}
                   className="sm:w-48"
                 >
-                  {EGRESS_KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {k}
+                  {kinds.map(({ kind, policy_enforced }) => (
+                    <option key={kind} value={kind}>
+                      {kind}
+                      {policy_enforced ? "" : " (advisory)"}
                     </option>
                   ))}
                 </NativeSelect>
@@ -366,6 +428,25 @@ export function TLPPolicyPage() {
                   {decision.allowed ? "ALLOWED" : "BLOCKED"} · {decision.effective_tlp}
                 </Badge>
                 <p className="text-sm text-muted-foreground mt-1">{decision.reason}</p>
+                {!decision.policy_enforced && (
+                  // Without this the verdict above reads as a description of
+                  // what the system does. For an ungoverned channel it is a
+                  // description of what the policy set says and nothing else,
+                  // which is the more dangerous half of the pair when it says
+                  // BLOCKED.
+                  <p
+                    className="flex items-start gap-1.5 text-xs text-amber-400 mt-2"
+                    data-testid="tlp-evaluate-unenforced"
+                    role="status"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                    <span>
+                      Not enforced at runtime. This is what the policy set says for{" "}
+                      <code>{decidedKind}</code>; no gate consults it when data actually leaves
+                      over that channel.
+                    </span>
+                  </p>
+                )}
               </div>
             )}
           </CardContent>

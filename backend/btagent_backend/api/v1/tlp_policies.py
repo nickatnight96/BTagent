@@ -2,14 +2,27 @@
 
 Org-scoped, CISO-approved exceptions to the default-deny TLP egress gate.
 
-  * GET    /tlp-policies          — list this org's policies (policy:view)
-  * POST   /tlp-policies          — create a policy (policy:manage / CISO)
-  * DELETE /tlp-policies/{id}     — revoke a policy (policy:manage / CISO)
-  * POST   /tlp-policies/evaluate — dry-run a (tlp, egress_kind) decision
+  * GET    /tlp-policies              — list this org's policies (policy:view)
+  * GET    /tlp-policies/egress-kinds — the governable channels + whether each
+    is enforced at runtime (policy:view)
+  * POST   /tlp-policies              — create a policy (policy:manage / CISO)
+  * DELETE /tlp-policies/{id}         — revoke a policy (policy:manage / CISO)
+  * POST   /tlp-policies/evaluate     — dry-run a (tlp, egress_kind) decision
 
 Reads are senior-analyst+ so analysts can see what exceptions exist;
 writes are admin-only because a policy widens what may leave the enclave
 and therefore requires CISO sign-off.
+
+**The dry-run answers for channels the runtime does not consult.** Two of the
+five :class:`~btagent_shared.security.tlp_policy.EgressKind` members —
+``mcp_return`` and ``event_emit`` — have no ``assert_org_policy_allows_egress``
+call site (see :data:`POLICY_ENFORCED_EGRESS_KINDS` for why). A policy naming
+them evaluates exactly like an enforced one and governs nothing, so every
+response that carries a decision or accepts a channel says which it is:
+``/egress-kinds`` labels the vocabulary, ``/evaluate`` returns
+``policy_enforced``, and creating a policy records the advisory channels on the
+audit ledger. Silently answering "BLOCKED" for an ungoverned channel is how a
+CISO comes to believe a control exists.
 """
 
 from __future__ import annotations
@@ -17,8 +30,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from btagent_shared.security.tlp import EgressKind
-from btagent_shared.security.tlp_policy import TLPPolicy, TLPPolicyAction
+from btagent_shared.security.tlp_policy import (
+    EgressKind,
+    TLPPolicy,
+    TLPPolicyAction,
+    advisory_egress_kinds,
+    is_policy_enforced,
+)
 from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -33,7 +51,7 @@ logger = logging.getLogger("btagent.api.tlp_policies")
 
 router = APIRouter(prefix="/tlp-policies", tags=["tlp-policies"])
 
-_VALID_EGRESS_KINDS = set(EgressKind.__args__)  # type: ignore[attr-defined]
+_VALID_EGRESS_KINDS = {k.value for k in EgressKind}
 
 
 class CreateTLPPolicyRequest(BaseModel):
@@ -78,6 +96,36 @@ class PolicyDecisionResponse(BaseModel):
     action: TLPPolicyAction
     matched_policy_id: str | None
     reason: str
+    policy_enforced: bool = Field(
+        description=(
+            "Whether this decision is applied when the egress actually happens. "
+            "False means the channel has no org-policy gate: the decision below "
+            "is what the policy says, not what the system does."
+        )
+    )
+
+
+class EgressKindInfo(BaseModel):
+    """One governable channel, and whether a policy on it does anything."""
+
+    kind: EgressKind
+    policy_enforced: bool
+
+
+@router.get("/egress-kinds", response_model=list[EgressKindInfo])
+async def list_egress_kinds(
+    user: CurrentUser = Depends(get_current_user),
+) -> list[EgressKindInfo]:
+    """The channels a policy may name, each labelled enforced or advisory.
+
+    Served rather than duplicated in the SPA on purpose. A hand-written copy
+    of this vocabulary in ``api/tlpPolicies.ts`` is what hid ``report_export``
+    from the picker until #597, and the enforced/advisory split is a property
+    of where the backend's call sites are — the frontend cannot know it and
+    would only be guessing.
+    """
+    user.require_permission("policy:view")
+    return [EgressKindInfo(kind=k, policy_enforced=is_policy_enforced(k)) for k in EgressKind]
 
 
 @router.get("", response_model=list[TLPPolicy])
@@ -129,6 +177,13 @@ async def create_policy(
             "approver_id": policy.approver_id,
             "rationale": policy.rationale,
             "valid_until": policy.valid_until.isoformat() if policy.valid_until else None,
+            # Which of the approved channels this policy cannot actually
+            # govern. An approval whose scope is partly inert is a different
+            # governance fact from one that bites everywhere it names, and the
+            # ledger is where an auditor reconstructs what was believed at
+            # sign-off time. Empty ``egress_kinds`` means "any channel", so
+            # the broadest policies list both advisory channels here.
+            "advisory_egress_kinds": [k.value for k in advisory_egress_kinds(policy.egress_kinds)],
         },
         org_id=user.org_id,
     )
@@ -189,4 +244,5 @@ async def evaluate_policy(
         action=decision.action,
         matched_policy_id=decision.matched_policy_id,
         reason=decision.reason,
+        policy_enforced=is_policy_enforced(body.egress_kind),
     )
