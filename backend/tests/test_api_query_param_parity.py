@@ -86,18 +86,16 @@ _API_CLIENT_DIR = _FRONTEND_SRC / "api"
 #: Four sibling dead parameters (``severity`` on investigations, ``search`` /
 #: ``is_active`` / ``trigger_type`` on playbooks) had no caller at all and were
 #: deleted in the same change rather than listed here.
-KNOWN_GAPS: dict[str, str] = {
-    "/api/v1/investigations search": (
-        "the list page sends it and the route ignores it; InvestigationList "
-        "filters client-side, so search only matches within the page already "
-        "loaded rather than across the investigation set"
-    ),
-    # The three ``/iocs/export`` entries this list shipped with — ``format``,
-    # ``type`` and ``confidence_min`` — are gone because the route now declares
-    # them. ``test_exemption_list_only_holds_live_entries`` is what forced
-    # their removal: leaving a fixed gap listed fails just as loudly as a new
-    # one appearing, which is the half of a ratchet that keeps it honest.
-}
+#: Empty, and that is the point. Every entry this list shipped with has been
+#: paid off: the three ``/iocs/export`` parameters (``format`` / ``type`` /
+#: ``confidence_min``) when the route began declaring them, and
+#: ``/investigations search`` when the search moved server-side.
+#:
+#: ``test_exemption_list_only_holds_live_entries`` is what forced each removal
+#: — leaving a since-fixed gap listed fails exactly as loudly as a new mismatch
+#: appearing. That is the half of a ratchet that keeps it honest, and it is why
+#: this list shrank rather than quietly becoming a permanent exemption.
+KNOWN_GAPS: dict[str, str] = {}
 
 # A parser this simple could match nothing and pass vacuously. The floors are
 # set below the real counts at the time of writing (13 buildQuery call sites,

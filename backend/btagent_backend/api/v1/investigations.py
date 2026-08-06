@@ -10,7 +10,7 @@ from btagent_shared.types.enums import InvestigationStatus, Severity
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -192,10 +192,22 @@ async def list_investigations(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status_filter: str | None = Query(None, alias="status"),
+    search: str | None = Query(None, max_length=200),
     db: AsyncSession = Depends(get_db),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """List investigations with pagination and optional status filter."""
+    """List investigations with pagination, status filter and free-text search.
+
+    ``search`` matches the title or description, case-insensitively.
+
+    The PunchList has always sent this parameter and the route has never
+    declared it, so it was discarded silently and ``InvestigationList``
+    compensated by filtering the rows it had already fetched. That made search
+    quietly page-local: typing a title that exists on page 3 found nothing
+    while on page 1, and the result count stayed at the unfiltered total.
+    Filtering here instead makes the count and the pagination agree with what
+    the analyst typed.
+    """
     user.require_permission("investigation:view")
 
     # AUTH-B1: tenant scoping. Every analyst — regardless of role — only sees
@@ -218,6 +230,28 @@ async def list_investigations(
     if status_filter:
         query = query.where(InvestigationRow.status == status_filter)
         count_query = count_query.where(InvestigationRow.status == status_filter)
+
+    if search and search.strip():
+        # ``lower()`` on both sides rather than ILIKE: SQLite (the test
+        # harness) has no ILIKE, and its LIKE is only case-insensitive for
+        # ASCII, so an accented title would match under Postgres and not under
+        # the tests that vouch for it.
+        #
+        # ``%`` and ``_`` are LIKE metacharacters. An analyst typing "100%" or
+        # "WORKSTATION_42" means those characters, not "match anything", so
+        # they are escaped and the escape character is declared on the
+        # comparison. The backslash itself is escaped first, or escaping the
+        # others would corrupt it.
+        escaped = (
+            search.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        )
+        needle = f"%{escaped}%"
+        matches = or_(
+            func.lower(InvestigationRow.title).like(needle, escape="\\"),
+            func.lower(InvestigationRow.description).like(needle, escape="\\"),
+        )
+        query = query.where(matches)
+        count_query = count_query.where(matches)
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
