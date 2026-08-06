@@ -44,7 +44,7 @@ from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from jose import JWTError, jwt
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -404,6 +404,7 @@ def _derive_username(email: str | None, subject: str) -> str:
 
 
 class LinkSSOIdentityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Bind an existing user to an IdP ``(provider, subject)`` identity."""
 
     user_id: str

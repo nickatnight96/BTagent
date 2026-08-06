@@ -44,9 +44,14 @@ What is NOT checked, so a pass isn't read as more than it is
 * **Dynamically built names.** A key assembled at runtime
   (``params[`filter_${k}`]``) is invisible, as is a spread of an object this
   cannot resolve.
-* **Request bodies.** POST/PUT payload fields are a separate surface with a
-  separate failure mode (Pydantic *does* reject unknown fields when configured
-  to, so they are not silently dropped in the same way).
+* **Request bodies.** A separate surface, covered by
+  ``test_request_body_strictness``. This list used to claim bodies were not
+  exposed to the same silent drop "because Pydantic *does* reject unknown
+  fields when configured to" — the conditional was carrying the whole claim,
+  and almost nothing was so configured: 4 of 63 ``*Request`` models set
+  ``extra="forbid"``. Pydantic v2 defaults to ``extra='ignore'``, so a
+  misspelled ``tlp_level`` produced a TLP:GREEN case and a 201. That guard now
+  requires ``forbid`` on every one of them.
 * **Interfaces resolved by name only.** If two interfaces share a name across
   files, the first one found wins.
 

@@ -10,7 +10,7 @@ from btagent_shared.types.config import IntegrationAutonomy
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,6 +90,7 @@ class AutonomyConfigResponse(BaseModel):
 
 
 class AutonomyOverridesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Wholesale replacement of the org's override set; {} clears to defaults."""
 
     overrides: dict[str, str] = Field(default_factory=dict, max_length=32)

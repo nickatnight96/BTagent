@@ -27,7 +27,7 @@ import logging
 
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -40,6 +40,7 @@ router = APIRouter(prefix="/hunt/packs", tags=["hunt"])
 
 
 class SetPackEnabledRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     enabled: bool = Field(..., description="True installs/enables the pack; False disables it.")
 
 
@@ -113,6 +114,7 @@ async def set_hunt_pack_enabled(
 
 
 class CustomPackUploadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """A pack uploaded as content: pack.yaml text + rule files by name."""
 
     manifest_yaml: str = Field(..., min_length=1, max_length=200_000)

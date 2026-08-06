@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,19 +31,23 @@ _service = PlaybookService()
 
 
 class CreatePlaybookRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
     yaml_content: str
 
 
 class UpdatePlaybookRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     yaml_content: str
 
 
 class ValidatePlaybookRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     yaml_content: str
 
 
 class ExecutePlaybookRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     trigger_data: dict[str, Any] = Field(default_factory=dict)
     investigation_id: str | None = None
 
@@ -179,6 +183,7 @@ async def get_execution_detail(
 
 
 class HITLDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """A human's answer to the gate a run is paused at."""
 
     decision: Literal["approve", "reject"]

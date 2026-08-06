@@ -7,7 +7,7 @@ from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,11 +63,13 @@ def _remaining_ttl(exp: datetime) -> int:
 
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     username: str
     password: str
 
 
 class RegisterRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     username: str
     email: str
     password: str
@@ -103,6 +105,7 @@ class RegisterRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Refresh request body.
 
     Phase C1: ``refresh_token`` is now *optional* in the body — when omitted,
@@ -113,6 +116,7 @@ class RefreshRequest(BaseModel):
 
 
 class LogoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Optional refresh token so logout can revoke the whole session.
 
     The access token comes from the ``Authorization`` header; the refresh

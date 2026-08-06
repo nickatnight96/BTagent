@@ -9,7 +9,7 @@ from btagent_shared.types.config import TLP, AutonomyLevel
 from btagent_shared.types.enums import InvestigationStatus, Severity
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,7 @@ def _get_task_manager(request: Request) -> TaskManager:
 
 
 class CreateInvestigationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: str
     description: str = ""
     severity: Severity = Severity.MEDIUM
@@ -381,6 +382,7 @@ async def stop_investigation(
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     message: str
 
 

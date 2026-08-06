@@ -12,7 +12,7 @@ from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import IOCType
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +61,7 @@ _MAX_BULK_IOCS = 500
 
 
 class CreateIOCRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     investigation_id: str
     type: IOCType
     value: str = Field(..., min_length=1, max_length=2048)
@@ -71,11 +72,13 @@ class CreateIOCRequest(BaseModel):
 
 
 class BulkCreateIOCRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     investigation_id: str
     iocs: list[CreateIOCRequest] = Field(..., min_length=1, max_length=_MAX_BULK_IOCS)
 
 
 class UpdateIOCRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: IOCType | None = None
     value: str | None = Field(default=None, min_length=1, max_length=2048)
     tlp_level: str | None = None
@@ -131,6 +134,7 @@ class IOCListResponse(BaseModel):
 
 
 class AnnotateIOCRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Partial update of the UC-5.2 notebook annotations.
 
     Only the supplied fields change (``exclude_unset`` semantics), so a pin
@@ -147,10 +151,12 @@ class AnnotateIOCRequest(BaseModel):
 
 
 class EnrichRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     pass  # No body needed; IOC ID comes from URL path
 
 
 class BulkEnrichRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     # See ``_MAX_BULK_IOCS`` above — same DoS-mitigation cap. Each id is
     # also length-bounded so a million-character "id" can't sneak past the
     # FastAPI request-body size limit.
@@ -158,11 +164,13 @@ class BulkEnrichRequest(BaseModel):
 
 
 class STIXImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     bundle: dict[str, Any]
     investigation_id: str
 
 
 class TextImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Frontend-shaped import body (``IOCImportModal`` sends ``{data, investigation_id}``).
 
     Used by both ``/import/csv`` (raw CSV text) and ``/import/stix`` (STIX

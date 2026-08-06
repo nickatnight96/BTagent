@@ -29,7 +29,7 @@ from btagent_shared.types.enums import Severity
 from btagent_shared.types.triage import TypedIntent
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_backend.api.deps import CurrentUser, get_current_user
 
@@ -39,6 +39,7 @@ router = APIRouter(prefix="/response-plan", tags=["response-plan"])
 
 
 class ResponsePlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     typed_intent: TypedIntent = Field(
         ..., description="Confirmed Typed Intent from triage (e.g. 'malware_detected')."
     )

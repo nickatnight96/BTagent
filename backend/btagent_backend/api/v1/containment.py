@@ -20,7 +20,7 @@ import logging
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -39,6 +39,7 @@ router = APIRouter(prefix="/containment", tags=["containment"])
 
 
 class ExecuteResponseActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     action_id: str = Field(..., description="Id of the approved ResponseAction step.")
     action_type: str = Field(..., description="e.g. isolate_host / block_ip / disable_account.")
     connector: str = Field(..., description="Connector that enforces it, e.g. 'crowdstrike'.")
@@ -51,6 +52,7 @@ class ExecuteResponseActionRequest(BaseModel):
 
 
 class ExecuteBulkBlockRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     action_id: str = Field(..., description="Id of the approved MitigationAction (block) step.")
     ioc_type: str = Field(..., description="ip | domain | url | hash_* — the IOC kind.")
     ioc_value: str = Field(..., description="The IOC to block.")
@@ -75,6 +77,7 @@ class ExecutionResponse(BaseModel):
 
 
 class SafelistEntryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     entry_type: str = Field(..., description="'ip' or 'domain'.")
     value: str = Field(..., description="The IP or domain to never block.")
     reason: str = Field(default="", description="Why it must never be blocked.")

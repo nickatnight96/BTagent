@@ -22,7 +22,7 @@ from btagent_shared.types.enums import Severity
 from btagent_shared.types.triage import Alert, TriageResult
 from btagent_shared.utils.ids import generate_id
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from btagent_backend.api.deps import CurrentUser, get_current_user
 
@@ -32,6 +32,7 @@ router = APIRouter(prefix="/triage", tags=["triage"])
 
 
 class TriageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: str = Field(..., min_length=1, max_length=2000, description="Alert title / rule name.")
     description: str = Field(default="", max_length=20000)
     source: str = Field(default="", max_length=200, description="Originating tool, e.g. 'splunk'.")

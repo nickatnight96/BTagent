@@ -68,6 +68,7 @@ _MAX_ADVISORY_CHARS = 200_000
 
 
 class HuntPackageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     text: str = Field(
         ...,
         min_length=1,
@@ -426,6 +427,7 @@ class HuntPlanIOC(BaseModel):
 
 
 class HuntPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Direct hunt-plan generation (#99 Phase A) — analyst names the target."""
 
     adversaries: list[str] = Field(
@@ -780,6 +782,7 @@ async def execute_hunt_plan(
 
 
 class CorrelateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     entity_type: IOCType = Field(..., description="Entity kind: ip / domain / hash_* / other.")
     entity_value: str = Field(..., min_length=1, max_length=500)
     mitre_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
@@ -847,6 +850,7 @@ class HuntPackSuggestionListResponse(BaseModel):
 
 
 class DecideHuntPackSuggestionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     state: Literal["accepted", "dismissed"] = Field(
         ...,
         description=(

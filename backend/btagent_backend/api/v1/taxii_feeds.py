@@ -75,6 +75,7 @@ class TaxiiFeedListResponse(BaseModel):
 
 
 class CreateTaxiiFeedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(..., max_length=200)
     server_url: str = Field(..., max_length=1000, description="TAXII 2.1 api-root URL.")
     collection_id: str = Field(..., max_length=200)
@@ -92,6 +93,7 @@ class CreateTaxiiFeedRequest(BaseModel):
 
 
 class UpdateTaxiiFeedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Partial update — only supplied fields change (``exclude_unset``)."""
 
     name: str | None = Field(default=None, max_length=200)

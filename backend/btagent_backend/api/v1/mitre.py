@@ -14,7 +14,7 @@ from btagent_shared.types.mitre import (
 )
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -133,6 +133,7 @@ class TechniqueExerciseListResponse(BaseModel):
 
 
 class TagRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     entity_type: str = Field(..., description="Entity kind (ioc, timeline, alert, etc.)")
     entity_id: str = Field(..., description="Entity primary key")
     technique_id: str = Field(..., description="MITRE technique ID (e.g. T1059.001)")

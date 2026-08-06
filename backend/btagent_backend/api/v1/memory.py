@@ -31,7 +31,7 @@ import logging
 from btagent_shared.types.config import TLP
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.api.deps import CurrentUser, get_current_user, get_db
@@ -59,6 +59,7 @@ _API_RECALL_CLEARANCE = TLP.AMBER_STRICT
 
 
 class RecordMemoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     kind: str = Field(..., description="One of entity_note|decision|learning|observation")
     subject: str = Field(..., min_length=1, max_length=512)
     content: str = Field(..., min_length=1, max_length=10_000)
