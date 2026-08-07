@@ -11,11 +11,20 @@ from typing import Any
 from btagent_shared.types.enums import AuditCategory, AuditOutcome
 from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import DEFAULT_ORG_ID, AuditLogRow
 
 logger = logging.getLogger(__name__)
+
+# How many times an append re-reads ``seq`` and retries after losing the race
+# to a concurrent writer. ``seq`` is UNIQUE, so a collision fails closed rather
+# than forking the chain — but the entry must still land, because by the time
+# an audit write runs the audited action has usually already happened. Five is
+# well past what contention on a single-row read is expected to need; the point
+# is a bound, so a pathological loop surfaces as an error instead of spinning.
+_MAX_APPEND_ATTEMPTS = 5
 
 # The genesis (first) entry uses this sentinel as prev_hash.
 _GENESIS_HASH = "0" * 64
@@ -85,23 +94,89 @@ class AuditTrail:
         """
         details = details or {}
         entry_id = generate_id("aud")
-        now = datetime.now(UTC)
-        ts_iso = now.isoformat()
+        canonical_details = _details_to_canonical(details)
 
-        # Fetch the latest entry to get prev_hash and next seq
+        for attempt in range(_MAX_APPEND_ATTEMPTS):
+            try:
+                return await self._append_once(
+                    entry_id=entry_id,
+                    actor=actor,
+                    category=category,
+                    action=action,
+                    resource=resource,
+                    outcome=outcome,
+                    details=details,
+                    canonical_details=canonical_details,
+                    org_id=org_id,
+                )
+            except IntegrityError:
+                # Another writer took this ``seq`` between our read and our
+                # insert. The UNIQUE constraint is what stops that becoming a
+                # forked chain, so this is the constraint working — but the
+                # entry still has to land, because by the time an audit write
+                # runs the audited action has usually already happened.
+                if attempt == _MAX_APPEND_ATTEMPTS - 1:
+                    logger.error(
+                        "audit append lost the seq race %d times for actor=%s action=%s; "
+                        "the audited action is NOT on the ledger",
+                        _MAX_APPEND_ATTEMPTS,
+                        actor,
+                        action,
+                    )
+                    raise
+                logger.warning(
+                    "audit append lost the seq race (attempt %d/%d); retrying",
+                    attempt + 1,
+                    _MAX_APPEND_ATTEMPTS,
+                )
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _next_seq_and_prev_hash(self) -> tuple[int, str]:
+        """The head of the chain: the next sequence number and what it links to.
+
+        This read is the step that races. Two writers reaching it concurrently
+        see the same head and derive the same ``seq``; ``UNIQUE(seq)`` then
+        refuses the second insert. Named as its own method both because that is
+        the racing step and because it gives a test a seam to return a stale
+        head from, which is the only way to reproduce the collision on a
+        single-writer SQLite suite.
+        """
         result = await self._db.execute(
             select(AuditLogRow).order_by(AuditLogRow.seq.desc()).limit(1)
         )
         prev_entry = result.scalar_one_or_none()
+        if prev_entry is None:
+            return 1, _GENESIS_HASH
+        return prev_entry.seq + 1, prev_entry.hash
 
-        if prev_entry is not None:
-            prev_hash = prev_entry.hash
-            seq = prev_entry.seq + 1
-        else:
-            prev_hash = _GENESIS_HASH
-            seq = 1
+    async def _append_once(
+        self,
+        *,
+        entry_id: str,
+        actor: str,
+        category: AuditCategory,
+        action: str,
+        resource: str,
+        outcome: AuditOutcome,
+        details: dict[str, Any],
+        canonical_details: str,
+        org_id: str,
+    ) -> AuditLogRow:
+        """One read-compute-insert attempt, isolated behind a SAVEPOINT.
 
-        canonical_details = _details_to_canonical(details)
+        The savepoint is what makes retrying possible at all. ``record`` is
+        called mid-transaction with the caller's own writes pending, so a bare
+        ``IntegrityError`` would poison the session and force a rollback that
+        discards the caller's work — a containment action, say. Rolling back to
+        a savepoint undoes only this failed insert.
+
+        ``seq`` and ``prev_hash`` are re-read on every attempt: both are part
+        of the hash, so a retry has to recompute the whole entry rather than
+        re-submitting the same row with a new number.
+        """
+        now = datetime.now(UTC)
+        ts_iso = now.isoformat()
+        seq, prev_hash = await self._next_seq_and_prev_hash()
 
         entry_hash = _compute_hash(
             id=entry_id,
@@ -130,8 +205,11 @@ class AuditTrail:
             prev_hash=prev_hash,
             hash=entry_hash,
         )
-        self._db.add(row)
-        await self._db.flush()
+        # SAVEPOINT: a UNIQUE(seq) violation here rolls back only this insert,
+        # leaving the caller's pending work intact so ``record`` can retry.
+        async with self._db.begin_nested():
+            self._db.add(row)
+            await self._db.flush()
 
         logger.info(
             "Audit: seq=%d actor=%s category=%s action=%s outcome=%s",
