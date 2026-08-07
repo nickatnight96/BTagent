@@ -36,6 +36,7 @@ restores the unrestricted default for tests.
 from __future__ import annotations
 
 import contextvars
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -44,6 +45,8 @@ from typing import Any
 from btagent_shared.types.config import TLP
 
 from btagent_agents.mcp.manifests import MANIFESTS
+
+logger = logging.getLogger("btagent.mcp.policy")
 
 # Ordering: how restrictive a classification is. A capability declared at
 # rank N may run in any context of rank <= N.
@@ -137,7 +140,14 @@ def hitl_approval(approved: bool = True) -> Iterator[None]:
 
 
 def is_tlp_allowed(capability_tlp: TLP, active_tlp: TLP | None) -> bool:
-    """True when a capability's declared egress covers the active context."""
+    """True when a capability's declared egress covers the active context.
+
+    ``active_tlp=None`` means *no classification was supplied*, and this
+    returns True — the gate cannot compare against a level it does not have.
+    That is a fail-open, and callers must not read the True as "the
+    classification permits this". See :attr:`PolicyVerdict.tlp_checked`, which
+    is what distinguishes the two.
+    """
     if active_tlp is None:
         return True
     return TLP_RANK[capability_tlp] >= TLP_RANK[active_tlp]
@@ -147,15 +157,36 @@ def is_tlp_allowed(capability_tlp: TLP, active_tlp: TLP | None) -> bool:
 class PolicyVerdict:
     """Outcome of a policy check for one tool call."""
 
-    status: str  # "allowed" | "hitl_required" | "tlp_blocked" | "undeclared"
+    # "allowed" | "hitl_required" | "tlp_blocked" | "undeclared" | "unclassified".
+    # "unclassified" is only ever produced under require_classification=True;
+    # consumers log or record the status rather than matching it exhaustively,
+    # so adding it does not change any existing refusal path.
+    status: str
     tool_name: str
     server_id: str | None = None
     reason: str = ""
     detail: dict[str, Any] = field(default_factory=dict)
+    #: Whether the TLP-egress comparison actually ran.
+    #:
+    #: False when no classification reached this call — the dispatch was
+    #: allowed *without* the egress check, not by it. Every backend service
+    #: dispatch site is currently in this state (#599): ``set_active_tlp`` is
+    #: called only from the agent's ``classification_hook``, so the ContextVar
+    #: is empty in the backend process and ``is_tlp_allowed`` short-circuits.
+    #:
+    #: This exists because "allowed" was previously indistinguishable between
+    #: the two cases. A control that reports success when it did nothing is
+    #: worse than one that is absent: the absent one gets noticed.
+    tlp_checked: bool = True
 
     @property
     def allowed(self) -> bool:
         return self.status == "allowed"
+
+    @property
+    def unclassified_pass(self) -> bool:
+        """Allowed without the TLP-egress check having run at all."""
+        return self.allowed and not self.tlp_checked
 
     def to_envelope(self) -> dict[str, Any]:
         """Router-shaped error envelope for a refused call."""
@@ -188,6 +219,7 @@ def guard_dispatch(
     *,
     active_tlp: TLP | None = None,
     hitl_approved: bool | None = None,
+    require_classification: bool = False,
 ) -> PolicyVerdict:
     """Enforce the manifest policy at a direct dispatch site, or raise.
 
@@ -201,8 +233,40 @@ def guard_dispatch(
     approve→execute double-gate, the detection-PR ship endpoint that follows
     per-proposal analyst acceptance). It must never be derived from model
     output (#374).
+
+    ``require_classification=True`` turns the fail-open into a fail-closed for
+    one call site: dispatching with no classification raises instead of
+    quietly skipping the egress comparison. It is opt-in rather than the
+    default because every backend dispatch site is currently unclassified
+    (#599) — defaulting it on would refuse containment actions that work
+    today, which is a rollout decision, not a bug fix. A site that has a
+    classification to pass should pass it *and* set this.
     """
     verdict = evaluate_tool_call(tool_name, active_tlp=active_tlp, hitl_approved=hitl_approved)
+    if verdict.unclassified_pass:
+        if require_classification:
+            raise MCPPolicyRefused(
+                PolicyVerdict(
+                    status="unclassified",
+                    tool_name=tool_name,
+                    server_id=verdict.server_id,
+                    reason=(
+                        f"'{tool_name}' requires a context classification and none was "
+                        "supplied — refusing rather than dispatching with the TLP-egress "
+                        "check skipped."
+                    ),
+                    tlp_checked=False,
+                )
+            )
+        # Loud on purpose. This is the only trace that the egress half of the
+        # gate did not run; without it the dispatch is indistinguishable in
+        # every log and audit record from one that was actually checked.
+        logger.warning(
+            "Dispatching '%s' with no active classification — TLP-egress check skipped "
+            "(capability declares tlp_egress=%s). See #599.",
+            tool_name,
+            (verdict.detail or {}).get("capability_tlp", "?"),
+        )
     if not verdict.allowed:
         raise MCPPolicyRefused(verdict)
     return verdict
@@ -279,4 +343,13 @@ def evaluate_tool_call(
             detail={"requires_hitl": True},
         )
 
-    return PolicyVerdict(status="allowed", tool_name=tool_name, server_id=server_id)
+    # ``capability_tlp`` rides along even on the allowed verdict: when the
+    # egress check was skipped, it is the only way a reader can see what the
+    # comparison *would* have been against.
+    return PolicyVerdict(
+        status="allowed",
+        tool_name=tool_name,
+        server_id=server_id,
+        detail={"capability_tlp": cap.tlp_egress.value},
+        tlp_checked=active_tlp is not None,
+    )
