@@ -583,11 +583,33 @@ async def test_scan_all_orgs_lists_every_org(db_session):
     assert DEFAULT_ORG_ID in org_ids
 
 
-def test_weekly_pattern_scan_delegates_to_scan_all_orgs():
-    """Wiring check: the thin job shell calls the multi-org service entry."""
+def test_weekly_pattern_scan_scans_every_org_with_a_commit_boundary_per_org():
+    """Wiring check: the job walks every org and isolates each one.
+
+    This replaces a grep for ``"scan_all_orgs" in src``. That assertion was
+    doubly weak: it pinned an implementation detail rather than a property,
+    and when the job stopped calling ``scan_all_orgs`` it kept passing anyway,
+    because the docstring that explains *why it no longer does* contains the
+    string. A source-text test matches prose as happily as code.
+
+    Asserting on the AST instead — the calls the function actually makes.
+    """
+    import ast
     import inspect
+    import textwrap
 
     from btagent_backend.scheduler import jobs
 
-    src = inspect.getsource(jobs.weekly_pattern_scan)
-    assert "scan_all_orgs" in src
+    tree = ast.parse(textwrap.dedent(inspect.getsource(jobs.weekly_pattern_scan)))
+    called = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+    }
+
+    # Enumerate every org, scan each one, and isolate each behind its own
+    # commit. `scan_all_orgs` would do the first two in a single transaction.
+    assert "list_org_ids" in called
+    assert "scan_corpus" in called
+    assert "_run_per_org" in called
+    assert "scan_all_orgs" not in called

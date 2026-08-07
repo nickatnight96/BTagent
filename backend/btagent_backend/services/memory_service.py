@@ -810,6 +810,19 @@ async def consolidate_memories(
     return result
 
 
+async def org_ids_with_memories(session: AsyncSession) -> list[str]:
+    """Every org that has at least one memory row — the consolidation universe.
+
+    Split out so the scheduler can drive the sweep org-by-org with a commit
+    boundary per tenant, rather than delegating the whole walk to
+    :func:`consolidate_all_orgs` under one transaction.
+    """
+    return [
+        org_id
+        for (org_id,) in (await session.execute(select(AgentMemoryRow.org_id).distinct())).all()
+    ]
+
+
 async def consolidate_all_orgs(
     session: AsyncSession,
     *,
@@ -818,16 +831,22 @@ async def consolidate_all_orgs(
 ) -> ConsolidationResult:
     """Run :func:`consolidate_memories` for every org that has memories.
 
-    Best-effort and per-org isolated: one org's failure is logged and skipped
-    rather than aborting the sweep. Multi-tenant by construction — a
-    single-``DEFAULT_ORG_ID`` sweep would permanently exclude every other
-    tenant's store. The caller owns the commit.
+    Multi-tenant by construction — a single-``DEFAULT_ORG_ID`` sweep would
+    permanently exclude every other tenant's store. The caller owns the commit.
+
+    **This is not per-org isolated, despite the ``try``/``continue`` below.**
+    It runs in one transaction, so a failure raised from a *flush* leaves the
+    session unusable and every subsequent org — plus the caller's commit —
+    fails with it. Catching an exception is not a transaction boundary.
+
+    The nightly sweep therefore no longer calls this; it drives
+    :func:`consolidate_memories` per org through ``_run_per_org``, which
+    commits and rolls back per tenant. Kept for callers that genuinely want a
+    single-transaction walk (and for the tests that assert the walk covers
+    every tenant).
     """
     totals = ConsolidationResult()
-    org_ids = [
-        org_id
-        for (org_id,) in (await session.execute(select(AgentMemoryRow.org_id).distinct())).all()
-    ]
+    org_ids = await org_ids_with_memories(session)
     for org_id in org_ids:
         try:
             one = await consolidate_memories(session, org_id, threshold=threshold, now=now)
