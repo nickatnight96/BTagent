@@ -463,3 +463,82 @@ async def test_enabled_feed_count_is_org_agnostic(db_session: AsyncSession):
         )
     ).scalar_one()
     assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failing_feed_keeps_its_backoff_stamp_and_spares_the_others(
+    db_session: AsyncSession, monkeypatch
+):
+    """The stamp must survive a FLUSH failure, which is when it matters most.
+
+    Without it ``last_polled_at`` stays unset, the feed is permanently "due",
+    and every tick retries a server already refusing us — the hammering the
+    inline comment says the stamp prevents. Under a single-transaction sweep
+    the stamp is written onto a poisoned session and lost at the trailing
+    commit, so the backoff fails exactly for the feed that keeps failing.
+
+    The failure here is raised from ``db.flush()`` rather than before it,
+    because a plain raise leaves the session usable and would pass even under
+    the old shape (the mistake made once already, in #603).
+    """
+    from btagent_backend.scheduler import jobs
+    from btagent_backend.services import taxii_poll_service
+
+    org = _make_org(db_session)
+    await db_session.commit()
+    bad = await _make_feed(db_session, org_id=org.id, name="Feed BAD")
+    good = await _make_feed(db_session, org_id=org.id, name="Feed GOOD")
+    await db_session.commit()
+    bad_id, good_id = bad.id, good.id
+
+    real_poll = taxii_poll_service.poll_feed
+
+    async def _poll(db, feed, **kwargs):
+        if feed.id == bad_id:
+            # Poison the transaction the way a real constraint violation does.
+            db.add(
+                IOCRow(
+                    id=generate_id("ioc"),
+                    org_id="org_does_not_exist",
+                    investigation_id="inv_nope",
+                    type="ip",
+                    value="203.0.113.9",
+                )
+            )
+            await db.flush()
+        return await real_poll(db, feed, **kwargs)
+
+    monkeypatch.setattr(taxii_poll_service, "poll_feed", _poll)
+
+    class _Keep:
+        async def __aenter__(self):
+            return db_session
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(jobs, "async_session_factory", lambda: _Keep())
+
+    counts = await jobs.taxii_feed_poll_sweep({})
+
+    assert counts["feeds_failed"] == 1
+    assert counts["feeds_polled"] >= 1
+
+    # Roll back before asserting. Without this the queries below read the
+    # session's own pending state, so both assertions pass even with no commit
+    # boundary at all — proving "the attribute was set", not "the work was
+    # persisted". Only what was committed survives this line.
+    await db_session.rollback()
+
+    # The failing feed's backoff stamp is persisted despite the poisoned flush.
+    failed = await db_session.get(TaxiiFeedRow, bad_id)
+    assert failed is not None
+    assert failed.last_status == "error"
+    assert failed.last_polled_at is not None, (
+        "backoff stamp lost — the feed will be permanently due and retry every tick"
+    )
+
+    # And the healthy feed's own poll was committed, not rolled back with it.
+    healthy = await db_session.get(TaxiiFeedRow, good_id)
+    assert healthy is not None
+    assert healthy.last_status == "ok"

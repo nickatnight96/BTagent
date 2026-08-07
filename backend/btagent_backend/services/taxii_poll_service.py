@@ -39,6 +39,7 @@ Nothing here commits — the arq job owns the single commit.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -327,22 +328,81 @@ async def poll_feed(
 # --------------------------------------------------------------------------- #
 
 
+async def stamp_feed_error(
+    db: AsyncSession, *, feed_id: str, moment: datetime, detail: str
+) -> None:
+    """Persist the backoff stamp for a feed whose poll failed.
+
+    Re-loads the row by id rather than taking the ORM object, so this is safe
+    to call **after a rollback** — which is exactly when it is needed. A flush
+    failure poisons the session, and the caller must roll back before anything
+    else can be written; that rollback also expires the in-memory ``feed``.
+
+    Why this is worth its own function: without the stamp, ``last_polled_at``
+    stays unset, the feed is permanently "due", and every sweep tick retries a
+    server that is already refusing us. The backoff is most load-bearing for
+    the feed that keeps failing, and a single-transaction sweep loses it in
+    precisely that case (#602).
+    """
+    feed = await db.get(TaxiiFeedRow, feed_id)
+    if feed is None:  # deleted mid-sweep; nothing to stamp
+        return
+    feed.last_polled_at = moment
+    feed.last_status = "error"
+    feed.last_error = detail
+
+
 async def poll_due_feeds(
     db: AsyncSession,
     *,
     now: datetime | None = None,
     max_objects: int = MAX_OBJECTS_PER_POLL,
+    on_settled: Callable[[], Awaitable[None]] | None = None,
+    on_failed: Callable[[str, datetime, str], Awaitable[None]] | None = None,
 ) -> SweepResult:
     """Poll every enabled, due feed across every tenant. Best-effort per feed.
 
     A feed that raises is recorded (``last_status='error'``, scrubbed
     ``last_error``) and the sweep moves on — one misconfigured or unreachable
     feed cannot sink the others, nor another tenant's.
+
+    **"Best-effort per feed" is only true with a commit boundary per feed.**
+    With neither callback supplied this walks every feed in one transaction, so
+    a failure raised from a *flush* leaves the session unusable and takes every
+    other feed's work — including the error stamps — with it. Catching an
+    exception is not a transaction boundary (#602).
+
+    The two hooks let the caller supply that boundary without this module
+    taking over transaction control (the convention here is that the arq job
+    owns commits):
+
+    ``on_settled``
+        Awaited after each feed the sweep is done with. The job passes
+        ``session.commit``.
+    ``on_failed``
+        Awaited with ``(feed_id, moment, detail)`` instead of stamping the
+        error inline. The job rolls back, calls :func:`stamp_feed_error`, and
+        commits that stamp on its own — in that order, because stamping before
+        the rollback would discard the stamp along with the poison.
+
+    Both default to ``None``, preserving the single-transaction behaviour for
+    callers that want it.
     """
     moment = now or datetime.now(UTC)
     summary = SweepResult()
 
-    for feed in await taxii_feed_service.list_enabled_feeds_all_orgs(db):
+    # Iterate over ids and re-load each feed, rather than holding the ORM
+    # instances across the loop. With a commit boundary per feed (``on_settled``)
+    # every commit expires the objects the loop is carrying, so the *next*
+    # iteration's ``is_due(feed)`` would trigger a lazy refresh — synchronous IO
+    # under async, i.e. MissingGreenlet. Re-loading is also what makes the walk
+    # correct: a feed's row may have moved on since the sweep started.
+    feed_ids = [f.id for f in await taxii_feed_service.list_enabled_feeds_all_orgs(db)]
+
+    for feed_id_ in feed_ids:
+        feed = await db.get(TaxiiFeedRow, feed_id_)
+        if feed is None:  # disabled or deleted mid-sweep
+            continue
         summary.feeds_considered += 1
         if not is_due(feed, now=moment):
             summary.feeds_skipped += 1
@@ -355,6 +415,13 @@ async def poll_due_feeds(
         # below can scrub this exact value out of the error it *persists* — a
         # third-party exception makes no redaction promise, and ``last_error``
         # is readable through the API.
+        # Captured BEFORE the poll. After a failed flush the instance is
+        # expired, so touching ``feed.id`` in the except branch triggers a
+        # lazy refresh on a poisoned session and raises PendingRollbackError
+        # over the top of the real error — losing both the message and the
+        # backoff stamp.
+        feed_id, feed_org_id = feed.id, feed.org_id
+
         credential: Any = _UNSET
         try:
             credential = _resolve_credential(feed)
@@ -371,20 +438,29 @@ async def poll_due_feeds(
             # unset would make the feed permanently "due" and retry on every
             # sweep tick, hammering a server that is already refusing us. The
             # feed backs off to its own configured interval instead.
-            feed.last_polled_at = moment
-            feed.last_status = "error"
-            feed.last_error = detail
+            #
+            # When the caller supplies ``on_failed`` it owns this write, because
+            # the session may need rolling back first and that would discard an
+            # inline stamp.
+            if on_failed is not None:
+                await on_failed(feed_id, moment, detail)
+            else:
+                feed.last_polled_at = moment
+                feed.last_status = "error"
+                feed.last_error = detail
             summary.feeds_failed += 1
             summary.outcomes.append(
-                FeedPollOutcome(feed_id=feed.id, org_id=feed.org_id, status="error", error=detail)
+                FeedPollOutcome(feed_id=feed_id, org_id=feed_org_id, status="error", error=detail)
             )
-            logger.warning("taxii poll failed: feed=%s org=%s — %s", feed.id, feed.org_id, detail)
+            logger.warning("taxii poll failed: feed=%s org=%s — %s", feed_id, feed_org_id, detail)
             continue
 
         summary.feeds_polled += 1
         summary.objects_fetched += outcome.objects_fetched
         summary.iocs_created += outcome.iocs_created
         summary.outcomes.append(outcome)
+        if on_settled is not None:
+            await on_settled()
 
     return summary
 
