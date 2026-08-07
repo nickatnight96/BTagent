@@ -25,7 +25,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from btagent_backend.db.models import DEFAULT_ORG_ID
+from btagent_backend.db.models import OrganizationRow
 from btagent_backend.db.models_memory import AgentMemoryRow
 from btagent_backend.scheduler import jobs
 
@@ -56,10 +56,15 @@ async def test_memory_sweep_keeps_a_healthy_orgs_work_when_another_org_fails(
     """The failing org is skipped; the healthy org's consolidation survives."""
     from btagent_backend.services import memory_service
 
-    # The writing org must be a real row — ``agent_memories.org_id`` is a FK.
-    # The failing org never writes, so a non-existent id is fine there and
-    # keeps the two tenants unambiguous.
-    good, bad = DEFAULT_ORG_ID, "org_mem_bad"
+    # A dedicated org for the healthy tenant, for two reasons. The write needs
+    # a real row (``agent_memories.org_id`` is a FK), and using DEFAULT_ORG_ID
+    # made the assertion below read every memory the rest of the suite had
+    # seeded there — green alone, red in the full run. The failing tenant needs
+    # no row: its whole job is to violate that FK at flush.
+    good, bad = "org_sweep_healthy", "org_mem_bad"
+    db_session.add(OrganizationRow(id=good, name="Sweep Isolation Healthy Tenant"))
+    await db_session.commit()
+
     monkeypatch.setattr(
         memory_service,
         "org_ids_with_memories",
