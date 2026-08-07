@@ -1168,6 +1168,25 @@ async def reevaluate_benign_labels(
     return result
 
 
+async def org_ids_with_benign_outliers(db: AsyncSession) -> list[str]:
+    """Every org holding a benign-labelled outlier — the re-evaluation universe.
+
+    Split out so the scheduler can drive the sweep org-by-org with a commit
+    boundary per tenant, rather than delegating the whole walk to
+    :func:`reevaluate_benign_labels_all_orgs` under one transaction.
+    """
+    return [
+        org_id
+        for (org_id,) in (
+            await db.execute(
+                select(BehavioralOutlierRow.org_id)
+                .where(BehavioralOutlierRow.intent_label == IntentLabel.BENIGN.value)
+                .distinct()
+            )
+        ).all()
+    ]
+
+
 async def reevaluate_benign_labels_all_orgs(
     db: AsyncSession,
     *,
@@ -1186,21 +1205,13 @@ async def reevaluate_benign_labels_all_orgs(
     leaves the session unusable and takes every later org — and the caller's
     commit — with it. A ``try`` is not a transaction boundary.
 
-    The nightly memory and weekly pattern sweeps were moved to a commit
-    boundary per tenant (``scheduler.jobs._run_per_org``); this one has not
-    been, and is tracked on #602.
+    The nightly sweep therefore no longer calls this: it drives
+    :func:`reevaluate_benign_labels` per org through
+    ``scheduler.jobs._run_per_org``, which commits and rolls back per tenant.
+    Kept for callers that genuinely want a single-transaction walk (#602).
     """
     totals = BenignDriftResult()
-    org_ids = [
-        org_id
-        for (org_id,) in (
-            await db.execute(
-                select(BehavioralOutlierRow.org_id)
-                .where(BehavioralOutlierRow.intent_label == IntentLabel.BENIGN.value)
-                .distinct()
-            )
-        ).all()
-    ]
+    org_ids = await org_ids_with_benign_outliers(db)
     for org_id in org_ids:
         try:
             one = await reevaluate_benign_labels(db, org_id=org_id, now=now, max_rows=max_rows)

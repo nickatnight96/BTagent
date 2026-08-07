@@ -165,3 +165,36 @@ def _async_return(value):
         return value
 
     return _fn
+
+
+async def test_benign_reeval_sweep_continues_past_a_failing_org(_session_factory, monkeypatch):
+    """The third sweep converted in #602 — same property, same shape.
+
+    Its wrapper carried the same "best-effort and per-org isolated" docstring
+    over the same single transaction, so it gets the same assertion rather
+    than being trusted because the other two were fixed.
+    """
+    from btagent_backend.services import behavioral_service
+
+    monkeypatch.setattr(
+        behavioral_service,
+        "org_ids_with_benign_outliers",
+        _async_return(["org_b_bad", "org_b_good"]),
+    )
+
+    seen: list[str] = []
+
+    async def _reeval(session, *, org_id, **kwargs):
+        seen.append(org_id)
+        if org_id == "org_b_bad":
+            raise RuntimeError("simulated per-org failure")
+        return behavioral_service.BenignDriftResult(orgs=1, entities_checked=4)
+
+    monkeypatch.setattr(behavioral_service, "reevaluate_benign_labels", _reeval)
+
+    counts = await jobs.behavioral_benign_reeval_sweep({})
+
+    assert seen == ["org_b_bad", "org_b_good"]
+    assert counts["entities_checked"] == 4
+    # The failing org is counted as a failure, not silently dropped.
+    assert counts["failures"] == 1
