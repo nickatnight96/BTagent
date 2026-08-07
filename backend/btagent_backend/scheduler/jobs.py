@@ -176,10 +176,32 @@ async def taxii_feed_poll_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     from btagent_backend.services import taxii_poll_service
 
     async with async_session_factory() as session:
+
+        async def _settled() -> None:
+            """Commit boundary per feed, not per sweep."""
+            await session.commit()
+
+        async def _failed(feed_id: str, moment: datetime, detail: str) -> None:
+            """Persist one feed's backoff stamp, in the only order that works.
+
+            Rollback FIRST. The failure may have come from a flush, which
+            leaves the session unusable — and rolling back after stamping
+            would discard the stamp along with the poison, which is the bug
+            this whole path exists to fix (#602). ``stamp_feed_error``
+            re-loads the row by id precisely because the rollback expired it.
+            """
+            await session.rollback()
+            await taxii_poll_service.stamp_feed_error(
+                session, feed_id=feed_id, moment=moment, detail=detail
+            )
+            await session.commit()
+
         result = await taxii_poll_service.poll_due_feeds(
-            session, max_objects=settings.taxii_max_objects_per_poll
+            session,
+            max_objects=settings.taxii_max_objects_per_poll,
+            on_settled=_settled,
+            on_failed=_failed,
         )
-        await session.commit()
 
     counts = result.as_counts()
     logger.info("taxii_feed_poll_sweep: %s", counts)

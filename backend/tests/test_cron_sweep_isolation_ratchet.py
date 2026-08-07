@@ -15,13 +15,14 @@ reading the code makes that obvious (#602, #603).
 
 So the property is pinned mechanically instead, in both directions:
 
-* a cron that stops calling ``_run_per_org`` fails here unless it is listed;
+* a cron that stops isolating per unit of work fails here unless it is listed;
 * an entry that no longer describes a real gap fails here too, so the list can
   only shrink.
 
 Deliberately *not* asserted: that the listed sweeps are wrong. Both remaining
 entries are honest design mismatches rather than oversights, and the reasons
-say which. Forcing them through ``_run_per_org`` would be the wrong fix.
+say which. Forcing the remaining one through ``_run_per_org`` would be the
+wrong fix — see ``_ISOLATION_MARKERS`` on why the property is per *unit*.
 """
 
 from __future__ import annotations
@@ -29,19 +30,18 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_PER_ORG = "_run_per_org"
+#: Helpers that establish a commit boundary per unit of work. The property is
+#: "commits per unit", not "calls one specific function" — ``taxii_feed_poll_
+#: sweep``'s unit is the *feed*, not the org, and it isolates by passing settle
+#: hooks into ``poll_due_feeds``. Asserting only on ``_run_per_org`` would fail
+#: an implementation that satisfies exactly what this guard exists to protect.
+_ISOLATION_MARKERS = frozenset({"_run_per_org", "stamp_feed_error"})
 
 #: Crons that do not isolate per org, and precisely why.
 #:
 #: Each value must name the obstacle, not merely assert one — an entry that
 #: cannot say what has to change before it is deleted is a shrug.
 _NOT_ISOLATED: dict[str, str] = {
-    "taxii_feed_poll_sweep": (
-        "#602 — multi-tenant, but its unit of work is the *feed*, not the org: "
-        "``poll_due_feeds`` walks ``list_enabled_feeds_all_orgs`` and one org "
-        "may own several feeds. Isolation here means a commit per feed, which "
-        "``_run_per_org`` does not express. Needs a per-feed boundary instead."
-    ),
     "stale_suppression_sweep": (
         "#602 — ``hunt_triage_service.sweep_stale_suppressions`` takes no "
         "``org_id`` and selects every ACTIVE ``SuppressionRuleRow`` across all "
@@ -78,7 +78,7 @@ def _cron_names() -> list[str]:
 
 
 def _isolation_by_job() -> dict[str, bool]:
-    """{cron job name: calls ``_run_per_org``}."""
+    """{cron job name: establishes a commit boundary per unit of work}."""
     tree = ast.parse((_repo_root() / "backend/btagent_backend/scheduler/jobs.py").read_text())
     wanted = set(_cron_names())
     found: dict[str, bool] = {}
@@ -92,7 +92,7 @@ def _isolation_by_job() -> dict[str, bool]:
             for c in ast.walk(node)
             if isinstance(c, ast.Call)
         }
-        found[node.name] = _PER_ORG in calls
+        found[node.name] = bool(_ISOLATION_MARKERS & calls)
     return found
 
 
@@ -117,7 +117,8 @@ def test_every_cron_isolates_per_org_or_is_listed():
     unlisted -= set(_NOT_ISOLATED)
     assert not unlisted, (
         f"cron sweeps with no per-org commit boundary and no entry: {sorted(unlisted)}. "
-        "Drive the walk through _run_per_org, or add the job to _NOT_ISOLATED "
+        "Give the walk a commit boundary per unit of work (see _ISOLATION_MARKERS), "
+        "or add the job to _NOT_ISOLATED "
         "with the specific obstacle that has to be removed first."
     )
 
