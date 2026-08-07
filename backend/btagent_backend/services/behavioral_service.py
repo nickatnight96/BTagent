@@ -1176,11 +1176,19 @@ async def reevaluate_benign_labels_all_orgs(
 ) -> BenignDriftResult:
     """Run :func:`reevaluate_benign_labels` for every org with benign outliers.
 
-    Best-effort and per-org isolated, mirroring
-    ``memory_service.consolidate_all_orgs``: one tenant's failure is logged,
-    counted, and skipped rather than aborting the sweep. Multi-tenant by
-    construction — a single ``DEFAULT_ORG_ID`` pass would permanently exclude
-    every other tenant's baselines. The caller owns the commit.
+    Multi-tenant by construction — a single ``DEFAULT_ORG_ID`` pass would
+    permanently exclude every other tenant's baselines. The caller owns the
+    commit.
+
+    Best-effort per org, but **not per-org isolated**: like
+    ``memory_service.consolidate_all_orgs``, the loop below catches and
+    continues inside a single transaction, so a failure raised from a *flush*
+    leaves the session unusable and takes every later org — and the caller's
+    commit — with it. A ``try`` is not a transaction boundary.
+
+    The nightly memory and weekly pattern sweeps were moved to a commit
+    boundary per tenant (``scheduler.jobs._run_per_org``); this one has not
+    been, and is tracked on #602.
     """
     totals = BenignDriftResult()
     org_ids = [

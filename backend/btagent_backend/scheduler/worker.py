@@ -266,10 +266,6 @@ class WorkerSettings:
             minute=30,
             unique=True,
         ),
-        # #108 UC-5.1 shift-handover digest: at each 8h shift boundary, push
-        # every org's handover headline to analysts' bells (quiet windows stay
-        # silent inside the producer). ``unique=True`` — one tick per boundary
-        # across worker replicas.
         # #482: nightly agent-memory consolidation. Not connector-blocked —
         # it runs over the already-stored memory rows. Fires at 03:20 UTC, in
         # the quiet window between the overnight hunt crons and the 06:30
@@ -280,6 +276,10 @@ class WorkerSettings:
             minute=20,
             unique=True,
         ),
+        # #108 UC-5.1 shift-handover digest: at each 8h shift boundary, push
+        # every org's handover headline to analysts' bells (quiet windows stay
+        # silent inside the producer). ``unique=True`` — one tick per boundary
+        # across worker replicas.
         cron(
             shift_handover_digest,
             hour={6, 14, 22},

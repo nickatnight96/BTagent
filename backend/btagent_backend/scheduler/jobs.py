@@ -89,23 +89,49 @@ async def memory_consolidation_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     ``superseded_at`` so they drop out of every recall path (the rows are kept
     for audit, not deleted).
 
-    Multi-tenant and best-effort, mirroring :func:`weekly_pattern_scan`: the
-    service walks **every** org (a single hard-coded ``DEFAULT_ORG_ID`` sweep
-    would permanently exclude every other tenant), and a failure on one org is
-    logged and skipped rather than aborting the tick. Consolidation never
-    merges across TLP levels — see ``memory_service.consolidate_memories``.
+    Multi-tenant and per-org isolated: the sweep walks **every** org that has
+    memories (a single hard-coded ``DEFAULT_ORG_ID`` sweep would permanently
+    exclude every other tenant), and each org is committed on its own via
+    :func:`_run_per_org` so one tenant's failure costs only that tenant's
+    tick. Consolidation never merges across TLP levels — see
+    ``memory_service.consolidate_memories``.
 
-    Thin shell: the single commit lives here; all decisions are in
-    :mod:`btagent_backend.services.memory_service`.
+    This used to call ``consolidate_all_orgs`` under a single trailing commit.
+    That wrapper catches per-org and continues, which reads as isolation but
+    is not: with one transaction, a failure that came from a *flush* leaves
+    the session unusable, so every later org and the final commit fail with
+    it — losing the work of the orgs that succeeded. Isolation has to be a
+    commit boundary, not a ``try``.
     """
     from btagent_backend.services import memory_service
 
-    async with async_session_factory() as session:
-        result = await memory_service.consolidate_all_orgs(session)
-        await session.commit()
+    totals = memory_service.ConsolidationResult()
 
-    counts = result.as_counts()
-    logger.info("memory_consolidation_sweep: %s", counts)
+    async with async_session_factory() as session:
+        org_ids = await memory_service.org_ids_with_memories(session)
+
+        # Counts accumulate as each org's work succeeds. An org whose *commit*
+        # then fails stays counted here; ``failed_orgs`` below is the honest
+        # signal for that, and it is logged next to the counts rather than
+        # silently reconciled.
+        async def _work(org_id: str) -> None:
+            one = await memory_service.consolidate_memories(session, org_id)
+            totals.orgs += 1
+            totals.scanned += one.scanned
+            totals.groups += one.groups
+            totals.merged += one.merged
+            totals.superseded += one.superseded
+            totals.superseded_ids.extend(one.superseded_ids)
+
+        failed_orgs = await _run_per_org(session, "memory_consolidation_sweep", org_ids, _work)
+
+    counts = totals.as_counts()
+    logger.info(
+        "memory_consolidation_sweep: %s (orgs=%d failed_orgs=%d)",
+        counts,
+        len(org_ids),
+        failed_orgs,
+    )
     return counts
 
 
@@ -433,13 +459,18 @@ async def weekly_pattern_scan(ctx: dict[str, Any]) -> dict[str, int]:
     by ``frequency × recency × cross-investigation diversity`` (diversity
     dominant), and upserts the top-N as ``pattern_hunt_proposals``.
 
-    Multi-tenant: ``scan_corpus`` and the weak-signal / proposal tables are all
-    org-scoped, so the job scans **every** organization — running it against a
-    single hard-coded ``DEFAULT_ORG_ID`` would permanently exclude every other
-    tenant's corpus. One ``scan_corpus`` call per org, counts aggregated.
+    Multi-tenant and per-org isolated: ``scan_corpus`` and the weak-signal /
+    proposal tables are all org-scoped, so the job scans **every** organization
+    — running it against a single hard-coded ``DEFAULT_ORG_ID`` would
+    permanently exclude every other tenant's corpus. One ``scan_corpus`` call
+    per org via :func:`_run_per_org`, committed per tenant, counts aggregated.
 
-    Thin shell: the single commit lives here (after all orgs are scanned); all
-    decisions are in :mod:`btagent_backend.services.pattern_hunt_service` /
+    This used to call ``scan_all_orgs`` under a single trailing commit. That
+    wrapper has no per-org error handling at all, so one org raising aborted
+    the whole weekly tick and discarded every org already scanned. A commit
+    boundary per tenant is what makes "best effort across orgs" true.
+
+    All decisions are in :mod:`btagent_backend.services.pattern_hunt_service` /
     :mod:`btagent_shared.hunt.pattern`. Gated behind ``pattern_scan_enabled``
     (mirrors ``hunt_schedule_enabled`` in shape but defaults on, since there is
     nothing to no-op against — the corpus is already stored).
@@ -458,12 +489,31 @@ async def weekly_pattern_scan(ctx: dict[str, Any]) -> dict[str, int]:
 
     from btagent_backend.services import pattern_hunt_service
 
+    result = pattern_hunt_service.MultiOrgScanResult()
+
     async with async_session_factory() as session:
-        result = await pattern_hunt_service.scan_all_orgs(
-            session,
-            top_n=settings.pattern_scan_top_n,
-        )
-        await session.commit()
+        org_ids = await pattern_hunt_service.list_org_ids(session)
+
+        # Counts accumulate as each org's scan succeeds; an org whose commit
+        # then fails stays counted, and ``failed_orgs`` is the honest signal
+        # for that rather than a silent reconciliation.
+        async def _work(org_id: str) -> None:
+            one = await pattern_hunt_service.scan_corpus(
+                session,
+                org_id=org_id,
+                top_n=settings.pattern_scan_top_n,
+            )
+            result.orgs_scanned += 1
+            result.investigations_scanned += one.investigations_scanned
+            result.weak_signals_upserted += one.weak_signals_upserted
+            result.clusters_ranked += one.clusters_ranked
+            result.proposals_created += one.proposals_created
+            result.proposals_updated += one.proposals_updated
+
+        failed_orgs = await _run_per_org(session, "weekly_pattern_scan", org_ids, _work)
+
+    if failed_orgs:
+        logger.warning("weekly_pattern_scan: %d org(s) failed and were skipped", failed_orgs)
 
     counts = {
         "orgs_scanned": result.orgs_scanned,
