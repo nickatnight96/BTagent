@@ -42,13 +42,10 @@ _ISOLATION_MARKERS = frozenset({"_run_per_org", "stamp_feed_error"})
 #: Each value must name the obstacle, not merely assert one — an entry that
 #: cannot say what has to change before it is deleted is a shrug.
 _NOT_ISOLATED: dict[str, str] = {
-    "stale_suppression_sweep": (
-        "#602 — ``hunt_triage_service.sweep_stale_suppressions`` takes no "
-        "``org_id`` and selects every ACTIVE ``SuppressionRuleRow`` across all "
-        "tenants in one query. Isolating it means changing that service "
-        "signature and deciding whether the sweep is genuinely org-scoped, "
-        "which is a design call rather than a mechanical conversion."
-    ),
+    # Empty, and that is the point: every registered cron now establishes a
+    # commit boundary per unit of work. An entry here is a known hole, so the
+    # list being empty is the property, not an oversight. The guard below is
+    # therefore at its strongest form — *all* crons must isolate.
 }
 
 

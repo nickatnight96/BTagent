@@ -66,15 +66,41 @@ async def stale_suppression_sweep(ctx: dict[str, Any]) -> dict[str, int]:
 
     Runs on a cron (see :mod:`btagent_backend.scheduler.worker`). Returns the
     sweep counts so they show up in arq's job result + our logs.
+
+    Multi-tenant and per-org isolated: suppression rules are org-owned and each
+    flip writes an org-stamped ledger entry, so the tenant is the unit of work.
+    Each org commits on its own via :func:`_run_per_org`.
+
+    This used to call ``sweep_stale_suppressions`` with no ``org_id`` at all,
+    selecting every tenant's ACTIVE rules in one transaction under a single
+    trailing commit. A failure raised from a *flush* — an audit write, say —
+    left the session unusable and lost every org's flips together, and because
+    the rules stay ACTIVE the next tick re-ran from the same stale state
+    (#602).
     """
+    totals = {"scanned": 0, "expired": 0, "needs_reconfirm": 0}
+
     async with async_session_factory() as session:
-        result = await hunt_triage_service.sweep_stale_suppressions(session)
-        await session.commit()
+        org_ids = await hunt_triage_service.org_ids_with_active_suppressions(session)
+
+        # Counts accumulate as each org's pass succeeds; an org whose commit
+        # then fails stays counted, and ``failed_orgs`` is the honest signal.
+        async def _work(org_id: str) -> None:
+            one = await hunt_triage_service.sweep_stale_suppressions(session, org_id=org_id)
+            for key in totals:
+                totals[key] += one.get(key, 0)
+
+        failed_orgs = await _run_per_org(session, "stale_suppression_sweep", org_ids, _work)
+
+    result = totals
     logger.info(
-        "stale_suppression_sweep: scanned=%d expired=%d needs_reconfirm=%d",
+        "stale_suppression_sweep: scanned=%d expired=%d needs_reconfirm=%d "
+        "(orgs=%d failed_orgs=%d)",
         result.get("scanned", 0),
         result.get("expired", 0),
         result.get("needs_reconfirm", 0),
+        len(org_ids),
+        failed_orgs,
     )
     return result
 
