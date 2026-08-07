@@ -68,6 +68,98 @@ def _aware(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+class EgressKind(StrEnum):
+    """The channels an org's TLP policy can *name*.
+
+    Naming them here rather than as bare strings is what lets the frontend's
+    picker be generated from the vocabulary instead of typed out —
+    ``report_export`` was gated and tested on the backend while the SPA's
+    hand-written list offered only the other four, so no operator could write
+    a policy restricting report exports by TLP. The control existed and could
+    not be configured.
+
+    **Naming a channel is not the same as governing it.** Only the subset in
+    :data:`POLICY_ENFORCED_EGRESS_KINDS` reaches
+    ``assert_org_policy_allows_egress`` at a call site that can refuse the
+    operation; for the rest a policy is *advisory*. Read that constant before
+    assuming a member here is enforced.
+
+    ``test_shared_enum_ts_parity`` compares this against
+    ``frontend/src/types/containment.ts`` from here on.
+    """
+
+    STIX_EXPORT = "stix_export"
+    REPORT_EXPORT = "report_export"
+    KNOWLEDGE_INGEST = "knowledge_ingest"
+    MCP_RETURN = "mcp_return"
+    EVENT_EMIT = "event_emit"
+
+
+#: Channels an org policy actually governs at runtime.
+#:
+#: The other members of :class:`EgressKind` are *advisory*: a policy may name
+#: them, ``POST /tlp-policies/evaluate`` will answer for them, and nothing
+#: consults that answer when the egress happens. That is a real gap, not a
+#: naming quibble — a CISO can write "deny ``mcp_return`` of AMBER_STRICT",
+#: watch the dry-run agree, and every connector return still leaves.
+#:
+#: Why the two are out, concretely:
+#:
+#: * ``event_emit`` — the chokepoint is ``ws.hub._should_drop_for_tlp``, a
+#:   synchronous method on the pub/sub fan-out path with no database session.
+#:   Enforcing org policy there means an awaited lookup per event on the
+#:   hot path that the 50 ms batching exists to keep cheap.
+#: * ``mcp_return`` — the chokepoint is ``agents.mcp.adapters``, which runs in
+#:   the agent process and has no access to the backend's session at all.
+#:
+#: Both still pass through the *baseline* gate
+#: (:func:`btagent_shared.security.assert_tlp_allows_egress`), so TLP:RED is
+#: refused on every channel exactly as before. What is missing is the
+#: org-scoped layer on top, which can only ever subtract further.
+#:
+#: This is deliberately a declaration rather than a comment:
+#: ``test_egress_policy_enforcement_map`` derives the enforced set from the
+#: real call sites and fails if the two disagree in either direction — so
+#: wiring one of these up without moving it here is a test failure, and so is
+#: listing a channel whose gate was removed.
+POLICY_ENFORCED_EGRESS_KINDS: frozenset[EgressKind] = frozenset(
+    {
+        EgressKind.STIX_EXPORT,
+        EgressKind.REPORT_EXPORT,
+        EgressKind.KNOWLEDGE_INGEST,
+    }
+)
+
+
+def is_policy_enforced(egress_kind: EgressKind | str) -> bool:
+    """Whether a policy naming *egress_kind* is enforced or merely advisory.
+
+    ``EgressKind`` is a :class:`~enum.StrEnum`, so a raw wire string compares
+    equal to its member and this accepts either.
+    """
+    return egress_kind in POLICY_ENFORCED_EGRESS_KINDS
+
+
+def advisory_egress_kinds(egress_kinds: Iterable[str] | None) -> tuple[EgressKind, ...]:
+    """The channels in *egress_kinds* that a policy cannot actually govern.
+
+    An **empty** list means "any channel" in
+    :meth:`TLPPolicy.matches`, so an empty selection covers the unenforced
+    channels too and this returns all of them. Treating empty as "nothing
+    advisory" would report the broadest policy in the system as fully
+    enforced, which is precisely backwards.
+
+    Returned in :class:`EgressKind` declaration order so audit records and API
+    responses are stable rather than set-ordered.
+    """
+    selected = set(egress_kinds or ())
+    return tuple(
+        k
+        for k in EgressKind
+        if k not in POLICY_ENFORCED_EGRESS_KINDS and (not selected or k in selected)
+    )
+
+
 class TLPPolicyAction(StrEnum):
     """What an egress policy does when it matches."""
 
@@ -270,12 +362,16 @@ def emit_violation(event: TLPViolationEvent) -> None:
 
 
 __all__ = [
+    "POLICY_ENFORCED_EGRESS_KINDS",
     "PolicyDecision",
     "TLPPolicy",
+    "EgressKind",
     "TLPPolicyAction",
     "TLPViolationEvent",
     "ViolationSink",
+    "advisory_egress_kinds",
     "clear_violation_sink",
+    "is_policy_enforced",
     "emit_violation",
     "evaluate_egress_policy",
     "get_violation_sink",

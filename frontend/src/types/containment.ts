@@ -19,3 +19,30 @@ export const SAFELIST_ENTRY_TYPE_LABELS: Record<SafelistEntryType, string> = {
   domain: "Domain",
   principal: "Principal",
 };
+
+/**
+ * Mirrors `EgressKind` in shared/btagent_shared/security/tlp_policy.py — the
+ * channels an org's TLP policy can govern.
+ *
+ * The SPA's hand-written list lived in `api/tlpPolicies.ts` and held four of
+ * the five. `report_export` was missing, so the TLP-policy page could not
+ * offer it and no operator could write a policy restricting report exports by
+ * classification — while the backend gated exactly that at
+ * `reports.py` (`egress_kind="report_export"`), with tests to prove the 403
+ * fires. The control was enforced and unconfigurable.
+ */
+export type EgressKind =
+  | "stix_export"
+  | "report_export"
+  | "knowledge_ingest"
+  | "mcp_return"
+  | "event_emit";
+
+/** Every governable channel, for the policy picker. Order is presentation. */
+export const EGRESS_KINDS: readonly EgressKind[] = [
+  "stix_export",
+  "report_export",
+  "knowledge_ingest",
+  "mcp_return",
+  "event_emit",
+];

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import pytest_asyncio
+from btagent_shared.security.tlp_policy import POLICY_ENFORCED_EGRESS_KINDS, EgressKind
 from httpx import AsyncClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
-from btagent_backend.db.models import TLPPolicyRow
+from btagent_backend.db.models import AuditLogRow, TLPPolicyRow
 from tests.helpers import auth_header
 
 
@@ -176,3 +177,136 @@ async def test_evaluate_downgrade_lowers_tlp(client: AsyncClient, admin_token: s
     assert d["allowed"] is True
     assert d["effective_tlp"] == "amber"
     assert d["action"] == "downgrade_then_allow"
+
+
+# --- enforced vs advisory channels ----------------------------------------- #
+
+
+async def test_evaluate_says_when_the_decision_is_not_applied(
+    client: AsyncClient, admin_token: str
+):
+    """The dry-run answers identically for a channel with no gate.
+
+    ``mcp_return`` returns the same shape and the same ``allowed`` as
+    ``stix_export`` — that is the whole problem, and why the response has to
+    carry the distinction rather than leaving the reader to infer it.
+    """
+    enforced = await client.post(
+        "/api/v1/tlp-policies/evaluate",
+        json={"tlp": "red", "egress_kind": "stix_export"},
+        headers=auth_header(admin_token),
+    )
+    advisory = await client.post(
+        "/api/v1/tlp-policies/evaluate",
+        json={"tlp": "red", "egress_kind": "mcp_return"},
+        headers=auth_header(admin_token),
+    )
+    assert enforced.status_code == advisory.status_code == 200
+
+    # Indistinguishable on the decision itself...
+    assert enforced.json()["allowed"] == advisory.json()["allowed"] is False
+    # ...and distinguishable only because of the new field.
+    assert enforced.json()["policy_enforced"] is True
+    assert advisory.json()["policy_enforced"] is False
+
+
+async def test_egress_kinds_endpoint_serves_the_whole_vocabulary(
+    client: AsyncClient, admin_token: str
+):
+    """Every channel, labelled — the SPA renders its picker from this.
+
+    Compared against the enum rather than a hand-written list here for the
+    same reason the endpoint exists: a second copy is what went stale.
+    """
+    resp = await client.get("/api/v1/tlp-policies/egress-kinds", headers=auth_header(admin_token))
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()
+
+    assert [r["kind"] for r in rows] == [k.value for k in EgressKind]
+    enforced = {r["kind"] for r in rows if r["policy_enforced"]}
+    assert enforced == {k.value for k in POLICY_ENFORCED_EGRESS_KINDS}
+
+
+async def test_egress_kinds_requires_view(client: AsyncClient, analyst_token: str):
+    """Where the enforcement gaps are is not public information."""
+    resp = await client.get("/api/v1/tlp-policies/egress-kinds", headers=auth_header(analyst_token))
+    assert resp.status_code == 403
+
+
+async def test_egress_kinds_is_not_swallowed_by_the_id_route(client: AsyncClient, admin_token: str):
+    """``/egress-kinds`` must not be read as a policy id.
+
+    ``DELETE /{policy_id}`` is a different method so there is no live
+    conflict, but adding ``GET /{policy_id}`` later would silently turn this
+    endpoint into a 404 lookup for a policy named "egress-kinds". Pinning it
+    now makes that a test failure instead of a blank picker.
+    """
+    resp = await client.get("/api/v1/tlp-policies/egress-kinds", headers=auth_header(admin_token))
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+async def test_creating_an_advisory_policy_records_that_on_the_ledger(
+    client: AsyncClient, admin_token: str, db_session
+):
+    """The approval is a governance fact; so is its being partly inert."""
+    created = await client.post(
+        "/api/v1/tlp-policies",
+        json={
+            "action": "deny",
+            "egress_kinds": ["stix_export", "mcp_return"],
+            "applies_to_tlp": ["amber_strict"],
+            "rationale": "No connector returns of AMBER_STRICT.",
+        },
+        headers=auth_header(admin_token),
+    )
+    assert created.status_code == 201, created.text
+
+    entry = (
+        await db_session.execute(
+            select(AuditLogRow)
+            .where(AuditLogRow.resource == created.json()["id"])
+            .where(AuditLogRow.action == "tlp_policy_created")
+        )
+    ).scalar_one()
+    assert entry.details["advisory_egress_kinds"] == ["mcp_return"]
+
+
+async def test_a_policy_naming_only_enforced_channels_records_none(
+    client: AsyncClient, admin_token: str, db_session
+):
+    created = await client.post(
+        "/api/v1/tlp-policies", json=_allow_red_stix(), headers=auth_header(admin_token)
+    )
+    entry = (
+        await db_session.execute(
+            select(AuditLogRow)
+            .where(AuditLogRow.resource == created.json()["id"])
+            .where(AuditLogRow.action == "tlp_policy_created")
+        )
+    ).scalar_one()
+    assert entry.details["advisory_egress_kinds"] == []
+
+
+async def test_an_any_channel_policy_records_both_advisory_channels(
+    client: AsyncClient, admin_token: str, db_session
+):
+    """Empty ``egress_kinds`` means *any* channel, so it covers the inert two.
+
+    This is the case an intersection-only reading gets backwards: the widest
+    policy in the system would be recorded as fully enforced.
+    """
+    created = await client.post(
+        "/api/v1/tlp-policies",
+        json={"action": "deny", "applies_to_tlp": ["red"], "rationale": "blanket"},
+        headers=auth_header(admin_token),
+    )
+    assert created.status_code == 201, created.text
+    entry = (
+        await db_session.execute(
+            select(AuditLogRow)
+            .where(AuditLogRow.resource == created.json()["id"])
+            .where(AuditLogRow.action == "tlp_policy_created")
+        )
+    ).scalar_one()
+    assert entry.details["advisory_egress_kinds"] == ["mcp_return", "event_emit"]

@@ -121,6 +121,9 @@ RENAMED_MIRRORS: dict[str, tuple[str, str]] = {
     # concern, so these live in the backend rather than the shared package.
     "ClientMessageType": ("btagent_backend.ws.protocol", "ClientMessageType"),
     "ServerMessageType": ("btagent_backend.ws.protocol", "ServerMessageType"),
+    # Same name, different home: the egress vocabulary belongs with the policy
+    # engine that enforces it, not with the request/response types.
+    "EgressKind": ("btagent_shared.security.tlp_policy", "EgressKind"),
 }
 
 #: TS union -> (module, constant prefix) whose module-level string constants it
