@@ -681,8 +681,27 @@ async def list_suppressions(db: AsyncSession, *, org_id: str) -> list[Suppressio
     return list(rows.scalars().all())
 
 
+async def org_ids_with_active_suppressions(db: AsyncSession) -> list[str]:
+    """Every org holding an ACTIVE suppression rule — the sweep universe.
+
+    Split out so the scheduler can drive the sweep org-by-org with a commit
+    boundary per tenant (#602). The rules are org-owned and each flip writes an
+    org-stamped ledger entry, so the tenant is the natural unit of work.
+    """
+    return [
+        org_id
+        for (org_id,) in (
+            await db.execute(
+                select(SuppressionRuleRow.org_id)
+                .where(SuppressionRuleRow.state == SuppressionState.ACTIVE.value)
+                .distinct()
+            )
+        ).all()
+    ]
+
+
 async def sweep_stale_suppressions(
-    db: AsyncSession, *, now: datetime | None = None
+    db: AsyncSession, *, org_id: str | None = None, now: datetime | None = None
 ) -> dict[str, int]:
     """Flip expired / due-for-reconfirmation suppressions (arq cron entry).
 
@@ -691,22 +710,21 @@ async def sweep_stale_suppressions(
     suppressed by a now-inactive rule are left as-is (re-evaluating them is
     a separate, heavier pass); the point of the sweep is to force a human
     to re-affirm the rule before it keeps hiding new signal.
+
+    ``org_id`` scopes the pass to one tenant. The cron passes it so each org
+    gets its own commit boundary — without it the sweep selects every tenant's
+    rules in one transaction, and a failure raised from a *flush* (an audit
+    write, say) loses every org's flips together (#602). Omitted, it keeps the
+    cross-org behaviour for callers that want a single pass.
     """
     # Normalise a caller-supplied `now` to aware-UTC too: the stored
     # expires_at/reconfirm_at are coerced to aware via _as_aware_utc below, so
     # a naive `now` would raise "can't compare offset-naive and offset-aware".
     now = _as_aware_utc(now) or _utcnow()
-    rows = (
-        (
-            await db.execute(
-                select(SuppressionRuleRow).where(
-                    SuppressionRuleRow.state == SuppressionState.ACTIVE.value
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
+    clauses = [SuppressionRuleRow.state == SuppressionState.ACTIVE.value]
+    if org_id is not None:
+        clauses.append(SuppressionRuleRow.org_id == org_id)
+    rows = (await db.execute(select(SuppressionRuleRow).where(*clauses))).scalars().all()
 
     audit = AuditTrail(db)
     expired = 0

@@ -22,6 +22,8 @@ boundary is the job's responsibility and that is precisely what changed.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import select
 
@@ -198,3 +200,84 @@ async def test_benign_reeval_sweep_continues_past_a_failing_org(_session_factory
     assert counts["entities_checked"] == 4
     # The failing org is counted as a failure, not silently dropped.
     assert counts["failures"] == 1
+
+
+async def test_suppression_sweep_continues_past_a_failing_org(_session_factory, monkeypatch):
+    """The last cron converted under #602 — the exemption list is now empty.
+
+    ``sweep_stale_suppressions`` previously took no ``org_id`` and selected
+    every tenant's ACTIVE rules in one transaction. Because the rules stay
+    ACTIVE when the tick is lost, the next sweep re-ran from the same stale
+    state — the flips never landed at all.
+    """
+    from btagent_backend.services import hunt_triage_service
+
+    monkeypatch.setattr(
+        hunt_triage_service,
+        "org_ids_with_active_suppressions",
+        _async_return(["org_s_bad", "org_s_good"]),
+    )
+
+    seen: list[str] = []
+
+    async def _sweep(session, *, org_id, **kwargs):
+        seen.append(org_id)
+        if org_id == "org_s_bad":
+            raise RuntimeError("simulated per-org failure")
+        return {"scanned": 5, "expired": 2, "needs_reconfirm": 1}
+
+    monkeypatch.setattr(hunt_triage_service, "sweep_stale_suppressions", _sweep)
+
+    counts = await jobs.stale_suppression_sweep({})
+
+    assert seen == ["org_s_bad", "org_s_good"]
+    # Only the surviving org's flips are tallied; the failure neither counts
+    # as success nor zeroes the tick.
+    assert counts == {"scanned": 5, "expired": 2, "needs_reconfirm": 1}
+
+
+async def test_the_suppression_org_filter_reaches_the_query(db_session):
+    """Guard the guard: the ``org_id`` argument must actually scope the SELECT.
+
+    A ``sweep_stale_suppressions`` that accepted ``org_id`` and ignored it
+    would still satisfy the sweep test above — the first org's call would flip
+    every tenant's rules, the second would find nothing left, and the totals
+    would look identical. So assert the scoping behaviourally: seed an expired
+    rule in two orgs, sweep only one, and check the other is untouched.
+
+    Deliberately not a ``"...org_id" in inspect.getsource(...)`` check. That
+    shape is what #603 had to replace, because a source-text test matches the
+    prose in a docstring as happily as the code.
+    """
+    from btagent_backend.db.models_hunt import SuppressionRuleRow
+    from btagent_backend.services import hunt_triage_service
+
+    swept_org = "org_supp_swept"
+    other_org = "org_supp_other"
+    for org_id in (swept_org, other_org):
+        db_session.add(OrganizationRow(id=org_id, name=f"Suppression {org_id}"))
+    await db_session.flush()
+
+    past = datetime(2020, 1, 1, tzinfo=UTC)
+    for org_id in (swept_org, other_org):
+        db_session.add(
+            SuppressionRuleRow(
+                id=f"supp_{org_id}",
+                org_id=org_id,
+                name=f"rule for {org_id}",
+                reason="stale",
+                match={},
+                state="active",
+                expires_at=past,
+            )
+        )
+    await db_session.flush()
+
+    counts = await hunt_triage_service.sweep_stale_suppressions(db_session, org_id=swept_org)
+
+    assert counts["scanned"] == 1, "the sweep saw rules outside the org it was scoped to"
+    assert counts["expired"] == 1
+
+    untouched = await db_session.get(SuppressionRuleRow, f"supp_{other_org}")
+    assert untouched is not None
+    assert untouched.state == "active", "another tenant's rule was flipped by a scoped sweep"
