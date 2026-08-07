@@ -620,27 +620,52 @@ async def behavioral_benign_reeval_sweep(ctx: dict[str, Any]) -> dict[str, int]:
     patterns have dropped out of it, so an analyst can re-review rather than
     trusting a stale "we already cleared that".
 
-    Multi-tenant and best-effort, mirroring :func:`memory_consolidation_sweep`:
-    the service walks **every** org that has benign outliers (a hard-coded
-    ``DEFAULT_ORG_ID`` pass would permanently exclude every other tenant), and a
-    failure on one org — or one entity — is logged, counted in ``failures``, and
-    skipped rather than sinking the tick.
+    Multi-tenant and per-org isolated, mirroring
+    :func:`memory_consolidation_sweep`: the sweep walks **every** org that has
+    benign outliers (a hard-coded ``DEFAULT_ORG_ID`` pass would permanently
+    exclude every other tenant) and commits each on its own via
+    :func:`_run_per_org`, so one tenant's failure costs only that tenant.
 
     Non-destructive: nothing is re-labelled or deleted. The flag lands in the
     entity's existing ``enrichment`` JSONB (no schema change) and clears itself
     when the pattern reappears in the baseline.
 
-    Thin shell: the single commit lives here; all decisions are in
-    :mod:`btagent_backend.services.behavioral_service`.
+    This used to call ``reevaluate_benign_labels_all_orgs`` under a single
+    trailing commit. That wrapper catches per-org and continues, which reads as
+    isolation but is not: one transaction covers the walk, so a failure raised
+    from a *flush* leaves the session unusable and takes every later org — and
+    the commit — with it (#602).
     """
     from btagent_backend.services import behavioral_service
 
-    async with async_session_factory() as session:
-        result = await behavioral_service.reevaluate_benign_labels_all_orgs(session)
-        await session.commit()
+    totals = behavioral_service.BenignDriftResult()
 
-    counts = result.as_counts()
-    logger.info("behavioral_benign_reeval_sweep: %s", counts)
+    async with async_session_factory() as session:
+        org_ids = await behavioral_service.org_ids_with_benign_outliers(session)
+
+        # Counts accumulate as each org's work succeeds; an org whose commit
+        # then fails stays counted, and ``failed_orgs`` is the honest signal
+        # rather than a silent reconciliation.
+        async def _work(org_id: str) -> None:
+            one = await behavioral_service.reevaluate_benign_labels(session, org_id=org_id)
+            totals.orgs += 1
+            totals.outliers_checked += one.outliers_checked
+            totals.entities_checked += one.entities_checked
+            totals.entities_flagged += one.entities_flagged
+            totals.entities_cleared += one.entities_cleared
+            totals.failures += one.failures
+            totals.flagged_entity_ids.extend(one.flagged_entity_ids)
+
+        failed_orgs = await _run_per_org(session, "behavioral_benign_reeval_sweep", org_ids, _work)
+
+    totals.failures += failed_orgs
+    counts = totals.as_counts()
+    logger.info(
+        "behavioral_benign_reeval_sweep: %s (orgs=%d failed_orgs=%d)",
+        counts,
+        len(org_ids),
+        failed_orgs,
+    )
     return counts
 
 
