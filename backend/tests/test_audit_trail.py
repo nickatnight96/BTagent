@@ -18,8 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from btagent_backend.db.models import AuditLogRow
 
-# Global counter so every test gets unique seq values (audit_logs.seq is UNIQUE).
-_seq_counter = itertools.count(1)
+# Unique seq values per test (audit_logs.seq is UNIQUE). Deliberately started
+# high rather than at 1: the in-memory DB is session-scoped and shared, so any
+# test module that writes real audit entries through ``AuditTrail.record``
+# takes seq 1, 2, 3... — and a counter starting at 1 then collides with it
+# depending only on collection order. This module builds its own rows directly,
+# so it just needs a range nothing else will claim.
+_SEQ_BASE = 1_000_000
+_seq_counter = itertools.count(_SEQ_BASE)
 
 
 # ---------------------------------------------------------------------------
