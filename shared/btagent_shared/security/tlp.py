@@ -210,7 +210,7 @@ def assert_tlp_allows_egress(
         The data about to leave the investigation. Walked recursively to
         detect any embedded ``tlp`` / ``tlp_level`` field set to ``"red"``.
     egress_kind:
-        One of the four :data:`EgressKind` values.
+        One of the :data:`EgressKind` values.
     classification_ctx:
         The investigation-wide classification (typically
         :attr:`AgentConfig.tlp_level`). May also be a string (``"red"``,
@@ -218,6 +218,11 @@ def assert_tlp_allows_egress(
         a mapping with no TLP field) defaults to :attr:`TLP.GREEN`; a
         *supplied* but unrecognised/empty value fails CLOSED to
         :attr:`TLP.RED` and blocks egress.
+
+        Omitting it is therefore a fail-open on the classification arm: the
+        payload scan still runs, but a RED *investigation* whose payload
+        carries no tag of its own passes. Every production call site supplies
+        it, and ``test_egress_classification_ctx_ratchet`` keeps that true.
     org_id:
         Optional org identifier carried on the emitted
         ``tlp.violation_attempt`` event so the alerter can route by tenant.
