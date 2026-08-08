@@ -126,7 +126,7 @@ def test_local_providers_covers_ollama_and_vllm():
     assert ModelProvider.BEDROCK not in LOCAL_PROVIDERS
 
 
-@pytest.mark.parametrize("tlp", [TLP.GREEN, TLP.WHITE, TLP.AMBER_STRICT, TLP.RED])
+@pytest.mark.parametrize("tlp", list(TLP))
 def test_local_only_narrows_allowed_providers(tlp: TLP):
     """Every provider surviving the filter is local, and the list is non-empty."""
     allowed = TLPAwareLLMRouter(local_only=True).get_allowed_providers(tlp)
@@ -158,8 +158,26 @@ def test_local_only_ignores_a_cloud_preferred_provider():
     assert provider == ModelProvider.OLLAMA
 
 
-def test_local_only_fails_closed_when_no_local_provider_is_authorised():
-    """TLP.AMBER lists no local provider: raise, never fall back to cloud."""
+def _synthesize_hosted_only_rung(monkeypatch: pytest.MonkeyPatch, tlp: TLP) -> None:
+    """Give *tlp* a routing rung with no local provider on it.
+
+    The live table no longer has such a rung — the AMBER hole these tests
+    originally leaned on was a drift bug against the classification hook's
+    ladder, fixed alongside ``test_router_hook_tlp_drift.py``. The fail-closed
+    path still has to stay pinned, so the hole is reproduced here explicitly.
+    """
+    monkeypatch.setitem(
+        TLPAwareLLMRouter.TLP_ROUTING,
+        tlp,
+        [ModelProvider.ANTHROPIC, ModelProvider.BEDROCK, ModelProvider.VERTEX_AI],
+    )
+
+
+def test_local_only_fails_closed_when_no_local_provider_is_authorised(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A rung with no local provider: raise, never fall back to cloud."""
+    _synthesize_hosted_only_rung(monkeypatch, TLP.AMBER)
     router = TLPAwareLLMRouter(local_only=True)
     assert router.get_allowed_providers(TLP.AMBER) == []
 
@@ -173,8 +191,11 @@ def test_local_only_fails_closed_when_no_local_provider_is_authorised():
     assert "refused" in message
 
 
-def test_local_only_fails_closed_for_every_tier_at_amber():
+def test_local_only_fails_closed_for_every_tier_on_a_hosted_only_rung(
+    monkeypatch: pytest.MonkeyPatch,
+):
     """The tier-fallback branches must not become an escape hatch either."""
+    _synthesize_hosted_only_rung(monkeypatch, TLP.AMBER)
     router = TLPAwareLLMRouter(local_only=True)
     for tier in ModelTier:
         with pytest.raises(RoutingError):
@@ -189,7 +210,10 @@ def test_local_only_get_llm_never_builds_a_hosted_model():
     assert llm.model_kwargs["api_base"] == _ENCLAVE_URL
 
 
-def test_local_only_get_llm_raises_rather_than_dispatching_to_cloud():
+def test_local_only_get_llm_raises_rather_than_dispatching_to_cloud(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _synthesize_hosted_only_rung(monkeypatch, TLP.AMBER)
     with pytest.raises(RoutingError):
         TLPAwareLLMRouter(local_only=True).get_llm(TLP.AMBER, ModelTier.STANDARD)
 
@@ -210,7 +234,8 @@ def test_local_only_enabled_from_env(monkeypatch: pytest.MonkeyPatch, value: str
     assert router.resolve(TLP.GREEN, ModelTier.STANDARD)[0] == ModelProvider.OLLAMA
 
 
-def test_local_only_flows_through_the_litellm_client():
+def test_local_only_flows_through_the_litellm_client(monkeypatch: pytest.MonkeyPatch):
+    _synthesize_hosted_only_rung(monkeypatch, TLP.AMBER)
     client = LiteLLMClient(local_only=True)
     assert client.router.local_only is True
     with pytest.raises(RoutingError):

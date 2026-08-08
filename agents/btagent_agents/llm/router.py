@@ -106,7 +106,18 @@ class TLPAwareLLMRouter:
     *not having credentials* into an explicit, testable setting.
     """
 
-    # Which providers are allowed at each TLP level (ordered by preference)
+    # Which providers are allowed at each TLP level (ordered by preference).
+    #
+    # This table must agree with the classification boundary's ladder
+    # (``classification_hook.TLP_ALLOWED_PROVIDERS``) — same policy, two
+    # consumers: the hook *validates* a provider, this table *picks* one.
+    # ``test_router_hook_tlp_drift.py`` pins the agreement. The AMBER rung
+    # previously omitted Ollama (the hook's ladder had the same hole, fixed
+    # first): local inference is admissible at every level — data never
+    # leaves the deployment — so under ``local_only`` the omission refused
+    # AMBER work outright, and a ``ModelTier.LOCAL`` request at AMBER
+    # fell back to a *cloud* STANDARD model. Ollama sits last so connected
+    # deployments still prefer the hosted providers.
     TLP_ROUTING: dict[TLP, list[str]] = {
         TLP.RED: [ModelProvider.OLLAMA],
         TLP.AMBER_STRICT: [ModelProvider.OLLAMA, ModelProvider.BEDROCK],
@@ -114,6 +125,7 @@ class TLPAwareLLMRouter:
             ModelProvider.ANTHROPIC,
             ModelProvider.BEDROCK,
             ModelProvider.VERTEX_AI,
+            ModelProvider.OLLAMA,
         ],
         TLP.GREEN: [
             ModelProvider.ANTHROPIC,
