@@ -47,6 +47,24 @@ PRICING: dict[str, ModelPricing] = {
         cache_read_per_m=1.50,
         cache_write_per_m=18.75,
     ),
+    # The models the router actually routes (TLPAwareLLMRouter.MODEL_TIERS).
+    # These entries exist because the partial-match fallback in get_pricing
+    # does NOT bridge "claude-opus-4-7" to "claude-opus-4-20250415" — without
+    # an exact key, premium calls silently billed at the 3/15 default, ~5x
+    # under Opus-class output pricing. test_router_pricing_drift.py pins that
+    # every routed model has an exact entry.
+    "claude-sonnet-4-6": ModelPricing(
+        input_per_m=3.00,
+        output_per_m=15.00,
+        cache_read_per_m=0.30,
+        cache_write_per_m=3.75,
+    ),
+    "claude-opus-4-7": ModelPricing(
+        input_per_m=5.00,
+        output_per_m=25.00,
+        cache_read_per_m=0.50,
+        cache_write_per_m=6.25,
+    ),
     # OpenAI
     "gpt-4o-mini": ModelPricing(
         input_per_m=0.15,
@@ -54,6 +72,10 @@ PRICING: dict[str, ModelPricing] = {
     ),
     "gpt-4o": ModelPricing(
         input_per_m=2.50,
+        output_per_m=10.00,
+    ),
+    "gpt-5": ModelPricing(
+        input_per_m=1.25,
         output_per_m=10.00,
     ),
     "o3": ModelPricing(
@@ -100,6 +122,18 @@ PRICING: dict[str, ModelPricing] = {
         output_per_m=75.00,
         cache_read_per_m=1.50,
         cache_write_per_m=18.75,
+    ),
+    "bedrock/claude-sonnet-4-6": ModelPricing(
+        input_per_m=3.00,
+        output_per_m=15.00,
+        cache_read_per_m=0.30,
+        cache_write_per_m=3.75,
+    ),
+    "bedrock/claude-opus-4-7": ModelPricing(
+        input_per_m=5.00,
+        output_per_m=25.00,
+        cache_read_per_m=0.50,
+        cache_write_per_m=6.25,
     ),
     # Ollama (local, free)
     "llama3.3": ModelPricing(

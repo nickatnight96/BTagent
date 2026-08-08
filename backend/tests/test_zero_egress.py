@@ -446,6 +446,10 @@ def test_local_llm_only_posture_never_resolves_a_hosted_provider():
             assert provider in LOCAL_PROVIDERS, f"{tlp} resolved to hosted provider {provider}"
 
     guard.assert_no_egress()
-    # TLP.AMBER authorises no local provider, so it must be one of the refusals
-    # rather than a silent hosted fallback.
-    assert TLP.AMBER in refused
+    # Every TLP rung authorises local inference (the router's AMBER rung used
+    # to omit Ollama — a drift bug against the classification hook's ladder,
+    # pinned by agents/tests/test_router_hook_tlp_drift.py). Local-only must
+    # therefore have no dead zone: a refusal here means a rung lost its local
+    # provider again, which would push an enclave operator toward turning the
+    # restriction *off* to get work through.
+    assert refused == []
