@@ -386,6 +386,32 @@ Rules:
 """
 
 
+def _format_agent_memory_section(state: InvestigationState, messages: list) -> str:
+    """Render the recalled ``<agent-memory>`` block for the first triage response.
+
+    #611: the backend recalls org memory at create time and carries the fenced
+    block into graph state as ``agent_memory`` — but nothing in the graph ever
+    read it, so recall was a dead end. The first triage response is the block's
+    live consumer: it surfaces what the org already learned (a host documented
+    as a false positive, a technique already ruled out) exactly where the
+    analyst forms their first impression of the case.
+
+    First response only — a prior ``AIMessage`` in the transcript means the
+    block has already been surfaced, and repeating it on every turn would bury
+    the new content. The fenced block is kept verbatim: it was already
+    fence-neutralised and size-capped at render time
+    (``memory_service.render_for_prompt``), and the transcript persists and may
+    be replayed into LLM context, where the fence is what marks the content as
+    data rather than instructions.
+    """
+    agent_memory = state.get("agent_memory") or ""
+    if not agent_memory.strip():
+        return ""
+    if any(isinstance(m, AIMessage) for m in messages):
+        return ""
+    return f"Relevant agency memory (recalled from prior investigations):\n{agent_memory}\n\n"
+
+
 def triage_node(state: InvestigationState) -> dict[str, Any]:
     """Run triage classification on the latest alert / message.
 
@@ -497,11 +523,13 @@ def triage_node(state: InvestigationState) -> dict[str, Any]:
     wrapped_alert = _wrap_external_data(alert_text)
     ioc_summary = _format_ioc_summary(new_iocs)
     mitre_summary = _format_mitre_summary(mitre_techniques)
+    memory_section = _format_agent_memory_section(state, messages)
     triage_output = (
         f"**Triage Analysis**\n"
         f"Severity: **{final_severity}**\n\n"
         f"IOCs Extracted ({len(new_iocs)} new):\n{ioc_summary}\n\n"
         f"{mitre_summary}"
+        f"{memory_section}"
         f"Alert data (wrapped for safety):\n{wrapped_alert}\n\n"
         f"Timeline entry added at {now_iso}."
     )

@@ -27,7 +27,7 @@ from btagent_shared.types.config import TLP
 from btagent_shared.utils.ids import generate_id
 from sqlalchemy import select
 
-from btagent_backend.db.models import OrganizationRow
+from btagent_backend.db.models import InvestigationRow, OrganizationRow
 from btagent_backend.db.models_memory import AgentMemoryRow
 from btagent_backend.services.embedding_service import (
     EmbeddingService,
@@ -590,3 +590,91 @@ async def test_api_recall_without_query_stays_recency(client, analyst_token):
     got = await client.get("/api/v1/memory", headers=auth_header(analyst_token))
     assert got.status_code == 200
     assert got.json()["mode"] == "recency"
+
+
+# --------------------------------------------------------------------------- #
+# Create-time carry into agent state (#611)
+# --------------------------------------------------------------------------- #
+#
+# The recalled block's live consumer is the first triage response
+# (agents/tests/test_triage_memory_surfacing.py). These two pin the backend
+# half of that contract: a recall that found something carries the fenced
+# block in ``config["agent_memory"]``; a recall that found nothing carries
+# NO key at all — absence, not the rendered "No agent memory recorded."
+# placeholder, is the empty signal, so the consumer checks truthiness
+# instead of parsing placeholder text.
+#
+# Both tests run in a dedicated org: DEFAULT_ORG_ID's memory table is shared
+# session-scoped state that other tests write to, so "no memories" is only
+# provable in an org nothing else touches.
+
+
+async def _org_user_token(db_session, tag: str) -> tuple[str, str]:
+    """A fresh org plus an admin user in it; returns (org_id, access_token)."""
+    from btagent_backend.auth.jwt import create_token_pair, hash_password
+    from btagent_backend.db.models import UserRow
+
+    oid = generate_id("org")
+    db_session.add(OrganizationRow(id=oid, name=f"Mem Wiring {tag}", created_at=datetime.now(UTC)))
+    user = UserRow(
+        id=generate_id("usr"),
+        org_id=oid,
+        username=f"memwiring_{tag}_{oid}",
+        email=f"memwiring_{tag}_{oid}@btagent.test",
+        password_hash=hash_password("Mem-Wiring-P@ss-1!"),
+        role="admin",
+        created_at=datetime.now(UTC),
+    )
+    db_session.add(user)
+    await db_session.commit()
+    # org_id must ride in the token: CurrentUser.org_id is read from the JWT
+    # payload (AUTH-B1), not from the user row, and it defaults to org_default.
+    token = create_token_pair(user.id, user.username, user.role, org_id=oid).access_token
+    return oid, token
+
+
+async def test_create_with_no_memories_carries_no_agent_memory_block(client, db_session):
+    _oid, token = await _org_user_token(db_session, "empty")
+
+    resp = await client.post(
+        "/api/v1/investigations",
+        headers=auth_header(token),
+        json={"title": "first case in an org with no memory"},
+    )
+    assert resp.status_code in (200, 201), resp.text
+    inv_id = resp.json()["id"]
+
+    row = (
+        await db_session.execute(select(InvestigationRow).where(InvestigationRow.id == inv_id))
+    ).scalar_one()
+    assert "agent_memory" not in (row.config or {}), (
+        "an empty recall must carry no block at all, not a rendered placeholder"
+    )
+
+
+async def test_create_with_memories_carries_the_fenced_block(client, db_session):
+    oid, token = await _org_user_token(db_session, "seeded")
+
+    await MemoryService().record_memory(
+        db_session,
+        org_id=oid,
+        kind="entity_note",
+        subject="host web-01",
+        content="AdminToolX flags EDR weekly; documented false positive",
+    )
+    await db_session.commit()
+
+    resp = await client.post(
+        "/api/v1/investigations",
+        headers=auth_header(token),
+        json={"title": "EDR alert on host web-01"},
+    )
+    assert resp.status_code in (200, 201), resp.text
+    inv_id = resp.json()["id"]
+
+    row = (
+        await db_session.execute(select(InvestigationRow).where(InvestigationRow.id == inv_id))
+    ).scalar_one()
+    block = (row.config or {}).get("agent_memory", "")
+    assert block.startswith("<agent-memory>"), f"fenced block missing: {block[:80]!r}"
+    assert "AdminToolX" in block
