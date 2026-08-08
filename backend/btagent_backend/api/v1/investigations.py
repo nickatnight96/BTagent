@@ -118,6 +118,52 @@ async def create_investigation(
         "template": body.template,
     }
 
+    # #482: surface the org's recalled long-term memory alongside org context so
+    # the agent starts with what it has already learned. Rendered to a fenced
+    # <agent-memory> block and carried into the agent state via config (see
+    # TaskManager._build_initial_state). Best-effort + org/TLP-scoped: a recall
+    # failure must never block investigation creation.
+    #
+    # Slice 2: recall is SEMANTIC — the new case's title/description is the
+    # query, so the block surfaces associatively relevant memories (the host
+    # that was a false positive last month, the technique already ruled out)
+    # rather than only rows whose subject matches exactly. ``recall_semantic``
+    # itself falls back to the recency/subject ranking whenever the vector path
+    # is unavailable (non-PostgreSQL dialect, no embedding provider), and the
+    # explicit fallback below covers a semantic pass that returns nothing.
+    #
+    # #611: this runs BEFORE the row is constructed. ``config`` is a plain
+    # JSONB column — mutating the dict after ``db.add`` is invisible to the
+    # unit of work, so a post-flush ``config["agent_memory"] = ...`` reached
+    # the running agent (via ``start_investigation``) but never the DB row,
+    # and the resume path (``TaskManager`` rebuilds state from ``row.config``)
+    # silently dropped the block on every backend restart.
+    try:
+        from btagent_backend.services.memory_service import (
+            MemoryService,
+            render_for_prompt,
+        )
+
+        service = MemoryService()
+        recall_query = " ".join(part for part in (body.title, body.description) if part).strip()
+        memories = await service.recall_semantic(
+            db, user.org_id, recall_query, caller_tlp=body.tlp_level
+        )
+        if not memories:
+            memories = await service.recall_memories(db, user.org_id, caller_tlp=body.tlp_level)
+        # Only carry a block when something was actually recalled. The rendered
+        # empty-case placeholder ("No agent memory recorded.") is a *prompt*
+        # contract — telling a model explicitly that no memory exists — but the
+        # block's live consumer is the analyst-facing first triage response
+        # (#611), and surfacing a placeholder there is noise. Absence is "",
+        # so consumers check truthiness instead of parsing placeholder text.
+        if memories:
+            config["agent_memory"] = render_for_prompt(memories)
+    except Exception:
+        logger.exception(
+            "Failed to recall agent memory for new investigation (org %s)", user.org_id
+        )
+
     # AUTH-B1: org_id is *always* taken from the authenticated user, never
     # from the request body. Defends against mass-assignment cross-tenant
     # writes if the request schema is later extended.
@@ -136,36 +182,6 @@ async def create_investigation(
     )
     db.add(inv)
     await db.flush()
-
-    # #482: surface the org's recalled long-term memory alongside org context so
-    # the agent starts with what it has already learned. Rendered to a fenced
-    # <agent-memory> block and carried into the agent state via config (see
-    # TaskManager._build_initial_state). Best-effort + org/TLP-scoped: a recall
-    # failure must never block investigation creation.
-    #
-    # Slice 2: recall is SEMANTIC — the new case's title/description is the
-    # query, so the block surfaces associatively relevant memories (the host
-    # that was a false positive last month, the technique already ruled out)
-    # rather than only rows whose subject matches exactly. ``recall_semantic``
-    # itself falls back to the recency/subject ranking whenever the vector path
-    # is unavailable (non-PostgreSQL dialect, no embedding provider), and the
-    # explicit fallback below covers a semantic pass that returns nothing.
-    try:
-        from btagent_backend.services.memory_service import (
-            MemoryService,
-            render_for_prompt,
-        )
-
-        service = MemoryService()
-        recall_query = " ".join(part for part in (body.title, body.description) if part).strip()
-        memories = await service.recall_semantic(
-            db, user.org_id, recall_query, caller_tlp=body.tlp_level
-        )
-        if not memories:
-            memories = await service.recall_memories(db, user.org_id, caller_tlp=body.tlp_level)
-        config["agent_memory"] = render_for_prompt(memories)
-    except Exception:
-        logger.exception("Failed to recall agent memory for investigation %s", inv.id)
 
     # B7: commit BEFORE starting the agent. The background task (and the
     # sync failure path in start_investigation) writes status through its OWN
